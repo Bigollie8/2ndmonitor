@@ -231,15 +231,57 @@ export function useNowPlaying(): NowPlayingState {
         if (cancelled) return;
         const p = e.payload;
         const track = payloadToTrack(p);
-        const playback: Playback | null = p.has_session
-          ? {
-              positionAtSync: p.position,
-              duration: p.duration,
-              playing: p.playing,
-              syncedAt: performance.now(),
+
+        // Only re-anchor playback when there's a meaningful change. GSMTC's
+        // reported position lags real playback by ~200-800ms, so re-syncing on
+        // every 2s tick caused interpolated time to jump *backward* to the
+        // lagging GSMTC value — visible as lyrics getting in sync, then stepping
+        // back. Trust local interpolation between meaningful events.
+        const SEEK_DRIFT_THRESHOLD = 2.0; // seconds
+        setState((prev) => {
+          let nextPlayback: Playback | null;
+          if (!p.has_session) {
+            nextPlayback = null;
+          } else {
+            const prevPb = prev.playback;
+            const trackChanged =
+              !prev.track || track?.title !== prev.track.title || track?.artist !== prev.track.artist;
+            const playStateChanged = !prevPb || prevPb.playing !== p.playing;
+            const reanchor = !prevPb || trackChanged || playStateChanged;
+
+            if (reanchor) {
+              nextPlayback = {
+                positionAtSync: p.position,
+                duration: p.duration,
+                playing: p.playing,
+                syncedAt: performance.now(),
+              };
+            } else {
+              const elapsed = prevPb.playing
+                ? (performance.now() - prevPb.syncedAt) / 1000
+                : 0;
+              const interpolated = prevPb.positionAtSync + elapsed;
+              const drift = Math.abs(p.position - interpolated);
+              if (drift > SEEK_DRIFT_THRESHOLD) {
+                // Big drift = user seeked.
+                nextPlayback = {
+                  positionAtSync: p.position,
+                  duration: p.duration,
+                  playing: p.playing,
+                  syncedAt: performance.now(),
+                };
+              } else if (prevPb.duration !== p.duration) {
+                // Just refresh duration; preserve anchor.
+                nextPlayback = { ...prevPb, duration: p.duration };
+              } else {
+                // No-op — return same reference so React doesn't re-render
+                // the lyrics interval (which would itself cause a brief jump).
+                nextPlayback = prevPb;
+              }
             }
-          : null;
-        setState({ track, playback });
+          }
+          return { track, playback: nextPlayback };
+        });
       }))
       .then((unlisten) => {
         if (cancelled) { unlisten(); return; }
