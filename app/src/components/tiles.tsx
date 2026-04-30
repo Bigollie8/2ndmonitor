@@ -3,6 +3,7 @@ import { getDensity } from '../data';
 import type { Density, Track, SysmonHistory } from '../types';
 import type { Todo } from '../types';
 import { type Playback, type SpectrumState, mediaControls } from '../state/tauri';
+import { useLyrics, currentLineIndex } from '../state/lyrics';
 
 export function HFTile({
   title, badge, headRight, children, accent, density = 'regular', noHead, style, onClick,
@@ -171,6 +172,8 @@ function useLivePosition(playback: Playback | null): number {
   return playback.duration > 0 ? Math.min(playback.duration, projected) : projected;
 }
 
+type SpotifyTab = 'now' | 'lyrics' | 'upnext';
+
 export function SpotifyTile({ density, accent, accent2, track, onPick: _onPick, playback, spectrumRef }: {
   density: Density;
   accent: string;
@@ -180,90 +183,239 @@ export function SpotifyTile({ density, accent, accent2, track, onPick: _onPick, 
   playback?: Playback | null;
   spectrumRef?: MutableRefObject<SpectrumState>;
 }) {
+  const [tab, setTab] = useState<SpotifyTab>('now');
+  return (
+    <HFTile
+      title="Now playing"
+      density={density}
+      badge={<SpotifyBadge playback={playback} accent={accent} />}
+      style={{ height: '100%' }}
+    >
+      <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+        <SpotifyTabBar tab={tab} setTab={setTab} accent={accent} />
+        <div style={{ flex: 1, minHeight: 0, position: 'relative', display: 'flex', flexDirection: 'column' }}>
+          {tab === 'now' && (
+            <SpotifyNowView
+              accent={accent} accent2={accent2} track={track}
+              playback={playback} spectrumRef={spectrumRef}
+            />
+          )}
+          {tab === 'lyrics' && <SpotifyLyricsView accent={accent} playback={playback} />}
+          {tab === 'upnext' && <SpotifyUpNextPlaceholder accent={accent} />}
+        </div>
+      </div>
+    </HFTile>
+  );
+}
+
+function SpotifyBadge({ playback, accent }: { playback?: Playback | null; accent: string }) {
+  const liveBadgeColor = playback?.playing ? '#22c55e' : accent;
+  const liveBadgeText = playback ? (playback.playing ? '● LIVE' : '⏸ PAUSED') : '● LIVE';
+  return (
+    <span style={{ fontSize: 9, color: liveBadgeColor, padding: '2px 6px', borderRadius: 4, background: liveBadgeColor + '15', border: `1px solid ${liveBadgeColor}33`, letterSpacing: '.05em' }}>
+      {liveBadgeText}
+    </span>
+  );
+}
+
+function SpotifyTabBar({ tab, setTab, accent }: { tab: SpotifyTab; setTab: (t: SpotifyTab) => void; accent: string }) {
+  const tabs: { id: SpotifyTab; label: string }[] = [
+    { id: 'now',    label: 'Now' },
+    { id: 'lyrics', label: 'Lyrics' },
+    { id: 'upnext', label: 'Up next' },
+  ];
+  return (
+    <div style={{
+      display: 'flex', borderBottom: '1px solid rgba(255,255,255,0.06)',
+      flexShrink: 0,
+    }}>
+      {tabs.map((t) => {
+        const active = tab === t.id;
+        return (
+          <button key={t.id} onClick={() => setTab(t.id)} style={{
+            flex: 1, padding: '6px 0',
+            background: active ? `${accent}10` : 'transparent',
+            border: 'none', borderBottom: active ? `2px solid ${accent}` : '2px solid transparent',
+            color: active ? accent : 'rgba(255,255,255,0.55)',
+            fontSize: 10, fontWeight: 600, letterSpacing: '.06em',
+            textTransform: 'uppercase',
+            fontFamily: '"JetBrains Mono", ui-monospace, monospace',
+            cursor: 'pointer',
+            transition: 'background 0.12s, border-color 0.12s, color 0.12s',
+          }}>{t.label}</button>
+        );
+      })}
+    </div>
+  );
+}
+
+function SpotifyNowView({ accent, accent2, track, playback, spectrumRef }: {
+  accent: string; accent2: string; track: Track;
+  playback?: Playback | null;
+  spectrumRef?: MutableRefObject<SpectrumState>;
+}) {
   const position = useLivePosition(playback ?? null);
   const duration = playback?.duration ?? 0;
   const havePlayback = !!playback && duration > 0;
   const progressPct = havePlayback ? Math.min(100, (position / duration) * 100) : 0;
   const positionLabel = havePlayback ? formatMMSS(position) : '—';
   const durationLabel = havePlayback ? formatMMSS(duration) : '—';
-  const liveBadgeColor = playback?.playing ? '#22c55e' : accent;
-  const liveBadgeText = playback ? (playback.playing ? '● LIVE' : '⏸ PAUSED') : '● LIVE';
   return (
-    <HFTile title="Now playing" density={density}
-            badge={<span style={{ fontSize: 9, color: liveBadgeColor, padding: '2px 6px', borderRadius: 4, background: liveBadgeColor + '15', border: `1px solid ${liveBadgeColor}33`, letterSpacing: '.05em' }}>{liveBadgeText}</span>}
-            style={{ height: '100%' }}>
-      <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
-        {/* Big album art — fills the available height while staying square */}
+    <>
+      {/* Big album art */}
+      <div style={{
+        flex: '1 1 auto',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        padding: '12px 12px 8px', minHeight: 0, overflow: 'hidden',
+      }}>
         <div style={{
-          flex: '1 1 auto',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          padding: '12px 12px 8px', minHeight: 0, overflow: 'hidden',
+          aspectRatio: '1 / 1',
+          maxWidth: 'min(100%, 230px)', maxHeight: '100%', width: '100%',
+          borderRadius: 12,
+          background: track.cover, backgroundSize: 'cover', backgroundPosition: 'center',
+          boxShadow: `0 14px 44px ${accent}66, 0 0 0 1px rgba(255,255,255,0.04)`,
+          position: 'relative', overflow: 'hidden',
         }}>
-          <div style={{
-            aspectRatio: '1 / 1',
-            maxWidth: 'min(100%, 230px)',
-            maxHeight: '100%',
-            width: '100%',
-            borderRadius: 12,
-            background: track.cover,
-            backgroundSize: 'cover',
-            backgroundPosition: 'center',
-            boxShadow: `0 14px 44px ${accent}66, 0 0 0 1px rgba(255,255,255,0.04)`,
-            position: 'relative',
-            overflow: 'hidden',
-          }}>
-            {/* Soft inner-light overlay only when the cover is procedural (no real art). */}
-            {!track.cover.startsWith('center') && (
-              <div style={{ position: 'absolute', inset: 0, background: 'radial-gradient(circle at 30% 30%, rgba(255,255,255,0.28), transparent 60%)' }} />
-            )}
-          </div>
-        </div>
-
-        {/* Track info */}
-        <div style={{ padding: '0 14px', flexShrink: 0, textAlign: 'center' }}>
-          <div style={{ fontSize: 14, fontWeight: 700, color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{track.title}</div>
-          <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.7)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{track.artist}</div>
-          {track.album && (
-            <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{track.album}</div>
+          {!track.cover.startsWith('center') && (
+            <div style={{ position: 'absolute', inset: 0, background: 'radial-gradient(circle at 30% 30%, rgba(255,255,255,0.28), transparent 60%)' }} />
           )}
         </div>
-
-        {/* Progress + time */}
-        <div style={{ padding: '10px 14px 6px', flexShrink: 0 }}>
-          <div style={{ height: 3, background: 'rgba(255,255,255,0.1)', borderRadius: 2, position: 'relative', overflow: 'hidden' }}>
-            <div style={{
-              position: 'absolute', left: 0, top: 0, bottom: 0, width: `${progressPct}%`,
-              background: `linear-gradient(90deg, ${accent2}, ${accent})`,
-              borderRadius: 2,
-              transition: havePlayback ? 'width 0.25s linear' : 'none',
-            }} />
-            <div style={{
-              position: 'absolute', left: `${progressPct}%`, top: '50%', transform: 'translate(-50%,-50%)',
-              width: 9, height: 9, background: '#fff', borderRadius: 999,
-              boxShadow: `0 0 8px ${accent}`,
-              transition: havePlayback ? 'left 0.25s linear' : 'none',
-            }} />
-          </div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: 'rgba(255,255,255,0.4)', fontFamily: '"JetBrains Mono", ui-monospace, monospace', marginTop: 4 }}>
-            <span>{positionLabel}</span><span>{durationLabel}</span>
-          </div>
-        </div>
-
-        {/* Controls */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, justifyContent: 'center', padding: '4px 0 8px', flexShrink: 0 }}>
-          <button title="Previous" onClick={() => mediaControls.previous()} style={{ ...iconBtn(), width: 32, height: 32 }}>⏮</button>
-          <button
-            title={playback?.playing ? 'Pause' : 'Play'}
-            onClick={() => mediaControls.togglePlayPause()}
-            style={{ ...iconBtn(), width: 44, height: 44, background: '#fff', color: '#000', borderRadius: 999, fontSize: 16 }}
-          >{playback?.playing ? '⏸' : '⏵'}</button>
-          <button title="Next" onClick={() => mediaControls.next()} style={{ ...iconBtn(), width: 32, height: 32 }}>⏭</button>
-        </div>
-
-        {/* Mini reactive visualizer fills the previous dead space at the bottom */}
-        {spectrumRef && <SpotifyMiniViz accent={accent} accent2={accent2} spectrumRef={spectrumRef} />}
       </div>
-    </HFTile>
+      {/* Track info */}
+      <div style={{ padding: '0 14px', flexShrink: 0, textAlign: 'center' }}>
+        <div style={{ fontSize: 14, fontWeight: 700, color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{track.title}</div>
+        <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.7)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{track.artist}</div>
+        {track.album && (
+          <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{track.album}</div>
+        )}
+      </div>
+      {/* Progress + time */}
+      <div style={{ padding: '10px 14px 6px', flexShrink: 0 }}>
+        <div style={{ height: 3, background: 'rgba(255,255,255,0.1)', borderRadius: 2, position: 'relative', overflow: 'hidden' }}>
+          <div style={{
+            position: 'absolute', left: 0, top: 0, bottom: 0, width: `${progressPct}%`,
+            background: `linear-gradient(90deg, ${accent2}, ${accent})`,
+            borderRadius: 2,
+            transition: havePlayback ? 'width 0.25s linear' : 'none',
+          }} />
+          <div style={{
+            position: 'absolute', left: `${progressPct}%`, top: '50%', transform: 'translate(-50%,-50%)',
+            width: 9, height: 9, background: '#fff', borderRadius: 999,
+            boxShadow: `0 0 8px ${accent}`,
+            transition: havePlayback ? 'left 0.25s linear' : 'none',
+          }} />
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: 'rgba(255,255,255,0.4)', fontFamily: '"JetBrains Mono", ui-monospace, monospace', marginTop: 4 }}>
+          <span>{positionLabel}</span><span>{durationLabel}</span>
+        </div>
+      </div>
+      {/* Controls */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, justifyContent: 'center', padding: '4px 0 8px', flexShrink: 0 }}>
+        <button title="Previous" onClick={() => mediaControls.previous()} style={{ ...iconBtn(), width: 32, height: 32 }}>⏮</button>
+        <button
+          title={playback?.playing ? 'Pause' : 'Play'}
+          onClick={() => mediaControls.togglePlayPause()}
+          style={{ ...iconBtn(), width: 44, height: 44, background: '#fff', color: '#000', borderRadius: 999, fontSize: 16 }}
+        >{playback?.playing ? '⏸' : '⏵'}</button>
+        <button title="Next" onClick={() => mediaControls.next()} style={{ ...iconBtn(), width: 32, height: 32 }}>⏭</button>
+      </div>
+      {/* Mini reactive visualizer */}
+      {spectrumRef && <SpotifyMiniViz accent={accent} accent2={accent2} spectrumRef={spectrumRef} />}
+    </>
+  );
+}
+
+function SpotifyUpNextPlaceholder({ accent }: { accent: string }) {
+  return (
+    <div style={{
+      flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center',
+      padding: 18, textAlign: 'center', color: 'rgba(255,255,255,0.55)',
+      fontSize: 11, lineHeight: 1.55,
+    }}>
+      <div>
+        <div style={{ fontSize: 13, fontWeight: 600, color: '#fff', marginBottom: 6 }}>Connect Spotify</div>
+        <div>Up next requires Spotify Web API access. Coming soon.</div>
+      </div>
+    </div>
+  );
+}
+
+function SpotifyLyricsView({ accent, playback }: { accent: string; playback?: Playback | null }) {
+  const lyrics = useLyrics();
+  const pos = useLivePosition(playback ?? null);
+  const idx = currentLineIndex(lyrics.syncedLines, pos);
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const activeRef = useRef<HTMLDivElement | null>(null);
+
+  // Auto-scroll the active line to ~1/3 from the top of the viewport.
+  useEffect(() => {
+    const c = containerRef.current;
+    const a = activeRef.current;
+    if (!c || !a) return;
+    const target = a.offsetTop - c.clientHeight / 3;
+    c.scrollTo({ top: Math.max(0, target), behavior: 'smooth' });
+  }, [idx]);
+
+  if (lyrics.instrumental) {
+    return (
+      <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'rgba(255,255,255,0.55)', fontSize: 14 }}>
+        ♪ Instrumental
+      </div>
+    );
+  }
+
+  if (lyrics.syncedLines.length === 0 && lyrics.plainLines.length === 0) {
+    return (
+      <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 18, textAlign: 'center', color: 'rgba(255,255,255,0.45)', fontSize: 11, lineHeight: 1.55 }}>
+        No lyrics found for this track.
+      </div>
+    );
+  }
+
+  // Synced view
+  if (lyrics.syncedLines.length > 0) {
+    return (
+      <div ref={containerRef} style={{
+        flex: 1, overflowY: 'auto', padding: '14px 16px',
+        fontFamily: '"JetBrains Mono", ui-monospace, monospace',
+        fontSize: 12, lineHeight: 1.7,
+        scrollBehavior: 'smooth',
+      }}>
+        {lyrics.syncedLines.map((line, i) => {
+          const active = i === idx;
+          return (
+            <div
+              key={i}
+              ref={active ? activeRef : undefined}
+              style={{
+                color: active ? '#fff' : (i < idx ? 'rgba(255,255,255,0.32)' : 'rgba(255,255,255,0.65)'),
+                fontWeight: active ? 700 : 400,
+                background: active ? `linear-gradient(90deg, ${accent}22, transparent)` : 'transparent',
+                borderLeft: active ? `2px solid ${accent}` : '2px solid transparent',
+                padding: '2px 0 2px 8px',
+                margin: '1px -8px',
+                transition: 'color 0.18s, background 0.18s',
+              }}
+            >
+              {line.text || ' ' /* non-breaking space for empty pause lines */}
+            </div>
+          );
+        })}
+      </div>
+    );
+  }
+
+  // Plain-text fallback
+  return (
+    <div style={{
+      flex: 1, overflowY: 'auto', padding: '14px 16px',
+      fontFamily: '"JetBrains Mono", ui-monospace, monospace',
+      fontSize: 12, lineHeight: 1.7, color: 'rgba(255,255,255,0.7)',
+    }}>
+      {lyrics.plainLines.map((line, i) => (
+        <div key={i}>{line || ' '}</div>
+      ))}
+    </div>
   );
 }
 
