@@ -1,6 +1,17 @@
 export type Density = 'compact' | 'regular' | 'spacious';
 export type VizMode = 'bars' | 'waveform' | 'radial' | 'particles' | 'ambient';
-export type Profile = 'work' | 'gaming' | 'chill';
+export interface Profile {
+  /** Stable id (UUID). Used for activeProfileId references. */
+  id: string;
+  /** User-editable display name, e.g. "Work". */
+  name: string;
+  /** Hex color used as accent in the switcher card and top-chrome button. */
+  color: string;
+  /** Tile rectangles for this profile. Empty = use DEFAULT_LAYOUT. */
+  layout: import('./state/layout').Layout;
+  /** Tile visibility map. */
+  hidden: Partial<Record<import('./state/layout').TileId, boolean>>;
+}
 export type AccentTheme = 'auto' | 'mint' | 'coral' | 'indigo' | 'amber';
 
 export interface Track {

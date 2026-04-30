@@ -1,96 +1,34 @@
-import React from 'react';
 import type { Profile } from '../types';
 
-interface ProfileSpec {
-  id: Profile;
-  name: string;
-  subtitle: string;
-  layout: 'work' | 'gaming' | 'chill';
-  tileCount: number;
-}
-
-const PROFILES: ProfileSpec[] = [
-  { id: 'work',   name: 'Work',   subtitle: 'Focus · sysmon · calendar',     layout: 'work',   tileCount: 8 },
-  { id: 'gaming', name: 'Gaming', subtitle: 'Viz hero · sysmon · discord',   layout: 'gaming', tileCount: 6 },
-  { id: 'chill',  name: 'Chill',  subtitle: 'Ambient · spotify · clock',     layout: 'chill',  tileCount: 5 },
-];
-
-export function ProfileSwitcher({ accent, currentProfile, setProfile, onClose, onCreate }: {
+export function ProfileSwitcher({ accent, profiles, activeProfileId, setActiveProfileId, setProfiles, onClose }: {
   accent: string;
-  currentProfile: Profile;
-  setProfile: (p: Profile) => void;
+  profiles: Profile[];
+  activeProfileId: string;
+  setActiveProfileId: (id: string) => void;
+  setProfiles: (next: Profile[]) => void;
   onClose: () => void;
-  onCreate: () => void;
 }) {
+  // Minimal stub to keep the build green between phases B-3 and B-4.
+  // Phase B-4 replaces this with real CRUD UI.
   return (
-    <div onClick={onClose} style={{
-      position: 'absolute', inset: 0, zIndex: 80,
-      background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(12px)',
-      display: 'flex', alignItems: 'center', justifyContent: 'center',
-    }}>
-      <div onClick={(e) => e.stopPropagation()} style={{
-        width: 1600, padding: 48, borderRadius: 18,
-        background: 'rgba(15,17,22,0.95)',
-        border: '1px solid rgba(255,255,255,0.08)',
-        boxShadow: '0 40px 100px rgba(0,0,0,0.6)',
-      }}>
-        <div style={{ display: 'flex', alignItems: 'baseline', gap: 16, marginBottom: 8 }}>
-          <h2 style={{ fontSize: 28, margin: 0, fontWeight: 700, letterSpacing: '-0.02em' }}>Switch profile</h2>
-          <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.4)', fontFamily: '"JetBrains Mono", ui-monospace, monospace' }}>⌘ + 1 / 2 / 3</span>
-        </div>
-        <p style={{ fontSize: 14, color: 'rgba(255,255,255,0.55)', margin: '0 0 32px 0' }}>
-          Each profile is a layout of tiles tuned for a context. Hub crossfades between them with shared-element transitions.
-        </p>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 20 }}>
-          {PROFILES.map((p) => (
-            <ProfileCard key={p.id} profile={p} accent={accent} active={p.id === currentProfile} onClick={() => { setProfile(p.id); onClose(); }} />
+    <div onClick={onClose} style={{ position: 'absolute', inset: 0, zIndex: 80, background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(12px)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ padding: 32, background: '#0f1116', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 12, color: '#fff' }}>
+        <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 12 }}>Profiles ({profiles.length})</div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {profiles.map((p) => (
+            <button key={p.id} onClick={() => { setActiveProfileId(p.id); onClose(); }} style={{ padding: '6px 12px', textAlign: 'left', background: p.id === activeProfileId ? `${p.color}22` : 'transparent', border: `1px solid ${p.id === activeProfileId ? p.color : 'rgba(255,255,255,0.1)'}`, color: '#fff', borderRadius: 6, cursor: 'pointer' }}>
+              {p.name}
+            </button>
           ))}
         </div>
-        <div style={{ marginTop: 24, display: 'flex', gap: 12, alignItems: 'center' }}>
-          <button onClick={onCreate} style={{
-            padding: '12px 18px', fontSize: 13, fontWeight: 600,
-            background: 'transparent', color: 'rgba(255,255,255,0.7)',
-            border: '1px dashed rgba(255,255,255,0.15)', borderRadius: 8,
-            cursor: 'pointer',
-          }}>+ New profile from current</button>
-          <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.4)', flex: 1 }}>
-            Profiles auto-switch on app focus rules — e.g. Gaming when fullscreen game launches.
-          </span>
-          <button onClick={onClose} style={{
-            padding: '10px 16px', fontSize: 12, color: 'rgba(255,255,255,0.5)',
-            background: 'transparent', border: '1px solid rgba(255,255,255,0.08)',
-            borderRadius: 6, cursor: 'pointer',
-          }}>Esc</button>
-        </div>
+        <div style={{ marginTop: 12, fontSize: 10, color: 'rgba(255,255,255,0.4)' }}>Stub UI — full switcher in B-4. accent: {accent}. setProfiles fn ready.</div>
       </div>
     </div>
   );
 }
 
-function ProfileCard({ profile, accent, active, onClick }: { profile: ProfileSpec; accent: string; active: boolean; onClick: () => void }) {
-  return (
-    <button onClick={onClick} style={{
-      padding: 0, borderRadius: 12, overflow: 'hidden',
-      background: active ? `${accent}10` : 'rgba(255,255,255,0.02)',
-      border: active ? `2px solid ${accent}` : '2px solid rgba(255,255,255,0.06)',
-      cursor: 'pointer', textAlign: 'left', color: '#fff',
-      transition: 'transform .15s, border-color .15s',
-      transform: active ? 'translateY(-2px)' : 'none',
-      boxShadow: active ? `0 12px 40px -8px ${accent}66` : 'none',
-    }}>
-      <ProfilePreview layout={profile.layout} accent={accent} />
-      <div style={{ padding: 16 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-          <span style={{ fontSize: 16, fontWeight: 700 }}>{profile.name}</span>
-          {active && <span style={{ fontSize: 9, color: accent, padding: '2px 8px', background: `${accent}20`, borderRadius: 3, fontFamily: '"JetBrains Mono", ui-monospace, monospace', letterSpacing: '.05em' }}>● ACTIVE</span>}
-        </div>
-        <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.55)', marginBottom: 8 }}>{profile.subtitle}</div>
-        <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.35)', fontFamily: '"JetBrains Mono", ui-monospace, monospace' }}>{profile.tileCount} tiles</div>
-      </div>
-    </button>
-  );
-}
-
+// Backwards-compatible export — onboarding.tsx uses this with hardcoded layout strings.
+// Identical to the original implementation; kept intact so onboarding keeps rendering.
 export function ProfilePreview({ layout, accent }: { layout: 'work' | 'gaming' | 'chill'; accent: string }) {
   const w = 480, h = 270;
   const stroke = 'rgba(255,255,255,0.06)';

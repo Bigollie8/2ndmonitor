@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
-import type { Track, Profile, AccentTheme, VizMode, Density } from './types';
-import type { Todo, WeatherLocation } from './types';
+import type { TileId, Layout } from './state/layout';
+import { DEFAULT_LAYOUT } from './state/layout';
+import type { Track, Profile, AccentTheme, VizMode, Density, Todo, WeatherLocation } from './types';
 import type { GeocodeResult } from './state/weatherLocation';
 import { TRACKS, ACCENT_PALETTES } from './data';
 import { useTweaks } from './state/useTweaks';
@@ -20,9 +21,6 @@ import { TileFrame } from './components/TileFrame';
 import {
   TweaksPanel, TweakSection, TweakRadio, TweakSelect, TweakButton,
 } from './components/tweaks';
-import type { TileId, Rect, Layout } from './state/layout';
-import { DEFAULT_LAYOUT } from './state/layout';
-
 interface VizColorOverride {
   enabled: boolean;
   accent: string;
@@ -33,29 +31,61 @@ interface TweakState extends Record<string, unknown> {
   vizMode: VizMode;
   accentTheme: AccentTheme;
   density: Density;
-  hidden: Partial<Record<TileId, boolean>>;
   vizArtBg: boolean;
   vizSensitivity: number;
   vizSmoothing: number;
   vizColorOverride: VizColorOverride;
   todos: Todo[];
   weatherLocation: WeatherLocation;
-  layout: Layout;
+  // Profile system: layout + tile visibility live INSIDE the active profile.
+  profiles: Profile[];
+  activeProfileId: string;
 }
 
 const TWEAK_DEFAULTS: TweakState = {
   vizMode: 'bars',
   accentTheme: 'auto',
   density: 'compact',
-  hidden: {},
   vizArtBg: false,
   vizSensitivity: 1.0,
   vizSmoothing: 0.0,
   vizColorOverride: { enabled: false, accent: '#a78bfa', accent2: '#ec4899' },
   todos: [],
   weatherLocation: { label: 'Knoxville, TN', lat: 35.9606, lon: -83.9207 },
-  layout: {},
+  profiles: [],
+  activeProfileId: '',
 };
+
+const PROFILE_DEFAULT_COLORS = ['#a78bfa', '#f59e0b', '#22d3ee', '#22c55e', '#f472b6', '#60a5fa', '#facc15', '#f97316'];
+
+function newId(): string {
+  return (typeof crypto !== 'undefined' && crypto.randomUUID)
+    ? crypto.randomUUID()
+    : `p_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+}
+
+/** Migration: legacy shape (top-level `layout`/`hidden`, no `profiles`) → new
+ *  profile-shaped state. Idempotent: returns input unchanged if already migrated. */
+function migrateTweaks(loaded: Record<string, unknown>): Record<string, unknown> {
+  const profilesField = loaded.profiles;
+  if (Array.isArray(profilesField) && profilesField.length > 0) {
+    return loaded;
+  }
+  const legacyLayout = (loaded.layout as Layout | undefined) ?? {};
+  const legacyHidden = (loaded.hidden as Partial<Record<TileId, boolean>> | undefined) ?? {};
+  const next: Record<string, unknown> = { ...loaded };
+  delete next.layout;
+  delete next.hidden;
+
+  const seeded: Profile[] = [
+    { id: newId(), name: 'Work',   color: PROFILE_DEFAULT_COLORS[0]!, layout: legacyLayout, hidden: legacyHidden },
+    { id: newId(), name: 'Gaming', color: PROFILE_DEFAULT_COLORS[1]!, layout: {},           hidden: {} },
+    { id: newId(), name: 'Chill',  color: PROFILE_DEFAULT_COLORS[2]!, layout: {},           hidden: {} },
+  ];
+  next.profiles = seeded;
+  next.activeProfileId = seeded[0]!.id;
+  return next;
+}
 
 const ALL_TILES: { id: TileId; label: string }[] = [
   { id: 'discord', label: 'Discord' },
@@ -68,10 +98,19 @@ const ALL_TILES: { id: TileId; label: string }[] = [
 ];
 
 export default function App() {
-  const [t, setTweak] = useTweaks<TweakState>(TWEAK_DEFAULTS);
+  const [t, setTweak] = useTweaks<TweakState>(TWEAK_DEFAULTS, { migrate: migrateTweaks });
+  useEffect(() => {
+    if (t.profiles.length > 0 && t.activeProfileId) return;
+    const seeded: Profile[] = [
+      { id: newId(), name: 'Work',   color: PROFILE_DEFAULT_COLORS[0]!, layout: {}, hidden: {} },
+      { id: newId(), name: 'Gaming', color: PROFILE_DEFAULT_COLORS[1]!, layout: {}, hidden: {} },
+      { id: newId(), name: 'Chill',  color: PROFILE_DEFAULT_COLORS[2]!, layout: {}, hidden: {} },
+    ];
+    setTweak('profiles', seeded);
+    setTweak('activeProfileId', seeded[0]!.id);
+  }, [t.profiles.length, t.activeProfileId, setTweak]);
   const [manualTrack, setManualTrack] = useState<Track>(TRACKS[0]!);
   const [editMode, setEditMode] = useState(false);
-  const [profile, setProfile] = useState<Profile>('work');
   const [showSwitcher, setShowSwitcher] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [selectedTileId, setSelectedTileId] = useState<TileId>('viz');
@@ -113,7 +152,8 @@ export default function App() {
       else if (cmd && (e.key === '1' || e.key === '2' || e.key === '3')) {
         e.preventDefault();
         const idx = parseInt(e.key, 10) - 1;
-        setProfile((['work', 'gaming', 'chill'] as const)[idx]!);
+        const p = t.profiles[idx];
+        if (p) setTweak('activeProfileId', p.id);
       }
       else if (e.key === 'Escape') {
         if (showSwitcher) setShowSwitcher(false);
@@ -128,7 +168,7 @@ export default function App() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [showSwitcher, editMode, showOnboarding, t.vizMode, setTweak]);
+  }, [showSwitcher, editMode, showOnboarding, t.vizMode, t.profiles, setTweak]);
 
   // Scale 2560x1440 design canvas to fit viewport.
   const [scale, setScale] = useState(1);
@@ -143,10 +183,19 @@ export default function App() {
   }, []);
 
   const overlaysOpen = editMode || showSwitcher || showOnboarding;
-  const hidden = t.hidden;
+  const activeProfile: Profile = t.profiles.find((p) => p.id === t.activeProfileId) ?? t.profiles[0] ?? {
+    id: '_fallback', name: 'Default', color: '#a78bfa', layout: {}, hidden: {},
+  };
+  const hidden = activeProfile.hidden;
+  const activeLayout: Layout = activeProfile.layout;
 
+  const updateActiveProfile = (patch: Partial<Profile>) => {
+    setTweak('profiles', t.profiles.map((p) =>
+      p.id === activeProfile.id ? { ...p, ...patch } : p
+    ));
+  };
   const setHidden = (id: TileId, hide: boolean) => {
-    setTweak('hidden', { ...hidden, [id]: hide || undefined });
+    updateActiveProfile({ hidden: { ...hidden, [id]: hide || undefined } });
   };
 
   const renderTile = (id: TileId) => {
@@ -191,13 +240,15 @@ export default function App() {
         <TopChrome
           accent={accent} editMode={editMode} setEditMode={setEditMode}
           accentLinked={accentLinked} track={track}
-          profile={profile} setProfile={setProfile}
+          profiles={t.profiles}
+          activeProfileId={t.activeProfileId}
+          setActiveProfileId={(id) => setTweak('activeProfileId', id)}
           onSwitcher={() => setShowSwitcher(true)}
           onOnboarding={() => setShowOnboarding(true)}
         />
         {ALL_TILES.map(({ id }) => {
           if (hidden[id]) return null;
-          const rect: Rect = t.layout[id] ?? DEFAULT_LAYOUT[id];
+          const rect = activeLayout[id] ?? DEFAULT_LAYOUT[id];
           return (
             <TileFrame
               key={id}
@@ -206,28 +257,41 @@ export default function App() {
               editing={editMode}
               selected={selectedTileId === id}
               onSelect={() => setSelectedTileId(id)}
-              onChange={(r) => setTweak('layout', { ...t.layout, [id]: r })}
+              onChange={(r) => updateActiveProfile({ layout: { ...activeLayout, [id]: r } })}
               accent={accent}
             >
               {renderTile(id)}
             </TileFrame>
           );
         })}
-        <BottomStatus accent={accent} onSwitcher={() => setShowSwitcher(true)} profile={profile} />
+        <BottomStatus
+          accent={accent}
+          onSwitcher={() => setShowSwitcher(true)}
+          profileName={activeProfile.name}
+        />
         {editMode && (
           <EditModeOverlay
             accent={accent}
             accent2={accent2}
             onExit={() => setEditMode(false)}
             onRemove={(id) => setHidden(id, true)}
-            layout={t.layout}
-            setLayout={(next) => setTweak('layout', next)}
+            layout={activeLayout}
+            setLayout={(next) => updateActiveProfile({ layout: next })}
             selectedId={selectedTileId}
             setSelectedId={setSelectedTileId}
             hiddenIds={(Object.keys(hidden) as TileId[]).filter((k) => hidden[k])}
           />
         )}
-        {showSwitcher && <ProfileSwitcher accent={accent} currentProfile={profile} setProfile={setProfile} onClose={() => setShowSwitcher(false)} onCreate={() => setShowSwitcher(false)} />}
+        {showSwitcher && (
+          <ProfileSwitcher
+            accent={accent}
+            profiles={t.profiles}
+            activeProfileId={t.activeProfileId}
+            setActiveProfileId={(id) => setTweak('activeProfileId', id)}
+            setProfiles={(next) => setTweak('profiles', next)}
+            onClose={() => setShowSwitcher(false)}
+          />
+        )}
         {showOnboarding && <Onboarding accent={accent} onFinish={() => setShowOnboarding(false)} />}
       </div>
 
@@ -323,7 +387,7 @@ export default function App() {
           label="Tile density" value={t.density}
           options={['compact', 'regular', 'spacious']}
           onChange={(v) => setTweak('density', v)} />
-        <TweakButton label="Reset layout" onClick={() => setTweak('layout', {})} />
+        <TweakButton label="Reset layout" onClick={() => updateActiveProfile({ layout: {} })} />
         <TweakSection label="Weather" />
         <WeatherSearch
           current={t.weatherLocation}
@@ -357,20 +421,20 @@ export default function App() {
   );
 }
 
-function TopChrome({ accent, editMode, setEditMode, accentLinked, track, profile, setProfile, onSwitcher, onOnboarding }: {
+function TopChrome({ accent, editMode, setEditMode, accentLinked, track, profiles, activeProfileId, setActiveProfileId, onSwitcher, onOnboarding }: {
   accent: string;
   editMode: boolean;
   setEditMode: (b: boolean) => void;
   accentLinked: boolean;
   track: Track;
-  profile: Profile;
-  setProfile: (p: Profile) => void;
+  profiles: Profile[];
+  activeProfileId: string;
+  setActiveProfileId: (id: string) => void;
   onSwitcher: () => void;
   onOnboarding: () => void;
 }) {
-  const PROFILES: { id: Profile; name: string }[] = [
-    { id: 'work', name: 'Work' }, { id: 'gaming', name: 'Gaming' }, { id: 'chill', name: 'Chill' },
-  ];
+  const visibleProfiles = profiles.slice(0, 4);
+  const overflow = Math.max(0, profiles.length - visibleProfiles.length);
   return (
     <div style={{
       position: 'absolute', top: 0, left: 0, right: 0, height: 56,
@@ -384,14 +448,14 @@ function TopChrome({ accent, editMode, setEditMode, accentLinked, track, profile
       </div>
       <div style={{ width: 1, height: 18, background: 'rgba(255,255,255,0.08)' }} />
       <div style={{ display: 'flex', gap: 4 }}>
-        {PROFILES.map((p) => {
-          const active = profile === p.id;
+        {visibleProfiles.map((p) => {
+          const active = p.id === activeProfileId;
           return (
-            <button key={p.id} onClick={() => setProfile(p.id)} style={{
+            <button key={p.id} onClick={() => setActiveProfileId(p.id)} style={{
               padding: '5px 12px', fontSize: 11, borderRadius: 6,
-              background: active ? `${accent}20` : 'transparent',
-              color: active ? accent : 'rgba(255,255,255,0.5)',
-              border: active ? `1px solid ${accent}55` : '1px solid transparent',
+              background: active ? `${p.color}22` : 'transparent',
+              color: active ? p.color : 'rgba(255,255,255,0.5)',
+              border: active ? `1px solid ${p.color}66` : '1px solid transparent',
               cursor: 'pointer', fontWeight: active ? 600 : 400,
             }}>{p.name}</button>
           );
@@ -400,7 +464,7 @@ function TopChrome({ accent, editMode, setEditMode, accentLinked, track, profile
           padding: '5px 8px', fontSize: 11, borderRadius: 6,
           background: 'transparent', color: 'rgba(255,255,255,0.4)',
           border: '1px solid transparent', cursor: 'pointer',
-        }}>⌃ More</button>
+        }}>{overflow > 0 ? `+${overflow} More` : '⌃ More'}</button>
       </div>
       <div style={{ flex: 1 }} />
       {accentLinked && (
@@ -505,7 +569,7 @@ function WeatherSearch({
   );
 }
 
-function BottomStatus({ accent, onSwitcher, profile }: { accent: string; onSwitcher: () => void; profile: Profile }) {
+function BottomStatus({ accent, onSwitcher, profileName }: { accent: string; onSwitcher: () => void; profileName: string }) {
   return (
     <div style={{
       position: 'absolute', bottom: 0, left: 0, right: 0, height: 32,
@@ -520,7 +584,7 @@ function BottomStatus({ accent, onSwitcher, profile }: { accent: string; onSwitc
       <span>GPU 3.1%</span>
       <span>Audio: WASAPI loopback</span>
       <div style={{ flex: 1 }} />
-      <button onClick={onSwitcher} style={{ background: 'transparent', border: 'none', color: 'rgba(255,255,255,0.45)', fontFamily: 'inherit', fontSize: 'inherit', cursor: 'pointer', padding: 0 }}>⌘1/2/3 profile · {profile}</button>
+      <button onClick={onSwitcher} style={{ background: 'transparent', border: 'none', color: 'rgba(255,255,255,0.45)', fontFamily: 'inherit', fontSize: 'inherit', cursor: 'pointer', padding: 0 }}>⌘1/2/3 profile · {profileName}</button>
       <span style={{ color: 'rgba(255,255,255,0.25)' }}>·</span>
       <span>⌘E edit · ⌘K command · ⌘, settings</span>
     </div>

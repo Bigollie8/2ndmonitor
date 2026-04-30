@@ -32,14 +32,17 @@ async function tauriSave(value: unknown): Promise<void> {
 
 export function useTweaks<T extends Record<string, unknown>>(
   defaults: T,
+  opts?: { migrate?: (loaded: Record<string, unknown>) => Record<string, unknown> },
 ): [T, <K extends keyof T>(key: K, value: T[K]) => void] {
-  // Synchronous initial state from localStorage (used in browser dev AND as a
-  // first-paint hint while the Tauri file load is in flight — avoids a flash
-  // of defaults for users who already have settings).
+  // Synchronous initial state from localStorage (browser dev + first-paint hint).
   const [values, setValues] = useState<T>(() => {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
-      if (raw) return mergeTweaks(defaults, JSON.parse(raw));
+      if (raw) {
+        let parsed = JSON.parse(raw) as Record<string, unknown>;
+        if (opts?.migrate) parsed = opts.migrate(parsed);
+        return mergeTweaks(defaults, parsed);
+      }
     } catch { /* fall through */ }
     return defaults;
   });
@@ -52,13 +55,17 @@ export function useTweaks<T extends Record<string, unknown>>(
         const fromFile = await tauriLoad();
         if (cancelled) return;
         if (fromFile && typeof fromFile === 'object' && !Array.isArray(fromFile)) {
-          setValues(mergeTweaks(defaults, fromFile as Record<string, unknown>));
+          let raw = fromFile as Record<string, unknown>;
+          if (opts?.migrate) raw = opts.migrate(raw);
+          setValues(mergeTweaks(defaults, raw));
         } else if (isTauri) {
           // Migration: file doesn't exist yet but localStorage might. Persist current state.
           try {
             const raw = localStorage.getItem(STORAGE_KEY);
-            const initial = raw ? mergeTweaks(defaults, JSON.parse(raw)) : defaults;
-            await tauriSave(initial);
+            let initial: Record<string, unknown> = raw ? JSON.parse(raw) : {};
+            if (opts?.migrate) initial = opts.migrate(initial);
+            const merged = mergeTweaks(defaults, initial);
+            await tauriSave(merged);
           } catch { /* ignore */ }
         }
       } catch (err) {
@@ -69,8 +76,7 @@ export function useTweaks<T extends Record<string, unknown>>(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Persist on change. Always update localStorage (cheap, also covers browser dev).
-  // Debounce Tauri file writes so rapid slider drags don't hammer the disk.
+  // Persist on change.
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(values)); } catch { /* noop */ }
