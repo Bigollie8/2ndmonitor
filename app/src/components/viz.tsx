@@ -242,12 +242,17 @@ export function HiFiVizParticles({ accent, accent2, spectrumRef, sensitivity = 1
     ro.observe(canvas);
 
     const N = 140;
-    const pts = Array.from({ length: N }, () => ({
-      x: Math.random(), y: Math.random(),
-      vx: 0, vy: 0,
-      r: 0.5 + Math.random() * 1.8,
-      hue: Math.random(),
-    }));
+    const pts = Array.from({ length: N }, () => {
+      const x = Math.random();
+      const y = Math.random();
+      return {
+        x, y,
+        homeX: x, homeY: y, // each particle springs back to where it spawned
+        vx: 0, vy: 0,
+        r: 0.5 + Math.random() * 1.8,
+        hue: Math.random(),
+      };
+    });
     let t = 0;
     let raf = 0;
     let bassSmoothed = 0;
@@ -284,19 +289,24 @@ export function HiFiVizParticles({ accent, accent2, spectrumRef, sensitivity = 1
       ctx.fillStyle = accent2 + '11';
       ctx.fillRect(0, 0, w, h);
 
-      // Outward kick on beats — particles closer to center get bigger pushes
-      // (more dramatic than uniform). Velocities decay so they settle between hits.
-      const kickStrength = spike * 0.020;
-      const drag = 0.90;
+      // Outward kick on beats — falls off with distance from center, so the
+      // shockwave moves the inner particles more than the edge ones.
+      const kickStrength = spike * 0.012;
+      const springK = 0.018;  // pull-back-to-home force
+      const drag = 0.86;
 
       for (const p of pts) {
+        // Spring force toward home. Without this, kicks accumulate and particles
+        // drift to the edges over time.
+        p.vx += (p.homeX - p.x) * springK;
+        p.vy += (p.homeY - p.y) * springK;
+
+        // Outward kick from center on bass spikes.
         const dx = p.x - 0.5;
         const dy = p.y - 0.5;
         const dist = Math.sqrt(dx * dx + dy * dy) + 0.0001;
         const inv = 1 / dist;
-        // Falloff makes near-center particles fly out more, edge particles barely
-        // move — feels like a shockwave from the middle on each kick.
-        const falloff = 1 / (1 + dist * 6);
+        const falloff = 1 / (1 + dist * 5);
         p.vx += (dx * inv) * kickStrength * falloff;
         p.vy += (dy * inv) * kickStrength * falloff;
 
@@ -305,10 +315,6 @@ export function HiFiVizParticles({ accent, accent2, spectrumRef, sensitivity = 1
 
         p.x += p.vx;
         p.y += p.vy;
-
-        // Wrap so particles re-enter from the opposite side instead of clipping.
-        if (p.x < 0) p.x += 1; if (p.x > 1) p.x -= 1;
-        if (p.y < 0) p.y += 1; if (p.y > 1) p.y -= 1;
 
         const px = p.x * w, py = p.y * h;
         const r = p.r * dpr * (0.3 + bass * 2.8);
