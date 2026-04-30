@@ -258,20 +258,23 @@ export function HiFiVizParticles({ accent, accent2, spectrumRef, sensitivity = 1
       ctx.clearRect(0, 0, w, h);
       const live = spectrumRef?.current.live === true;
       const bands = spectrumRef?.current.bands;
+      const level = spectrumRef?.current.level ?? 0;
       const sm = Math.max(0, Math.min(0.95, smoothing));
-      // Bass = energy across the lowest ~8 bands; falls back to a slow sine.
+      // Bass = energy across the lowest ~8 bands, mixed with overall RMS for
+      // snappier reaction on transient kicks. Falls back to a slow sine.
       let bassRaw: number;
       if (live && bands) {
         let sum = 0;
         const lowN = Math.min(8, bands.length);
         for (let i = 0; i < lowN; i++) sum += bands[i] ?? 0;
-        bassRaw = (sum / lowN) * 1.5 + 0.1;
+        const lowAvg = sum / lowN;
+        bassRaw = (lowAvg * 0.7 + level * 0.6) * 1.6 + 0.08;
       } else {
         bassRaw = (Math.sin(t) * 0.5 + 0.5) * 0.5 + 0.3;
       }
       const scaled = bassRaw * sensitivity;
       bassSmoothed = bassSmoothed * sm + scaled * (1 - sm);
-      const bass = Math.min(1, bassSmoothed);
+      const bass = Math.min(1.5, bassSmoothed);
       ctx.fillStyle = accent2 + '11';
       ctx.fillRect(0, 0, w, h);
       for (const p of pts) {
@@ -280,7 +283,7 @@ export function HiFiVizParticles({ accent, accent2, spectrumRef, sensitivity = 1
         if (p.x < 0) p.x += 1; if (p.x > 1) p.x -= 1;
         if (p.y < 0) p.y += 1; if (p.y > 1) p.y -= 1;
         const px = p.x * w, py = p.y * h;
-        const r = p.r * dpr * (0.6 + bass * 1.4);
+        const r = p.r * dpr * (0.3 + bass * 2.8);
         const grad = ctx.createRadialGradient(px, py, 0, px, py, r * 4);
         grad.addColorStop(0, p.hue > 0.5 ? accent : accent2);
         grad.addColorStop(1, 'transparent');
