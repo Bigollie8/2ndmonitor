@@ -500,20 +500,24 @@ export function VizHero({
   );
 }
 
-function useLivePositionForLyrics(playback?: Playback | null): number {
-  const [t, setT] = useState(0);
+/** Returns the active synced-line index, recomputed on a 200ms interval against
+ *  interpolated playback position. Only setState when the index actually changes,
+ *  so the overlay re-renders once per line transition (not 60×/sec). */
+function useCurrentLyricIndex(lines: import('../state/lyrics').LrcLine[], playback?: Playback | null): number {
+  const [idx, setIdx] = useState(-1);
   useEffect(() => {
-    if (!playback) { setT(0); return; }
-    let raf = 0;
+    if (!playback || lines.length === 0) { setIdx(-1); return; }
     const tick = () => {
       const elapsed = playback.playing ? (performance.now() - playback.syncedAt) / 1000 : 0;
-      setT(playback.positionAtSync + elapsed);
-      raf = requestAnimationFrame(tick);
+      const pos = playback.positionAtSync + elapsed;
+      const next = currentLineIndex(lines, pos);
+      setIdx((prev) => (prev === next ? prev : next));
     };
-    raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
-  }, [playback]);
-  return t;
+    tick();
+    const id = setInterval(tick, 200);
+    return () => clearInterval(id);
+  }, [playback, lines]);
+  return idx;
 }
 
 export function LyricsOverlay({
@@ -524,8 +528,7 @@ export function LyricsOverlay({
   enabled: boolean;
 }) {
   const lyrics = useLyrics();
-  const pos = useLivePositionForLyrics(playback);
-  const idx = currentLineIndex(lyrics.syncedLines, pos);
+  const idx = useCurrentLyricIndex(lyrics.syncedLines, playback);
   const line = idx >= 0 ? lyrics.syncedLines[idx]?.text ?? '' : '';
 
   // Hide unless we have synced lyrics, the user enabled the overlay, and a
