@@ -468,6 +468,7 @@ export function VizHero({
   return (
     <div style={{
       position: 'relative', overflow: 'hidden',
+      width: '100%', height: '100%',
       borderRadius: 14,
       background: '#06070a',
       border: '1px solid rgba(255,255,255,0.05)',
