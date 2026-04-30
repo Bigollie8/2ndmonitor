@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState, type MutableRefObject } from 'react
 import { getDensity } from '../data';
 import type { Density, Track, SysmonHistory } from '../types';
 import type { Todo } from '../types';
-import { type Playback, type SpectrumState, mediaControls } from '../state/tauri';
+import { type Playback, type SpectrumState, mediaControls, useSpotify, type SpotifyTrack } from '../state/tauri';
 import { useLyrics, currentLineIndex } from '../state/lyrics';
 
 export function HFTile({
@@ -201,7 +201,7 @@ export function SpotifyTile({ density, accent, accent2, track, onPick: _onPick, 
             />
           )}
           {tab === 'lyrics' && <SpotifyLyricsView accent={accent} playback={playback} />}
-          {tab === 'upnext' && <SpotifyUpNextPlaceholder accent={accent} />}
+          {tab === 'upnext' && <SpotifyUpNextView accent={accent} />}
         </div>
       </div>
     </HFTile>
@@ -325,17 +325,129 @@ function SpotifyNowView({ accent, accent2, track, playback, spectrumRef }: {
   );
 }
 
-function SpotifyUpNextPlaceholder({ accent }: { accent: string }) {
-  return (
-    <div style={{
-      flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center',
-      padding: 18, textAlign: 'center', color: 'rgba(255,255,255,0.55)',
-      fontSize: 11, lineHeight: 1.55,
-    }}>
-      <div>
-        <div style={{ fontSize: 13, fontWeight: 600, color: '#fff', marginBottom: 6 }}>Connect Spotify</div>
-        <div>Up next requires Spotify Web API access. Coming soon.</div>
+function SpotifyUpNextView({ accent }: { accent: string }) {
+  const { state, connect, disconnect, getStoredClientId } = useSpotify();
+  const [draftId, setDraftId] = useState('');
+  const [showHelp, setShowHelp] = useState(false);
+
+  useEffect(() => {
+    getStoredClientId().then((id) => { if (id) setDraftId(id); });
+  }, []);
+
+  if (!state.connected) {
+    return (
+      <div style={{ flex: 1, padding: 14, display: 'flex', flexDirection: 'column', gap: 10, overflow: 'auto' }}>
+        <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.85)', lineHeight: 1.5 }}>
+          Connect Spotify to see your queue. Read-only — we never play, pause, or skip on your behalf.
+        </div>
+        <input
+          value={draftId}
+          onChange={(e) => setDraftId(e.target.value)}
+          placeholder="Spotify Client ID"
+          spellCheck={false}
+          style={{
+            background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.08)',
+            borderRadius: 6, color: '#fff', padding: '7px 10px', fontSize: 12,
+            fontFamily: '"JetBrains Mono", ui-monospace, monospace', outline: 'none',
+          }}
+          onKeyDown={(e) => { if (e.key === 'Enter' && draftId.trim()) connect(draftId.trim()); }}
+        />
+        <button
+          onClick={() => { if (draftId.trim()) connect(draftId.trim()); }}
+          disabled={!draftId.trim() || state.connecting}
+          style={{
+            padding: '8px 12px', fontSize: 12, fontWeight: 700,
+            background: draftId.trim() && !state.connecting ? accent : 'rgba(255,255,255,0.06)',
+            color: draftId.trim() && !state.connecting ? '#000' : 'rgba(255,255,255,0.4)',
+            border: 'none', borderRadius: 6,
+            cursor: draftId.trim() && !state.connecting ? 'pointer' : 'not-allowed',
+          }}
+        >{state.connecting ? 'Authorizing…' : 'Connect Spotify'}</button>
+        {state.error && (
+          <div style={{ fontSize: 11, color: '#fca5a5', padding: 8, borderRadius: 6, background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)' }}>
+            {state.error}
+          </div>
+        )}
+        <button onClick={() => setShowHelp((v) => !v)} style={{
+          fontSize: 11, color: 'rgba(255,255,255,0.55)', background: 'transparent',
+          border: 'none', padding: '4px 0', textAlign: 'left', cursor: 'pointer',
+        }}>{showHelp ? 'Hide setup help' : 'How do I get a Client ID?'}</button>
+        {showHelp && (
+          <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.7)', lineHeight: 1.5, padding: 10, borderRadius: 6, background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)' }}>
+            <ol style={{ margin: 0, paddingLeft: 18, display: 'flex', flexDirection: 'column', gap: 4 }}>
+              <li>Go to <span style={{ color: accent, fontFamily: '"JetBrains Mono", ui-monospace, monospace' }}>developer.spotify.com/dashboard</span></li>
+              <li>Create an app. Add <span style={{ color: accent, fontFamily: '"JetBrains Mono", ui-monospace, monospace' }}>http://localhost:14202/callback</span> as a Redirect URI.</li>
+              <li>Copy the Client ID, paste it above.</li>
+              <li>Click Connect — the browser opens, click Authorize.</li>
+            </ol>
+          </div>
+        )}
       </div>
+    );
+  }
+
+  if (state.premium_required) {
+    return (
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
+        <SpotifyConnectionHeader onDisconnect={() => disconnect()} />
+        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 18, textAlign: 'center', color: 'rgba(255,255,255,0.55)', fontSize: 11, lineHeight: 1.55 }}>
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 600, color: '#fff', marginBottom: 6 }}>Premium required</div>
+            <div>Spotify Web API requires Premium to read the queue. Free accounts don't expose it.</div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (state.queue.length === 0) {
+    return (
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
+        <SpotifyConnectionHeader onDisconnect={() => disconnect()} />
+        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'rgba(255,255,255,0.45)', fontSize: 11 }}>
+          Nothing queued.
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+      <SpotifyConnectionHeader onDisconnect={() => disconnect()} />
+      <div style={{ flex: 1, overflowY: 'auto', padding: '4px 8px 10px' }}>
+        {state.queue.map((q, i) => <UpNextRow key={(q.id || q.title) + ':' + i} track={q} accent={accent} />)}
+      </div>
+    </div>
+  );
+}
+
+function SpotifyConnectionHeader({ onDisconnect }: { onDisconnect: () => void }) {
+  return (
+    <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '4px 10px 0' }}>
+      <button onClick={onDisconnect} style={{
+        fontSize: 9, color: 'rgba(255,255,255,0.4)',
+        background: 'transparent', border: 'none', cursor: 'pointer',
+        fontFamily: '"JetBrains Mono", ui-monospace, monospace',
+      }}>sign out</button>
+    </div>
+  );
+}
+
+function UpNextRow({ track, accent }: { track: SpotifyTrack; accent: string }) {
+  const mins = Math.floor(track.duration_ms / 60000);
+  const secs = Math.floor((track.duration_ms % 60000) / 1000);
+  return (
+    <div style={{ display: 'flex', gap: 10, alignItems: 'center', padding: '5px 6px', borderRadius: 5 }}>
+      {track.art_url ? (
+        <img src={track.art_url} alt="" style={{ width: 32, height: 32, borderRadius: 4, flexShrink: 0, background: 'rgba(255,255,255,0.05)' }} />
+      ) : (
+        <div style={{ width: 32, height: 32, borderRadius: 4, background: `linear-gradient(135deg, ${accent}66, ${accent}22)`, flexShrink: 0 }} />
+      )}
+      <div style={{ minWidth: 0, flex: 1 }}>
+        <div style={{ fontSize: 11.5, fontWeight: 600, color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{track.title}</div>
+        <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.5)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{track.artist}</div>
+      </div>
+      <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)', fontFamily: '"JetBrains Mono", ui-monospace, monospace', flexShrink: 0 }}>{mins}:{String(secs).padStart(2, '0')}</span>
     </div>
   );
 }

@@ -519,6 +519,81 @@ export function useDiscord(): {
   return { state, connect, disconnect, getStoredClientId };
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Spotify (OAuth PKCE → Web API queue polling)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface SpotifyTrack {
+  id: string;
+  title: string;
+  artist: string;
+  album: string;
+  art_url: string | null;
+  duration_ms: number;
+}
+
+export interface SpotifyState {
+  connected: boolean;
+  connecting: boolean;
+  error: string | null;
+  queue: SpotifyTrack[];
+  premium_required: boolean;
+}
+
+const EMPTY_SPOTIFY: SpotifyState = {
+  connected: false, connecting: false, error: null,
+  queue: [], premium_required: false,
+};
+
+export function useSpotify(): {
+  state: SpotifyState;
+  connect: (clientId: string) => Promise<void>;
+  disconnect: () => Promise<void>;
+  getStoredClientId: () => Promise<string | null>;
+} {
+  const [state, setState] = useState<SpotifyState>(EMPTY_SPOTIFY);
+
+  useEffect(() => {
+    if (!isTauri) return;
+    let cancelled = false;
+    let cleanup: (() => void) | null = null;
+    (async () => {
+      const { listen } = await import('@tauri-apps/api/event');
+      const { invoke } = await import('@tauri-apps/api/core');
+      try {
+        const initial = await invoke<SpotifyState>('spotify_status');
+        if (!cancelled) setState(initial);
+      } catch { /* ignore */ }
+      const unlisten = await listen<SpotifyState>('spotify:state', (e) => {
+        if (cancelled) return;
+        setState(e.payload);
+      });
+      if (cancelled) { unlisten(); return; }
+      cleanup = unlisten;
+    })().catch((err) => console.error('spotify listen failed', err));
+    return () => { cancelled = true; cleanup?.(); };
+  }, []);
+
+  const connect = async (clientId: string) => {
+    if (!isTauri) return;
+    const { invoke } = await import('@tauri-apps/api/core');
+    await invoke('spotify_connect', { clientId });
+  };
+  const disconnect = async () => {
+    if (!isTauri) return;
+    const { invoke } = await import('@tauri-apps/api/core');
+    await invoke('spotify_disconnect');
+  };
+  const getStoredClientId = async (): Promise<string | null> => {
+    if (!isTauri) return null;
+    const { invoke } = await import('@tauri-apps/api/core');
+    try { return await invoke<string | null>('spotify_get_client_id'); }
+    catch { return null; }
+  };
+
+  return { state, connect, disconnect, getStoredClientId };
+}
+
 export function useClaudeSessions(): ClaudeSession[] {
   const [sessions, setSessions] = useState<ClaudeSession[]>([]);
   useEffect(() => {
