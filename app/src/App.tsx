@@ -7,6 +7,7 @@ import { TRACKS, ACCENT_PALETTES } from './data';
 import { useTweaks } from './state/useTweaks';
 import { useSysmon, useNowPlaying, useSpectrumRef } from './state/tauri';
 import { VizHero } from './components/viz';
+import { VizGallery } from './components/viz-gallery';
 import {
   SpotifyTile, NotesTile,
   SysMonTile,
@@ -115,6 +116,7 @@ export default function App() {
   const [editMode, setEditMode] = useState(false);
   const [showSwitcher, setShowSwitcher] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(false);
+  const [showGallery, setShowGallery] = useState(false);
   const [selectedTileId, setSelectedTileId] = useState<TileId>('viz');
   const sysmon = useSysmon();
   const spectrumRef = useSpectrumRef();
@@ -158,7 +160,8 @@ export default function App() {
         if (p) setTweak('activeProfileId', p.id);
       }
       else if (e.key === 'Escape') {
-        if (showSwitcher) setShowSwitcher(false);
+        if (showGallery) setShowGallery(false);
+        else if (showSwitcher) setShowSwitcher(false);
         else if (showOnboarding) setShowOnboarding(false);
         else if (editMode) setEditMode(false);
       }
@@ -170,7 +173,7 @@ export default function App() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [showSwitcher, editMode, showOnboarding, t.vizMode, t.profiles, setTweak]);
+  }, [showSwitcher, editMode, showOnboarding, showGallery, t.vizMode, t.profiles, setTweak]);
 
   // Scale 2560x1440 design canvas to fit viewport.
   const [scale, setScale] = useState(1);
@@ -296,6 +299,18 @@ export default function App() {
           />
         )}
         {showOnboarding && <Onboarding accent={accent} onFinish={() => setShowOnboarding(false)} />}
+        {showGallery && (
+          <VizGallery
+            accent={vizAccent}
+            accent2={vizAccent2}
+            spectrumRef={spectrumRef}
+            currentMode={t.vizMode}
+            sensitivity={t.vizSensitivity}
+            smoothing={t.vizSmoothing}
+            onPick={(m) => setTweak('vizMode', m)}
+            onClose={() => setShowGallery(false)}
+          />
+        )}
       </div>
 
       <TweaksPanel title="Tweaks" defaultOpen={true}>
@@ -304,6 +319,7 @@ export default function App() {
           label="Mode" value={t.vizMode}
           options={['bars', 'waveform', 'radial', 'particles', 'ambient']}
           onChange={(v) => setTweak('vizMode', v)} />
+        <TweakButton label="Browse all 17 styles" onClick={() => setShowGallery(true)} />
         <label style={{
           display: 'flex', alignItems: 'center', gap: 8, padding: '3px 0',
           cursor: 'pointer', userSelect: 'none', color: 'rgba(41,38,27,0.85)',

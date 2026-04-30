@@ -2,8 +2,64 @@ import React, { useEffect, useRef, useState, type MutableRefObject } from 'react
 import type { VizMode, Track } from '../types';
 import { type SpectrumState, type Playback, mediaControls } from '../state/tauri';
 import { useLyrics, currentLineIndex } from '../state/lyrics';
+import {
+  VizNeonBars, VizSplitMirror, VizCircularPulse, VizWaveformTunnel,
+  VizPixelLED, VizRibbon, VizOscilloscope, VizSpectrogram, VizVinyl,
+  VizKaleidoscope, VizFreqGrid, VizMinimalDots,
+} from './viz-extra';
 
-interface VizProps {
+/** Reads N values from spectrumRef.current.bands by resampling, applies
+ *  sensitivity, and per-bin smooths. Falls back to a procedural fake
+ *  spectrum when no live audio. Returns a callable that mutates `out`
+ *  in place each frame — much faster than allocating per-frame. */
+export function makeSpectrumReader(
+  N: number,
+  spectrumRef: MutableRefObject<SpectrumState> | undefined,
+  sensitivity: number,
+  smoothing: number,
+) {
+  const out = new Float32Array(N);
+  const smoothed = new Float32Array(N);
+  let t = 0;
+  const sm = Math.max(0, Math.min(0.95, smoothing));
+  return {
+    out,
+    /** Call once per frame; mutates `out` in place. Returns the bass scalar (mean of low ~10% of bins). */
+    read(): number {
+      t += 0.04;
+      const live = spectrumRef?.current.live === true;
+      const bands = spectrumRef?.current.bands;
+      const srcLen = bands?.length ?? 64;
+      let bassSum = 0;
+      const bassN = Math.max(1, Math.floor(N * 0.1));
+      for (let i = 0; i < N; i++) {
+        let raw: number;
+        if (live && bands) {
+          raw = bands[Math.floor((i / N) * srcLen)] ?? 0;
+        } else {
+          // Procedural fallback — same shape as the design's fake spectrum.
+          const x = i / N;
+          const env = Math.pow(1 - x, 1.2) * 0.55 + 0.18;
+          const a = Math.sin(t * 1.6 + i * 0.18) * 0.18;
+          const b = Math.sin(t * 0.7 + i * 0.05) * 0.12;
+          const c = Math.sin(t * 4.2 + i * 1.1) * 0.06;
+          const noise = (Math.sin(i * 1.7 + t) * 0.5 + Math.cos(i * 0.9 + t * 2) * 0.5) * 0.08;
+          raw = env + a + b + c + noise;
+        }
+        const scaled = raw * sensitivity;
+        const prev = smoothed[i] ?? 0;
+        const v = prev * sm + scaled * (1 - sm);
+        smoothed[i] = v;
+        const clamped = Math.max(0.04, Math.min(1, v));
+        out[i] = clamped;
+        if (i < bassN) bassSum += clamped;
+      }
+      return bassSum / bassN;
+    },
+  };
+}
+
+export interface VizProps {
   accent: string;
   accent2: string;
   /** Live audio-spectrum ref. When live, viz reads from `bands`/`level`; otherwise falls back to a synthetic envelope. */
@@ -375,13 +431,25 @@ export function HiFiVizAmbient({ accent, accent2 }: VizProps) {
 export function HiFiVizSurface({ mode, accent, accent2, spectrumRef, sensitivity, smoothing }: { mode: VizMode } & VizProps) {
   const props = { accent, accent2, spectrumRef, sensitivity, smoothing };
   switch (mode) {
-    case 'bars':      return <HiFiVizBars {...props} />;
-    case 'waveform':  return <HiFiVizWaveform {...props} />;
-    case 'radial':    return <HiFiVizRadial {...props} />;
-    case 'particles': return <HiFiVizParticles {...props} />;
-    case 'ambient':   return <HiFiVizAmbient {...props} />;
+    case 'bars':         return <HiFiVizBars {...props} />;
+    case 'waveform':     return <HiFiVizWaveform {...props} />;
+    case 'radial':       return <HiFiVizRadial {...props} />;
+    case 'particles':    return <HiFiVizParticles {...props} />;
+    case 'ambient':      return <HiFiVizAmbient {...props} />;
+    case 'neonbars':     return <VizNeonBars {...props} />;
+    case 'splitmirror':  return <VizSplitMirror {...props} />;
+    case 'circular':     return <VizCircularPulse {...props} />;
+    case 'tunnel':       return <VizWaveformTunnel {...props} />;
+    case 'pixelled':     return <VizPixelLED {...props} />;
+    case 'ribbon':       return <VizRibbon {...props} />;
+    case 'scope':        return <VizOscilloscope {...props} />;
+    case 'spectrogram':  return <VizSpectrogram {...props} />;
+    case 'vinyl':        return <VizVinyl {...props} />;
+    case 'kaleidoscope': return <VizKaleidoscope {...props} />;
+    case 'freqgrid':     return <VizFreqGrid {...props} />;
+    case 'minimal':      return <VizMinimalDots {...props} />;
+    default:             return null;
   }
-  return null;
 }
 
 const overlayBtn: React.CSSProperties = {

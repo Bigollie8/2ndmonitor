@@ -1,5 +1,9 @@
 export type Density = 'compact' | 'regular' | 'spacious';
-export type VizMode = 'bars' | 'waveform' | 'radial' | 'particles' | 'ambient';
+export type VizMode =
+  | 'bars' | 'waveform' | 'radial' | 'particles' | 'ambient'
+  | 'neonbars' | 'splitmirror' | 'circular' | 'tunnel' | 'pixelled'
+  | 'ribbon' | 'scope' | 'spectrogram' | 'vinyl' | 'kaleidoscope'
+  | 'freqgrid' | 'minimal';
 export interface Profile {
   /** Stable id (UUID). Used for activeProfileId references. */
   id: string;
