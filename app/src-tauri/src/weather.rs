@@ -1,15 +1,35 @@
-//! 7-day weather forecast for Knoxville TN via Open-Meteo (no API key required).
-//!
+//! 7-day weather forecast via Open-Meteo (no API key required).
 //! Polls every 30 minutes, emits a `weather:tick` event with current conditions
 //! plus a daily forecast strip the frontend renders next to the clock.
+//!
+//! Location is dynamic — frontend can change it via `set_weather_location`.
 
+use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 use std::time::Duration;
-use tauri::{AppHandle, Emitter, Runtime};
+use tauri::{AppHandle, Emitter, Manager, Runtime, State};
 
-const KNOXVILLE_LAT: f64 = 35.9606;
-const KNOXVILLE_LON: f64 = -83.9207;
 const POLL_INTERVAL_SECS: u64 = 30 * 60;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WeatherLocation {
+    pub label: String,
+    pub lat: f64,
+    pub lon: f64,
+}
+
+impl Default for WeatherLocation {
+    fn default() -> Self {
+        Self { label: "Knoxville, TN".into(), lat: 35.9606, lon: -83.9207 }
+    }
+}
+
+pub struct WeatherState {
+    pub location: Mutex<WeatherLocation>,
+    /// One-shot signaler — the poll loop drops its sleep and refetches when this flips.
+    pub refetch_now: Mutex<bool>,
+}
 
 #[derive(Debug, Serialize, Clone)]
 pub struct DayForecast {
@@ -83,18 +103,47 @@ struct DailyResp {
 }
 
 pub fn spawn<R: Runtime>(app: AppHandle<R>) {
+    let state = Arc::new(WeatherState {
+        location: Mutex::new(WeatherLocation::default()),
+        refetch_now: Mutex::new(false),
+    });
+    app.manage(state.clone());
+
     std::thread::spawn(move || loop {
-        match fetch() {
+        let loc = state.location.lock().clone();
+        match fetch(&loc) {
             Ok(w) => {
                 let _ = app.emit("weather:tick", &w);
             }
             Err(e) => eprintln!("weather: {e}"),
         }
-        std::thread::sleep(Duration::from_secs(POLL_INTERVAL_SECS));
+        // Sleep up to POLL_INTERVAL_SECS, but wake early if `refetch_now` flips.
+        let total_ms = POLL_INTERVAL_SECS * 1000;
+        let step = 200u64;
+        let mut waited = 0u64;
+        while waited < total_ms {
+            std::thread::sleep(Duration::from_millis(step));
+            waited += step;
+            if *state.refetch_now.lock() {
+                *state.refetch_now.lock() = false;
+                break;
+            }
+        }
     });
 }
 
-fn fetch() -> Result<Weather, String> {
+#[tauri::command]
+pub fn set_weather_location<R: Runtime>(
+    _app: AppHandle<R>,
+    state: State<'_, Arc<WeatherState>>,
+    label: String, lat: f64, lon: f64,
+) -> Result<(), String> {
+    *state.location.lock() = WeatherLocation { label, lat, lon };
+    *state.refetch_now.lock() = true;
+    Ok(())
+}
+
+fn fetch(loc: &WeatherLocation) -> Result<Weather, String> {
     let url = format!(
         "https://api.open-meteo.com/v1/forecast\
         ?latitude={lat}&longitude={lon}\
@@ -102,9 +151,9 @@ fn fetch() -> Result<Weather, String> {
         &hourly=temperature_2m,weather_code,precipitation_probability\
         &current=temperature_2m,apparent_temperature,weather_code,relative_humidity_2m,wind_speed_10m\
         &temperature_unit=fahrenheit&wind_speed_unit=mph\
-        &timezone=America/New_York&forecast_days=7&forecast_hours=12&past_hours=0",
-        lat = KNOXVILLE_LAT,
-        lon = KNOXVILLE_LON
+        &timezone=auto&forecast_days=7&forecast_hours=12&past_hours=0",
+        lat = loc.lat,
+        lon = loc.lon
     );
     let resp: OpenMeteoResp = ureq::get(&url)
         .timeout(Duration::from_secs(10))
@@ -161,7 +210,7 @@ fn fetch() -> Result<Weather, String> {
         sunset: format_clock(resp.daily.sunset.first()),
         hourly,
         forecast,
-        location: "Knoxville, TN".into(),
+        location: loc.label.clone(),
     })
 }
 

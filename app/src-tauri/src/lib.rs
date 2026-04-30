@@ -26,6 +26,7 @@ pub fn run() {
             discord_rpc::discord_rpc_leave_voice,
             tweaks::tweaks_load,
             tweaks::tweaks_save,
+            weather::set_weather_location,
         ])
         .setup(|app| {
             sysmon::spawn(app.handle().clone());

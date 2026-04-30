@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { Track, Profile, AccentTheme, VizMode, Density } from './types';
-import type { Todo } from './types';
+import type { Todo, WeatherLocation } from './types';
+import type { GeocodeResult } from './state/weatherLocation';
 import { TRACKS, ACCENT_PALETTES, getDensity } from './data';
 import { useTweaks } from './state/useTweaks';
 import { useSysmon, useNowPlaying, useSpectrumRef } from './state/tauri';
@@ -37,6 +38,7 @@ interface TweakState extends Record<string, unknown> {
   vizSmoothing: number;
   vizColorOverride: VizColorOverride;
   todos: Todo[];
+  weatherLocation: WeatherLocation;
 }
 
 const TWEAK_DEFAULTS: TweakState = {
@@ -49,6 +51,7 @@ const TWEAK_DEFAULTS: TweakState = {
   vizSmoothing: 0.0,
   vizColorOverride: { enabled: false, accent: '#a78bfa', accent2: '#ec4899' },
   todos: [],
+  weatherLocation: { label: 'Knoxville, TN', lat: 35.9606, lon: -83.9207 },
 };
 
 const RAIL_DEFS: { id: TileId; label: string; row: number }[] = [
@@ -89,6 +92,14 @@ export default function App() {
     document.documentElement.style.setProperty('--accent', accent);
     document.documentElement.style.setProperty('--accent2', accent2);
   }, [accent, accent2]);
+
+  useEffect(() => {
+    // Whenever the saved location changes (including initial load from disk),
+    // tell Rust so the next emit is for the right city.
+    void import('./state/weatherLocation').then(({ pushLocationToRust }) =>
+      pushLocationToRust(t.weatherLocation),
+    );
+  }, [t.weatherLocation]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -331,6 +342,11 @@ export default function App() {
           label="Tile density" value={t.density}
           options={['compact', 'regular', 'spacious']}
           onChange={(v) => setTweak('density', v)} />
+        <TweakSection label="Weather" />
+        <WeatherSearch
+          current={t.weatherLocation}
+          onPick={(loc) => setTweak('weatherLocation', loc)}
+        />
         <TweakSection label="Tiles · show / hide" />
         {[...RAIL_DEFS, ...STRIP_DEFS].map((def) => {
           const visible = !hidden[def.id];
@@ -423,6 +439,86 @@ function TopChrome({ accent, editMode, setEditMode, accentLinked, track, profile
         cursor: 'pointer', fontWeight: 600,
       }}>✎ Edit</button>
       <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)', fontFamily: '"JetBrains Mono", ui-monospace, monospace' }}>2560×1440</span>
+    </div>
+  );
+}
+
+function WeatherSearch({
+  current, onPick,
+}: {
+  current: WeatherLocation;
+  onPick: (loc: WeatherLocation) => void;
+}) {
+  const [query, setQuery] = useState('');
+  const [results, setResults] = useState<GeocodeResult[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    const q = query.trim();
+    if (q.length < 2) { setResults([]); setErr(null); return; }
+    setLoading(true); setErr(null);
+    const id = setTimeout(async () => {
+      try {
+        const { geocode } = await import('./state/weatherLocation');
+        const data = await geocode(q);
+        setResults(data);
+      } catch (e: any) {
+        setErr(String(e?.message ?? e));
+      } finally {
+        setLoading(false);
+      }
+    }, 350);
+    return () => clearTimeout(id);
+  }, [query]);
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 4, padding: '4px 0' }}>
+      <div style={{ fontSize: 11, fontWeight: 500, color: 'rgba(41,38,27,0.85)', display: 'flex', justifyContent: 'space-between' }}>
+        <span>Location</span>
+        <span style={{ fontFamily: '"JetBrains Mono", ui-monospace, monospace', color: 'rgba(41,38,27,0.55)', fontSize: 10 }}>
+          {current.label}
+        </span>
+      </div>
+      <input
+        type="text" value={query}
+        onChange={(e) => setQuery(e.target.value)}
+        placeholder="Search a city…"
+        style={{
+          fontSize: 11, padding: '5px 8px',
+          background: 'rgba(41,38,27,0.05)', border: '1px solid rgba(41,38,27,0.15)',
+          borderRadius: 4, color: 'rgba(41,38,27,0.9)',
+        }}
+      />
+      {loading && <div style={{ fontSize: 10, color: 'rgba(41,38,27,0.5)' }}>Searching…</div>}
+      {err && <div style={{ fontSize: 10, color: '#b91c1c' }}>{err}</div>}
+      {results.length > 0 && (
+        <div style={{
+          display: 'flex', flexDirection: 'column', gap: 2,
+          background: 'rgba(41,38,27,0.04)', borderRadius: 4, padding: 4,
+        }}>
+          {results.map((r, i) => (
+            <button
+              key={i}
+              onClick={() => {
+                onPick({ label: r.label, lat: r.lat, lon: r.lon });
+                setQuery('');
+                setResults([]);
+              }}
+              style={{
+                textAlign: 'left', padding: '4px 6px', borderRadius: 3,
+                background: 'transparent', border: 'none', cursor: 'pointer',
+                fontSize: 11, color: 'rgba(41,38,27,0.85)',
+              }}
+            >
+              <div style={{ fontWeight: 500 }}>{r.label}</div>
+              <div style={{ fontSize: 9, color: 'rgba(41,38,27,0.5)', fontFamily: '"JetBrains Mono", ui-monospace, monospace' }}>
+                {r.lat.toFixed(3)}, {r.lon.toFixed(3)}
+              </div>
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

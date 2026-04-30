@@ -43,3 +43,5 @@ export interface SysmonHistory {
 }
 
 export interface Todo { id: string; text: string; done: boolean; createdAt: number }
+
+export interface WeatherLocation { label: string; lat: number; lon: number }
