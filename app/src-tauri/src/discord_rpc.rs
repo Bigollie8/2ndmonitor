@@ -21,11 +21,12 @@ use parking_lot::Mutex;
 use serde::Serialize;
 use serde_json::{json, Value};
 use std::{
-    collections::VecDeque,
+    collections::{HashMap, VecDeque},
     fs::{File, OpenOptions},
     io::{Read, Write},
     sync::{
         atomic::{AtomicU64, Ordering},
+        mpsc::{channel, Sender},
         Arc,
     },
     thread,
@@ -88,6 +89,12 @@ static NONCE: AtomicU64 = AtomicU64::new(1);
 /// thread continues reading on its own (try_clone'd) handle. None when no
 /// session is live.
 static WRITE_PIPE: Lazy<Mutex<Option<Arc<Mutex<File>>>>> = Lazy::new(|| Mutex::new(None));
+
+/// Pending command nonces awaiting a Discord IPC response. Each entry's Sender
+/// resolves the matching `discord_rpc_*` Tauri command with the parsed response
+/// value. Entries are removed by the read loop on response, or by the command
+/// itself on timeout.
+static PENDING: Lazy<Mutex<HashMap<String, Sender<Value>>>> = Lazy::new(|| Mutex::new(HashMap::new()));
 
 fn next_nonce() -> String {
     NONCE.fetch_add(1, Ordering::Relaxed).to_string()
@@ -285,6 +292,16 @@ fn handle_message<R: Runtime>(
     msg: &Value,
     current_voice_channel: &mut Option<String>,
 ) -> Result<(), String> {
+    // If this frame is a response to a Tauri command we sent, route it to the
+    // waiting receiver and stop processing. (Both DISPATCH events and command
+    // responses share the same opcode-1 frame; nonces disambiguate.)
+    if let Some(nonce) = msg.get("nonce").and_then(|v| v.as_str()) {
+        if let Some(tx) = PENDING.lock().remove(nonce) {
+            let _ = tx.send(msg.clone());
+            return Ok(());
+        }
+    }
+
     let cmd = msg.get("cmd").and_then(|v| v.as_str()).unwrap_or("");
     let evt = msg.get("evt").and_then(|v| v.as_str()).unwrap_or("");
     let data = msg.get("data");
@@ -610,6 +627,21 @@ pub async fn discord_rpc_status() -> RpcState {
     STATE.lock().clone()
 }
 
+/// Convert a Discord IPC response frame into a Tauri command Result.
+/// Discord returns `evt: "ERROR"` with a `data.message` for failures.
+fn parse_command_response(resp: &Value) -> Result<(), String> {
+    if resp.get("evt").and_then(|v| v.as_str()) == Some("ERROR") {
+        let msg = resp
+            .get("data")
+            .and_then(|d| d.get("message"))
+            .and_then(|m| m.as_str())
+            .unwrap_or("Discord returned ERROR")
+            .to_string();
+        return Err(msg);
+    }
+    Ok(())
+}
+
 fn writer_or_err() -> Result<Arc<Mutex<File>>, String> {
     WRITE_PIPE
         .lock()
@@ -624,30 +656,61 @@ pub async fn discord_rpc_set_voice_settings(mute: Option<bool>, deaf: Option<boo
     let writer = writer_or_err()?;
     let mut args = serde_json::Map::new();
     if let Some(m) = mute {
-        args.insert("mute".into(), serde_json::Value::Bool(m));
+        args.insert("mute".into(), Value::Bool(m));
     }
     if let Some(d) = deaf {
-        args.insert("deaf".into(), serde_json::Value::Bool(d));
+        args.insert("deaf".into(), Value::Bool(d));
     }
     if args.is_empty() {
         return Err("no fields to update".into());
     }
+
+    let nonce = next_nonce();
+    let (tx, rx) = channel();
+    PENDING.lock().insert(nonce.clone(), tx);
+
     let payload = json!({
-        "nonce": next_nonce(),
+        "nonce": nonce,
         "cmd": "SET_VOICE_SETTINGS",
         "args": args,
     });
-    write_frame(&writer, 1, &payload.to_string())
+    if let Err(e) = write_frame(&writer, 1, &payload.to_string()) {
+        PENDING.lock().remove(&nonce);
+        return Err(e);
+    }
+
+    match rx.recv_timeout(Duration::from_millis(2000)) {
+        Ok(resp) => parse_command_response(&resp),
+        Err(_) => {
+            PENDING.lock().remove(&nonce);
+            Err("Discord did not respond within 2s".into())
+        }
+    }
 }
 
 /// Disconnect from the current voice channel (Discord's "leave call" action).
 #[tauri::command]
 pub async fn discord_rpc_leave_voice() -> Result<(), String> {
     let writer = writer_or_err()?;
+    let nonce = next_nonce();
+    let (tx, rx) = channel();
+    PENDING.lock().insert(nonce.clone(), tx);
+
     let payload = json!({
-        "nonce": next_nonce(),
+        "nonce": nonce,
         "cmd": "SELECT_VOICE_CHANNEL",
-        "args": { "channel_id": serde_json::Value::Null },
+        "args": { "channel_id": Value::Null },
     });
-    write_frame(&writer, 1, &payload.to_string())
+    if let Err(e) = write_frame(&writer, 1, &payload.to_string()) {
+        PENDING.lock().remove(&nonce);
+        return Err(e);
+    }
+
+    match rx.recv_timeout(Duration::from_millis(2000)) {
+        Ok(resp) => parse_command_response(&resp),
+        Err(_) => {
+            PENDING.lock().remove(&nonce);
+            Err("Discord did not respond within 2s".into())
+        }
+    }
 }

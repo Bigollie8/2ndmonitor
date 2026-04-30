@@ -260,15 +260,27 @@ function VoiceSection({ voice, accent, selfUserId }: { voice: VoiceState; accent
   const muted = self?.muted ?? false;
   const deafened = self?.deafened ?? false;
 
+  const [voiceError, setVoiceError] = useState<string | null>(null);
+  useEffect(() => {
+    if (!voiceError) return;
+    const id = setTimeout(() => setVoiceError(null), 5000);
+    return () => clearTimeout(id);
+  }, [voiceError]);
+
   const onMute = async () => {
-    try { await discordVoice.setMute(!muted); } catch { /* surfaced via state.error */ }
+    setVoiceError(null);
+    try { await discordVoice.setMute(!muted); }
+    catch (e: any) { setVoiceError(`Mute: ${e?.message ?? e}`); }
   };
   const onDeaf = async () => {
-    // Discord auto-mutes when deafening (server-side); reflect that locally too.
-    try { await discordVoice.setDeaf(!deafened); } catch { /* noop */ }
+    setVoiceError(null);
+    try { await discordVoice.setDeaf(!deafened); }
+    catch (e: any) { setVoiceError(`Deafen: ${e?.message ?? e}`); }
   };
   const onLeave = async () => {
-    try { await discordVoice.leave(); } catch { /* noop */ }
+    setVoiceError(null);
+    try { await discordVoice.leave(); }
+    catch (e: any) { setVoiceError(`Leave: ${e?.message ?? e}`); }
   };
 
   return (
@@ -295,6 +307,22 @@ function VoiceSection({ voice, accent, selfUserId }: { voice: VoiceState; accent
         </span>
       </div>
 
+      {voiceError && (
+        <div
+          onClick={() => setVoiceError(null)}
+          title="Click to dismiss"
+          style={{
+            fontSize: 10.5, color: '#fca5a5',
+            padding: '6px 8px', marginBottom: 8,
+            background: 'rgba(239,68,68,0.08)',
+            border: '1px solid rgba(239,68,68,0.25)',
+            borderRadius: 4, cursor: 'pointer',
+            fontFamily: '"JetBrains Mono", ui-monospace, monospace',
+          }}
+        >
+          ⚠ {voiceError}
+        </div>
+      )}
       {/* Self controls — mute / deafen / leave */}
       <div style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
         <VoiceCtlButton
