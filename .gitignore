@@ -1,0 +1,16 @@
+# Build artifacts
+app/dist/
+app/node_modules/
+app/src-tauri/target/
+app/*.tsbuildinfo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+
+# Tauri
+app/src-tauri/gen/

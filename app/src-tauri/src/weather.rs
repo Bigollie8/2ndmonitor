@@ -1,0 +1,248 @@
+//! 7-day weather forecast for Knoxville TN via Open-Meteo (no API key required).
+//!
+//! Polls every 30 minutes, emits a `weather:tick` event with current conditions
+//! plus a daily forecast strip the frontend renders next to the clock.
+
+use serde::{Deserialize, Serialize};
+use std::time::Duration;
+use tauri::{AppHandle, Emitter, Runtime};
+
+const KNOXVILLE_LAT: f64 = 35.9606;
+const KNOXVILLE_LON: f64 = -83.9207;
+const POLL_INTERVAL_SECS: u64 = 30 * 60;
+
+#[derive(Debug, Serialize, Clone)]
+pub struct DayForecast {
+    pub date: String,        // "2026-04-29"
+    pub day_of_week: String, // "Mon"
+    pub high_f: f32,
+    pub low_f: f32,
+    pub code: u32,
+    pub icon: String,
+    pub label: String,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct HourForecast {
+    pub time: String,       // "8p" / "12a"
+    pub temp_f: f32,
+    pub code: u32,
+    pub icon: String,
+    pub precip_pct: u32,    // chance of precipitation 0-100
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct Weather {
+    pub current_temp_f: f32,
+    pub feels_like_f: f32,
+    pub current_code: u32,
+    pub current_icon: String,
+    pub current_label: String,
+    pub humidity: u32,
+    pub wind_mph: f32,
+    pub sunrise: String,
+    pub sunset: String,
+    pub hourly: Vec<HourForecast>,
+    pub forecast: Vec<DayForecast>,
+    pub location: String,
+}
+
+#[derive(Deserialize)]
+struct OpenMeteoResp {
+    current: CurrentResp,
+    hourly: HourlyResp,
+    daily: DailyResp,
+}
+
+#[derive(Deserialize)]
+struct CurrentResp {
+    temperature_2m: f32,
+    apparent_temperature: f32,
+    weather_code: u32,
+    relative_humidity_2m: f32,
+    wind_speed_10m: f32,
+}
+
+#[derive(Deserialize)]
+struct HourlyResp {
+    time: Vec<String>,
+    temperature_2m: Vec<f32>,
+    weather_code: Vec<u32>,
+    #[serde(default)]
+    precipitation_probability: Vec<Option<u32>>,
+}
+
+#[derive(Deserialize)]
+struct DailyResp {
+    time: Vec<String>,
+    temperature_2m_max: Vec<f32>,
+    temperature_2m_min: Vec<f32>,
+    weather_code: Vec<u32>,
+    sunrise: Vec<String>,
+    sunset: Vec<String>,
+}
+
+pub fn spawn<R: Runtime>(app: AppHandle<R>) {
+    std::thread::spawn(move || loop {
+        match fetch() {
+            Ok(w) => {
+                let _ = app.emit("weather:tick", &w);
+            }
+            Err(e) => eprintln!("weather: {e}"),
+        }
+        std::thread::sleep(Duration::from_secs(POLL_INTERVAL_SECS));
+    });
+}
+
+fn fetch() -> Result<Weather, String> {
+    let url = format!(
+        "https://api.open-meteo.com/v1/forecast\
+        ?latitude={lat}&longitude={lon}\
+        &daily=temperature_2m_max,temperature_2m_min,weather_code,sunrise,sunset\
+        &hourly=temperature_2m,weather_code,precipitation_probability\
+        &current=temperature_2m,apparent_temperature,weather_code,relative_humidity_2m,wind_speed_10m\
+        &temperature_unit=fahrenheit&wind_speed_unit=mph\
+        &timezone=America/New_York&forecast_days=7&forecast_hours=12&past_hours=0",
+        lat = KNOXVILLE_LAT,
+        lon = KNOXVILLE_LON
+    );
+    let resp: OpenMeteoResp = ureq::get(&url)
+        .timeout(Duration::from_secs(10))
+        .call()
+        .map_err(|e| e.to_string())?
+        .into_json()
+        .map_err(|e| e.to_string())?;
+
+    let forecast: Vec<DayForecast> = resp
+        .daily
+        .time
+        .iter()
+        .enumerate()
+        .map(|(i, date)| {
+            let code = *resp.daily.weather_code.get(i).unwrap_or(&0);
+            DayForecast {
+                date: date.clone(),
+                day_of_week: day_of_week_label(date),
+                high_f: *resp.daily.temperature_2m_max.get(i).unwrap_or(&0.0),
+                low_f: *resp.daily.temperature_2m_min.get(i).unwrap_or(&0.0),
+                code,
+                icon: weather_icon(code).into(),
+                label: weather_label(code).into(),
+            }
+        })
+        .collect();
+
+    let hourly: Vec<HourForecast> = resp
+        .hourly
+        .time
+        .iter()
+        .enumerate()
+        .map(|(i, ts)| {
+            let code = *resp.hourly.weather_code.get(i).unwrap_or(&0);
+            HourForecast {
+                time: format_hour_label(ts),
+                temp_f: *resp.hourly.temperature_2m.get(i).unwrap_or(&0.0),
+                code,
+                icon: weather_icon(code).into(),
+                precip_pct: resp.hourly.precipitation_probability.get(i).and_then(|o| *o).unwrap_or(0),
+            }
+        })
+        .collect();
+
+    Ok(Weather {
+        current_temp_f: resp.current.temperature_2m,
+        feels_like_f: resp.current.apparent_temperature,
+        current_code: resp.current.weather_code,
+        current_icon: weather_icon(resp.current.weather_code).into(),
+        current_label: weather_label(resp.current.weather_code).into(),
+        humidity: resp.current.relative_humidity_2m as u32,
+        wind_mph: resp.current.wind_speed_10m,
+        sunrise: format_clock(resp.daily.sunrise.first()),
+        sunset: format_clock(resp.daily.sunset.first()),
+        hourly,
+        forecast,
+        location: "Knoxville, TN".into(),
+    })
+}
+
+/// "2026-04-29T20:00" → "8p"
+fn format_hour_label(iso: &str) -> String {
+    let Some(t) = iso.split('T').nth(1) else { return iso.to_string() };
+    let Some(h_str) = t.split(':').next() else { return t.to_string() };
+    let Ok(h) = h_str.parse::<u32>() else { return h_str.to_string() };
+    let suffix = if h >= 12 { "p" } else { "a" };
+    let h12 = ((h + 11) % 12) + 1;
+    format!("{}{}", h12, suffix)
+}
+
+fn weather_icon(code: u32) -> &'static str {
+    match code {
+        0 => "☀",
+        1 | 2 => "⛅",
+        3 => "☁",
+        45 | 48 => "🌫",
+        51..=57 => "🌦",
+        61 | 63 => "🌧",
+        65 => "⛈",
+        66 | 67 => "🌧",
+        71..=77 => "❄",
+        80..=82 => "🌧",
+        85 | 86 => "🌨",
+        95 => "⛈",
+        96 | 99 => "⛈",
+        _ => "•",
+    }
+}
+
+fn weather_label(code: u32) -> &'static str {
+    match code {
+        0 => "Clear",
+        1 => "Mainly clear",
+        2 => "Partly cloudy",
+        3 => "Overcast",
+        45 | 48 => "Fog",
+        51..=57 => "Drizzle",
+        61 => "Light rain",
+        63 => "Rain",
+        65 => "Heavy rain",
+        66 | 67 => "Freezing rain",
+        71 => "Light snow",
+        73 => "Snow",
+        75 => "Heavy snow",
+        77 => "Snow grains",
+        80 => "Light showers",
+        81 => "Showers",
+        82 => "Heavy showers",
+        85 | 86 => "Snow showers",
+        95 => "Thunderstorm",
+        96 | 99 => "Thunderstorm",
+        _ => "—",
+    }
+}
+
+/// "2026-04-29" → "Wed". Sakamoto's algorithm, no chrono dep.
+fn day_of_week_label(iso: &str) -> String {
+    let mut parts = iso.split('-');
+    let y: i32 = parts.next().and_then(|s| s.parse().ok()).unwrap_or(2026);
+    let m: u32 = parts.next().and_then(|s| s.parse().ok()).unwrap_or(1);
+    let d: u32 = parts.next().and_then(|s| s.parse().ok()).unwrap_or(1);
+    static T: [i64; 12] = [0, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4];
+    let yy = if m < 3 { (y - 1) as i64 } else { y as i64 };
+    let mm = m as usize;
+    let dd = d as i64;
+    let dow = ((yy + yy / 4 - yy / 100 + yy / 400 + T[mm - 1] + dd) % 7) as usize;
+    ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][dow].into()
+}
+
+/// "2026-04-29T06:42" → "6:42a"
+fn format_clock(iso: Option<&String>) -> String {
+    let Some(s) = iso else { return String::new() };
+    let Some(t) = s.split('T').nth(1) else { return s.clone() };
+    let mut hm = t.split(':');
+    let Some(h_str) = hm.next() else { return t.into() };
+    let Some(m_str) = hm.next() else { return t.into() };
+    let Ok(h) = h_str.parse::<u32>() else { return t.into() };
+    let suffix = if h >= 12 { "p" } else { "a" };
+    let h12 = ((h + 11) % 12) + 1;
+    format!("{}:{}{}", h12, m_str, suffix)
+}

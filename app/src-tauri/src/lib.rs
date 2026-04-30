@@ -1,0 +1,39 @@
+mod audio;
+mod claude;
+mod discord;
+mod discord_rpc;
+mod nowplaying;
+mod sysmon;
+mod weather;
+mod webtiles;
+
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
+pub fn run() {
+    tauri::Builder::default()
+        .invoke_handler(tauri::generate_handler![
+            webtiles::position_tile,
+            webtiles::close_tile,
+            nowplaying::media_toggle,
+            nowplaying::media_next,
+            nowplaying::media_previous,
+            discord::discord_connect,
+            discord::discord_disconnect,
+            discord::discord_status,
+            discord::discord_get_client_id,
+            discord_rpc::discord_rpc_status,
+            discord_rpc::discord_rpc_set_voice_settings,
+            discord_rpc::discord_rpc_leave_voice,
+        ])
+        .setup(|app| {
+            sysmon::spawn(app.handle().clone());
+            nowplaying::spawn(app.handle().clone());
+            audio::spawn(app.handle().clone());
+            claude::spawn(app.handle().clone());
+            weather::spawn(app.handle().clone());
+            discord::spawn(app.handle().clone());
+            discord_rpc::spawn(app.handle().clone());
+            Ok(())
+        })
+        .run(tauri::generate_context!())
+        .expect("error while running tauri application");
+}

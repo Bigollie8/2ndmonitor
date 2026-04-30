@@ -1,0 +1,2171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Second-Monitor Hub — Layout C</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" />
+<style>
+  html, body {
+    margin: 0; padding: 0;
+    background: #000;
+    font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    color: #fff;
+    overflow: hidden;
+  }
+  #root { width: 100vw; height: 100vh; }
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 3px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  button { font-family: inherit; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script crossorigin src="https://unpkg.com/react@18.3.1/umd/react.development.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js"></script>
+
+<script type="text/babel" data-presets="react">
+// ─────────────────────────────────────────────────────────────────────────────
+// Tweaks panel — floating dev panel with sliders, radios, etc.
+// ─────────────────────────────────────────────────────────────────────────────
+const __TWEAKS_STYLE = `
+  .twk-panel{position:fixed;right:16px;bottom:16px;z-index:2147483646;width:280px;
+    max-height:calc(100vh - 32px);display:flex;flex-direction:column;
+    background:rgba(250,249,247,.78);color:#29261b;
+    -webkit-backdrop-filter:blur(24px) saturate(160%);backdrop-filter:blur(24px) saturate(160%);
+    border:.5px solid rgba(255,255,255,.6);border-radius:14px;
+    box-shadow:0 1px 0 rgba(255,255,255,.5) inset,0 12px 40px rgba(0,0,0,.18);
+    font:11.5px/1.4 ui-sans-serif,system-ui,-apple-system,sans-serif;overflow:hidden}
+  .twk-hd{display:flex;align-items:center;justify-content:space-between;
+    padding:10px 8px 10px 14px;cursor:move;user-select:none}
+  .twk-hd b{font-size:12px;font-weight:600;letter-spacing:.01em}
+  .twk-x{appearance:none;border:0;background:transparent;color:rgba(41,38,27,.55);
+    width:22px;height:22px;border-radius:6px;cursor:pointer;font-size:13px;line-height:1}
+  .twk-x:hover{background:rgba(0,0,0,.06);color:#29261b}
+  .twk-body{padding:2px 14px 14px;display:flex;flex-direction:column;gap:10px;
+    overflow-y:auto;overflow-x:hidden;min-height:0;
+    scrollbar-width:thin;scrollbar-color:rgba(0,0,0,.15) transparent}
+  .twk-body::-webkit-scrollbar{width:8px}
+  .twk-body::-webkit-scrollbar-track{background:transparent;margin:2px}
+  .twk-body::-webkit-scrollbar-thumb{background:rgba(0,0,0,.15);border-radius:4px;
+    border:2px solid transparent;background-clip:content-box}
+  .twk-body::-webkit-scrollbar-thumb:hover{background:rgba(0,0,0,.25);
+    border:2px solid transparent;background-clip:content-box}
+  .twk-row{display:flex;flex-direction:column;gap:5px}
+  .twk-row-h{flex-direction:row;align-items:center;justify-content:space-between;gap:10px}
+  .twk-lbl{display:flex;justify-content:space-between;align-items:baseline;
+    color:rgba(41,38,27,.72)}
+  .twk-lbl>span:first-child{font-weight:500}
+  .twk-val{color:rgba(41,38,27,.5);font-variant-numeric:tabular-nums}
+  .twk-sect{font-size:10px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;
+    color:rgba(41,38,27,.45);padding:10px 0 0}
+  .twk-sect:first-child{padding-top:0}
+  .twk-field{appearance:none;width:100%;height:26px;padding:0 8px;
+    border:.5px solid rgba(0,0,0,.1);border-radius:7px;
+    background:rgba(255,255,255,.6);color:inherit;font:inherit;outline:none}
+  .twk-field:focus{border-color:rgba(0,0,0,.25);background:rgba(255,255,255,.85)}
+  select.twk-field{padding-right:22px;
+    background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'><path fill='rgba(0,0,0,.5)' d='M0 0h10L5 6z'/></svg>");
+    background-repeat:no-repeat;background-position:right 8px center}
+  .twk-seg{position:relative;display:flex;padding:2px;border-radius:8px;
+    background:rgba(0,0,0,.06);user-select:none}
+  .twk-seg-thumb{position:absolute;top:2px;bottom:2px;border-radius:6px;
+    background:rgba(255,255,255,.9);box-shadow:0 1px 2px rgba(0,0,0,.12);
+    transition:left .15s cubic-bezier(.3,.7,.4,1),width .15s}
+  .twk-seg.dragging .twk-seg-thumb{transition:none}
+  .twk-seg button{appearance:none;position:relative;z-index:1;flex:1;border:0;
+    background:transparent;color:inherit;font:inherit;font-weight:500;min-height:22px;
+    border-radius:6px;cursor:pointer;padding:4px 6px;line-height:1.2;
+    overflow-wrap:anywhere}
+  .twk-btn{appearance:none;height:26px;padding:0 12px;border:0;border-radius:7px;
+    background:rgba(0,0,0,.78);color:#fff;font:inherit;font-weight:500;cursor:pointer}
+  .twk-btn:hover{background:rgba(0,0,0,.88)}
+  .twk-btn.secondary{background:rgba(0,0,0,.06);color:inherit}
+  .twk-btn.secondary:hover{background:rgba(0,0,0,.1)}
+  .twk-toggle-open{position:fixed;right:16px;bottom:16px;z-index:2147483645;
+    appearance:none;border:0;height:34px;padding:0 14px;border-radius:10px;
+    background:rgba(250,249,247,.85);color:#29261b;
+    -webkit-backdrop-filter:blur(20px) saturate(160%);backdrop-filter:blur(20px) saturate(160%);
+    border:.5px solid rgba(255,255,255,.6);
+    box-shadow:0 8px 24px rgba(0,0,0,.18);
+    font:12px/1 ui-sans-serif,system-ui,-apple-system,sans-serif;font-weight:600;cursor:pointer;
+    letter-spacing:.01em}
+  .twk-toggle-open:hover{background:rgba(255,255,255,.95)}
+`;
+
+function useTweaks(defaults) {
+  const [values, setValues] = React.useState(defaults);
+  const setTweak = React.useCallback((keyOrEdits, val) => {
+    const edits = typeof keyOrEdits === 'object' && keyOrEdits !== null
+      ? keyOrEdits : { [keyOrEdits]: val };
+    setValues((prev) => ({ ...prev, ...edits }));
+  }, []);
+  return [values, setTweak];
+}
+
+function TweaksPanel({ title = 'Tweaks', children, defaultOpen = true }) {
+  const [open, setOpen] = React.useState(defaultOpen);
+  const dragRef = React.useRef(null);
+  const offsetRef = React.useRef({ x: 16, y: 16 });
+  const PAD = 16;
+
+  const clampToViewport = React.useCallback(() => {
+    const panel = dragRef.current;
+    if (!panel) return;
+    const w = panel.offsetWidth, h = panel.offsetHeight;
+    const maxRight = Math.max(PAD, window.innerWidth - w - PAD);
+    const maxBottom = Math.max(PAD, window.innerHeight - h - PAD);
+    offsetRef.current = {
+      x: Math.min(maxRight, Math.max(PAD, offsetRef.current.x)),
+      y: Math.min(maxBottom, Math.max(PAD, offsetRef.current.y)),
+    };
+    panel.style.right = offsetRef.current.x + 'px';
+    panel.style.bottom = offsetRef.current.y + 'px';
+  }, []);
+
+  React.useEffect(() => {
+    if (!open) return;
+    clampToViewport();
+    if (typeof ResizeObserver === 'undefined') {
+      window.addEventListener('resize', clampToViewport);
+      return () => window.removeEventListener('resize', clampToViewport);
+    }
+    const ro = new ResizeObserver(clampToViewport);
+    ro.observe(document.documentElement);
+    return () => ro.disconnect();
+  }, [open, clampToViewport]);
+
+  const onDragStart = (e) => {
+    const panel = dragRef.current;
+    if (!panel) return;
+    const r = panel.getBoundingClientRect();
+    const sx = e.clientX, sy = e.clientY;
+    const startRight = window.innerWidth - r.right;
+    const startBottom = window.innerHeight - r.bottom;
+    const move = (ev) => {
+      offsetRef.current = {
+        x: startRight - (ev.clientX - sx),
+        y: startBottom - (ev.clientY - sy),
+      };
+      clampToViewport();
+    };
+    const up = () => {
+      window.removeEventListener('mousemove', move);
+      window.removeEventListener('mouseup', up);
+    };
+    window.addEventListener('mousemove', move);
+    window.addEventListener('mouseup', up);
+  };
+
+  return (
+    <>
+      <style>{__TWEAKS_STYLE}</style>
+      {!open && (
+        <button className="twk-toggle-open" onClick={() => setOpen(true)}>⚙ Tweaks</button>
+      )}
+      {open && (
+        <div ref={dragRef} className="twk-panel"
+             style={{ right: offsetRef.current.x, bottom: offsetRef.current.y }}>
+          <div className="twk-hd" onMouseDown={onDragStart}>
+            <b>{title}</b>
+            <button className="twk-x" aria-label="Close tweaks"
+                    onMouseDown={(e) => e.stopPropagation()}
+                    onClick={() => setOpen(false)}>✕</button>
+          </div>
+          <div className="twk-body">{children}</div>
+        </div>
+      )}
+    </>
+  );
+}
+
+function TweakSection({ label, children }) {
+  return (
+    <>
+      <div className="twk-sect">{label}</div>
+      {children}
+    </>
+  );
+}
+
+function TweakRow({ label, value, children, inline = false }) {
+  return (
+    <div className={inline ? 'twk-row twk-row-h' : 'twk-row'}>
+      <div className="twk-lbl">
+        <span>{label}</span>
+        {value != null && <span className="twk-val">{value}</span>}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function TweakRadio({ label, value, options, onChange }) {
+  const trackRef = React.useRef(null);
+  const [dragging, setDragging] = React.useState(false);
+  const opts = options.map((o) => (typeof o === 'object' ? o : { value: o, label: o }));
+  const idx = Math.max(0, opts.findIndex((o) => o.value === value));
+  const n = opts.length;
+  const valueRef = React.useRef(value);
+  valueRef.current = value;
+
+  const segAt = (clientX) => {
+    const r = trackRef.current.getBoundingClientRect();
+    const inner = r.width - 4;
+    const i = Math.floor(((clientX - r.left - 2) / inner) * n);
+    return opts[Math.max(0, Math.min(n - 1, i))].value;
+  };
+
+  const onPointerDown = (e) => {
+    setDragging(true);
+    const v0 = segAt(e.clientX);
+    if (v0 !== valueRef.current) onChange(v0);
+    const move = (ev) => {
+      if (!trackRef.current) return;
+      const v = segAt(ev.clientX);
+      if (v !== valueRef.current) onChange(v);
+    };
+    const up = () => {
+      setDragging(false);
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+  };
+
+  return (
+    <TweakRow label={label}>
+      <div ref={trackRef} role="radiogroup" onPointerDown={onPointerDown}
+           className={dragging ? 'twk-seg dragging' : 'twk-seg'}>
+        <div className="twk-seg-thumb"
+             style={{ left: `calc(2px + ${idx} * (100% - 4px) / ${n})`,
+                      width: `calc((100% - 4px) / ${n})` }} />
+        {opts.map((o) => (
+          <button key={o.value} type="button" role="radio" aria-checked={o.value === value}>
+            {o.label}
+          </button>
+        ))}
+      </div>
+    </TweakRow>
+  );
+}
+
+function TweakSelect({ label, value, options, onChange }) {
+  return (
+    <TweakRow label={label}>
+      <select className="twk-field" value={value} onChange={(e) => onChange(e.target.value)}>
+        {options.map((o) => {
+          const v = typeof o === 'object' ? o.value : o;
+          const l = typeof o === 'object' ? o.label : o;
+          return <option key={v} value={v}>{l}</option>;
+        })}
+      </select>
+    </TweakRow>
+  );
+}
+
+function TweakButton({ label, onClick, secondary = false }) {
+  return (
+    <button type="button" className={secondary ? 'twk-btn secondary' : 'twk-btn'}
+            onClick={onClick}>{label}</button>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Sparkline (only primitive needed from wf-primitives)
+// ─────────────────────────────────────────────────────────────────────────────
+function Sparkline({ data, color, height = 28, width = '100%' }) {
+  const pts = data.map((v, i) => `${(i / (data.length - 1)) * 100},${100 - v * 100}`).join(' ');
+  return (
+    <svg viewBox="0 0 100 100" preserveAspectRatio="none" style={{ width, height, display: 'block' }}>
+      <polyline points={pts} fill="none" stroke={color} strokeWidth="2" vectorEffect="non-scaling-stroke" />
+      <polyline points={`0,100 ${pts} 100,100`} fill={color} opacity="0.12" />
+    </svg>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Hi-fi visualizer renderers
+// ─────────────────────────────────────────────────────────────────────────────
+function HiFiVizBars({ accent, accent2, count = 64, intensity = 1 }) {
+  const barsRef = React.useRef([]);
+  const peaksRef = React.useRef(new Array(count).fill(0));
+  const rafRef = React.useRef(0);
+
+  React.useEffect(() => {
+    let t = 0;
+    const tick = () => {
+      t += 0.04;
+      for (let i = 0; i < count; i++) {
+        const x = i / count;
+        const env = Math.pow(1 - x, 1.2) * 0.55 + 0.18;
+        const a = Math.sin(t * 1.6 + i * 0.18) * 0.18;
+        const b = Math.sin(t * 0.7 + i * 0.05) * 0.12;
+        const c = Math.sin(t * 4.2 + i * 1.1) * 0.06;
+        const noise = (Math.sin(i * 1.7 + t) * 0.5 + Math.cos(i * 0.9 + t * 2) * 0.5) * 0.08;
+        let h = Math.max(0.04, Math.min(1, (env + a + b + c + noise) * intensity));
+        const bar = barsRef.current[i];
+        if (bar) bar.style.transform = `scaleY(${h})`;
+        if (peaksRef.current[i] < h) peaksRef.current[i] = h;
+        else peaksRef.current[i] = Math.max(h, peaksRef.current[i] - 0.008);
+        const peak = barsRef.current[i + count];
+        if (peak) peak.style.transform = `translateY(${-peaksRef.current[i] * 100}%)`;
+      }
+      rafRef.current = requestAnimationFrame(tick);
+    };
+    rafRef.current = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(rafRef.current);
+  }, [count, intensity]);
+
+  return (
+    <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'flex-end', justifyContent: 'center', gap: '0.4%', padding: '8% 4% 12%' }}>
+      {Array.from({ length: count }).map((_, i) => (
+        <div key={i} style={{ flex: 1, height: '100%', position: 'relative', display: 'flex', alignItems: 'flex-end' }}>
+          <div ref={el => barsRef.current[i] = el} style={{
+            width: '100%', height: '100%', transformOrigin: 'bottom',
+            background: `linear-gradient(180deg, ${accent} 0%, ${accent2} 100%)`,
+            borderRadius: '2px 2px 0 0',
+            filter: `drop-shadow(0 0 8px ${accent}66)`,
+            transform: 'scaleY(0.1)',
+            transition: 'background 0.4s',
+          }} />
+          <div ref={el => barsRef.current[i + count] = el} style={{
+            position: 'absolute', left: 0, right: 0, bottom: 0, height: 2,
+            background: accent, borderRadius: 1, opacity: 0.85,
+            boxShadow: `0 0 8px ${accent}`,
+            transition: 'background 0.4s',
+          }} />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function HiFiVizWaveform({ accent, accent2 }) {
+  const ref = React.useRef(null);
+  const ref2 = React.useRef(null);
+  React.useEffect(() => {
+    let t = 0;
+    let raf = 0;
+    const tick = () => {
+      t += 0.05;
+      const N = 200;
+      const pts = [];
+      for (let i = 0; i < N; i++) {
+        const x = (i / (N - 1)) * 100;
+        const wave = Math.sin(i * 0.18 + t) * 14
+          + Math.sin(i * 0.07 + t * 0.7) * 8
+          + Math.sin(i * 0.5 + t * 2.1) * 3;
+        const env = Math.sin(i * 0.04 + t * 0.3) * 0.5 + 0.7;
+        pts.push(`${x},${50 + wave * env}`);
+      }
+      const d = pts.join(' ');
+      if (ref.current) ref.current.setAttribute('points', d);
+      if (ref2.current) ref2.current.setAttribute('points', d);
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, []);
+  return (
+    <svg width="100%" height="100%" viewBox="0 0 100 100" preserveAspectRatio="none" style={{ position: 'absolute', inset: 0 }}>
+      <defs>
+        <linearGradient id="wf-grad" x1="0" y1="0" x2="1" y2="0">
+          <stop offset="0" stopColor={accent2} />
+          <stop offset="1" stopColor={accent} />
+        </linearGradient>
+      </defs>
+      <polyline ref={ref2} fill="none" stroke="url(#wf-grad)" strokeWidth="4" vectorEffect="non-scaling-stroke" opacity="0.3" filter="blur(2px)" />
+      <polyline ref={ref} fill="none" stroke="url(#wf-grad)" strokeWidth="1.6" vectorEffect="non-scaling-stroke" />
+    </svg>
+  );
+}
+
+function HiFiVizRadial({ accent, accent2 }) {
+  const linesRef = React.useRef([]);
+  const groupRef = React.useRef(null);
+  const N = 96;
+  React.useEffect(() => {
+    let t = 0;
+    let raf = 0;
+    const tick = () => {
+      t += 0.03;
+      if (groupRef.current) groupRef.current.setAttribute('transform', `rotate(${t * 8})`);
+      for (let i = 0; i < N; i++) {
+        const x = i / N;
+        const a = Math.sin(t * 1.5 + i * 0.3) * 0.2;
+        const b = Math.sin(t * 0.8 + x * Math.PI * 8) * 0.25;
+        const env = 0.35 + Math.sin(x * Math.PI * 4) * 0.15;
+        const h = Math.max(0.1, Math.min(1, env + a + b));
+        const ln = linesRef.current[i];
+        if (ln) {
+          const ang = (i / N) * Math.PI * 2;
+          const r1 = 14, r2 = 14 + h * 22;
+          ln.setAttribute('x1', Math.cos(ang) * r1);
+          ln.setAttribute('y1', Math.sin(ang) * r1);
+          ln.setAttribute('x2', Math.cos(ang) * r2);
+          ln.setAttribute('y2', Math.sin(ang) * r2);
+          ln.setAttribute('opacity', 0.4 + h * 0.6);
+        }
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, []);
+  return (
+    <svg width="100%" height="100%" viewBox="-50 -50 100 100" style={{ position: 'absolute', inset: 0 }}>
+      <defs>
+        <radialGradient id="rd-grad">
+          <stop offset="0" stopColor={accent} stopOpacity="0.2" />
+          <stop offset="1" stopColor={accent} stopOpacity="0" />
+        </radialGradient>
+      </defs>
+      <circle r="14" fill="url(#rd-grad)" />
+      <circle r="13" fill="none" stroke={accent} strokeOpacity="0.25" strokeWidth="0.4" />
+      <g ref={groupRef}>
+        {Array.from({ length: N }).map((_, i) => (
+          <line key={i} ref={el => linesRef.current[i] = el}
+            stroke={i % 2 === 0 ? accent : accent2} strokeWidth="0.8" strokeLinecap="round" />
+        ))}
+      </g>
+    </svg>
+  );
+}
+
+function HiFiVizParticles({ accent, accent2 }) {
+  const ref = React.useRef(null);
+  React.useEffect(() => {
+    const canvas = ref.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    const dpr = window.devicePixelRatio || 1;
+    const resize = () => {
+      const r = canvas.getBoundingClientRect();
+      canvas.width = r.width * dpr;
+      canvas.height = r.height * dpr;
+    };
+    resize();
+    const ro = new ResizeObserver(resize);
+    ro.observe(canvas);
+
+    const N = 140;
+    const pts = Array.from({ length: N }, () => ({
+      x: Math.random(), y: Math.random(),
+      vx: (Math.random() - 0.5) * 0.0008,
+      vy: (Math.random() - 0.5) * 0.0008,
+      r: 0.5 + Math.random() * 1.8,
+      hue: Math.random(),
+    }));
+    let t = 0;
+    let raf = 0;
+    const tick = () => {
+      t += 0.02;
+      const w = canvas.width, h = canvas.height;
+      ctx.clearRect(0, 0, w, h);
+      const bass = (Math.sin(t) * 0.5 + 0.5) * 0.5 + 0.3;
+      ctx.fillStyle = accent2 + '11';
+      ctx.fillRect(0, 0, w, h);
+      for (const p of pts) {
+        p.x += p.vx + Math.sin(t + p.y * 8) * 0.0006;
+        p.y += p.vy + Math.cos(t + p.x * 8) * 0.0006;
+        if (p.x < 0) p.x += 1; if (p.x > 1) p.x -= 1;
+        if (p.y < 0) p.y += 1; if (p.y > 1) p.y -= 1;
+        const px = p.x * w, py = p.y * h;
+        const r = p.r * dpr * (0.6 + bass * 1.4);
+        const grad = ctx.createRadialGradient(px, py, 0, px, py, r * 4);
+        grad.addColorStop(0, p.hue > 0.5 ? accent : accent2);
+        grad.addColorStop(1, 'transparent');
+        ctx.fillStyle = grad;
+        ctx.beginPath();
+        ctx.arc(px, py, r * 4, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => { cancelAnimationFrame(raf); ro.disconnect(); };
+  }, [accent, accent2]);
+  return <canvas ref={ref} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }} />;
+}
+
+function HiFiVizAmbient({ accent, accent2 }) {
+  return (
+    <div style={{ position: 'absolute', inset: 0, overflow: 'hidden', background: '#06080d' }}>
+      <div style={{
+        position: 'absolute', inset: '-10%',
+        background: `
+          radial-gradient(ellipse 50% 40% at 25% 35%, ${accent}77, transparent 65%),
+          radial-gradient(ellipse 45% 55% at 75% 60%, ${accent2}77, transparent 65%),
+          radial-gradient(ellipse 35% 30% at 50% 85%, ${accent}55, transparent 70%),
+          radial-gradient(ellipse 60% 45% at 15% 80%, ${accent2}33, transparent 70%)
+        `,
+        filter: 'blur(2px) saturate(1.2)',
+        animation: 'amb-drift 22s ease-in-out infinite alternate',
+      }} />
+      <style>{`
+        @keyframes amb-drift {
+          0% { transform: translate(0, 0) scale(1); }
+          50% { transform: translate(3%, -2%) scale(1.08); }
+          100% { transform: translate(-2%, 3%) scale(0.95); }
+        }
+      `}</style>
+    </div>
+  );
+}
+
+function HiFiVizSurface({ mode, accent, accent2 }) {
+  if (mode === 'bars') return <HiFiVizBars accent={accent} accent2={accent2} />;
+  if (mode === 'waveform') return <HiFiVizWaveform accent={accent} accent2={accent2} />;
+  if (mode === 'radial') return <HiFiVizRadial accent={accent} accent2={accent2} />;
+  if (mode === 'particles') return <HiFiVizParticles accent={accent} accent2={accent2} />;
+  if (mode === 'ambient') return <HiFiVizAmbient accent={accent} accent2={accent2} />;
+  return null;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Hi-fi tile chrome + tiles
+// ─────────────────────────────────────────────────────────────────────────────
+function getDensity(d) {
+  if (d === 'compact') return { gap: 10, pad: 10, headerPad: 8, fontTitle: 11, fontBody: 11 };
+  if (d === 'spacious') return { gap: 18, pad: 16, headerPad: 12, fontTitle: 13, fontBody: 13 };
+  return { gap: 14, pad: 13, headerPad: 10, fontTitle: 12, fontBody: 12 };
+}
+
+function HFTile({ title, badge, headRight, children, accent, density = 'regular', noHead, style, onClick }) {
+  const D = getDensity(density);
+  return (
+    <div onClick={onClick} style={{
+      background: 'rgba(22,24,30,0.78)',
+      backdropFilter: 'blur(20px) saturate(140%)',
+      WebkitBackdropFilter: 'blur(20px) saturate(140%)',
+      border: '1px solid rgba(255,255,255,0.06)',
+      borderRadius: 14,
+      overflow: 'hidden',
+      position: 'relative',
+      display: 'flex',
+      flexDirection: 'column',
+      boxShadow: accent ? `0 0 0 1px ${accent}33, 0 0 30px -8px ${accent}55` : '0 8px 24px -8px rgba(0,0,0,0.4)',
+      ...style,
+    }}>
+      {!noHead && (
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 8,
+          padding: `${D.headerPad}px ${D.pad}px`,
+          fontSize: 10, color: 'rgba(255,255,255,0.55)',
+          letterSpacing: '0.08em', textTransform: 'uppercase', fontWeight: 600,
+          flexShrink: 0,
+        }}>
+          <span style={{ flex: 1 }}>{title}</span>
+          {badge}
+          {headRight}
+        </div>
+      )}
+      <div style={{ flex: 1, minHeight: 0, position: 'relative' }}>{children}</div>
+    </div>
+  );
+}
+
+const TRACKS = [
+  { title: 'Midnight City', artist: 'M83', album: "Hurry Up, We're Dreaming",
+    cover: 'linear-gradient(135deg, #f97316, #ec4899)',
+    accent: '#fb923c', accent2: '#ec4899' },
+  { title: 'Strobe', artist: 'deadmau5', album: 'For Lack of a Better Name',
+    cover: 'linear-gradient(135deg, #1e3a8a, #06b6d4)',
+    accent: '#06b6d4', accent2: '#3b82f6' },
+  { title: 'Time', artist: 'Hans Zimmer', album: 'Inception OST',
+    cover: 'linear-gradient(135deg, #1f2937, #6b7280)',
+    accent: '#94a3b8', accent2: '#cbd5e1' },
+  { title: 'Lateralus', artist: 'TOOL', album: 'Lateralus',
+    cover: 'linear-gradient(135deg, #7c2d12, #facc15)',
+    accent: '#facc15', accent2: '#f59e0b' },
+  { title: 'Resonance', artist: 'HOME', album: 'Odyssey',
+    cover: 'linear-gradient(135deg, #be185d, #6d28d9)',
+    accent: '#a78bfa', accent2: '#ec4899' },
+];
+
+const iconBtn = () => ({
+  background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.08)',
+  color: 'rgba(255,255,255,0.85)', width: 28, height: 28, borderRadius: 999,
+  display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer',
+  fontSize: 11, padding: 0,
+});
+
+function DiscordHiFi({ density, accent }) {
+  const messages = [
+    { user: 'maya', color: '#fb7185', time: '14:28', text: 'pushed the new viz preset, take a look when you get a sec', mine: false },
+    { user: 'me', color: accent, time: '14:29', text: 'omw — the radial mode looks unreal', mine: true },
+    { user: 'alex', color: '#60a5fa', time: '14:31', text: 'also the bass response is way better now 🔥', mine: false },
+    { user: 'jules', color: '#a78bfa', time: '14:32', text: 'shipping the build today still?', mine: false },
+  ];
+  return (
+    <HFTile title="Discord — # design-log" density={density}
+            badge={<span style={{ background: '#22c55e', width: 6, height: 6, borderRadius: 999 }} />}
+            headRight={<span style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)' }}>4 online</span>}
+            style={{ height: '100%' }}>
+      <div style={{ display: 'flex', height: '100%' }}>
+        <div style={{ width: 44, padding: '8px 0', display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'center', borderRight: '1px solid rgba(255,255,255,0.05)', background: 'rgba(0,0,0,0.2)' }}>
+          {[
+            { c: accent, active: true, l: 'D' },
+            { c: '#fb7185', l: 'P' },
+            { c: '#60a5fa', l: 'M' },
+            { c: '#a78bfa', l: 'A' },
+            { c: '#facc15', l: 'G' },
+          ].map((s, i) => (
+            <div key={i} style={{
+              width: 30, height: 30,
+              borderRadius: s.active ? 9 : 999,
+              background: s.active ? `linear-gradient(135deg, ${accent}, ${accent}aa)` : 'rgba(255,255,255,0.07)',
+              border: s.active ? 'none' : '1px solid rgba(255,255,255,0.08)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              color: s.active ? '#000' : 'rgba(255,255,255,0.7)',
+              fontSize: 12, fontWeight: 700,
+              boxShadow: s.active ? `0 0 16px ${accent}66` : 'none',
+            }}>{s.l}</div>
+          ))}
+        </div>
+        <div style={{ width: 130, padding: '10px 8px', borderRight: '1px solid rgba(255,255,255,0.05)' }}>
+          <div style={{ fontSize: 9, color: 'rgba(255,255,255,0.4)', textTransform: 'uppercase', letterSpacing: '.08em', marginBottom: 8, padding: '0 6px' }}>Channels</div>
+          {[
+            { n: '# general' },
+            { n: '# design-log', active: true, unread: 2 },
+            { n: '# eng' },
+            { n: '# random' },
+            { n: '# music', unread: 5 },
+          ].map(c => (
+            <div key={c.n} style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              padding: '5px 8px', fontSize: 11.5, color: c.active ? '#fff' : 'rgba(255,255,255,0.6)',
+              background: c.active ? 'rgba(255,255,255,0.06)' : 'transparent',
+              borderRadius: 5, marginBottom: 1,
+            }}>
+              <span>{c.n}</span>
+              {c.unread && <span style={{ background: accent, color: '#000', fontSize: 9, fontWeight: 700, padding: '1px 5px', borderRadius: 6 }}>{c.unread}</span>}
+            </div>
+          ))}
+        </div>
+        <div style={{ flex: 1, padding: 12, display: 'flex', flexDirection: 'column', gap: 10, minWidth: 0, overflow: 'hidden' }}>
+          {messages.map((m, i) => (
+            <div key={i} style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+              <div style={{ width: 26, height: 26, borderRadius: 999, background: m.color + '33', border: `1px solid ${m.color}66`, display: 'flex', alignItems: 'center', justifyContent: 'center', color: m.color, fontSize: 11, fontWeight: 700, flexShrink: 0 }}>
+                {m.user[0].toUpperCase()}
+              </div>
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+                  <span style={{ fontSize: 11.5, fontWeight: 600, color: m.color }}>{m.user}</span>
+                  <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.35)' }}>{m.time}</span>
+                </div>
+                <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.85)', lineHeight: 1.45 }}>{m.text}</div>
+              </div>
+            </div>
+          ))}
+          <div style={{ flex: 1 }} />
+          <div style={{ background: 'rgba(0,0,0,0.3)', borderRadius: 8, padding: '8px 10px', fontSize: 11, color: 'rgba(255,255,255,0.4)', border: '1px solid rgba(255,255,255,0.05)' }}>
+            Message # design-log
+          </div>
+        </div>
+      </div>
+    </HFTile>
+  );
+}
+
+function SpotifyHiFi({ density, accent, accent2, track, onPick }) {
+  return (
+    <HFTile title="Now playing · Spotify" density={density}
+            badge={<span style={{ fontSize: 9, color: accent, padding: '2px 6px', borderRadius: 4, background: accent + '15', border: `1px solid ${accent}33`, letterSpacing: '.05em' }}>● LIVE</span>}
+            style={{ height: '100%' }}>
+      <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', padding: 12, gap: 10, minHeight: 0 }}>
+        <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start', flexShrink: 0 }}>
+          <div style={{
+            width: 64, height: 64, borderRadius: 8, flexShrink: 0,
+            background: track.cover, position: 'relative', overflow: 'hidden',
+            boxShadow: `0 8px 24px ${accent}55`,
+          }}>
+            <div style={{ position: 'absolute', inset: 0, background: 'radial-gradient(circle at 30% 30%, rgba(255,255,255,0.3), transparent 60%)' }} />
+          </div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 13, fontWeight: 600, color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{track.title}</div>
+            <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.6)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{track.artist}</div>
+            <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)', marginTop: 2 }}>{track.album}</div>
+          </div>
+        </div>
+        <div>
+          <div style={{ height: 3, background: 'rgba(255,255,255,0.1)', borderRadius: 2, position: 'relative', overflow: 'hidden' }}>
+            <div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: '38%', background: `linear-gradient(90deg, ${accent2}, ${accent})`, borderRadius: 2 }} />
+            <div style={{ position: 'absolute', left: '38%', top: '50%', transform: 'translate(-50%,-50%)', width: 9, height: 9, background: '#fff', borderRadius: 999, boxShadow: `0 0 8px ${accent}` }} />
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: 'rgba(255,255,255,0.4)', fontFamily: 'JetBrains Mono, ui-monospace, monospace', marginTop: 4 }}>
+            <span>1:32</span><span>4:03</span>
+          </div>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, justifyContent: 'center' }}>
+          <button style={iconBtn()}>⇄</button>
+          <button style={iconBtn()}>⏮</button>
+          <button style={{ ...iconBtn(), width: 36, height: 36, background: '#fff', color: '#000', borderRadius: 999, fontSize: 14 }}>⏵</button>
+          <button style={iconBtn()}>⏭</button>
+          <button style={iconBtn()}>↺</button>
+        </div>
+        <div style={{ borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: 8, marginTop: 'auto', minHeight: 0, overflow: 'hidden' }}>
+          <div style={{ fontSize: 9, color: 'rgba(255,255,255,0.4)', textTransform: 'uppercase', letterSpacing: '.08em', marginBottom: 6 }}>Up next · pick to remix accent</div>
+          {TRACKS.filter(t => t.title !== track.title).slice(0, 2).map(t => (
+            <div key={t.title} onClick={() => onPick(t)} style={{
+              display: 'flex', gap: 8, alignItems: 'center', padding: '4px 4px', borderRadius: 5, cursor: 'pointer',
+            }}
+            onMouseEnter={e => e.currentTarget.style.background = 'rgba(255,255,255,0.05)'}
+            onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+            >
+              <div style={{ width: 22, height: 22, borderRadius: 4, background: t.cover, flexShrink: 0 }} />
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <div style={{ fontSize: 11, color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.title}</div>
+                <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.artist}</div>
+              </div>
+              <div style={{ width: 8, height: 8, borderRadius: 999, background: t.accent, boxShadow: `0 0 6px ${t.accent}` }} />
+            </div>
+          ))}
+        </div>
+      </div>
+    </HFTile>
+  );
+}
+
+function CalendarHiFi({ density, accent }) {
+  const events = [
+    { time: '15:00', title: 'Standup', dur: '15m', color: '#22c55e', soon: true },
+    { time: '16:00', title: 'Focus block · viz tuning', dur: '90m', color: accent },
+    { time: '17:30', title: 'Design review w/ Maya', dur: '45m', color: '#fb7185' },
+    { time: '19:00', title: 'Pickleball', dur: '60m', color: '#facc15' },
+  ];
+  return (
+    <HFTile title="Today · Apr 29" density={density}
+            headRight={<span style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)' }}>4 events</span>}
+            style={{ height: '100%' }}>
+      <div style={{ position: 'absolute', inset: 0, padding: 10, display: 'flex', flexDirection: 'column', gap: 6, overflow: 'hidden' }}>
+        {events.slice(0, 3).map((e, i) => (
+          <div key={i} style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+            <div style={{ width: 3, height: 28, background: e.color, borderRadius: 2, flexShrink: 0, boxShadow: e.soon ? `0 0 8px ${e.color}` : 'none' }} />
+            <div style={{ minWidth: 50, fontSize: 11, fontFamily: 'JetBrains Mono, ui-monospace, monospace', color: e.soon ? '#fff' : 'rgba(255,255,255,0.6)' }}>{e.time}</div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 12, color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{e.title}</div>
+              <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)' }}>{e.dur}{e.soon && ' · in 28 min'}</div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </HFTile>
+  );
+}
+
+function NotesHiFi({ density, accent }) {
+  return (
+    <HFTile title="Notes" density={density}
+            headRight={<span style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)' }}>scratch.md · auto-save</span>}
+            style={{ height: '100%' }}>
+      <div style={{ position: 'absolute', inset: 0, padding: 10, fontSize: 11, color: 'rgba(255,255,255,0.85)', lineHeight: 1.5, fontFamily: 'JetBrains Mono, ui-monospace, monospace', overflow: 'hidden' }}>
+        <div style={{ color: accent, marginBottom: 6 }}># todo</div>
+        <div>☑ <s style={{ color: 'rgba(255,255,255,0.4)' }}>fix peak-hold decay</s></div>
+        <div>☐ try particle count up to 200</div>
+        <div>☐ ship preset import/export</div>
+        <div style={{ marginTop: 12, color: accent }}># questions</div>
+        <div style={{ color: 'rgba(255,255,255,0.7)' }}>– WebGPU stable enough by Q3?</div>
+        <div style={{ color: 'rgba(255,255,255,0.7)' }}>– lazy-init for plugins?</div>
+      </div>
+    </HFTile>
+  );
+}
+
+function WebHiFi({ density, accent, url, title }) {
+  return (
+    <HFTile title={title || 'Web tile'} density={density}
+            headRight={<span style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)', fontFamily: 'JetBrains Mono, ui-monospace, monospace' }}>{url}</span>}
+            style={{ height: '100%' }}>
+      <div style={{ position: 'absolute', inset: 0, padding: 10, display: 'flex', flexDirection: 'column', gap: 6, overflow: 'hidden' }}>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', paddingBottom: 6, borderBottom: '1px solid rgba(255,255,255,0.06)', flexShrink: 0 }}>
+          <div style={{ width: 22, height: 22, borderRadius: 5, background: `linear-gradient(135deg, ${accent}, ${accent}88)` }} />
+          <div style={{ fontSize: 12, fontWeight: 600 }}>Linear · Inbox</div>
+          <div style={{ flex: 1 }} />
+          <span style={{ fontSize: 10, color: accent, padding: '2px 6px', background: accent + '15', borderRadius: 4 }}>3 new</span>
+        </div>
+        {[
+          { p: 'M2-441', t: 'Visualizer ambient idle drop', s: 'In Progress', c: '#facc15' },
+          { p: 'M2-442', t: 'Top processes drilldown', s: 'Todo', c: '#94a3b8' },
+          { p: 'M2-438', t: 'WebView2 shared env', s: 'In Review', c: accent },
+        ].map(t => (
+          <div key={t.p} style={{ display: 'flex', gap: 10, alignItems: 'center', padding: '6px 4px' }}>
+            <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)', fontFamily: 'JetBrains Mono, ui-monospace, monospace', minWidth: 50 }}>{t.p}</span>
+            <span style={{ fontSize: 12, flex: 1, color: '#fff' }}>{t.t}</span>
+            <span style={{ fontSize: 10, color: t.c, padding: '2px 6px', background: t.c + '15', borderRadius: 3 }}>{t.s}</span>
+          </div>
+        ))}
+      </div>
+    </HFTile>
+  );
+}
+
+function SysMonHiFi({ density, accent, accent2 }) {
+  const [data, setData] = React.useState(() => ({
+    cpu: Array.from({ length: 40 }, (_, i) => 0.2 + Math.sin(i * 0.3) * 0.15 + Math.random() * 0.15),
+    ram: Array.from({ length: 40 }, () => 0.4 + Math.random() * 0.1),
+    gpu: Array.from({ length: 40 }, (_, i) => 0.3 + Math.sin(i * 0.5) * 0.2 + Math.random() * 0.15),
+    net: Array.from({ length: 40 }, () => Math.random() * 0.6),
+  }));
+  React.useEffect(() => {
+    const id = setInterval(() => {
+      setData(d => ({
+        cpu: [...d.cpu.slice(1), Math.max(0.05, Math.min(1, d.cpu[d.cpu.length-1] + (Math.random()-0.5)*0.15))],
+        ram: [...d.ram.slice(1), Math.max(0.05, Math.min(1, d.ram[d.ram.length-1] + (Math.random()-0.5)*0.04))],
+        gpu: [...d.gpu.slice(1), Math.max(0.05, Math.min(1, d.gpu[d.gpu.length-1] + (Math.random()-0.5)*0.2))],
+        net: [...d.net.slice(1), Math.random() * 0.7],
+      }));
+    }, 1000);
+    return () => clearInterval(id);
+  }, []);
+  const Cell = ({ k, v, sub, data, color }) => (
+    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 6, padding: '0 14px', borderRight: '1px solid rgba(255,255,255,0.05)' }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+        <span style={{ fontSize: 9, color: 'rgba(255,255,255,0.4)', textTransform: 'uppercase', letterSpacing: '.08em', fontFamily: 'JetBrains Mono, ui-monospace, monospace' }}>{k}</span>
+        <span style={{ fontSize: 18, fontWeight: 700, color: '#fff', fontFamily: 'JetBrains Mono, ui-monospace, monospace', lineHeight: 1 }}>{v}</span>
+      </div>
+      <div style={{ flex: 1, minHeight: 0 }}>
+        <Sparkline data={data} color={color} height="100%" />
+      </div>
+      <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)' }}>{sub}</div>
+    </div>
+  );
+  return (
+    <HFTile title="System · live" density={density}
+            headRight={<span style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)' }}>1Hz · Ryzen 7 / RTX 4070</span>}
+            style={{ height: '100%' }}>
+      <div style={{ display: 'flex', height: '100%', padding: '8px 0', minHeight: 0 }}>
+        <Cell k="CPU" v="23%" sub="4.1 GHz · 58°C" data={data.cpu} color={accent} />
+        <Cell k="RAM" v="14.2G" sub="44% of 32 GB" data={data.ram} color={accent2} />
+        <Cell k="GPU" v="41%" sub="6.1G · 64°C" data={data.gpu} color="#facc15" />
+        <Cell k="NET" v="↓8.2" sub="↑0.4 MB/s · Wi-Fi" data={data.net} color="#22c55e" />
+        <div style={{ flex: 0.9, display: 'flex', flexDirection: 'column', gap: 4, padding: '0 14px', justifyContent: 'center' }}>
+          <div style={{ fontSize: 9, color: 'rgba(255,255,255,0.4)', textTransform: 'uppercase', letterSpacing: '.08em' }}>Top processes</div>
+          {[
+            ['chrome.exe', '12.4%'],
+            ['Hub.exe', '1.2%', accent],
+            ['Discord.exe', '3.1%'],
+            ['Code.exe', '4.7%'],
+          ].map(([n, v, col], i) => (
+            <div key={i} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10.5, fontFamily: 'JetBrains Mono, ui-monospace, monospace', color: col || 'rgba(255,255,255,0.7)' }}>
+              <span>{n}</span><span>{v}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </HFTile>
+  );
+}
+
+function ClockHiFi({ density, accent, accent2 }) {
+  const [time, setTime] = React.useState(() => new Date());
+  React.useEffect(() => {
+    const id = setInterval(() => setTime(new Date()), 1000);
+    return () => clearInterval(id);
+  }, []);
+  const hh = String(time.getHours()).padStart(2, '0');
+  const mm = String(time.getMinutes()).padStart(2, '0');
+  const ss = String(time.getSeconds()).padStart(2, '0');
+  return (
+    <HFTile title="Now" density={density}
+            headRight={<span style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)' }}>San Francisco</span>}
+            style={{ height: '100%' }}>
+      <div style={{ padding: 12, height: '100%', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', minHeight: 0, overflow: 'hidden' }}>
+        <div>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 4 }}>
+            <span style={{ fontSize: 44, fontWeight: 700, fontFamily: 'JetBrains Mono, ui-monospace, monospace', letterSpacing: '-0.04em', lineHeight: 0.9, color: '#fff' }}>{hh}:{mm}</span>
+            <span style={{ fontSize: 18, fontWeight: 500, fontFamily: 'JetBrains Mono, ui-monospace, monospace', color: accent, lineHeight: 1 }}>:{ss}</span>
+          </div>
+          <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)', marginTop: 6 }}>
+            Wed · April 29 · Week 18
+          </div>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <div style={{ width: 36, height: 36, borderRadius: 999, background: `linear-gradient(135deg, ${accent2}, ${accent})`, position: 'relative', overflow: 'hidden', flexShrink: 0 }}>
+            <div style={{ position: 'absolute', inset: 0, background: 'radial-gradient(circle at 30% 30%, rgba(255,255,255,0.4), transparent 60%)' }} />
+          </div>
+          <div>
+            <div style={{ fontSize: 16, fontWeight: 700, color: '#fff', fontFamily: 'JetBrains Mono, ui-monospace, monospace' }}>62°</div>
+            <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.5)' }}>partly cloudy · feels 60°</div>
+          </div>
+        </div>
+      </div>
+    </HFTile>
+  );
+}
+
+function CalendarStripHiFi({ density, accent }) {
+  return (
+    <HFTile title="Up next" density={density}
+            headRight={<span style={{ fontSize: 10, color: '#22c55e' }}>● in 28m</span>}
+            style={{ height: '100%' }}>
+      <div style={{ padding: 12, height: '100%', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', minHeight: 0, overflow: 'hidden' }}>
+        <div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+            <span style={{ fontSize: 10, color: '#22c55e', textTransform: 'uppercase', letterSpacing: '.08em', fontWeight: 700 }}>● Standup</span>
+            <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)', fontFamily: 'JetBrains Mono, ui-monospace, monospace' }}>15:00 — 15:15</span>
+          </div>
+          <div style={{ fontSize: 14, fontWeight: 500, color: '#fff', marginBottom: 12 }}>Daily standup · Design</div>
+          <div style={{ display: 'flex', marginBottom: 10 }}>
+            {['#fb7185', '#60a5fa', '#a78bfa', accent].map((c, i) => (
+              <div key={i} style={{ width: 22, height: 22, borderRadius: 999, background: c + '33', border: '2px solid #16181c', marginLeft: i ? -6 : 0, fontSize: 10, color: c, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700 }}>
+                {['M','A','J','Y'][i]}
+              </div>
+            ))}
+            <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.5)', alignSelf: 'center', marginLeft: 8 }}>4 attendees</span>
+          </div>
+        </div>
+        <div style={{ display: 'flex', gap: 6 }}>
+          <button style={{ flex: 1, background: accent, color: '#000', border: 'none', borderRadius: 6, padding: '8px 10px', fontSize: 11, fontWeight: 700, cursor: 'pointer' }}>Join Zoom</button>
+          <button style={{ background: 'rgba(255,255,255,0.06)', color: '#fff', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 6, padding: '8px 10px', fontSize: 11, cursor: 'pointer' }}>Snooze</button>
+        </div>
+      </div>
+    </HFTile>
+  );
+}
+
+const overlayBtn = () => ({
+  background: 'rgba(0,0,0,0.4)', backdropFilter: 'blur(20px)',
+  border: '1px solid rgba(255,255,255,0.08)',
+  color: 'rgba(255,255,255,0.85)', padding: '7px 12px', borderRadius: 8,
+  cursor: 'pointer', fontSize: 11, fontWeight: 500,
+  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+});
+
+function VizOverlay({ track, mode, setMode, accent, accent2 }) {
+  return (
+    <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+      <div style={{ padding: 18, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', pointerEvents: 'auto' }}>
+        <div style={{ display: 'flex', gap: 4, padding: 4, background: 'rgba(0,0,0,0.4)', backdropFilter: 'blur(20px)', borderRadius: 10, border: '1px solid rgba(255,255,255,0.06)' }}>
+          {[
+            { k: 'bars', label: 'Bars' },
+            { k: 'waveform', label: 'Wave' },
+            { k: 'radial', label: 'Radial' },
+            { k: 'particles', label: 'Particle' },
+            { k: 'ambient', label: 'Ambient' },
+          ].map(m => (
+            <button key={m.k} onClick={() => setMode(m.k)} style={{
+              padding: '6px 12px', fontSize: 11, fontWeight: 600,
+              background: mode === m.k ? accent : 'transparent',
+              color: mode === m.k ? '#000' : 'rgba(255,255,255,0.7)',
+              border: 'none', borderRadius: 6, cursor: 'pointer',
+              boxShadow: mode === m.k ? `0 0 12px ${accent}77` : 'none',
+              transition: 'all 0.2s',
+            }}>{m.label}</button>
+          ))}
+        </div>
+        <div style={{ display: 'flex', gap: 6 }}>
+          <button style={overlayBtn()}>⚙ Configure</button>
+          <button style={overlayBtn()}>⛶</button>
+        </div>
+      </div>
+      <div style={{ padding: 22, display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 20, pointerEvents: 'auto' }}>
+        <div style={{ display: 'flex', gap: 14, alignItems: 'center', minWidth: 0 }}>
+          <div style={{ width: 78, height: 78, borderRadius: 10, background: track.cover, position: 'relative', overflow: 'hidden', flexShrink: 0, boxShadow: `0 12px 40px ${accent}66` }}>
+            <div style={{ position: 'absolute', inset: 0, background: 'radial-gradient(circle at 30% 30%, rgba(255,255,255,0.3), transparent 60%)' }} />
+          </div>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontSize: 10, color: accent, textTransform: 'uppercase', letterSpacing: '.1em', fontWeight: 700, marginBottom: 4 }}>● Now playing — accent linked</div>
+            <div style={{ fontSize: 22, fontWeight: 700, color: '#fff', letterSpacing: '-0.01em', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{track.title}</div>
+            <div style={{ fontSize: 13, color: 'rgba(255,255,255,0.65)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{track.artist} — {track.album}</div>
+          </div>
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, alignItems: 'flex-end' }}>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <button style={overlayBtn()}>⏮</button>
+            <button style={{ ...overlayBtn(), width: 44, height: 44, background: '#fff', color: '#000', borderRadius: 999, fontSize: 16 }}>⏵</button>
+            <button style={overlayBtn()}>⏭</button>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 280 }}>
+            <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.5)', fontFamily: 'JetBrains Mono, ui-monospace, monospace' }}>1:32</span>
+            <div style={{ flex: 1, height: 3, background: 'rgba(255,255,255,0.15)', borderRadius: 2, position: 'relative', overflow: 'hidden' }}>
+              <div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: '38%', background: `linear-gradient(90deg, ${accent2}, ${accent})`, borderRadius: 2 }} />
+            </div>
+            <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.5)', fontFamily: 'JetBrains Mono, ui-monospace, monospace' }}>4:03</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────
+// EDIT MODE
+// ─────────────────────────────────────────────────────────────────
+function EditModeOverlay({ accent, accent2, onExit }) {
+  const [tool, setTool] = React.useState('select');
+  const [selected, setSelected] = React.useState('viz');
+  const [showGuides, setShowGuides] = React.useState(true);
+  const [showGrid, setShowGrid] = React.useState(true);
+  const [snap, setSnap] = React.useState(true);
+
+  const railX = 20, railY = 56 + 8, railW = 560;
+  const gap = 14;
+  const railH = 1440 - 56 - 32 - 16;
+  const railRows = [1.4, 1, 0.7, 0.6, 0.6];
+  const sumRows = railRows.reduce((a, b) => a + b, 0);
+  const rowUnit = (railH - gap * (railRows.length - 1)) / sumRows;
+  let yCursor = railY;
+  const railRects = railRows.map((r) => {
+    const h = r * rowUnit;
+    const rect = { x: railX, y: yCursor, w: railW, h };
+    yCursor += h + gap;
+    return rect;
+  });
+
+  const rightX = railX + railW + gap;
+  const rightW = 2560 - rightX - 20;
+  const bottomH = 360;
+  const vizRect = { x: rightX, y: railY, w: rightW, h: railH - bottomH - gap };
+  const bottomY = vizRect.y + vizRect.h + gap;
+  const bsCols = [1.6, 1, 1];
+  const bsSum = bsCols.reduce((a, b) => a + b, 0);
+  const bsUnit = (rightW - gap * 2) / bsSum;
+  let xCursor = rightX;
+  const bsRects = bsCols.map((c) => {
+    const w = c * bsUnit;
+    const rect = { x: xCursor, y: bottomY, w, h: bottomH };
+    xCursor += w + gap;
+    return rect;
+  });
+
+  const TILES = {
+    discord:  { rect: railRects[0], label: 'Discord', kind: 'discord' },
+    spotify:  { rect: railRects[1], label: 'Now playing', kind: 'spotify' },
+    calendar: { rect: railRects[2], label: 'Today', kind: 'calendar' },
+    notes:    { rect: railRects[3], label: 'Notes', kind: 'notes' },
+    linear:   { rect: railRects[4], label: 'Linear', kind: 'web' },
+    viz:      { rect: vizRect, label: 'Audio visualizer', kind: 'viz' },
+    sysmon:   { rect: bsRects[0], label: 'System monitor', kind: 'sysmon' },
+    clock:    { rect: bsRects[1], label: 'Clock & weather', kind: 'clock' },
+    upnext:   { rect: bsRects[2], label: 'Up next', kind: 'upnext' },
+  };
+
+  const sel = TILES[selected];
+
+  return (
+    <div style={{
+      position: 'absolute', inset: 0, zIndex: 50, pointerEvents: 'auto',
+      background: 'rgba(8,9,12,0.55)', backdropFilter: 'blur(2px)',
+    }}>
+      <EditToolbar accent={accent} tool={tool} setTool={setTool}
+        showGuides={showGuides} setShowGuides={setShowGuides}
+        showGrid={showGrid} setShowGrid={setShowGrid}
+        snap={snap} setSnap={setSnap}
+        onExit={onExit} />
+      <EditLeftRail accent={accent} tool={tool} setTool={setTool} />
+      {showGrid && <GridOverlay />}
+      {Object.entries(TILES).map(([id, t]) => (
+        <div key={id} onClick={() => setSelected(id)} style={{
+          position: 'absolute',
+          left: t.rect.x, top: t.rect.y, width: t.rect.w, height: t.rect.h,
+          cursor: 'pointer',
+          border: id === selected ? `2px solid ${accent}` : '2px solid transparent',
+          borderRadius: 14,
+          boxShadow: id === selected ? `0 0 0 1px ${accent}55, 0 0 40px -8px ${accent}aa` : 'none',
+          transition: 'border-color .12s, box-shadow .12s',
+        }}>
+          {id === selected && (
+            <>
+              <SelectionHandles accent={accent} />
+              <SelectionLabel accent={accent} label={t.label} w={t.rect.w} h={t.rect.h} />
+            </>
+          )}
+        </div>
+      ))}
+      {showGuides && sel && (
+        <SmartGuides rect={sel.rect} accent={accent2} />
+      )}
+      <PropertiesPanel accent={accent} tile={sel} selectedId={selected} />
+      <LayersPanel accent={accent} selected={selected} setSelected={setSelected} tiles={TILES} />
+    </div>
+  );
+}
+
+function EditToolbar({ accent, tool, setTool, showGuides, setShowGuides, showGrid, setShowGrid, snap, setSnap, onExit }) {
+  return (
+    <div style={{
+      position: 'absolute', top: 16, left: '50%', transform: 'translateX(-50%)',
+      display: 'flex', alignItems: 'center', gap: 4,
+      padding: '6px 8px', borderRadius: 10,
+      background: 'rgba(20,22,28,0.95)', backdropFilter: 'blur(20px)',
+      border: '1px solid rgba(255,255,255,0.08)',
+      boxShadow: '0 12px 40px rgba(0,0,0,0.5)',
+      zIndex: 60,
+    }}>
+      <ToolBtn icon="↖" label="Select" active={tool==='select'} onClick={() => setTool('select')} accent={accent} />
+      <ToolBtn icon="✥" label="Move" active={tool==='move'} onClick={() => setTool('move')} accent={accent} />
+      <ToolBtn icon="◰" label="Resize" active={tool==='resize'} onClick={() => setTool('resize')} accent={accent} />
+      <ToolBtn icon="+" label="Add tile" active={tool==='add'} onClick={() => setTool('add')} accent={accent} />
+      <Divider />
+      <ToolToggle label="Snap" active={snap} onClick={() => setSnap(!snap)} accent={accent} />
+      <ToolToggle label="Grid" active={showGrid} onClick={() => setShowGrid(!showGrid)} accent={accent} />
+      <ToolToggle label="Guides" active={showGuides} onClick={() => setShowGuides(!showGuides)} accent={accent} />
+      <Divider />
+      <span style={{ fontSize: 10.5, color: 'rgba(255,255,255,0.45)', fontFamily: 'JetBrains Mono, ui-monospace, monospace', padding: '0 8px' }}>
+        Editing · "Work"
+      </span>
+      <Divider />
+      <button onClick={onExit} style={{
+        padding: '6px 12px', fontSize: 11, fontWeight: 600, borderRadius: 6,
+        background: accent, color: '#000', border: 'none', cursor: 'pointer',
+      }}>Done</button>
+    </div>
+  );
+}
+
+function ToolBtn({ icon, label, active, onClick, accent }) {
+  return (
+    <button onClick={onClick} title={label} style={{
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      width: 32, height: 32, borderRadius: 6, fontSize: 14,
+      background: active ? `${accent}20` : 'transparent',
+      color: active ? accent : 'rgba(255,255,255,0.65)',
+      border: active ? `1px solid ${accent}55` : '1px solid transparent',
+      cursor: 'pointer',
+    }}>{icon}</button>
+  );
+}
+
+function ToolToggle({ label, active, onClick, accent }) {
+  return (
+    <button onClick={onClick} style={{
+      padding: '6px 10px', fontSize: 10.5, fontWeight: 500, borderRadius: 6,
+      background: active ? `${accent}20` : 'transparent',
+      color: active ? accent : 'rgba(255,255,255,0.5)',
+      border: active ? `1px solid ${accent}55` : '1px solid rgba(255,255,255,0.06)',
+      cursor: 'pointer',
+      letterSpacing: '.02em',
+    }}>{label}</button>
+  );
+}
+
+function Divider() {
+  return <div style={{ width: 1, height: 20, background: 'rgba(255,255,255,0.08)', margin: '0 4px' }} />;
+}
+
+function EditLeftRail({ accent, tool, setTool }) {
+  const tools = [
+    { id: 'select', icon: '↖', label: 'V' },
+    { id: 'move', icon: '✥', label: 'M' },
+    { id: 'resize', icon: '◰', label: 'R' },
+    { id: 'add', icon: '+', label: 'A' },
+    { id: 'comment', icon: '◐', label: 'C' },
+  ];
+  return (
+    <div style={{
+      position: 'absolute', top: '50%', left: 16, transform: 'translateY(-50%)',
+      display: 'flex', flexDirection: 'column', gap: 6,
+      padding: 8, borderRadius: 10,
+      background: 'rgba(20,22,28,0.95)', backdropFilter: 'blur(20px)',
+      border: '1px solid rgba(255,255,255,0.08)',
+      boxShadow: '0 12px 40px rgba(0,0,0,0.5)',
+      zIndex: 55,
+    }}>
+      {tools.map(t => (
+        <button key={t.id} onClick={() => setTool(t.id)} title={t.id} style={{
+          width: 36, height: 36, borderRadius: 6, fontSize: 16,
+          background: tool === t.id ? `${accent}20` : 'transparent',
+          color: tool === t.id ? accent : 'rgba(255,255,255,0.65)',
+          border: tool === t.id ? `1px solid ${accent}55` : '1px solid transparent',
+          cursor: 'pointer',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          flexDirection: 'column', gap: 0,
+        }}>
+          <span style={{ lineHeight: 1 }}>{t.icon}</span>
+          <span style={{ fontSize: 8, color: 'rgba(255,255,255,0.4)', fontFamily: 'JetBrains Mono, ui-monospace, monospace' }}>{t.label}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function GridOverlay() {
+  return (
+    <div style={{
+      position: 'absolute', inset: 0,
+      backgroundImage: `
+        linear-gradient(rgba(255,255,255,0.04) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255,255,255,0.04) 1px, transparent 1px)
+      `,
+      backgroundSize: '40px 40px',
+      pointerEvents: 'none',
+      zIndex: 45,
+    }} />
+  );
+}
+
+function SelectionHandles({ accent }) {
+  const handle = (style) => (
+    <div style={{
+      position: 'absolute', width: 10, height: 10,
+      background: '#06070a', border: `2px solid ${accent}`,
+      borderRadius: 2, ...style,
+    }} />
+  );
+  return (
+    <>
+      {handle({ top: -6, left: -6, cursor: 'nwse-resize' })}
+      {handle({ top: -6, right: -6, cursor: 'nesw-resize' })}
+      {handle({ bottom: -6, left: -6, cursor: 'nesw-resize' })}
+      {handle({ bottom: -6, right: -6, cursor: 'nwse-resize' })}
+      {handle({ top: -6, left: '50%', transform: 'translateX(-50%)', cursor: 'ns-resize' })}
+      {handle({ bottom: -6, left: '50%', transform: 'translateX(-50%)', cursor: 'ns-resize' })}
+      {handle({ left: -6, top: '50%', transform: 'translateY(-50%)', cursor: 'ew-resize' })}
+      {handle({ right: -6, top: '50%', transform: 'translateY(-50%)', cursor: 'ew-resize' })}
+    </>
+  );
+}
+
+function SelectionLabel({ accent, label, w, h }) {
+  return (
+    <div style={{
+      position: 'absolute', top: -28, left: 0,
+      padding: '3px 10px', fontSize: 11, fontWeight: 600,
+      background: accent, color: '#000', borderRadius: 4,
+      fontFamily: 'JetBrains Mono, ui-monospace, monospace',
+      whiteSpace: 'nowrap',
+    }}>
+      {label} · {Math.round(w)}×{Math.round(h)}
+    </div>
+  );
+}
+
+function SmartGuides({ rect, accent }) {
+  const cx = rect.x + rect.w / 2;
+  const cy = rect.y + rect.h / 2;
+  const lineStyle = {
+    position: 'absolute', background: accent, pointerEvents: 'none',
+    boxShadow: `0 0 6px ${accent}`, zIndex: 44,
+  };
+  return (
+    <>
+      <div style={{ ...lineStyle, left: cx - 0.5, top: 0, width: 1, height: '100%', opacity: 0.5 }} />
+      <div style={{ ...lineStyle, top: cy - 0.5, left: 0, width: '100%', height: 1, opacity: 0.5 }} />
+      <DistanceMarker x={rect.x} y={0} w={0} h={rect.y} accent={accent} value={rect.y} orient="vertical" />
+      <DistanceMarker x={rect.x} y={rect.y + rect.h} w={0} h={1440 - rect.y - rect.h} accent={accent} value={1440 - rect.y - rect.h} orient="vertical" />
+      <DistanceMarker x={0} y={rect.y} w={rect.x} h={0} accent={accent} value={rect.x} orient="horizontal" />
+      <DistanceMarker x={rect.x + rect.w} y={rect.y} w={2560 - rect.x - rect.w} h={0} accent={accent} value={2560 - rect.x - rect.w} orient="horizontal" />
+    </>
+  );
+}
+
+function DistanceMarker({ x, y, w, h, accent, value, orient }) {
+  const labelStyle = {
+    position: 'absolute', padding: '2px 6px',
+    background: accent, color: '#000', fontSize: 10, fontWeight: 600,
+    borderRadius: 3, fontFamily: 'JetBrains Mono, ui-monospace, monospace',
+    pointerEvents: 'none', zIndex: 46,
+  };
+  if (orient === 'vertical') {
+    return (
+      <>
+        <div style={{ position: 'absolute', left: x + 20, top: y, width: 1, height: h, background: accent, opacity: 0.6, zIndex: 44 }} />
+        <div style={{ ...labelStyle, left: x + 28, top: y + h/2 - 9 }}>{Math.round(value)}</div>
+      </>
+    );
+  }
+  return (
+    <>
+      <div style={{ position: 'absolute', left: x, top: y + 20, height: 1, width: w, background: accent, opacity: 0.6, zIndex: 44 }} />
+      <div style={{ ...labelStyle, left: x + w/2 - 16, top: y + 28 }}>{Math.round(value)}</div>
+    </>
+  );
+}
+
+function PropertiesPanel({ accent, tile, selectedId }) {
+  if (!tile) return null;
+  return (
+    <div style={{
+      position: 'absolute', top: 80, right: 16, width: 280,
+      maxHeight: 'calc(100% - 100px)',
+      borderRadius: 10, padding: 0,
+      background: 'rgba(20,22,28,0.96)', backdropFilter: 'blur(20px)',
+      border: '1px solid rgba(255,255,255,0.08)',
+      boxShadow: '0 12px 40px rgba(0,0,0,0.5)',
+      zIndex: 55, overflow: 'hidden', display: 'flex', flexDirection: 'column',
+    }}>
+      <div style={{ padding: '10px 14px', borderBottom: '1px solid rgba(255,255,255,0.06)', display: 'flex', alignItems: 'center', gap: 8 }}>
+        <div style={{ width: 8, height: 8, background: accent, borderRadius: 2 }} />
+        <span style={{ fontSize: 12, fontWeight: 600, color: '#fff' }}>{tile.label}</span>
+        <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)', fontFamily: 'JetBrains Mono, ui-monospace, monospace', marginLeft: 'auto' }}>#{selectedId}</span>
+      </div>
+      <div style={{ overflow: 'auto', padding: '4px 0' }}>
+        <PropSection title="Position & size">
+          <PropRow label="X"><PropNum v={Math.round(tile.rect.x)} /></PropRow>
+          <PropRow label="Y"><PropNum v={Math.round(tile.rect.y)} /></PropRow>
+          <PropRow label="W"><PropNum v={Math.round(tile.rect.w)} /></PropRow>
+          <PropRow label="H"><PropNum v={Math.round(tile.rect.h)} /></PropRow>
+          <PropRow label="Lock"><EmToggle on={false} accent={accent} /></PropRow>
+        </PropSection>
+        <PropSection title="Appearance">
+          <PropRow label="Radius"><PropNum v={14} /></PropRow>
+          <PropRow label="Padding"><PropNum v={12} /></PropRow>
+          <PropRow label="Opacity">
+            <div style={{ flex: 1, display: 'flex', gap: 6, alignItems: 'center' }}>
+              <input type="range" min="0" max="100" defaultValue="100" style={{ flex: 1, accentColor: accent }} />
+              <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.6)', fontFamily: 'JetBrains Mono, ui-monospace, monospace', width: 28, textAlign: 'right' }}>100</span>
+            </div>
+          </PropRow>
+          <PropRow label="Glass"><EmToggle on={true} accent={accent} /></PropRow>
+        </PropSection>
+        {tile.kind === 'viz' && (
+          <PropSection title="Visualizer">
+            <PropRow label="Mode">
+              <span style={{ fontSize: 10.5, color: '#fff', padding: '2px 8px', background: accent + '20', borderRadius: 4 }}>Ambient</span>
+            </PropRow>
+            <PropRow label="Source">
+              <span style={{ fontSize: 10.5, color: 'rgba(255,255,255,0.7)' }}>WASAPI loopback</span>
+            </PropRow>
+            <PropRow label="Reactivity">
+              <input type="range" min="0" max="100" defaultValue="68" style={{ flex: 1, accentColor: accent }} />
+            </PropRow>
+            <PropRow label="Theme link"><EmToggle on={true} accent={accent} /></PropRow>
+            <button style={{
+              width: '100%', padding: '8px', marginTop: 8, fontSize: 11, fontWeight: 600,
+              background: 'transparent', color: accent, border: `1px solid ${accent}55`,
+              borderRadius: 6, cursor: 'pointer',
+            }}>Open viz config →</button>
+          </PropSection>
+        )}
+        {tile.kind === 'spotify' && (
+          <PropSection title="Tile · Spotify">
+            <PropRow label="Account"><span style={{ fontSize: 10.5, color: 'rgba(255,255,255,0.7)' }}>nick@hub</span></PropRow>
+            <PropRow label="Show controls"><EmToggle on={true} accent={accent} /></PropRow>
+            <PropRow label="Show up next"><EmToggle on={true} accent={accent} /></PropRow>
+            <PropRow label="Theme accent"><EmToggle on={true} accent={accent} /></PropRow>
+          </PropSection>
+        )}
+        {tile.kind === 'discord' && (
+          <PropSection title="Tile · Discord">
+            <PropRow label="Workspace"><span style={{ fontSize: 10.5, color: 'rgba(255,255,255,0.7)' }}>second-monitor</span></PropRow>
+            <PropRow label="Channels"><span style={{ fontSize: 10.5, color: 'rgba(255,255,255,0.7)' }}>3 pinned</span></PropRow>
+            <PropRow label="Notifications"><EmToggle on={true} accent={accent} /></PropRow>
+          </PropSection>
+        )}
+        {tile.kind === 'web' && (
+          <PropSection title="Tile · Web">
+            <PropRow label="URL">
+              <input defaultValue="linear.app/inbox" style={{
+                flex: 1, fontSize: 10.5, padding: '4px 6px', borderRadius: 4,
+                background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)',
+                color: '#fff', fontFamily: 'JetBrains Mono, ui-monospace, monospace',
+              }} />
+            </PropRow>
+            <PropRow label="Auto-refresh"><EmToggle on={true} accent={accent} /></PropRow>
+            <PropRow label="Interval">
+              <span style={{ fontSize: 10.5, color: 'rgba(255,255,255,0.7)' }}>60s</span>
+            </PropRow>
+          </PropSection>
+        )}
+        <PropSection title="Layout grid">
+          <PropRow label="Span row"><Stepper v={1} accent={accent} /></PropRow>
+          <PropRow label="Span col"><Stepper v={1} accent={accent} /></PropRow>
+          <PropRow label="Snap"><EmToggle on={true} accent={accent} /></PropRow>
+        </PropSection>
+      </div>
+      <div style={{ borderTop: '1px solid rgba(255,255,255,0.06)', padding: 8, display: 'flex', gap: 6 }}>
+        <button style={{
+          flex: 1, padding: '7px', fontSize: 10.5, fontWeight: 600,
+          background: 'rgba(255,255,255,0.04)', color: 'rgba(255,255,255,0.7)',
+          border: '1px solid rgba(255,255,255,0.08)', borderRadius: 5, cursor: 'pointer',
+        }}>Duplicate</button>
+        <button style={{
+          flex: 1, padding: '7px', fontSize: 10.5, fontWeight: 600,
+          background: 'rgba(239,68,68,0.1)', color: '#fca5a5',
+          border: '1px solid rgba(239,68,68,0.2)', borderRadius: 5, cursor: 'pointer',
+        }}>Remove</button>
+      </div>
+    </div>
+  );
+}
+
+function PropSection({ title, children }) {
+  return (
+    <div style={{ padding: '8px 14px', borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+      <div style={{ fontSize: 9, color: 'rgba(255,255,255,0.4)', textTransform: 'uppercase', letterSpacing: '.08em', marginBottom: 8, fontWeight: 600 }}>{title}</div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>{children}</div>
+    </div>
+  );
+}
+
+function PropRow({ label, children }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+      <span style={{ width: 70, fontSize: 10.5, color: 'rgba(255,255,255,0.45)' }}>{label}</span>
+      <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 6 }}>{children}</div>
+    </div>
+  );
+}
+
+function PropNum({ v }) {
+  return (
+    <input defaultValue={v} style={{
+      flex: 1, fontSize: 11, padding: '4px 6px', borderRadius: 4,
+      background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)',
+      color: '#fff', fontFamily: 'JetBrains Mono, ui-monospace, monospace',
+      width: '100%',
+    }} />
+  );
+}
+
+function EmToggle({ on, accent }) {
+  const [checked, setChecked] = React.useState(on);
+  return (
+    <button onClick={() => setChecked(!checked)} style={{
+      width: 28, height: 16, borderRadius: 8,
+      background: checked ? accent : 'rgba(255,255,255,0.1)',
+      border: 'none', position: 'relative', cursor: 'pointer',
+      transition: 'background .15s',
+    }}>
+      <div style={{
+        position: 'absolute', top: 2, left: checked ? 14 : 2,
+        width: 12, height: 12, borderRadius: 6, background: '#fff',
+        transition: 'left .15s',
+      }} />
+    </button>
+  );
+}
+
+function Stepper({ v, accent }) {
+  const [val, setVal] = React.useState(v);
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 4, flex: 1 }}>
+      <button onClick={() => setVal(Math.max(1, val - 1))} style={{ width: 22, height: 22, borderRadius: 4, border: '1px solid rgba(255,255,255,0.08)', background: 'rgba(255,255,255,0.04)', color: '#fff', cursor: 'pointer' }}>−</button>
+      <span style={{ flex: 1, textAlign: 'center', fontSize: 11, fontFamily: 'JetBrains Mono, ui-monospace, monospace' }}>{val}</span>
+      <button onClick={() => setVal(val + 1)} style={{ width: 22, height: 22, borderRadius: 4, border: '1px solid rgba(255,255,255,0.08)', background: 'rgba(255,255,255,0.04)', color: '#fff', cursor: 'pointer' }}>+</button>
+    </div>
+  );
+}
+
+function LayersPanel({ accent, selected, setSelected, tiles }) {
+  const order = ['viz', 'spotify', 'discord', 'calendar', 'notes', 'linear', 'sysmon', 'clock', 'upnext'];
+  return (
+    <div style={{
+      position: 'absolute', bottom: 16, left: 16, width: 240,
+      borderRadius: 10, overflow: 'hidden',
+      background: 'rgba(20,22,28,0.96)', backdropFilter: 'blur(20px)',
+      border: '1px solid rgba(255,255,255,0.08)',
+      boxShadow: '0 12px 40px rgba(0,0,0,0.5)',
+      zIndex: 55,
+    }}>
+      <div style={{ padding: '10px 14px', borderBottom: '1px solid rgba(255,255,255,0.06)', display: 'flex', alignItems: 'center', gap: 8 }}>
+        <span style={{ fontSize: 11, fontWeight: 600, color: '#fff' }}>Layers</span>
+        <span style={{ fontSize: 9, color: 'rgba(255,255,255,0.4)', fontFamily: 'JetBrains Mono, ui-monospace, monospace', marginLeft: 'auto' }}>{order.length} tiles</span>
+      </div>
+      <div style={{ padding: 6 }}>
+        {order.map(id => {
+          const t = tiles[id];
+          return (
+            <button key={id} onClick={() => setSelected(id)} style={{
+              width: '100%', display: 'flex', alignItems: 'center', gap: 8,
+              padding: '6px 8px', borderRadius: 5, border: 'none', cursor: 'pointer',
+              background: selected === id ? `${accent}25` : 'transparent',
+              color: selected === id ? '#fff' : 'rgba(255,255,255,0.7)',
+              textAlign: 'left',
+            }}>
+              <span style={{ fontSize: 11 }}>{kindIcon(t.kind)}</span>
+              <span style={{ fontSize: 11, flex: 1 }}>{t.label}</span>
+              <span style={{ fontSize: 9, color: 'rgba(255,255,255,0.3)', fontFamily: 'JetBrains Mono, ui-monospace, monospace' }}>
+                {Math.round(t.rect.w)}×{Math.round(t.rect.h)}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function kindIcon(k) {
+  return ({ viz: '◢', spotify: '♪', discord: '◇', calendar: '◫', notes: '✎', web: '◰', sysmon: '▤', clock: '◐', upnext: '▸' })[k] || '◰';
+}
+
+// ─────────────────────────────────────────────────────────────────
+// PROFILE SWITCHER
+// ─────────────────────────────────────────────────────────────────
+function ProfileSwitcher({ accent, currentProfile, setProfile, onClose, onCreate }) {
+  const PROFILES = [
+    { id: 'work',   name: 'Work',   subtitle: 'Focus · sysmon · calendar', layout: 'work',   tileCount: 8 },
+    { id: 'gaming', name: 'Gaming', subtitle: 'Viz hero · sysmon · discord', layout: 'gaming', tileCount: 6 },
+    { id: 'chill',  name: 'Chill',  subtitle: 'Ambient · spotify · clock', layout: 'chill',  tileCount: 5 },
+  ];
+  return (
+    <div onClick={onClose} style={{
+      position: 'absolute', inset: 0, zIndex: 80,
+      background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(12px)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+    }}>
+      <div onClick={(e) => e.stopPropagation()} style={{
+        width: 1600, padding: 48, borderRadius: 18,
+        background: 'rgba(15,17,22,0.95)',
+        border: '1px solid rgba(255,255,255,0.08)',
+        boxShadow: '0 40px 100px rgba(0,0,0,0.6)',
+      }}>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 16, marginBottom: 8 }}>
+          <h2 style={{ fontSize: 28, margin: 0, fontWeight: 700, letterSpacing: '-0.02em' }}>Switch profile</h2>
+          <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.4)', fontFamily: 'JetBrains Mono, ui-monospace, monospace' }}>⌘ + 1 / 2 / 3</span>
+        </div>
+        <p style={{ fontSize: 14, color: 'rgba(255,255,255,0.55)', margin: '0 0 32px 0' }}>
+          Each profile is a layout of tiles tuned for a context. Hub crossfades between them with shared-element transitions.
+        </p>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 20 }}>
+          {PROFILES.map(p => (
+            <ProfileCard key={p.id} profile={p} accent={accent} active={p.id === currentProfile} onClick={() => { setProfile(p.id); onClose(); }} />
+          ))}
+        </div>
+        <div style={{ marginTop: 24, display: 'flex', gap: 12, alignItems: 'center' }}>
+          <button onClick={onCreate} style={{
+            padding: '12px 18px', fontSize: 13, fontWeight: 600,
+            background: 'transparent', color: 'rgba(255,255,255,0.7)',
+            border: '1px dashed rgba(255,255,255,0.15)', borderRadius: 8,
+            cursor: 'pointer',
+          }}>+ New profile from current</button>
+          <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.4)', flex: 1 }}>
+            Profiles auto-switch on app focus rules — e.g. Gaming when fullscreen game launches.
+          </span>
+          <button onClick={onClose} style={{
+            padding: '10px 16px', fontSize: 12, color: 'rgba(255,255,255,0.5)',
+            background: 'transparent', border: '1px solid rgba(255,255,255,0.08)',
+            borderRadius: 6, cursor: 'pointer',
+          }}>Esc</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ProfileCard({ profile, accent, active, onClick }) {
+  return (
+    <button onClick={onClick} style={{
+      padding: 0, borderRadius: 12, overflow: 'hidden',
+      background: active ? `${accent}10` : 'rgba(255,255,255,0.02)',
+      border: active ? `2px solid ${accent}` : '2px solid rgba(255,255,255,0.06)',
+      cursor: 'pointer', textAlign: 'left', color: '#fff',
+      transition: 'transform .15s, border-color .15s',
+      transform: active ? 'translateY(-2px)' : 'none',
+      boxShadow: active ? `0 12px 40px -8px ${accent}66` : 'none',
+    }}>
+      <ProfilePreview layout={profile.layout} accent={accent} />
+      <div style={{ padding: 16 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+          <span style={{ fontSize: 16, fontWeight: 700 }}>{profile.name}</span>
+          {active && <span style={{ fontSize: 9, color: accent, padding: '2px 8px', background: `${accent}20`, borderRadius: 3, fontFamily: 'JetBrains Mono, ui-monospace, monospace', letterSpacing: '.05em' }}>● ACTIVE</span>}
+        </div>
+        <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.55)', marginBottom: 8 }}>{profile.subtitle}</div>
+        <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.35)', fontFamily: 'JetBrains Mono, ui-monospace, monospace' }}>
+          {profile.tileCount} tiles
+        </div>
+      </div>
+    </button>
+  );
+}
+
+function ProfilePreview({ layout, accent }) {
+  const w = 480, h = 270;
+  const stroke = 'rgba(255,255,255,0.06)';
+  const fill = 'rgba(255,255,255,0.03)';
+  const vizFill = `${accent}40`;
+  const vizStroke = `${accent}88`;
+
+  if (layout === 'work') {
+    return (
+      <svg viewBox={`0 0 ${w} ${h}`} style={{ width: '100%', display: 'block', background: '#06070a' }}>
+        <rect x="0" y="0" width={w} height="14" fill="rgba(255,255,255,0.04)" />
+        <rect x="8" y="20" width="100" height="50" fill={fill} stroke={stroke} rx="3" />
+        <rect x="8" y="74" width="100" height="40" fill={fill} stroke={stroke} rx="3" />
+        <rect x="8" y="118" width="100" height="30" fill={fill} stroke={stroke} rx="3" />
+        <rect x="8" y="152" width="100" height="30" fill={fill} stroke={stroke} rx="3" />
+        <rect x="8" y="186" width="100" height="30" fill={fill} stroke={stroke} rx="3" />
+        <rect x="112" y="20" width={w - 120} height="160" fill={vizFill} stroke={vizStroke} rx="3" />
+        <rect x="112" y="184" width="180" height="36" fill={fill} stroke={stroke} rx="3" />
+        <rect x="296" y="184" width="80" height="36" fill={fill} stroke={stroke} rx="3" />
+        <rect x="380" y="184" width={w - 388} height="36" fill={fill} stroke={stroke} rx="3" />
+        <rect x="0" y={h - 8} width={w} height="8" fill="rgba(255,255,255,0.04)" />
+      </svg>
+    );
+  }
+  if (layout === 'gaming') {
+    return (
+      <svg viewBox={`0 0 ${w} ${h}`} style={{ width: '100%', display: 'block', background: '#06070a' }}>
+        <rect x="0" y="0" width={w} height="14" fill="rgba(255,255,255,0.04)" />
+        <rect x="8" y="20" width={w - 16} height="160" fill={vizFill} stroke={vizStroke} rx="3" />
+        <rect x="8" y="184" width={w - 16} height="36" fill={fill} stroke={stroke} rx="3" />
+        <line x1={(w/3)} y1="190" x2={(w/3)} y2="214" stroke={stroke} />
+        <line x1={(2*w/3)} y1="190" x2={(2*w/3)} y2="214" stroke={stroke} />
+        <rect x="0" y={h - 8} width={w} height="8" fill="rgba(255,255,255,0.04)" />
+      </svg>
+    );
+  }
+  return (
+    <svg viewBox={`0 0 ${w} ${h}`} style={{ width: '100%', display: 'block', background: '#06070a' }}>
+      <rect x="0" y="0" width={w} height="14" fill="rgba(255,255,255,0.04)" />
+      <rect x="0" y="14" width={w} height={h - 22} fill={vizFill} stroke="none" />
+      <rect x="20" y="40" width="180" height="80" fill="rgba(8,9,12,0.6)" stroke={vizStroke} rx="6" />
+      <rect x="20" y={h - 100} width="180" height="60" fill="rgba(8,9,12,0.6)" stroke={vizStroke} rx="6" />
+      <rect x={w - 200} y="40" width="180" height="60" fill="rgba(8,9,12,0.6)" stroke={vizStroke} rx="6" />
+      <rect x="0" y={h - 8} width={w} height="8" fill="rgba(255,255,255,0.04)" />
+    </svg>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────
+// ONBOARDING
+// ─────────────────────────────────────────────────────────────────
+function Onboarding({ accent, onFinish }) {
+  const [step, setStep] = React.useState(0);
+  const [audio, setAudio] = React.useState('wasapi');
+  const [profile, setProfile] = React.useState(null);
+  const [tiles, setTiles] = React.useState({ spotify: true, discord: true, calendar: true, sysmon: true, notes: false, weather: true });
+  const STEPS = ['Welcome', 'Audio source', 'Pick a profile', 'Connect tiles', 'Ready'];
+
+  return (
+    <div style={{
+      position: 'absolute', inset: 0, zIndex: 90,
+      background: '#06070a',
+      display: 'flex', flexDirection: 'column',
+    }}>
+      <div style={{
+        position: 'absolute', inset: 0,
+        background: `radial-gradient(ellipse at 30% 20%, ${accent}25 0%, transparent 50%), radial-gradient(ellipse at 70% 80%, ${accent}15 0%, transparent 50%)`,
+        opacity: 0.7,
+      }} />
+      <div style={{ position: 'absolute', inset: 0, background: 'radial-gradient(ellipse at 50% 50%, transparent 30%, rgba(0,0,0,0.5) 100%)' }} />
+      <div style={{
+        position: 'relative', zIndex: 2, padding: '32px 48px',
+        display: 'flex', alignItems: 'center', gap: 16,
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <div style={{ width: 28, height: 28, borderRadius: 8, background: `linear-gradient(135deg, ${accent}, ${accent}aa)`, boxShadow: `0 0 20px ${accent}66` }} />
+          <span style={{ fontSize: 16, fontWeight: 700 }}>Hub</span>
+        </div>
+        <div style={{ flex: 1 }} />
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          {STEPS.map((s, i) => (
+            <React.Fragment key={s}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <div style={{
+                  width: 22, height: 22, borderRadius: 11,
+                  background: i < step ? accent : 'transparent',
+                  border: i === step ? `2px solid ${accent}` : (i < step ? 'none' : '2px solid rgba(255,255,255,0.15)'),
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  fontSize: 10, fontWeight: 700, color: i < step ? '#000' : (i === step ? accent : 'rgba(255,255,255,0.3)'),
+                }}>{i < step ? '✓' : i + 1}</div>
+                <span style={{ fontSize: 12, color: i <= step ? '#fff' : 'rgba(255,255,255,0.3)', fontWeight: i === step ? 600 : 400 }}>{s}</span>
+              </div>
+              {i < STEPS.length - 1 && <div style={{ width: 24, height: 1, background: i < step ? accent : 'rgba(255,255,255,0.1)' }} />}
+            </React.Fragment>
+          ))}
+        </div>
+        <div style={{ flex: 1 }} />
+        <button onClick={onFinish} style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)', background: 'transparent', border: 'none', cursor: 'pointer' }}>Skip setup</button>
+      </div>
+      <div style={{ flex: 1, position: 'relative', zIndex: 2, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 40 }}>
+        {step === 0 && <OnbWelcome accent={accent} />}
+        {step === 1 && <OnbAudio accent={accent} value={audio} setValue={setAudio} />}
+        {step === 2 && <OnbProfile accent={accent} value={profile} setValue={setProfile} />}
+        {step === 3 && <OnbTiles accent={accent} tiles={tiles} setTiles={setTiles} />}
+        {step === 4 && <OnbReady accent={accent} profile={profile} audio={audio} tiles={tiles} />}
+      </div>
+      <div style={{
+        position: 'relative', zIndex: 2, padding: '24px 48px',
+        display: 'flex', alignItems: 'center', gap: 12,
+        borderTop: '1px solid rgba(255,255,255,0.04)',
+      }}>
+        <button onClick={() => step > 0 && setStep(step - 1)} disabled={step === 0} style={{
+          padding: '10px 18px', fontSize: 13, fontWeight: 500,
+          background: 'transparent', color: step === 0 ? 'rgba(255,255,255,0.2)' : 'rgba(255,255,255,0.7)',
+          border: '1px solid rgba(255,255,255,0.08)', borderRadius: 8,
+          cursor: step === 0 ? 'default' : 'pointer',
+        }}>← Back</button>
+        <div style={{ flex: 1 }} />
+        <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.35)', fontFamily: 'JetBrains Mono, ui-monospace, monospace' }}>
+          Step {step + 1} of {STEPS.length}
+        </span>
+        <div style={{ flex: 1 }} />
+        {step < STEPS.length - 1 ? (
+          <button onClick={() => setStep(step + 1)} style={{
+            padding: '10px 22px', fontSize: 13, fontWeight: 600,
+            background: accent, color: '#000', border: 'none', borderRadius: 8,
+            cursor: 'pointer', boxShadow: `0 8px 24px -6px ${accent}aa`,
+          }}>Continue →</button>
+        ) : (
+          <button onClick={onFinish} style={{
+            padding: '10px 22px', fontSize: 13, fontWeight: 600,
+            background: accent, color: '#000', border: 'none', borderRadius: 8,
+            cursor: 'pointer', boxShadow: `0 8px 24px -6px ${accent}aa`,
+          }}>Launch Hub →</button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function OnbWelcome({ accent }) {
+  return (
+    <div style={{ maxWidth: 720, textAlign: 'center' }}>
+      <div style={{
+        width: 96, height: 96, margin: '0 auto 32px', borderRadius: 24,
+        background: `linear-gradient(135deg, ${accent}, ${accent}66)`,
+        boxShadow: `0 20px 80px -10px ${accent}88`,
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+      }}>
+        <span style={{ fontSize: 48, color: '#000', fontWeight: 800 }}>◢</span>
+      </div>
+      <h1 style={{ fontSize: 56, fontWeight: 800, margin: '0 0 16px 0', letterSpacing: '-0.03em' }}>
+        Your second monitor, finally with a job.
+      </h1>
+      <p style={{ fontSize: 18, color: 'rgba(255,255,255,0.6)', lineHeight: 1.5, margin: '0 0 40px 0' }}>
+        Hub turns spare screens into a glanceable cockpit. Audio reactive visualizers, system monitor, your apps as tiles —
+        all themed to whatever's playing.
+      </p>
+      <div style={{ display: 'flex', gap: 24, justifyContent: 'center', marginTop: 48 }}>
+        {[
+          { i: '◢', label: 'Audio reactive' },
+          { i: '▤', label: 'System monitor' },
+          { i: '⊞', label: 'App tiles' },
+          { i: '◐', label: 'Theme-linked' },
+        ].map(f => (
+          <div key={f.label} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
+            <div style={{ width: 48, height: 48, borderRadius: 10, background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 22, color: accent }}>{f.i}</div>
+            <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)' }}>{f.label}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function OnbAudio({ accent, value, setValue }) {
+  const SOURCES = [
+    { id: 'wasapi', name: 'System loopback', subtitle: 'Capture everything on this PC (recommended)', sub2: 'WASAPI · zero config', icon: '◢' },
+    { id: 'spotify', name: 'Spotify', subtitle: 'Direct from Spotify with track metadata', sub2: 'Connects to your account', icon: '♪' },
+    { id: 'mic', name: 'Microphone', subtitle: 'Vocal-driven viz for streaming or DJ sets', sub2: 'Default input device', icon: '◓' },
+    { id: 'cable', name: 'Virtual cable', subtitle: 'Route any specific app or hardware', sub2: 'Advanced · VB-Audio', icon: '⌥' },
+  ];
+  return (
+    <div style={{ maxWidth: 880, width: '100%' }}>
+      <h1 style={{ fontSize: 40, fontWeight: 700, margin: '0 0 8px 0', letterSpacing: '-0.02em', textAlign: 'center' }}>Where's the audio coming from?</h1>
+      <p style={{ fontSize: 15, color: 'rgba(255,255,255,0.5)', margin: '0 0 36px 0', textAlign: 'center' }}>The visualizer needs an audio stream. You can change this anytime.</p>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 14 }}>
+        {SOURCES.map(s => (
+          <button key={s.id} onClick={() => setValue(s.id)} style={{
+            display: 'flex', alignItems: 'flex-start', gap: 16, padding: 20, borderRadius: 12,
+            background: value === s.id ? `${accent}10` : 'rgba(255,255,255,0.02)',
+            border: value === s.id ? `2px solid ${accent}` : '2px solid rgba(255,255,255,0.06)',
+            color: '#fff', textAlign: 'left', cursor: 'pointer',
+            transition: 'all .15s',
+          }}>
+            <div style={{ width: 44, height: 44, borderRadius: 10, background: value === s.id ? accent : 'rgba(255,255,255,0.04)', color: value === s.id ? '#000' : accent, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 22, flexShrink: 0 }}>{s.icon}</div>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 4 }}>{s.name}</div>
+              <div style={{ fontSize: 13, color: 'rgba(255,255,255,0.6)', marginBottom: 6, lineHeight: 1.4 }}>{s.subtitle}</div>
+              <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.35)', fontFamily: 'JetBrains Mono, ui-monospace, monospace', textTransform: 'uppercase', letterSpacing: '.06em' }}>{s.sub2}</div>
+            </div>
+            {value === s.id && <span style={{ fontSize: 14, color: accent }}>●</span>}
+          </button>
+        ))}
+      </div>
+      <div style={{
+        marginTop: 24, padding: 14, borderRadius: 8,
+        background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)',
+        display: 'flex', alignItems: 'center', gap: 12,
+      }}>
+        <div style={{ width: 32, height: 32, borderRadius: 6, background: `${accent}15`, color: accent, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 14 }}>◢</div>
+        <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.6)' }}>Live audio level — </span>
+        <div style={{ flex: 1, display: 'flex', gap: 2, height: 16, alignItems: 'flex-end' }}>
+          {Array.from({ length: 40 }).map((_, i) => (
+            <div key={i} style={{
+              flex: 1, height: `${30 + Math.sin(i * 0.5) * 30 + Math.random() * 30}%`,
+              background: accent, opacity: 0.3 + Math.random() * 0.5, borderRadius: 1,
+            }} />
+          ))}
+        </div>
+        <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)', fontFamily: 'JetBrains Mono, ui-monospace, monospace' }}>−12 dB</span>
+      </div>
+    </div>
+  );
+}
+
+function OnbProfile({ accent, value, setValue }) {
+  const PROFILES = [
+    { id: 'work', name: 'Work', subtitle: 'Calendar, sysmon, notes — focus mode', layout: 'work' },
+    { id: 'gaming', name: 'Gaming', subtitle: 'Big viz hero with sysmon strip', layout: 'gaming' },
+    { id: 'chill', name: 'Chill', subtitle: 'Fullscreen ambient with glass overlays', layout: 'chill' },
+  ];
+  return (
+    <div style={{ maxWidth: 1200, width: '100%' }}>
+      <h1 style={{ fontSize: 40, fontWeight: 700, margin: '0 0 8px 0', letterSpacing: '-0.02em', textAlign: 'center' }}>Pick a starter layout</h1>
+      <p style={{ fontSize: 15, color: 'rgba(255,255,255,0.5)', margin: '0 0 36px 0', textAlign: 'center' }}>You can have multiple profiles and switch with ⌘1/2/3. Customize anytime.</p>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 18 }}>
+        {PROFILES.map(p => (
+          <button key={p.id} onClick={() => setValue(p.id)} style={{
+            padding: 0, borderRadius: 12, overflow: 'hidden', textAlign: 'left',
+            background: value === p.id ? `${accent}10` : 'rgba(255,255,255,0.02)',
+            border: value === p.id ? `2px solid ${accent}` : '2px solid rgba(255,255,255,0.06)',
+            cursor: 'pointer', color: '#fff',
+            transform: value === p.id ? 'translateY(-2px)' : 'none',
+            transition: 'all .15s',
+            boxShadow: value === p.id ? `0 12px 40px -8px ${accent}88` : 'none',
+          }}>
+            <ProfilePreview layout={p.layout} accent={accent} />
+            <div style={{ padding: 18 }}>
+              <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 4 }}>{p.name}</div>
+              <div style={{ fontSize: 13, color: 'rgba(255,255,255,0.55)' }}>{p.subtitle}</div>
+            </div>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function OnbTiles({ accent, tiles, setTiles }) {
+  const AVAILABLE = [
+    { id: 'spotify', name: 'Spotify', desc: 'Now playing + remote', icon: '♪', type: 'integration' },
+    { id: 'discord', name: 'Discord', desc: 'Channels + voice', icon: '◇', type: 'integration' },
+    { id: 'calendar', name: 'Calendar', desc: 'Today + upcoming', icon: '◫', type: 'integration' },
+    { id: 'sysmon', name: 'System monitor', desc: 'Always available', icon: '▤', type: 'built-in', locked: true },
+    { id: 'notes', name: 'Notes scratchpad', desc: 'Markdown · auto-save', icon: '✎', type: 'built-in' },
+    { id: 'weather', name: 'Weather + clock', desc: 'Local conditions', icon: '◐', type: 'built-in' },
+    { id: 'youtube', name: 'YouTube', desc: 'Pinned video', icon: '▶', type: 'integration' },
+    { id: 'web', name: 'Custom web tile', desc: 'Any URL', icon: '◰', type: 'built-in' },
+  ];
+  return (
+    <div style={{ maxWidth: 980, width: '100%' }}>
+      <h1 style={{ fontSize: 40, fontWeight: 700, margin: '0 0 8px 0', letterSpacing: '-0.02em', textAlign: 'center' }}>Connect your tiles</h1>
+      <p style={{ fontSize: 15, color: 'rgba(255,255,255,0.5)', margin: '0 0 36px 0', textAlign: 'center' }}>Tap to add. Integrations open auth in a popup. Add more anytime from edit mode.</p>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12 }}>
+        {AVAILABLE.map(t => {
+          const on = tiles[t.id];
+          const locked = t.locked;
+          return (
+            <button key={t.id} onClick={() => !locked && setTiles({ ...tiles, [t.id]: !on })} style={{
+              padding: 16, borderRadius: 10, textAlign: 'left',
+              background: on ? `${accent}10` : 'rgba(255,255,255,0.02)',
+              border: on ? `1.5px solid ${accent}` : '1.5px solid rgba(255,255,255,0.06)',
+              color: '#fff', cursor: locked ? 'default' : 'pointer',
+              opacity: locked ? 0.7 : 1,
+              display: 'flex', flexDirection: 'column', gap: 8,
+              minHeight: 110,
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <div style={{ width: 36, height: 36, borderRadius: 8, background: on ? accent : 'rgba(255,255,255,0.04)', color: on ? '#000' : accent, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18 }}>{t.icon}</div>
+                {on ? (
+                  <span style={{ fontSize: 10, color: accent, padding: '2px 8px', background: `${accent}20`, borderRadius: 3, fontFamily: 'JetBrains Mono, ui-monospace, monospace' }}>● ADDED</span>
+                ) : locked ? (
+                  <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)', padding: '2px 8px', background: 'rgba(255,255,255,0.04)', borderRadius: 3, fontFamily: 'JetBrains Mono, ui-monospace, monospace' }}>LOCKED</span>
+                ) : (
+                  <span style={{ fontSize: 14, color: 'rgba(255,255,255,0.3)' }}>+</span>
+                )}
+              </div>
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 2 }}>{t.name}</div>
+                <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)', marginBottom: 4 }}>{t.desc}</div>
+                <div style={{ fontSize: 9, color: 'rgba(255,255,255,0.3)', fontFamily: 'JetBrains Mono, ui-monospace, monospace', textTransform: 'uppercase', letterSpacing: '.06em' }}>{t.type}</div>
+              </div>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function OnbReady({ accent, profile, audio, tiles }) {
+  const tileCount = Object.values(tiles).filter(Boolean).length;
+  return (
+    <div style={{ maxWidth: 720, textAlign: 'center' }}>
+      <div style={{
+        width: 96, height: 96, margin: '0 auto 32px', borderRadius: 24,
+        background: `linear-gradient(135deg, ${accent}, ${accent}88)`,
+        boxShadow: `0 20px 80px -10px ${accent}88`,
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+      }}>
+        <span style={{ fontSize: 48, color: '#000', fontWeight: 800 }}>✓</span>
+      </div>
+      <h1 style={{ fontSize: 48, fontWeight: 800, margin: '0 0 16px 0', letterSpacing: '-0.03em' }}>
+        You're set.
+      </h1>
+      <p style={{ fontSize: 16, color: 'rgba(255,255,255,0.6)', lineHeight: 1.5, margin: '0 0 40px 0' }}>
+        Hub will launch with your <b style={{ color: accent }}>{profile || 'Work'}</b> profile, <b style={{ color: accent }}>{tileCount}</b> tiles, audio from <b style={{ color: accent }}>{audio === 'wasapi' ? 'system loopback' : audio}</b>.
+      </p>
+      <div style={{
+        padding: 20, borderRadius: 12, background: 'rgba(255,255,255,0.02)',
+        border: '1px solid rgba(255,255,255,0.06)', textAlign: 'left',
+        display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 12,
+      }}>
+        <KbHint k="⌘ E" desc="Toggle edit mode" />
+        <KbHint k="⌘ 1/2/3" desc="Switch profiles" />
+        <KbHint k="⌘ K" desc="Command palette" />
+        <KbHint k="⌘ ," desc="Settings" />
+        <KbHint k="V" desc="Cycle viz mode" />
+        <KbHint k="?" desc="All shortcuts" />
+      </div>
+    </div>
+  );
+}
+
+function KbHint({ k, desc }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+      <kbd style={{
+        padding: '4px 10px', fontSize: 11, fontWeight: 600,
+        background: 'rgba(255,255,255,0.06)', color: '#fff',
+        border: '1px solid rgba(255,255,255,0.1)', borderRadius: 5,
+        fontFamily: 'JetBrains Mono, ui-monospace, monospace',
+        minWidth: 60, textAlign: 'center',
+      }}>{k}</kbd>
+      <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.6)' }}>{desc}</span>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// App — Hub Layout C
+// ─────────────────────────────────────────────────────────────────────────────
+const TWEAK_DEFAULTS = {
+  vizMode: 'bars',
+  accentTheme: 'auto',
+  density: 'compact',
+};
+
+const ACCENT_PALETTES = {
+  auto:    { label: 'Theme-linked' },
+  mint:    { label: 'Mint',   accent: '#7cf5d4', accent2: '#a78bfa' },
+  coral:   { label: 'Coral',  accent: '#fb7185', accent2: '#facc15' },
+  indigo:  { label: 'Indigo', accent: '#818cf8', accent2: '#06b6d4' },
+  amber:   { label: 'Amber',  accent: '#fbbf24', accent2: '#fb7185' },
+};
+
+function App() {
+  const [t, setTweak] = useTweaks(TWEAK_DEFAULTS);
+  const [track, setTrack] = React.useState(TRACKS[0]);
+  const [editMode, setEditMode] = React.useState(false);
+  const [profile, setProfile] = React.useState('work');
+  const [showSwitcher, setShowSwitcher] = React.useState(false);
+  const [showOnboarding, setShowOnboarding] = React.useState(false);
+
+  const palette = ACCENT_PALETTES[t.accentTheme] || ACCENT_PALETTES.auto;
+  const accent = palette.accent || track.accent;
+  const accent2 = palette.accent2 || track.accent2;
+  const accentLinked = t.accentTheme === 'auto';
+
+  React.useEffect(() => {
+    document.documentElement.style.setProperty('--accent', accent);
+    document.documentElement.style.setProperty('--accent2', accent2);
+  }, [accent, accent2]);
+
+  React.useEffect(() => {
+    const onKey = (e) => {
+      const cmd = e.metaKey || e.ctrlKey;
+      const tag = (e.target && e.target.tagName) || '';
+      const editing = tag === 'INPUT' || tag === 'TEXTAREA' || (e.target && e.target.isContentEditable);
+      if (cmd && e.key === 'e') { e.preventDefault(); setEditMode(m => !m); }
+      else if (cmd && (e.key === '1' || e.key === '2' || e.key === '3')) {
+        e.preventDefault();
+        setProfile(['work', 'gaming', 'chill'][parseInt(e.key) - 1]);
+      }
+      else if (e.key === 'Escape') {
+        if (showSwitcher) setShowSwitcher(false);
+        else if (showOnboarding) setShowOnboarding(false);
+        else if (editMode) setEditMode(false);
+      }
+      else if (!editing && !cmd && (e.key === 'v' || e.key === 'V')) {
+        const modes = ['bars', 'waveform', 'radial', 'particles', 'ambient'];
+        const i = modes.indexOf(t.vizMode);
+        setTweak('vizMode', modes[(i + 1) % modes.length]);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [showSwitcher, editMode, showOnboarding, t.vizMode, setTweak]);
+
+  const [scale, setScale] = React.useState(1);
+  React.useEffect(() => {
+    const fit = () => {
+      const s = Math.min(window.innerWidth / 2560, window.innerHeight / 1440);
+      setScale(s);
+    };
+    fit();
+    window.addEventListener('resize', fit);
+    return () => window.removeEventListener('resize', fit);
+  }, []);
+
+  return (
+    <div style={{ width: '100vw', height: '100vh', background: '#000', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
+      <div style={{ width: 2560, height: 1440, transform: `scale(${scale})`, transformOrigin: 'center center', flexShrink: 0, background: '#06070a', position: 'relative', overflow: 'hidden', borderRadius: 8 }}>
+        <TopChrome accent={accent} editMode={editMode} setEditMode={setEditMode} accentLinked={accentLinked} track={track} profile={profile} setProfile={setProfile} onSwitcher={() => setShowSwitcher(true)} onOnboarding={() => setShowOnboarding(true)} />
+        <div style={{
+          position: 'absolute', top: 56, bottom: 32, left: 20, right: 20,
+          display: 'grid',
+          gridTemplateColumns: '560px 1fr',
+          gridTemplateRows: '1fr',
+          gap: getDensity(t.density).gap,
+        }}>
+          <div style={{ display: 'grid', gridTemplateRows: '1.4fr 1fr 0.7fr 0.6fr 0.6fr', gap: getDensity(t.density).gap, minHeight: 0 }}>
+            <DiscordHiFi density={t.density} accent={accent} />
+            <SpotifyHiFi density={t.density} accent={accent} accent2={accent2} track={track} onPick={setTrack} />
+            <CalendarHiFi density={t.density} accent={accent} />
+            <NotesHiFi density={t.density} accent={accent} />
+            <WebHiFi density={t.density} accent={accent} url="linear.app/inbox" title="Linear" />
+          </div>
+          <div style={{ display: 'grid', gridTemplateRows: '1fr 360px', gap: getDensity(t.density).gap, minHeight: 0 }}>
+            <VizHero
+              mode={t.vizMode}
+              setMode={(m) => setTweak('vizMode', m)}
+              accent={accent}
+              accent2={accent2}
+              track={track}
+              accentLinked={accentLinked}
+            />
+            <div style={{ display: 'grid', gridTemplateColumns: '1.6fr 1fr 1fr', gap: getDensity(t.density).gap, minHeight: 0 }}>
+              <SysMonHiFi density={t.density} accent={accent} accent2={accent2} />
+              <ClockHiFi density={t.density} accent={accent} accent2={accent2} />
+              <CalendarStripHiFi density={t.density} accent={accent} />
+            </div>
+          </div>
+        </div>
+        <BottomStatus accent={accent} onSwitcher={() => setShowSwitcher(true)} onOnboarding={() => setShowOnboarding(true)} profile={profile} />
+        {editMode && <EditModeOverlay accent={accent} accent2={accent2} onExit={() => setEditMode(false)} />}
+        {showSwitcher && <ProfileSwitcher accent={accent} currentProfile={profile} setProfile={setProfile} onClose={() => setShowSwitcher(false)} onCreate={() => setShowSwitcher(false)} />}
+        {showOnboarding && <Onboarding accent={accent} onFinish={() => setShowOnboarding(false)} />}
+      </div>
+
+      <TweaksPanel title="Tweaks" defaultOpen={true}>
+        <TweakSection label="Visualizer" />
+        <TweakRadio label="Mode" value={t.vizMode}
+          options={['bars', 'waveform', 'radial', 'particles', 'ambient']}
+          onChange={(v) => setTweak('vizMode', v)} />
+        <TweakSection label="Accent color" />
+        <TweakSelect label="Source" value={t.accentTheme}
+          options={Object.keys(ACCENT_PALETTES).map(k => ({ value: k, label: ACCENT_PALETTES[k].label }))}
+          onChange={(v) => setTweak('accentTheme', v)} />
+        <div style={{ display: 'flex', gap: 6, padding: '4px 0', alignItems: 'center' }}>
+          <div style={{ width: 22, height: 22, borderRadius: 5, background: accent, border: '1px solid rgba(0,0,0,0.1)' }} />
+          <div style={{ width: 22, height: 22, borderRadius: 5, background: accent2, border: '1px solid rgba(0,0,0,0.1)' }} />
+          <span style={{ fontSize: 10, color: 'rgba(41,38,27,0.55)', fontFamily: 'JetBrains Mono, ui-monospace, monospace', marginLeft: 4 }}>
+            {accentLinked ? `from "${track.title}"` : 'manual'}
+          </span>
+        </div>
+        <TweakSection label="Layout" />
+        <TweakRadio label="Tile density" value={t.density}
+          options={['compact', 'regular', 'spacious']}
+          onChange={(v) => setTweak('density', v)} />
+        <TweakSection label="Demo screens" />
+        <TweakButton label="Edit mode" onClick={() => setEditMode(true)} />
+        <TweakButton label="Profile switcher" onClick={() => setShowSwitcher(true)} />
+        <TweakButton label="First-launch onboarding" onClick={() => setShowOnboarding(true)} />
+      </TweaksPanel>
+    </div>
+  );
+}
+
+function TopChrome({ accent, editMode, setEditMode, accentLinked, track, profile, setProfile, onSwitcher, onOnboarding }) {
+  const PROFILES = [{ id: 'work', name: 'Work' }, { id: 'gaming', name: 'Gaming' }, { id: 'chill', name: 'Chill' }];
+  return (
+    <div style={{
+      position: 'absolute', top: 0, left: 0, right: 0, height: 56,
+      background: 'rgba(8,9,12,0.85)', backdropFilter: 'blur(20px)',
+      borderBottom: '1px solid rgba(255,255,255,0.05)',
+      display: 'flex', alignItems: 'center', padding: '0 18px', gap: 16, zIndex: 10,
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <div style={{ width: 16, height: 16, borderRadius: 5, background: `linear-gradient(135deg, ${accent}, ${accent}99)`, boxShadow: `0 0 12px ${accent}66` }} />
+        <span style={{ fontSize: 12, fontWeight: 700, letterSpacing: '-0.01em' }}>Hub</span>
+      </div>
+      <div style={{ width: 1, height: 18, background: 'rgba(255,255,255,0.08)' }} />
+      <div style={{ display: 'flex', gap: 4 }}>
+        {PROFILES.map((p) => {
+          const active = profile === p.id;
+          return (
+            <button key={p.id} onClick={() => setProfile(p.id)} style={{
+              padding: '5px 12px', fontSize: 11, borderRadius: 6,
+              background: active ? `${accent}20` : 'transparent',
+              color: active ? accent : 'rgba(255,255,255,0.5)',
+              border: active ? `1px solid ${accent}55` : '1px solid transparent',
+              cursor: 'pointer', fontWeight: active ? 600 : 400,
+            }}>{p.name}</button>
+          );
+        })}
+        <button onClick={onSwitcher} title="Open profile switcher" style={{
+          padding: '5px 8px', fontSize: 11, borderRadius: 6,
+          background: 'transparent', color: 'rgba(255,255,255,0.4)',
+          border: '1px solid transparent', cursor: 'pointer',
+        }}>⌃ More</button>
+      </div>
+      <div style={{ flex: 1 }} />
+      {accentLinked && (
+        <span style={{ fontSize: 10, color: accent, padding: '3px 8px', background: accent + '15', borderRadius: 4, border: `1px solid ${accent}44`, letterSpacing: '.05em' }}>
+          ◐ Theme synced to "{track.title}"
+        </span>
+      )}
+      <button onClick={onOnboarding} title="Replay first-launch setup" style={{
+        padding: '5px 10px', fontSize: 11, borderRadius: 6,
+        background: 'transparent', color: 'rgba(255,255,255,0.5)',
+        border: '1px solid rgba(255,255,255,0.1)',
+        cursor: 'pointer', fontWeight: 500,
+      }}>↻ Setup</button>
+      <button onClick={() => setEditMode(!editMode)} style={{
+        padding: '5px 10px', fontSize: 11, borderRadius: 6,
+        background: editMode ? accent : 'transparent', color: editMode ? '#000' : 'rgba(255,255,255,0.7)',
+        border: editMode ? 'none' : '1px solid rgba(255,255,255,0.1)',
+        cursor: 'pointer', fontWeight: 600,
+      }}>✎ Edit</button>
+      <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)', fontFamily: 'JetBrains Mono, ui-monospace, monospace' }}>2560×1440</span>
+    </div>
+  );
+}
+
+function VizHero({ mode, setMode, accent, accent2, track, accentLinked }) {
+  return (
+    <div style={{
+      position: 'relative', overflow: 'hidden',
+      borderRadius: 14,
+      background: '#06070a',
+      border: '1px solid rgba(255,255,255,0.05)',
+      boxShadow: `0 0 60px -20px ${accent}66`,
+    }}>
+      <HiFiVizSurface mode={mode} accent={accent} accent2={accent2} />
+      <div style={{
+        position: 'absolute', inset: 0, pointerEvents: 'none',
+        background: 'linear-gradient(180deg, rgba(0,0,0,0.5) 0%, transparent 18%, transparent 75%, rgba(0,0,0,0.55) 100%)',
+      }} />
+      <VizOverlay track={track} mode={mode} setMode={setMode} accent={accent} accent2={accent2} />
+    </div>
+  );
+}
+
+function BottomStatus({ accent, onSwitcher, onOnboarding, profile }) {
+  return (
+    <div style={{
+      position: 'absolute', bottom: 0, left: 0, right: 0, height: 32,
+      background: 'rgba(8,9,12,0.85)', backdropFilter: 'blur(20px)',
+      borderTop: '1px solid rgba(255,255,255,0.05)',
+      display: 'flex', alignItems: 'center', padding: '0 18px', gap: 18, zIndex: 10,
+      fontSize: 10.5, color: 'rgba(255,255,255,0.45)', fontFamily: 'JetBrains Mono, ui-monospace, monospace',
+    }}>
+      <span style={{ color: accent }}>● 8 tiles</span>
+      <span>CPU 1.2%</span>
+      <span>RAM 142 MB</span>
+      <span>GPU 3.1%</span>
+      <span>Audio: WASAPI loopback</span>
+      <div style={{ flex: 1 }} />
+      <button onClick={onSwitcher} style={{ background: 'transparent', border: 'none', color: 'rgba(255,255,255,0.45)', fontFamily: 'inherit', fontSize: 'inherit', cursor: 'pointer', padding: 0 }}>⌘1/2/3 profile · {profile}</button>
+      <span style={{ color: 'rgba(255,255,255,0.25)' }}>·</span>
+      <span>⌘E edit · ⌘K command · ⌘, settings</span>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>
