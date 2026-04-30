@@ -4,6 +4,7 @@ mod discord;
 mod discord_rpc;
 mod lyrics;
 mod nowplaying;
+mod spotify;
 mod sysmon;
 mod tweaks;
 mod weather;
@@ -25,6 +26,10 @@ pub fn run() {
             discord_rpc::discord_rpc_status,
             discord_rpc::discord_rpc_set_voice_settings,
             discord_rpc::discord_rpc_leave_voice,
+            spotify::spotify_status,
+            spotify::spotify_connect,
+            spotify::spotify_disconnect,
+            spotify::spotify_get_client_id,
             tweaks::tweaks_load,
             tweaks::tweaks_save,
             weather::set_weather_location,
@@ -38,6 +43,7 @@ pub fn run() {
             weather::spawn(app.handle().clone());
             discord::spawn(app.handle().clone());
             discord_rpc::spawn(app.handle().clone());
+            spotify::spawn(app.handle().clone());
             Ok(())
         })
         .run(tauri::generate_context!())
