@@ -138,7 +138,10 @@ function ProfileCard({
     setEditingName(false);
   };
 
-  const tileCount = Object.keys({ ...profile.layout }).length || Object.keys(DEFAULT_LAYOUT).length;
+  // Match the preview: count visible tiles (i.e. not hidden), regardless of
+  // whether their rect is custom or falls back to DEFAULT_LAYOUT.
+  const ALL_TILES: TileId[] = ['discord', 'spotify', 'claude', 'notes', 'sysmon', 'clock', 'viz'];
+  const tileCount = ALL_TILES.filter((id) => !profile.hidden[id]).length;
 
   return (
     <div style={{
