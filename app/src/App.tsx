@@ -231,6 +231,7 @@ export default function App() {
             sensitivity={t.vizSensitivity}
             smoothing={t.vizSmoothing}
             lyricsOverlayEnabled={t.lyricsOverlayEnabled}
+            paused={showGallery}
           />
         );
     }

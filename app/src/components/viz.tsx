@@ -123,47 +123,72 @@ export interface VizProps {
   sensitivity?: number;
   /** Exponential smoothing factor on bands (0=no smoothing, 0.95=heavy). Default 0. */
   smoothing?: number;
+  /** When true, viz freezes — skips reader.read() and drawing each frame.
+   *  rAF is still scheduled so resume is instant on unpause. */
+  paused?: boolean;
 }
 
-export function HiFiVizBars({ accent, accent2, spectrumRef, sensitivity = 1, smoothing = 0 }: VizProps) {
+/** Returns a stable ref whose `.current` is `true` when the viz should run.
+ *  False when `paused` is true OR the document is hidden (tab/window minimized).
+ *  Each viz reads `gate.current` inside its rAF tick to decide whether to draw. */
+export function useAnimateGate(paused?: boolean): React.MutableRefObject<boolean> {
+  const ref = useRef(true);
+  useEffect(() => {
+    const update = () => {
+      ref.current = !paused && (typeof document === 'undefined' || document.visibilityState !== 'hidden');
+    };
+    update();
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', update);
+      return () => document.removeEventListener('visibilitychange', update);
+    }
+    return undefined;
+  }, [paused]);
+  return ref;
+}
+
+export function HiFiVizBars({ accent, accent2, spectrumRef, sensitivity = 1, smoothing = 0, paused }: VizProps) {
   const count = 64;
   const barsRef = useRef<(HTMLDivElement | null)[]>([]);
   const peaksRef = useRef<number[]>(new Array(count).fill(0));
   const smoothedRef = useRef<number[]>(new Array(count).fill(0));
   const rafRef = useRef(0);
+  const gate = useAnimateGate(paused);
 
   useEffect(() => {
     let t = 0;
     const tick = () => {
-      t += 0.04;
-      const live = spectrumRef?.current.live === true;
-      const bands = spectrumRef?.current.bands;
-      const sm = Math.max(0, Math.min(0.95, smoothing));
-      for (let i = 0; i < count; i++) {
-        let raw: number;
-        if (live && bands) {
-          raw = bands[i] ?? 0;
-        } else {
-          const x = i / count;
-          const env = Math.pow(1 - x, 1.2) * 0.55 + 0.18;
-          const a = Math.sin(t * 1.6 + i * 0.18) * 0.18;
-          const b = Math.sin(t * 0.7 + i * 0.05) * 0.12;
-          const c = Math.sin(t * 4.2 + i * 1.1) * 0.06;
-          const noise = (Math.sin(i * 1.7 + t) * 0.5 + Math.cos(i * 0.9 + t * 2) * 0.5) * 0.08;
-          raw = env + a + b + c + noise;
-        }
-        const scaled = raw * sensitivity;
-        const prev = smoothedRef.current[i] ?? 0;
-        const sm_v = prev * sm + scaled * (1 - sm);
-        smoothedRef.current[i] = sm_v;
-        const h = Math.max(0.04, Math.min(1, sm_v));
+      if (gate.current) {
+        t += 0.04;
+        const live = spectrumRef?.current.live === true;
+        const bands = spectrumRef?.current.bands;
+        const sm = Math.max(0, Math.min(0.95, smoothing));
+        for (let i = 0; i < count; i++) {
+          let raw: number;
+          if (live && bands) {
+            raw = bands[i] ?? 0;
+          } else {
+            const x = i / count;
+            const env = Math.pow(1 - x, 1.2) * 0.55 + 0.18;
+            const a = Math.sin(t * 1.6 + i * 0.18) * 0.18;
+            const b = Math.sin(t * 0.7 + i * 0.05) * 0.12;
+            const c = Math.sin(t * 4.2 + i * 1.1) * 0.06;
+            const noise = (Math.sin(i * 1.7 + t) * 0.5 + Math.cos(i * 0.9 + t * 2) * 0.5) * 0.08;
+            raw = env + a + b + c + noise;
+          }
+          const scaled = raw * sensitivity;
+          const prev = smoothedRef.current[i] ?? 0;
+          const sm_v = prev * sm + scaled * (1 - sm);
+          smoothedRef.current[i] = sm_v;
+          const h = Math.max(0.04, Math.min(1, sm_v));
 
-        const bar = barsRef.current[i];
-        if (bar) bar.style.transform = `scaleY(${h})`;
-        if (peaksRef.current[i]! < h) peaksRef.current[i] = h;
-        else peaksRef.current[i] = Math.max(h, peaksRef.current[i]! - 0.008);
-        const peak = barsRef.current[i + count];
-        if (peak) peak.style.transform = `translateY(${-peaksRef.current[i]! * 100}%)`;
+          const bar = barsRef.current[i];
+          if (bar) bar.style.transform = `scaleY(${h})`;
+          if (peaksRef.current[i]! < h) peaksRef.current[i] = h;
+          else peaksRef.current[i] = Math.max(h, peaksRef.current[i]! - 0.008);
+          const peak = barsRef.current[i + count];
+          if (peak) peak.style.transform = `translateY(${-peaksRef.current[i]! * 100}%)`;
+        }
       }
       rafRef.current = requestAnimationFrame(tick);
     };
@@ -195,57 +220,60 @@ export function HiFiVizBars({ accent, accent2, spectrumRef, sensitivity = 1, smo
   );
 }
 
-export function HiFiVizWaveform({ accent, accent2, spectrumRef, sensitivity = 1, smoothing = 0 }: VizProps) {
+export function HiFiVizWaveform({ accent, accent2, spectrumRef, sensitivity = 1, smoothing = 0, paused }: VizProps) {
   const ref = useRef<SVGPolylineElement | null>(null);
   const ref2 = useRef<SVGPolylineElement | null>(null);
   const smoothedRef = useRef<number[]>(new Array(200).fill(0));
+  const gate = useAnimateGate(paused);
   useEffect(() => {
     let t = 0;
     let raf = 0;
     const N = 200;
     const tick = () => {
-      t += 0.05;
-      const live = spectrumRef?.current.live === true;
-      const bands = spectrumRef?.current.bands;
-      const level = spectrumRef?.current.level ?? 0;
-      const sm = Math.max(0, Math.min(0.95, smoothing));
-      const pts: string[] = [];
-      for (let i = 0; i < N; i++) {
-        const x = (i / (N - 1)) * 100;
-        let y: number;
-        if (live && bands) {
-          // Sample lower-mid bins (most musical energy lives there); the top
-          // 16 kHz band is usually silent and made the right edge go flat.
-          // Squaring the position skews the mapping toward the energetic end.
-          const t_norm = i / (N - 1);
-          const biased = Math.pow(t_norm, 1.6);
-          const maxBand = Math.floor(bands.length * 0.7);
-          const bandIdx = Math.min(maxBand, Math.floor(biased * maxBand));
-          const bandV = bands[bandIdx] ?? 0;
-          // Blend: spectral detail + overall level + a tiny baseline so the
-          // wave breathes even in very quiet passages.
-          const vRaw = (bandV * 0.55 + level * 0.45 + 0.06) * sensitivity;
-          const prev = smoothedRef.current[i] ?? 0;
-          const v = prev * sm + vRaw * (1 - sm);
-          smoothedRef.current[i] = v;
-          const phase = Math.sin(i * 0.4 + t * 1.3);
-          y = 50 + phase * v * 35;
-        } else {
-          const wave = Math.sin(i * 0.18 + t) * 14
-            + Math.sin(i * 0.07 + t * 0.7) * 8
-            + Math.sin(i * 0.5 + t * 2.1) * 3;
-          const env = Math.sin(i * 0.04 + t * 0.3) * 0.5 + 0.7;
-          const yRaw = (wave * env) * sensitivity;
-          const prev = smoothedRef.current[i] ?? 0;
-          const yS = prev * sm + yRaw * (1 - sm);
-          smoothedRef.current[i] = yS;
-          y = 50 + yS;
+      if (gate.current) {
+        t += 0.05;
+        const live = spectrumRef?.current.live === true;
+        const bands = spectrumRef?.current.bands;
+        const level = spectrumRef?.current.level ?? 0;
+        const sm = Math.max(0, Math.min(0.95, smoothing));
+        const pts: string[] = [];
+        for (let i = 0; i < N; i++) {
+          const x = (i / (N - 1)) * 100;
+          let y: number;
+          if (live && bands) {
+            // Sample lower-mid bins (most musical energy lives there); the top
+            // 16 kHz band is usually silent and made the right edge go flat.
+            // Squaring the position skews the mapping toward the energetic end.
+            const t_norm = i / (N - 1);
+            const biased = Math.pow(t_norm, 1.6);
+            const maxBand = Math.floor(bands.length * 0.7);
+            const bandIdx = Math.min(maxBand, Math.floor(biased * maxBand));
+            const bandV = bands[bandIdx] ?? 0;
+            // Blend: spectral detail + overall level + a tiny baseline so the
+            // wave breathes even in very quiet passages.
+            const vRaw = (bandV * 0.55 + level * 0.45 + 0.06) * sensitivity;
+            const prev = smoothedRef.current[i] ?? 0;
+            const v = prev * sm + vRaw * (1 - sm);
+            smoothedRef.current[i] = v;
+            const phase = Math.sin(i * 0.4 + t * 1.3);
+            y = 50 + phase * v * 35;
+          } else {
+            const wave = Math.sin(i * 0.18 + t) * 14
+              + Math.sin(i * 0.07 + t * 0.7) * 8
+              + Math.sin(i * 0.5 + t * 2.1) * 3;
+            const env = Math.sin(i * 0.04 + t * 0.3) * 0.5 + 0.7;
+            const yRaw = (wave * env) * sensitivity;
+            const prev = smoothedRef.current[i] ?? 0;
+            const yS = prev * sm + yRaw * (1 - sm);
+            smoothedRef.current[i] = yS;
+            y = 50 + yS;
+          }
+          pts.push(`${x},${y}`);
         }
-        pts.push(`${x},${y}`);
+        const d = pts.join(' ');
+        ref.current?.setAttribute('points', d);
+        ref2.current?.setAttribute('points', d);
       }
-      const d = pts.join(' ');
-      ref.current?.setAttribute('points', d);
-      ref2.current?.setAttribute('points', d);
       raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
@@ -265,49 +293,52 @@ export function HiFiVizWaveform({ accent, accent2, spectrumRef, sensitivity = 1,
   );
 }
 
-export function HiFiVizRadial({ accent, accent2, spectrumRef, sensitivity = 1, smoothing = 0 }: VizProps) {
+export function HiFiVizRadial({ accent, accent2, spectrumRef, sensitivity = 1, smoothing = 0, paused }: VizProps) {
   const linesRef = useRef<(SVGLineElement | null)[]>([]);
   const groupRef = useRef<SVGGElement | null>(null);
   const N = 96;
   const smoothedRef = useRef<number[]>(new Array(N).fill(0));
+  const gate = useAnimateGate(paused);
   useEffect(() => {
     let t = 0;
     let raf = 0;
     const tick = () => {
-      t += 0.03;
-      const live = spectrumRef?.current.live === true;
-      const bands = spectrumRef?.current.bands;
-      const sm = Math.max(0, Math.min(0.95, smoothing));
-      groupRef.current?.setAttribute('transform', `rotate(${t * 8})`);
-      for (let i = 0; i < N; i++) {
-        const x = i / N;
-        let raw: number;
-        if (live && bands) {
-          // Mirror the spectrum around the circle: first half is bands, second half mirrors.
-          const half = N / 2;
-          const idx = i < half ? i : N - 1 - i;
-          const bandIdx = Math.floor((idx / half) * (bands.length - 1));
-          raw = (bands[bandIdx] ?? 0) * 1.1 + 0.08;
-        } else {
-          const a = Math.sin(t * 1.5 + i * 0.3) * 0.2;
-          const b = Math.sin(t * 0.8 + x * Math.PI * 8) * 0.25;
-          const env = 0.35 + Math.sin(x * Math.PI * 4) * 0.15;
-          raw = env + a + b;
-        }
-        const scaled = raw * sensitivity;
-        const prev = smoothedRef.current[i] ?? 0;
-        const sm_v = prev * sm + scaled * (1 - sm);
-        smoothedRef.current[i] = sm_v;
-        const h = Math.max(0.1, Math.min(1, sm_v));
-        const ln = linesRef.current[i];
-        if (ln) {
-          const ang = (i / N) * Math.PI * 2;
-          const r1 = 14, r2 = 14 + h * 22;
-          ln.setAttribute('x1', String(Math.cos(ang) * r1));
-          ln.setAttribute('y1', String(Math.sin(ang) * r1));
-          ln.setAttribute('x2', String(Math.cos(ang) * r2));
-          ln.setAttribute('y2', String(Math.sin(ang) * r2));
-          ln.setAttribute('opacity', String(0.4 + h * 0.6));
+      if (gate.current) {
+        t += 0.03;
+        const live = spectrumRef?.current.live === true;
+        const bands = spectrumRef?.current.bands;
+        const sm = Math.max(0, Math.min(0.95, smoothing));
+        groupRef.current?.setAttribute('transform', `rotate(${t * 8})`);
+        for (let i = 0; i < N; i++) {
+          const x = i / N;
+          let raw: number;
+          if (live && bands) {
+            // Mirror the spectrum around the circle: first half is bands, second half mirrors.
+            const half = N / 2;
+            const idx = i < half ? i : N - 1 - i;
+            const bandIdx = Math.floor((idx / half) * (bands.length - 1));
+            raw = (bands[bandIdx] ?? 0) * 1.1 + 0.08;
+          } else {
+            const a = Math.sin(t * 1.5 + i * 0.3) * 0.2;
+            const b = Math.sin(t * 0.8 + x * Math.PI * 8) * 0.25;
+            const env = 0.35 + Math.sin(x * Math.PI * 4) * 0.15;
+            raw = env + a + b;
+          }
+          const scaled = raw * sensitivity;
+          const prev = smoothedRef.current[i] ?? 0;
+          const sm_v = prev * sm + scaled * (1 - sm);
+          smoothedRef.current[i] = sm_v;
+          const h = Math.max(0.1, Math.min(1, sm_v));
+          const ln = linesRef.current[i];
+          if (ln) {
+            const ang = (i / N) * Math.PI * 2;
+            const r1 = 14, r2 = 14 + h * 22;
+            ln.setAttribute('x1', String(Math.cos(ang) * r1));
+            ln.setAttribute('y1', String(Math.sin(ang) * r1));
+            ln.setAttribute('x2', String(Math.cos(ang) * r2));
+            ln.setAttribute('y2', String(Math.sin(ang) * r2));
+            ln.setAttribute('opacity', String(0.4 + h * 0.6));
+          }
         }
       }
       raf = requestAnimationFrame(tick);
@@ -335,8 +366,9 @@ export function HiFiVizRadial({ accent, accent2, spectrumRef, sensitivity = 1, s
   );
 }
 
-export function HiFiVizParticles({ accent, accent2, spectrumRef, sensitivity = 1, smoothing = 0 }: VizProps) {
+export function HiFiVizParticles({ accent, accent2, spectrumRef, sensitivity = 1, smoothing = 0, paused }: VizProps) {
   const ref = useRef<HTMLCanvasElement | null>(null);
+  const gate = useAnimateGate(paused);
   useEffect(() => {
     const canvas = ref.current;
     if (!canvas) return;
@@ -373,82 +405,84 @@ export function HiFiVizParticles({ accent, accent2, spectrumRef, sensitivity = 1
     let bassSmoothed = 0;
     let bassReference = 0;  // slow-tracking baseline; spike = bass - reference
     const tick = () => {
-      t += 0.02;
-      const w = canvas.width, h = canvas.height;
-      ctx.clearRect(0, 0, w, h);
-      const live = spectrumRef?.current.live === true;
-      const bands = spectrumRef?.current.bands;
-      const level = spectrumRef?.current.level ?? 0;
-      const sm = Math.max(0, Math.min(0.95, smoothing));
-      // Bass = energy across the lowest ~8 bands, mixed with overall RMS for
-      // snappier reaction on transient kicks. Falls back to a slow sine.
-      let bassRaw: number;
-      if (live && bands) {
-        let sum = 0;
-        const lowN = Math.min(8, bands.length);
-        for (let i = 0; i < lowN; i++) sum += bands[i] ?? 0;
-        const lowAvg = sum / lowN;
-        bassRaw = (lowAvg * 0.7 + level * 0.6) * 1.6 + 0.08;
-      } else {
-        bassRaw = (Math.sin(t) * 0.5 + 0.5) * 0.5 + 0.3;
-      }
-      const scaled = bassRaw * sensitivity;
-      bassSmoothed = bassSmoothed * sm + scaled * (1 - sm);
-      const bass = Math.min(1.5, bassSmoothed);
+      if (gate.current) {
+        t += 0.02;
+        const w = canvas.width, h = canvas.height;
+        ctx.clearRect(0, 0, w, h);
+        const live = spectrumRef?.current.live === true;
+        const bands = spectrumRef?.current.bands;
+        const level = spectrumRef?.current.level ?? 0;
+        const sm = Math.max(0, Math.min(0.95, smoothing));
+        // Bass = energy across the lowest ~8 bands, mixed with overall RMS for
+        // snappier reaction on transient kicks. Falls back to a slow sine.
+        let bassRaw: number;
+        if (live && bands) {
+          let sum = 0;
+          const lowN = Math.min(8, bands.length);
+          for (let i = 0; i < lowN; i++) sum += bands[i] ?? 0;
+          const lowAvg = sum / lowN;
+          bassRaw = (lowAvg * 0.7 + level * 0.6) * 1.6 + 0.08;
+        } else {
+          bassRaw = (Math.sin(t) * 0.5 + 0.5) * 0.5 + 0.3;
+        }
+        const scaled = bassRaw * sensitivity;
+        bassSmoothed = bassSmoothed * sm + scaled * (1 - sm);
+        const bass = Math.min(1.5, bassSmoothed);
 
-      // Spike detection: bass exceeding the slow-tracked reference is "the beat".
-      // The reference catches up slowly so a sustained loud passage still has beats.
-      bassReference = bassReference * 0.92 + bass * 0.08;
-      const spike = Math.max(0, bass - bassReference); // 0..~0.6 typical
+        // Spike detection: bass exceeding the slow-tracked reference is "the beat".
+        // The reference catches up slowly so a sustained loud passage still has beats.
+        bassReference = bassReference * 0.92 + bass * 0.08;
+        const spike = Math.max(0, bass - bassReference); // 0..~0.6 typical
 
-      ctx.fillStyle = accent2 + '11';
-      ctx.fillRect(0, 0, w, h);
+        ctx.fillStyle = accent2 + '11';
+        ctx.fillRect(0, 0, w, h);
 
-      // Outward kick on beats — falls off with distance from center, so the
-      // shockwave moves the inner particles more than the edge ones.
-      const kickStrength = spike * 0.012;
-      const springK = 0.018;  // pull-back-to-home force
-      const drag = 0.86;
+        // Outward kick on beats — falls off with distance from center, so the
+        // shockwave moves the inner particles more than the edge ones.
+        const kickStrength = spike * 0.012;
+        const springK = 0.018;  // pull-back-to-home force
+        const drag = 0.86;
 
-      for (const p of pts) {
-        // Drift the home position so the scene stays alive between beats.
-        // Bounce off a 5% inner margin so homes never reach the corners.
-        p.homeX += p.vhomeX;
-        p.homeY += p.vhomeY;
-        if (p.homeX < 0.05) { p.homeX = 0.05; p.vhomeX = -p.vhomeX; }
-        else if (p.homeX > 0.95) { p.homeX = 0.95; p.vhomeX = -p.vhomeX; }
-        if (p.homeY < 0.05) { p.homeY = 0.05; p.vhomeY = -p.vhomeY; }
-        else if (p.homeY > 0.95) { p.homeY = 0.95; p.vhomeY = -p.vhomeY; }
+        for (const p of pts) {
+          // Drift the home position so the scene stays alive between beats.
+          // Bounce off a 5% inner margin so homes never reach the corners.
+          p.homeX += p.vhomeX;
+          p.homeY += p.vhomeY;
+          if (p.homeX < 0.05) { p.homeX = 0.05; p.vhomeX = -p.vhomeX; }
+          else if (p.homeX > 0.95) { p.homeX = 0.95; p.vhomeX = -p.vhomeX; }
+          if (p.homeY < 0.05) { p.homeY = 0.05; p.vhomeY = -p.vhomeY; }
+          else if (p.homeY > 0.95) { p.homeY = 0.95; p.vhomeY = -p.vhomeY; }
 
-        // Spring force toward (drifting) home keeps the particle near it but
-        // free to wander; beat kicks displace it transiently.
-        p.vx += (p.homeX - p.x) * springK;
-        p.vy += (p.homeY - p.y) * springK;
+          // Spring force toward (drifting) home keeps the particle near it but
+          // free to wander; beat kicks displace it transiently.
+          p.vx += (p.homeX - p.x) * springK;
+          p.vy += (p.homeY - p.y) * springK;
 
-        // Outward kick from center on bass spikes.
-        const dx = p.x - 0.5;
-        const dy = p.y - 0.5;
-        const dist = Math.sqrt(dx * dx + dy * dy) + 0.0001;
-        const inv = 1 / dist;
-        const falloff = 1 / (1 + dist * 5);
-        p.vx += (dx * inv) * kickStrength * falloff;
-        p.vy += (dy * inv) * kickStrength * falloff;
+          // Outward kick from center on bass spikes.
+          const dx = p.x - 0.5;
+          const dy = p.y - 0.5;
+          const dist = Math.sqrt(dx * dx + dy * dy) + 0.0001;
+          const inv = 1 / dist;
+          const falloff = 1 / (1 + dist * 5);
+          p.vx += (dx * inv) * kickStrength * falloff;
+          p.vy += (dy * inv) * kickStrength * falloff;
 
-        p.vx *= drag;
-        p.vy *= drag;
+          p.vx *= drag;
+          p.vy *= drag;
 
-        p.x += p.vx;
-        p.y += p.vy;
+          p.x += p.vx;
+          p.y += p.vy;
 
-        const px = p.x * w, py = p.y * h;
-        const r = p.r * dpr * (0.3 + bass * 2.8);
-        const grad = ctx.createRadialGradient(px, py, 0, px, py, r * 4);
-        grad.addColorStop(0, p.hue > 0.5 ? accent : accent2);
-        grad.addColorStop(1, 'transparent');
-        ctx.fillStyle = grad;
-        ctx.beginPath();
-        ctx.arc(px, py, r * 4, 0, Math.PI * 2);
-        ctx.fill();
+          const px = p.x * w, py = p.y * h;
+          const r = p.r * dpr * (0.3 + bass * 2.8);
+          const grad = ctx.createRadialGradient(px, py, 0, px, py, r * 4);
+          grad.addColorStop(0, p.hue > 0.5 ? accent : accent2);
+          grad.addColorStop(1, 'transparent');
+          ctx.fillStyle = grad;
+          ctx.beginPath();
+          ctx.arc(px, py, r * 4, 0, Math.PI * 2);
+          ctx.fill();
+        }
       }
       raf = requestAnimationFrame(tick);
     };
@@ -458,23 +492,26 @@ export function HiFiVizParticles({ accent, accent2, spectrumRef, sensitivity = 1
   return <canvas ref={ref} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }} />;
 }
 
-export function HiFiVizAmbient({ accent, accent2, spectrumRef, sensitivity = 1, smoothing = 0 }: VizProps) {
+export function HiFiVizAmbient({ accent, accent2, spectrumRef, sensitivity = 1, smoothing = 0, paused }: VizProps) {
   const blobsRef = useRef<HTMLDivElement | null>(null);
+  const gate = useAnimateGate(paused);
   useEffect(() => {
     const reader = makeSpectrumReader(48, spectrumRef, sensitivity, smoothing);
     let raf = 0;
     const tick = () => {
-      reader.read();
-      const bass = reader.bands.bass;
-      const mid = reader.bands.mid;
-      const el = blobsRef.current;
-      if (el) {
-        // Bass slowly inflates the blobs; mid gently nudges saturation.
-        const scale = 1 + bass * 0.18;
-        const sat = 1.2 + mid * 0.6;
-        const blur = 2 + (1 - bass) * 4; // softer when quiet, sharper on bass
-        el.style.transform = `scale(${scale})`;
-        el.style.filter = `blur(${blur}px) saturate(${sat})`;
+      if (gate.current) {
+        reader.read();
+        const bass = reader.bands.bass;
+        const mid = reader.bands.mid;
+        const el = blobsRef.current;
+        if (el) {
+          // Bass slowly inflates the blobs; mid gently nudges saturation.
+          const scale = 1 + bass * 0.18;
+          const sat = 1.2 + mid * 0.6;
+          const blur = 2 + (1 - bass) * 4; // softer when quiet, sharper on bass
+          el.style.transform = `scale(${scale})`;
+          el.style.filter = `blur(${blur}px) saturate(${sat})`;
+        }
       }
       raf = requestAnimationFrame(tick);
     };
@@ -507,8 +544,8 @@ export function HiFiVizAmbient({ accent, accent2, spectrumRef, sensitivity = 1, 
   );
 }
 
-export function HiFiVizSurface({ mode, accent, accent2, spectrumRef, sensitivity, smoothing }: { mode: VizMode } & VizProps) {
-  const props = { accent, accent2, spectrumRef, sensitivity, smoothing };
+export function HiFiVizSurface({ mode, accent, accent2, spectrumRef, sensitivity, smoothing, paused }: { mode: VizMode } & VizProps) {
+  const props = { accent, accent2, spectrumRef, sensitivity, smoothing, paused };
   switch (mode) {
     case 'bars':         return <HiFiVizBars {...props} />;
     case 'waveform':     return <HiFiVizWaveform {...props} />;
@@ -658,6 +695,7 @@ export function VizOverlay({
 export function VizHero({
   mode, setMode, accent, accent2, track, spectrumRef, playback,
   showArtBg = false, sensitivity = 1, smoothing = 0, lyricsOverlayEnabled = true,
+  paused = false,
 }: {
   mode: VizMode;
   setMode: (m: VizMode) => void;
@@ -671,6 +709,7 @@ export function VizHero({
   sensitivity?: number;
   smoothing?: number;
   lyricsOverlayEnabled?: boolean;
+  paused?: boolean;
 }) {
   return (
     <div style={{
@@ -679,7 +718,7 @@ export function VizHero({
       borderRadius: 14,
       background: '#06070a',
       border: '1px solid rgba(255,255,255,0.05)',
-      boxShadow: `0 0 60px -20px ${accent}66`,
+      boxShadow: `0 0 32px -16px ${accent}66`,
     }}>
       {showArtBg && (
         <div style={{
@@ -687,14 +726,14 @@ export function VizHero({
           background: track.cover,
           backgroundSize: 'cover',
           backgroundPosition: 'center',
-          filter: 'blur(48px) saturate(1.4) brightness(0.45)',
+          filter: 'blur(24px) saturate(1.4) brightness(0.45)',
           transform: 'scale(1.12)',
           pointerEvents: 'none',
           zIndex: 0,
         }} />
       )}
       <div style={{ position: 'absolute', inset: 0, zIndex: 1 }}>
-        <HiFiVizSurface mode={mode} accent={accent} accent2={accent2} spectrumRef={spectrumRef} sensitivity={sensitivity} smoothing={smoothing} />
+        <HiFiVizSurface mode={mode} accent={accent} accent2={accent2} spectrumRef={spectrumRef} sensitivity={sensitivity} smoothing={smoothing} paused={paused} />
       </div>
       <div style={{
         position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: 2,

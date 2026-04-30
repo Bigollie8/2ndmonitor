@@ -182,6 +182,14 @@ function GalleryCard({
   onPick: () => void;
   onFocus: () => void;
 }) {
+  const [hovered, setHovered] = useState(false);
+  const [warmupOver, setWarmupOver] = useState(false);
+  useEffect(() => {
+    const id = setTimeout(() => setWarmupOver(true), 1200);
+    return () => clearTimeout(id);
+  }, []);
+  const paused = !active && !hovered && warmupOver;
+
   return (
     <div style={{
       position: 'relative',
@@ -192,17 +200,20 @@ function GalleryCard({
       cursor: 'pointer',
     }}
     onMouseEnter={(e) => {
+      setHovered(true);
       if (!active) e.currentTarget.style.borderColor = `${accent}66`;
       e.currentTarget.style.transform = 'translateY(-2px)';
     }}
     onMouseLeave={(e) => {
+      setHovered(false);
       if (!active) e.currentTarget.style.borderColor = 'rgba(255,255,255,0.06)';
       e.currentTarget.style.transform = 'none';
     }}
     onClick={onPick}>
       <div style={{ position: 'relative', width: '100%', aspectRatio: '16/9', background: '#06070a' }}>
         <HiFiVizSurface mode={style.id} accent={accent} accent2={accent2}
-          spectrumRef={spectrumRef} sensitivity={sensitivity} smoothing={smoothing} />
+          spectrumRef={spectrumRef} sensitivity={sensitivity} smoothing={smoothing}
+          paused={paused} />
         <div style={{
           position: 'absolute', top: 12, left: 12,
           padding: '3px 8px', fontSize: 10, fontWeight: 600,
