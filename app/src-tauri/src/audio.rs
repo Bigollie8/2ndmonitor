@@ -21,8 +21,17 @@ use tauri::{AppHandle, Emitter, Runtime};
 
 const FFT_SIZE: usize = 2048;
 const SPECTRUM_BANDS: usize = 64;
-/// How often we re-emit a spectrum frame to the frontend.
-const EMIT_HZ: u64 = 60;
+/// How often we re-emit a spectrum frame to the frontend. Atomic so the
+/// frontend can dial it down via the `set_audio_emit_hz` command tied to
+/// the perf-mode tweak — at 60Hz the FFT thread is a real CPU/IPC cost
+/// when audio is actively playing.
+static EMIT_HZ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(30);
+
+#[tauri::command]
+pub fn set_audio_emit_hz(hz: u64) {
+    let clamped = hz.clamp(5, 120);
+    EMIT_HZ.store(clamped, std::sync::atomic::Ordering::Relaxed);
+}
 /// Most we'll ever buffer (samples). Caps memory if the processor stalls.
 const RING_CAP: usize = FFT_SIZE * 8;
 
@@ -162,9 +171,12 @@ fn process_loop<R: Runtime>(
     let mut samples = vec![0f32; FFT_SIZE];
     let mut smoothed = vec![0f32; SPECTRUM_BANDS];
 
-    let frame_interval = Duration::from_millis(1000 / EMIT_HZ);
+    // Initial interval; recomputed each iteration so a runtime change in
+    // EMIT_HZ takes effect on the next tick.
 
     loop {
+        let hz = EMIT_HZ.load(std::sync::atomic::Ordering::Relaxed);
+        let frame_interval = Duration::from_millis(1000 / hz.max(1));
         thread::sleep(frame_interval);
 
         // Snapshot the most-recent FFT_SIZE samples without holding the lock

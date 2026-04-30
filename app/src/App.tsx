@@ -171,24 +171,34 @@ export default function App() {
   }, [accent, accent2]);
 
   useEffect(() => {
+    let audioHz = 30;
     switch (t.perfMode) {
       case 'uncapped':
         setVizDprCap(window.devicePixelRatio || 1);
-        setVizMaxFps(0);  // no cap — let rAF run at native rate
+        setVizMaxFps(0);
+        audioHz = 60;
         break;
       case 'high':
         setVizDprCap(1.5);
         setVizMaxFps(120);
+        audioHz = 60;
         break;
       case 'balanced':
-        setVizDprCap(1.25);
+        setVizDprCap(1.0);
         setVizMaxFps(60);
+        audioHz = 30;
         break;
       case 'battery':
         setVizDprCap(1.0);
         setVizMaxFps(30);
+        audioHz = 15;
         break;
     }
+    // Push the audio FFT rate to Rust. Halving it on Balanced/Battery is the
+    // biggest single CPU win when audio is actively playing.
+    void import('@tauri-apps/api/core').then(({ invoke }) => {
+      invoke('set_audio_emit_hz', { hz: audioHz }).catch(() => {});
+    });
     // Nudge canvases to re-read their bounding rect with the new DPR.
     // ResizeObserver fires on subtree size changes; window resize is the cheap
     // trigger that all our viz already listen to.
@@ -517,10 +527,10 @@ export default function App() {
           onChange={(v) => setTweak('perfMode', v)}
         />
         <div style={{ fontSize: 10, color: 'rgba(41,38,27,0.55)', padding: '2px 0 6px', lineHeight: 1.45 }}>
-          {t.perfMode === 'uncapped' && 'Native DPR · uncapped fps · no idle pause'}
-          {t.perfMode === 'high'     && 'DPR cap 1.5× · 120 fps cap'}
-          {t.perfMode === 'balanced' && 'DPR cap 1.25× · 60 fps cap'}
-          {t.perfMode === 'battery'  && 'DPR cap 1× · 30 fps cap · hero pauses when idle'}
+          {t.perfMode === 'uncapped' && 'Native DPR · uncapped fps · 60 Hz audio · no idle pause'}
+          {t.perfMode === 'high'     && 'DPR cap 1.5× · 120 fps · 60 Hz audio'}
+          {t.perfMode === 'balanced' && 'DPR cap 1× · 60 fps · 30 Hz audio'}
+          {t.perfMode === 'battery'  && 'DPR cap 1× · 30 fps · 15 Hz audio · hero pauses when idle'}
         </div>
         <TweakSection label="Tiles · show / hide" />
         {ALL_TILES.filter(({ id }) => id !== 'viz').map((def) => {

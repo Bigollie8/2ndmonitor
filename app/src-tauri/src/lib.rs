@@ -33,6 +33,7 @@ pub fn run() {
             tweaks::tweaks_load,
             tweaks::tweaks_save,
             weather::set_weather_location,
+            audio::set_audio_emit_hz,
         ])
         .setup(|app| {
             sysmon::spawn(app.handle().clone());
