@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { TileId, Layout } from './state/layout';
 import { DEFAULT_LAYOUT } from './state/layout';
-import type { Track, Profile, AccentTheme, VizMode, Density, Todo, WeatherLocation } from './types';
+import type { Track, Profile, AccentTheme, VizMode, Density, Todo, WeatherLocation, AppMetrics } from './types';
 import type { GeocodeResult } from './state/weatherLocation';
 import { TRACKS, ACCENT_PALETTES } from './data';
 import { useTweaks } from './state/useTweaks';
@@ -219,6 +219,8 @@ export default function App() {
   };
   const hidden = activeProfile.hidden;
   const activeLayout: Layout = activeProfile.layout;
+  const visibleTileCount = ALL_TILES.filter(({ id }) => !hidden[id]).length;
+  const fps = useFrameRate();
 
   const updateActiveProfile = (patch: Partial<Profile>) => {
     setTweak('profiles', t.profiles.map((p) =>
@@ -302,6 +304,9 @@ export default function App() {
           accent={accent}
           onSwitcher={() => setShowSwitcher(true)}
           profileName={activeProfile.name}
+          tileCount={visibleTileCount}
+          app={sysmon.latest.app}
+          fps={fps}
         />
         {editMode && (
           <EditModeOverlay
@@ -649,7 +654,44 @@ function WeatherSearch({
   );
 }
 
-function BottomStatus({ accent, onSwitcher, profileName }: { accent: string; onSwitcher: () => void; profileName: string }) {
+/** Measures actual rAF frame interval as a rolling average and returns FPS.
+ *  Updates state once per second so we don't trash React with 60Hz re-renders. */
+function useFrameRate(): number {
+  const [fps, setFps] = useState(60);
+  useEffect(() => {
+    let raf = 0;
+    let frames = 0;
+    let last = performance.now();
+    const tick = (now: number) => {
+      frames++;
+      if (now - last >= 1000) {
+        setFps(Math.round((frames * 1000) / (now - last)));
+        frames = 0;
+        last = now;
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, []);
+  return fps;
+}
+
+function BottomStatus({
+  accent, onSwitcher, profileName, tileCount, app, fps,
+}: {
+  accent: string;
+  onSwitcher: () => void;
+  profileName: string;
+  tileCount: number;
+  app: AppMetrics | null;
+  fps: number;
+}) {
+  const cpuText = app ? `${app.cpu.toFixed(1)}%` : '—';
+  const ramText = app ? (app.ram_mb >= 1024 ? `${(app.ram_mb / 1024).toFixed(2)} GB` : `${Math.round(app.ram_mb)} MB`) : '—';
+  const fpsText = `${fps} fps`;
+  // Color FPS based on health: green ≥ 55, amber 30-54, red < 30.
+  const fpsColor = fps >= 55 ? '#22c55e' : fps >= 30 ? '#facc15' : '#fb7185';
   return (
     <div style={{
       position: 'absolute', bottom: 0, left: 0, right: 0, height: 32,
@@ -658,10 +700,10 @@ function BottomStatus({ accent, onSwitcher, profileName }: { accent: string; onS
       display: 'flex', alignItems: 'center', padding: '0 18px', gap: 18, zIndex: 10,
       fontSize: 10.5, color: 'rgba(255,255,255,0.45)', fontFamily: '"JetBrains Mono", ui-monospace, monospace',
     }}>
-      <span style={{ color: accent }}>● 8 tiles</span>
-      <span>CPU 1.2%</span>
-      <span>RAM 142 MB</span>
-      <span>GPU 3.1%</span>
+      <span style={{ color: accent }}>● {tileCount} tile{tileCount === 1 ? '' : 's'}</span>
+      <span title="App CPU usage">CPU {cpuText}</span>
+      <span title="App resident memory">RAM {ramText}</span>
+      <span title="Render frame rate" style={{ color: fpsColor }}>{fpsText}</span>
       <span>Audio: WASAPI loopback</span>
       <div style={{ flex: 1 }} />
       <button onClick={onSwitcher} style={{ background: 'transparent', border: 'none', color: 'rgba(255,255,255,0.45)', fontFamily: 'inherit', fontSize: 'inherit', cursor: 'pointer', padding: 0 }}>{profileName}</button>

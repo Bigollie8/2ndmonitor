@@ -35,6 +35,11 @@ export interface Tweaks {
   density: Density;
 }
 
+export interface AppMetrics {
+  cpu: number;     // % CPU used by THIS app's process (can exceed 100 on multicore)
+  ram_mb: number;  // resident memory in MB
+}
+
 export interface SysmonSample {
   cpu: number;
   ram: number;
@@ -49,6 +54,7 @@ export interface SysmonSample {
   gpu_sub: string;
   net_sub: string;
   top: { name: string; cpu: number }[];
+  app: AppMetrics | null;
 }
 
 export interface SysmonHistory {

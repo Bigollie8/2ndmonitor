@@ -18,6 +18,14 @@ pub struct TopProcess {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub struct AppMetrics {
+    /// CPU% used by THIS app's process. 0..N where N can exceed 100 on multi-core.
+    pub cpu: f32,
+    /// Resident memory in MB.
+    pub ram_mb: f32,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct SysmonSample {
     pub cpu: f32,
     pub ram: f32,
@@ -32,6 +40,9 @@ pub struct SysmonSample {
     pub gpu_sub: String,
     pub net_sub: String,
     pub top: Vec<TopProcess>,
+    /// This app's own resource usage — surfaced in the bottom status bar so the
+    /// user can see its impact at a glance. None on rare boot races.
+    pub app: Option<AppMetrics>,
 }
 
 struct State {
@@ -115,7 +126,12 @@ fn collect(state: &Arc<Mutex<State>>) -> SysmonSample {
     let used_gb = used_mem / 1024.0 / 1024.0 / 1024.0;
     let total_gb = total_mem / 1024.0 / 1024.0 / 1024.0;
 
-    // ── Top processes ───────────────────────────────────────────────────────
+    // ── Top processes + this app's own metrics ────────────────────────────
+    let our_pid = sysinfo::Pid::from_u32(std::process::id());
+    let app_metrics = s.sys.process(our_pid).map(|p| AppMetrics {
+        cpu: p.cpu_usage(),
+        ram_mb: (p.memory() as f64 / 1024.0 / 1024.0) as f32,
+    });
     let mut procs: Vec<(String, f32)> = s
         .sys
         .processes()
@@ -161,6 +177,7 @@ fn collect(state: &Arc<Mutex<State>>) -> SysmonSample {
         gpu_sub,
         net_sub,
         top,
+        app: app_metrics,
     }
 }
 
