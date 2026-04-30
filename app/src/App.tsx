@@ -37,7 +37,7 @@ interface TweakState extends Record<string, unknown> {
   vizSmoothing: number;
   vizColorOverride: VizColorOverride;
   lyricsOverlayEnabled: boolean;
-  perfMode: 'quality' | 'balanced' | 'battery';
+  perfMode: 'uncapped' | 'high' | 'balanced' | 'battery';
   todos: Todo[];
   weatherLocation: WeatherLocation;
   // Profile system: layout + tile visibility live INSIDE the active profile.
@@ -74,6 +74,10 @@ function newId(): string {
 /** Migration: legacy shape (top-level `layout`/`hidden`, no `profiles`) → new
  *  profile-shaped state. Idempotent: returns input unchanged if already migrated. */
 function migrateTweaks(loaded: Record<string, unknown>): Record<string, unknown> {
+  // Old `quality` perfMode was renamed to `uncapped`. Same behavior; just clearer label.
+  if (loaded.perfMode === 'quality') {
+    loaded.perfMode = 'uncapped';
+  }
   const profilesField = loaded.profiles;
   // True first launch: nothing was loaded from disk at all (no profiles, no
   // legacy layout, no todos). Used below to seed demo todos.
@@ -168,9 +172,13 @@ export default function App() {
 
   useEffect(() => {
     switch (t.perfMode) {
-      case 'quality':
+      case 'uncapped':
         setVizDprCap(window.devicePixelRatio || 1);
         setVizMaxFps(0);  // no cap — let rAF run at native rate
+        break;
+      case 'high':
+        setVizDprCap(1.5);
+        setVizMaxFps(120);
         break;
       case 'balanced':
         setVizDprCap(1.25);
@@ -502,16 +510,17 @@ export default function App() {
           onPick={(loc) => setTweak('weatherLocation', loc)}
         />
         <TweakSection label="Performance" />
-        <TweakRadio<'quality' | 'balanced' | 'battery'>
+        <TweakRadio<'uncapped' | 'high' | 'balanced' | 'battery'>
           label="Mode"
           value={t.perfMode}
-          options={['quality', 'balanced', 'battery']}
+          options={['uncapped', 'high', 'balanced', 'battery']}
           onChange={(v) => setTweak('perfMode', v)}
         />
         <div style={{ fontSize: 10, color: 'rgba(41,38,27,0.55)', padding: '2px 0 6px', lineHeight: 1.45 }}>
-          {t.perfMode === 'quality'   && 'Native DPR · native fps · no idle pause'}
-          {t.perfMode === 'balanced'  && 'DPR cap 1.25× · 60 fps cap'}
-          {t.perfMode === 'battery'   && 'DPR cap 1× · 30 fps cap · hero pauses when idle'}
+          {t.perfMode === 'uncapped' && 'Native DPR · uncapped fps · no idle pause'}
+          {t.perfMode === 'high'     && 'DPR cap 1.5× · 120 fps cap'}
+          {t.perfMode === 'balanced' && 'DPR cap 1.25× · 60 fps cap'}
+          {t.perfMode === 'battery'  && 'DPR cap 1× · 30 fps cap · hero pauses when idle'}
         </div>
         <TweakSection label="Tiles · show / hide" />
         {ALL_TILES.filter(({ id }) => id !== 'viz').map((def) => {
