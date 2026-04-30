@@ -620,8 +620,9 @@ export function VizHero({
 }
 
 /** Returns the active synced-line index, recomputed on a 200ms interval against
- *  interpolated playback position. Only setState when the index actually changes,
- *  so the overlay re-renders once per line transition (not 60×/sec). */
+ *  interpolated playback position. Only setState when the index actually changes.
+ *  Anti-hop guard: tiny backward jumps (< 3s of LRC time) are treated as jitter
+ *  from GSMTC re-sync stalls and ignored; large backward jumps (real seeks) pass. */
 function useCurrentLyricIndex(lines: import('../state/lyrics').LrcLine[], playback?: Playback | null): number {
   const [idx, setIdx] = useState(-1);
   useEffect(() => {
@@ -630,7 +631,16 @@ function useCurrentLyricIndex(lines: import('../state/lyrics').LrcLine[], playba
       const elapsed = playback.playing ? (performance.now() - playback.syncedAt) / 1000 : 0;
       const pos = playback.positionAtSync + elapsed;
       const next = currentLineIndex(lines, pos);
-      setIdx((prev) => (prev === next ? prev : next));
+      setIdx((prev) => {
+        if (prev === next) return prev;
+        // Anti-hop: don't go backward unless it's a real seek (>3s of lyric time).
+        if (next >= 0 && prev > next) {
+          const prevTs = lines[prev]?.tsMs ?? 0;
+          const nextTs = lines[next]?.tsMs ?? 0;
+          if ((prevTs - nextTs) < 3000) return prev;
+        }
+        return next;
+      });
     };
     tick();
     const id = setInterval(tick, 200);
