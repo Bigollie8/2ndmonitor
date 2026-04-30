@@ -26,6 +26,8 @@ export function getVizDpr(): number {
  *  bodies skip drawing when `now - lastDraw < 1000/maxFps`. */
 let vizMaxFps = 0;
 export function setVizMaxFps(fps: number) { vizMaxFps = fps; }
+/** 0 = uncapped (rAF native rate). Otherwise the configured cap in fps. */
+export function getVizMaxFps(): number { return vizMaxFps; }
 
 /** Reads N values from spectrumRef.current.bands by resampling, applies
  *  sensitivity, and per-bin smooths. Falls back to a procedural fake

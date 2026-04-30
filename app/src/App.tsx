@@ -6,7 +6,7 @@ import type { GeocodeResult } from './state/weatherLocation';
 import { TRACKS, ACCENT_PALETTES } from './data';
 import { useTweaks } from './state/useTweaks';
 import { useSysmon, useNowPlaying, useSpectrumRef } from './state/tauri';
-import { VizHero, setVizDprCap, setVizMaxFps } from './components/viz';
+import { VizHero, setVizDprCap, setVizMaxFps, getVizMaxFps } from './components/viz';
 import { VizGallery, VIZ_STYLES } from './components/viz-gallery';
 import {
   SpotifyTile, NotesTile,
@@ -734,9 +734,13 @@ function BottomStatus({
   const cpuText = app ? `${app.cpu.toFixed(1)}%` : '—';
   const ramText = app ? (app.ram_mb >= 1024 ? `${(app.ram_mb / 1024).toFixed(2)} GB` : `${Math.round(app.ram_mb)} MB`) : '—';
   const gpuText = app && app.gpu != null ? `${app.gpu.toFixed(0)}%` : '—';
-  const fpsText = `${fps} fps`;
-  // Color FPS based on health: green ≥ 55, amber 30-54, red < 30.
-  const fpsColor = fps >= 55 ? '#22c55e' : fps >= 30 ? '#facc15' : '#fb7185';
+  // Effective viz draw rate = min(rAF rate, configured cap). When uncapped, just rAF.
+  const cap = getVizMaxFps();
+  const effectiveFps = cap > 0 ? Math.min(fps, cap) : fps;
+  const fpsText = cap > 0 ? `${effectiveFps} fps · cap ${cap}` : `${fps} fps`;
+  // Color based on whether the cap is being met or we're falling behind.
+  const target = cap > 0 ? cap : 60;
+  const fpsColor = effectiveFps >= target * 0.92 ? '#22c55e' : effectiveFps >= target * 0.5 ? '#facc15' : '#fb7185';
   return (
     <div style={{
       position: 'absolute', bottom: 0, left: 0, right: 0, height: 32,
