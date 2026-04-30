@@ -247,7 +247,11 @@ export function HiFiVizParticles({ accent, accent2, spectrumRef, sensitivity = 1
       const y = Math.random();
       return {
         x, y,
-        homeX: x, homeY: y, // each particle springs back to where it spawned
+        homeX: x, homeY: y, // each particle springs back to its (drifting) home
+        // homes drift slowly across the canvas, bouncing off walls — so the
+        // overall scene is alive even when no beat is hitting.
+        vhomeX: (Math.random() - 0.5) * 0.0010,
+        vhomeY: (Math.random() - 0.5) * 0.0010,
         vx: 0, vy: 0,
         r: 0.5 + Math.random() * 1.8,
         hue: Math.random(),
@@ -296,8 +300,17 @@ export function HiFiVizParticles({ accent, accent2, spectrumRef, sensitivity = 1
       const drag = 0.86;
 
       for (const p of pts) {
-        // Spring force toward home. Without this, kicks accumulate and particles
-        // drift to the edges over time.
+        // Drift the home position so the scene stays alive between beats.
+        // Bounce off a 5% inner margin so homes never reach the corners.
+        p.homeX += p.vhomeX;
+        p.homeY += p.vhomeY;
+        if (p.homeX < 0.05) { p.homeX = 0.05; p.vhomeX = -p.vhomeX; }
+        else if (p.homeX > 0.95) { p.homeX = 0.95; p.vhomeX = -p.vhomeX; }
+        if (p.homeY < 0.05) { p.homeY = 0.05; p.vhomeY = -p.vhomeY; }
+        else if (p.homeY > 0.95) { p.homeY = 0.95; p.vhomeY = -p.vhomeY; }
+
+        // Spring force toward (drifting) home keeps the particle near it but
+        // free to wander; beat kicks displace it transiently.
         p.vx += (p.homeX - p.x) * springK;
         p.vy += (p.homeY - p.y) * springK;
 
