@@ -11,6 +11,7 @@ import {
   VizStarfield, VizPerlinFlow, VizOrbital, VizAurora, VizCityEqualizer,
   VizStrings, VizHUD, VizLiquid, VizCassette, VizConstellation,
 } from './viz-extra2';
+import { VIZ_STYLES } from './viz-gallery';
 
 /** Reads N values from spectrumRef.current.bands by resampling, applies
  *  sensitivity, and per-bin smooths. Falls back to a procedural fake
@@ -609,7 +610,7 @@ function useLivePos(playback: Playback | null): number {
 }
 
 export function VizOverlay({
-  track, mode, setMode, accent, accent2, playback,
+  track, mode, setMode, accent, accent2, playback, onConfigure, onToggleImmersive, immersive = false,
 }: {
   track: Track;
   mode: VizMode;
@@ -617,6 +618,9 @@ export function VizOverlay({
   accent: string;
   accent2: string;
   playback?: Playback | null;
+  onConfigure?: () => void;
+  onToggleImmersive?: () => void;
+  immersive?: boolean;
 }) {
   const position = useLivePos(playback ?? null);
   const duration = playback?.duration ?? 0;
@@ -632,10 +636,12 @@ export function VizOverlay({
     { k: 'particles', label: 'Particle' },
     { k: 'ambient', label: 'Ambient' },
   ];
+  const isOriginalMode = modes.some((m) => m.k === mode);
+  const styleEntry = VIZ_STYLES.find((s) => s.id === mode);
   return (
     <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
       <div style={{ padding: 18, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', pointerEvents: 'auto' }}>
-        <div style={{ display: 'flex', gap: 4, padding: 4, background: 'rgba(0,0,0,0.4)', backdropFilter: 'blur(20px)', borderRadius: 10, border: '1px solid rgba(255,255,255,0.06)' }}>
+        <div style={{ display: 'flex', gap: 4, padding: 4, background: 'rgba(0,0,0,0.4)', backdropFilter: 'blur(20px)', borderRadius: 10, border: '1px solid rgba(255,255,255,0.06)', alignItems: 'center' }}>
           {modes.map((m) => (
             <button key={m.k} onClick={() => setMode(m.k)} style={{
               padding: '6px 12px', fontSize: 11, fontWeight: 600,
@@ -646,10 +652,25 @@ export function VizOverlay({
               transition: 'all 0.2s',
             }}>{m.label}</button>
           ))}
+          <button onClick={onConfigure} style={{
+            padding: '6px 12px', fontSize: 11, fontWeight: 500,
+            background: 'transparent', color: 'rgba(255,255,255,0.6)',
+            border: 'none', borderRadius: 6, cursor: 'pointer',
+          }}>+ More</button>
+          {!isOriginalMode && styleEntry && (
+            <span style={{
+              padding: '6px 10px', fontSize: 10, fontWeight: 600,
+              background: `${accent}22`, color: accent,
+              border: `1px solid ${accent}55`, borderRadius: 6,
+              fontFamily: '"JetBrains Mono", ui-monospace, monospace',
+              letterSpacing: '.05em',
+              display: 'flex', alignItems: 'center', gap: 4,
+            }}>● {styleEntry.label}</span>
+          )}
         </div>
         <div style={{ display: 'flex', gap: 6 }}>
-          <button style={overlayBtn}>⚙ Configure</button>
-          <button style={overlayBtn}>⛶</button>
+          <button onClick={onConfigure} style={overlayBtn} title="Browse all visualizers">⚙ Configure</button>
+          <button onClick={onToggleImmersive} style={overlayBtn} title={immersive ? 'Show overlay (Esc)' : 'Immersive mode'}>{immersive ? '⛶' : '⛶'}</button>
         </div>
       </div>
       <div style={{ padding: 22, display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 20, pointerEvents: 'auto' }}>
@@ -695,7 +716,7 @@ export function VizOverlay({
 export function VizHero({
   mode, setMode, accent, accent2, track, spectrumRef, playback,
   showArtBg = false, sensitivity = 1, smoothing = 0, lyricsOverlayEnabled = true,
-  paused = false,
+  paused = false, onConfigure,
 }: {
   mode: VizMode;
   setMode: (m: VizMode) => void;
@@ -710,7 +731,19 @@ export function VizHero({
   smoothing?: number;
   lyricsOverlayEnabled?: boolean;
   paused?: boolean;
+  /** Called when the user clicks "⚙ Configure" or "+ More" — opens the viz gallery. */
+  onConfigure?: () => void;
 }) {
+  const [immersive, setImmersive] = useState(false);
+  useEffect(() => {
+    // Esc exits immersive mode without closing edit mode etc. — only handle when immersive is on.
+    if (!immersive) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') { e.preventDefault(); setImmersive(false); }
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [immersive]);
   return (
     <div style={{
       position: 'relative', overflow: 'hidden',
@@ -740,9 +773,30 @@ export function VizHero({
         background: 'linear-gradient(180deg, rgba(0,0,0,0.5) 0%, transparent 18%, transparent 75%, rgba(0,0,0,0.55) 100%)',
       }} />
       <LyricsOverlay accent={accent} playback={playback} enabled={lyricsOverlayEnabled} />
-      <div style={{ position: 'absolute', inset: 0, zIndex: 3 }}>
-        <VizOverlay track={track} mode={mode} setMode={setMode} accent={accent} accent2={accent2} playback={playback} />
-      </div>
+      {!immersive && (
+        <div style={{ position: 'absolute', inset: 0, zIndex: 3 }}>
+          <VizOverlay
+            track={track} mode={mode} setMode={setMode}
+            accent={accent} accent2={accent2} playback={playback}
+            onConfigure={onConfigure}
+            onToggleImmersive={() => setImmersive(true)}
+            immersive={immersive}
+          />
+        </div>
+      )}
+      {immersive && (
+        <button
+          onClick={() => setImmersive(false)}
+          title="Show controls (Esc)"
+          style={{
+            position: 'absolute', top: 12, right: 12, zIndex: 4,
+            width: 32, height: 32, borderRadius: 6,
+            background: 'rgba(0,0,0,0.4)', backdropFilter: 'blur(20px)',
+            border: '1px solid rgba(255,255,255,0.08)',
+            color: 'rgba(255,255,255,0.7)', cursor: 'pointer', fontSize: 13,
+          }}
+        >✕</button>
+      )}
     </div>
   );
 }

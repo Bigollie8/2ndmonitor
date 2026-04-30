@@ -7,7 +7,7 @@ import { TRACKS, ACCENT_PALETTES } from './data';
 import { useTweaks } from './state/useTweaks';
 import { useSysmon, useNowPlaying, useSpectrumRef } from './state/tauri';
 import { VizHero } from './components/viz';
-import { VizGallery } from './components/viz-gallery';
+import { VizGallery, VIZ_STYLES } from './components/viz-gallery';
 import {
   SpotifyTile, NotesTile,
   SysMonTile,
@@ -42,6 +42,7 @@ interface TweakState extends Record<string, unknown> {
   // Profile system: layout + tile visibility live INSIDE the active profile.
   profiles: Profile[];
   activeProfileId: string;
+  onboardingDone: boolean;
 }
 
 const TWEAK_DEFAULTS: TweakState = {
@@ -57,6 +58,7 @@ const TWEAK_DEFAULTS: TweakState = {
   weatherLocation: { label: 'Knoxville, TN', lat: 35.9606, lon: -83.9207 },
   profiles: [],
   activeProfileId: '',
+  onboardingDone: false,
 };
 
 const PROFILE_DEFAULT_COLORS = ['#a78bfa', '#f59e0b', '#22d3ee', '#22c55e', '#f472b6', '#60a5fa', '#facc15', '#f97316'];
@@ -71,6 +73,10 @@ function newId(): string {
  *  profile-shaped state. Idempotent: returns input unchanged if already migrated. */
 function migrateTweaks(loaded: Record<string, unknown>): Record<string, unknown> {
   const profilesField = loaded.profiles;
+  // True first launch: nothing was loaded from disk at all (no profiles, no
+  // legacy layout, no todos). Used below to seed demo todos.
+  const isFirstLaunch = !loaded.profiles && !loaded.todos && !loaded.layout;
+
   if (Array.isArray(profilesField) && profilesField.length > 0) {
     return loaded;
   }
@@ -87,6 +93,15 @@ function migrateTweaks(loaded: Record<string, unknown>): Record<string, unknown>
   ];
   next.profiles = seeded;
   next.activeProfileId = seeded[0]!.id;
+
+  // Seed two demo todos on absolute-first launch (only when nothing was loaded)
+  // so the Notes tile isn't empty when a friend opens the app.
+  if (isFirstLaunch) {
+    next.todos = [
+      { id: newId(), text: 'Try clicking ⛶ on the visualizer for immersive mode', done: false, createdAt: Date.now() - 2000 },
+      { id: newId(), text: 'Press V to cycle visualizer styles', done: false, createdAt: Date.now() - 1000 },
+    ];
+  }
   return next;
 }
 
@@ -112,6 +127,17 @@ export default function App() {
     setTweak('profiles', seeded);
     setTweak('activeProfileId', seeded[0]!.id);
   }, [t.profiles.length, t.activeProfileId, setTweak]);
+
+  useEffect(() => {
+    // First-ever launch: profile system is ready AND user hasn't completed onboarding.
+    if (!t.onboardingDone && t.profiles.length > 0 && t.activeProfileId) {
+      setShowOnboarding(true);
+    }
+    // We DO want this to fire whenever onboardingDone toggles to false (e.g., user
+    // clicks "First-launch onboarding" in Tweaks to replay it). But auto-trigger
+    // only on initial state where it's already false.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [manualTrack, setManualTrack] = useState<Track>(TRACKS[0]!);
   const [editMode, setEditMode] = useState(false);
   const [showSwitcher, setShowSwitcher] = useState(false);
@@ -166,9 +192,9 @@ export default function App() {
         else if (editMode) setEditMode(false);
       }
       else if (!editing && !cmd && (e.key === 'v' || e.key === 'V')) {
-        const modes: VizMode[] = ['bars', 'waveform', 'radial', 'particles', 'ambient'];
-        const i = modes.indexOf(t.vizMode);
-        setTweak('vizMode', modes[(i + 1) % modes.length]!);
+        const ids = VIZ_STYLES.map((s) => s.id);
+        const i = ids.indexOf(t.vizMode);
+        setTweak('vizMode', ids[(i + 1) % ids.length] ?? 'bars');
       }
     };
     window.addEventListener('keydown', onKey);
@@ -232,6 +258,7 @@ export default function App() {
             smoothing={t.vizSmoothing}
             lyricsOverlayEnabled={t.lyricsOverlayEnabled}
             paused={showGallery}
+            onConfigure={() => setShowGallery(true)}
           />
         );
     }
@@ -299,7 +326,27 @@ export default function App() {
             onClose={() => setShowSwitcher(false)}
           />
         )}
-        {showOnboarding && <Onboarding accent={accent} onFinish={() => setShowOnboarding(false)} />}
+        {showOnboarding && (
+          <Onboarding
+            accent={accent}
+            profiles={t.profiles}
+            onFinish={(result) => {
+              // Apply user choices to tweaks. If result is undefined (Skip setup),
+              // we still mark onboardingDone but don't apply anything.
+              if (result?.profileId) {
+                setTweak('activeProfileId', result.profileId);
+              }
+              if (result?.hiddenForActive) {
+                const targetId = result.profileId ?? t.activeProfileId;
+                setTweak('profiles', t.profiles.map((p) =>
+                  p.id === targetId ? { ...p, hidden: result.hiddenForActive! } : p
+                ));
+              }
+              setTweak('onboardingDone', true);
+              setShowOnboarding(false);
+            }}
+          />
+        )}
         {showGallery && (
           <VizGallery
             accent={vizAccent}
@@ -617,9 +664,9 @@ function BottomStatus({ accent, onSwitcher, profileName }: { accent: string; onS
       <span>GPU 3.1%</span>
       <span>Audio: WASAPI loopback</span>
       <div style={{ flex: 1 }} />
-      <button onClick={onSwitcher} style={{ background: 'transparent', border: 'none', color: 'rgba(255,255,255,0.45)', fontFamily: 'inherit', fontSize: 'inherit', cursor: 'pointer', padding: 0 }}>⌘1/2/3 profile · {profileName}</button>
+      <button onClick={onSwitcher} style={{ background: 'transparent', border: 'none', color: 'rgba(255,255,255,0.45)', fontFamily: 'inherit', fontSize: 'inherit', cursor: 'pointer', padding: 0 }}>{profileName}</button>
       <span style={{ color: 'rgba(255,255,255,0.25)' }}>·</span>
-      <span>⌘E edit · ⌘K command · ⌘, settings</span>
+      <span>⌘E edit · V cycle viz · ⌘1/2/3 profile</span>
     </div>
   );
 }

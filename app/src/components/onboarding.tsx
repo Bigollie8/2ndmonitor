@@ -3,13 +3,43 @@ import { ProfilePreview } from './profile';
 
 const STEPS = ['Welcome', 'Audio source', 'Pick a profile', 'Connect tiles', 'Ready'];
 
-export function Onboarding({ accent, onFinish }: { accent: string; onFinish: () => void }) {
+/** Dashboard tile ids that the onboarding tile picker can toggle visibility for.
+ *  `viz` is intentionally excluded — it can't be hidden. */
+const DASHBOARD_TILE_IDS = ['discord', 'spotify', 'claude', 'notes', 'sysmon', 'clock'] as const;
+
+export interface OnboardingResult {
+  audio?: string;          // currently unused at the app level, but pass it through
+  profileId?: string;      // id of profile chosen on the "Pick a profile" step
+  hiddenForActive?: Partial<Record<string, boolean>>; // tile-visibility map for the chosen profile
+}
+
+export function Onboarding({ accent, profiles, onFinish }: {
+  accent: string;
+  profiles: { id: string; name: string }[];
+  onFinish: (result?: OnboardingResult) => void;
+}) {
   const [step, setStep] = useState(0);
   const [audio, setAudio] = useState('wasapi');
   const [profile, setProfile] = useState<string | null>(null);
   const [tiles, setTiles] = useState<Record<string, boolean>>({
-    spotify: true, discord: true, calendar: true, sysmon: true, notes: false, weather: true,
+    spotify: true, discord: true, claude: true, sysmon: true, notes: true, clock: true,
   });
+
+  const buildResult = (): OnboardingResult => {
+    // Map onboarding's checkbox map to a hidden-tile map for the dashboard:
+    // checked → visible (false / undefined), unchecked → hidden (true).
+    const hidden: Partial<Record<string, boolean>> = {};
+    for (const id of DASHBOARD_TILE_IDS) {
+      const checked = tiles[id];
+      if (checked === false) hidden[id] = true;
+      // Missing or true → leave as visible (no entry).
+    }
+    return {
+      audio,
+      profileId: profile ?? undefined,
+      hiddenForActive: hidden,
+    };
+  };
 
   return (
     <div style={{
@@ -47,14 +77,14 @@ export function Onboarding({ accent, onFinish }: { accent: string; onFinish: () 
           ))}
         </div>
         <div style={{ flex: 1 }} />
-        <button onClick={onFinish} style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)', background: 'transparent', border: 'none', cursor: 'pointer' }}>Skip setup</button>
+        <button onClick={() => onFinish()} style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)', background: 'transparent', border: 'none', cursor: 'pointer' }}>Skip setup</button>
       </div>
       <div style={{ flex: 1, position: 'relative', zIndex: 2, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 40 }}>
         {step === 0 && <OnbWelcome accent={accent} />}
         {step === 1 && <OnbAudio accent={accent} value={audio} setValue={setAudio} />}
-        {step === 2 && <OnbProfile accent={accent} value={profile} setValue={setProfile} />}
+        {step === 2 && <OnbProfile accent={accent} profiles={profiles} value={profile} setValue={setProfile} />}
         {step === 3 && <OnbTiles accent={accent} tiles={tiles} setTiles={setTiles} />}
-        {step === 4 && <OnbReady accent={accent} profile={profile} audio={audio} tiles={tiles} />}
+        {step === 4 && <OnbReady accent={accent} profile={profile} profiles={profiles} audio={audio} tiles={tiles} />}
       </div>
       <div style={{ position: 'relative', zIndex: 2, padding: '24px 48px', display: 'flex', alignItems: 'center', gap: 12, borderTop: '1px solid rgba(255,255,255,0.04)' }}>
         <button onClick={() => step > 0 && setStep(step - 1)} disabled={step === 0} style={{
@@ -73,7 +103,7 @@ export function Onboarding({ accent, onFinish }: { accent: string; onFinish: () 
             cursor: 'pointer', boxShadow: `0 8px 24px -6px ${accent}aa`,
           }}>Continue →</button>
         ) : (
-          <button onClick={onFinish} style={{
+          <button onClick={() => onFinish(buildResult())} style={{
             padding: '10px 22px', fontSize: 13, fontWeight: 600,
             background: accent, color: '#000', border: 'none', borderRadius: 8,
             cursor: 'pointer', boxShadow: `0 8px 24px -6px ${accent}aa`,
@@ -152,18 +182,32 @@ function OnbAudio({ accent, value, setValue }: { accent: string; value: string; 
   );
 }
 
-function OnbProfile({ accent, value, setValue }: { accent: string; value: string | null; setValue: (s: string) => void }) {
-  const PROFILES: { id: string; name: string; subtitle: string; layout: 'work' | 'gaming' | 'chill' }[] = [
-    { id: 'work',   name: 'Work',   subtitle: 'Calendar, sysmon, notes — focus mode',     layout: 'work' },
-    { id: 'gaming', name: 'Gaming', subtitle: 'Big viz hero with sysmon strip',           layout: 'gaming' },
-    { id: 'chill',  name: 'Chill',  subtitle: 'Fullscreen ambient with glass overlays',   layout: 'chill' },
+function OnbProfile({ accent, profiles, value, setValue }: {
+  accent: string;
+  profiles: { id: string; name: string }[];
+  value: string | null;
+  setValue: (s: string) => void;
+}) {
+  // Render up to 3 cards mapped to the user's first 3 real profiles. Each
+  // displayed card uses a hardcoded preview layout for visual variety, but its
+  // underlying id is the real profile id so the App can apply the choice.
+  const PREVIEWS: { layout: 'work' | 'gaming' | 'chill'; subtitle: string }[] = [
+    { layout: 'work',   subtitle: 'Calendar, sysmon, notes — focus mode' },
+    { layout: 'gaming', subtitle: 'Big viz hero with sysmon strip' },
+    { layout: 'chill',  subtitle: 'Fullscreen ambient with glass overlays' },
   ];
+  const cards = profiles.slice(0, 3).map((p, i) => ({
+    id: p.id,
+    name: p.name,
+    subtitle: PREVIEWS[i]?.subtitle ?? '',
+    layout: PREVIEWS[i]?.layout ?? 'work',
+  }));
   return (
     <div style={{ maxWidth: 1200, width: '100%' }}>
       <h1 style={{ fontSize: 40, fontWeight: 700, margin: '0 0 8px 0', letterSpacing: '-0.02em', textAlign: 'center' }}>Pick a starter layout</h1>
       <p style={{ fontSize: 15, color: 'rgba(255,255,255,0.5)', margin: '0 0 36px 0', textAlign: 'center' }}>You can have multiple profiles and switch with ⌘1/2/3. Customize anytime.</p>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 18 }}>
-        {PROFILES.map((p) => (
+      <div style={{ display: 'grid', gridTemplateColumns: `repeat(${Math.max(1, cards.length)}, 1fr)`, gap: 18 }}>
+        {cards.map((p) => (
           <button key={p.id} onClick={() => setValue(p.id)} style={{
             padding: 0, borderRadius: 12, overflow: 'hidden', textAlign: 'left',
             background: value === p.id ? `${accent}10` : 'rgba(255,255,255,0.02)',
@@ -185,31 +229,30 @@ function OnbProfile({ accent, value, setValue }: { accent: string; value: string
 }
 
 function OnbTiles({ accent, tiles, setTiles }: { accent: string; tiles: Record<string, boolean>; setTiles: (t: Record<string, boolean>) => void }) {
+  // Tile ids must match the dashboard's TileId set (excluding `viz`, which
+  // can't be hidden). Toggling a card flips that tile's visibility for the
+  // selected profile when onboarding finishes.
   const AVAILABLE = [
-    { id: 'spotify',  name: 'Spotify',          desc: 'Now playing + remote',     icon: '♪', type: 'integration' },
-    { id: 'discord',  name: 'Discord',          desc: 'Channels + voice',         icon: '◇', type: 'integration' },
-    { id: 'calendar', name: 'Calendar',         desc: 'Today + upcoming',         icon: '◫', type: 'integration' },
-    { id: 'sysmon',   name: 'System monitor',   desc: 'Always available',         icon: '▤', type: 'built-in', locked: true },
-    { id: 'notes',    name: 'Notes scratchpad', desc: 'Markdown · auto-save',     icon: '✎', type: 'built-in' },
-    { id: 'weather',  name: 'Weather + clock',  desc: 'Local conditions',         icon: '◐', type: 'built-in' },
-    { id: 'youtube',  name: 'YouTube',          desc: 'Pinned video',             icon: '▶', type: 'integration' },
-    { id: 'web',      name: 'Custom web tile',  desc: 'Any URL',                  icon: '◰', type: 'built-in' },
+    { id: 'spotify', name: 'Spotify',        desc: 'Now playing + Up next',  icon: '♪', type: 'integration' },
+    { id: 'discord', name: 'Discord',        desc: 'Voice + speaking ring',  icon: '◇', type: 'integration' },
+    { id: 'claude',  name: 'Claude Code',    desc: 'CLI session viewer',     icon: '◐', type: 'integration' },
+    { id: 'sysmon',  name: 'System monitor', desc: 'CPU · RAM · GPU · Net',  icon: '▤', type: 'built-in' },
+    { id: 'notes',   name: 'Todos',          desc: 'Quick scratchpad',       icon: '✎', type: 'built-in' },
+    { id: 'clock',   name: 'Now & forecast', desc: 'Weather + clock',        icon: '◑', type: 'built-in' },
   ];
   return (
     <div style={{ maxWidth: 980, width: '100%' }}>
       <h1 style={{ fontSize: 40, fontWeight: 700, margin: '0 0 8px 0', letterSpacing: '-0.02em', textAlign: 'center' }}>Connect your tiles</h1>
       <p style={{ fontSize: 15, color: 'rgba(255,255,255,0.5)', margin: '0 0 36px 0', textAlign: 'center' }}>Tap to add. Integrations open auth in a popup. Add more anytime from edit mode.</p>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
         {AVAILABLE.map((t) => {
           const on = !!tiles[t.id];
-          const locked = t.locked;
           return (
-            <button key={t.id} onClick={() => !locked && setTiles({ ...tiles, [t.id]: !on })} style={{
+            <button key={t.id} onClick={() => setTiles({ ...tiles, [t.id]: !on })} style={{
               padding: 16, borderRadius: 10, textAlign: 'left',
               background: on ? `${accent}10` : 'rgba(255,255,255,0.02)',
               border: on ? `1.5px solid ${accent}` : '1.5px solid rgba(255,255,255,0.06)',
-              color: '#fff', cursor: locked ? 'default' : 'pointer',
-              opacity: locked ? 0.7 : 1,
+              color: '#fff', cursor: 'pointer',
               display: 'flex', flexDirection: 'column', gap: 8,
               minHeight: 110,
             }}>
@@ -217,8 +260,6 @@ function OnbTiles({ accent, tiles, setTiles }: { accent: string; tiles: Record<s
                 <div style={{ width: 36, height: 36, borderRadius: 8, background: on ? accent : 'rgba(255,255,255,0.04)', color: on ? '#000' : accent, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18 }}>{t.icon}</div>
                 {on ? (
                   <span style={{ fontSize: 10, color: accent, padding: '2px 8px', background: `${accent}20`, borderRadius: 3, fontFamily: '"JetBrains Mono", ui-monospace, monospace' }}>● ADDED</span>
-                ) : locked ? (
-                  <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)', padding: '2px 8px', background: 'rgba(255,255,255,0.04)', borderRadius: 3, fontFamily: '"JetBrains Mono", ui-monospace, monospace' }}>LOCKED</span>
                 ) : (
                   <span style={{ fontSize: 14, color: 'rgba(255,255,255,0.3)' }}>+</span>
                 )}
@@ -236,8 +277,15 @@ function OnbTiles({ accent, tiles, setTiles }: { accent: string; tiles: Record<s
   );
 }
 
-function OnbReady({ accent, profile, audio, tiles }: { accent: string; profile: string | null; audio: string; tiles: Record<string, boolean> }) {
+function OnbReady({ accent, profile, profiles, audio, tiles }: {
+  accent: string;
+  profile: string | null;
+  profiles: { id: string; name: string }[];
+  audio: string;
+  tiles: Record<string, boolean>;
+}) {
   const tileCount = Object.values(tiles).filter(Boolean).length;
+  const profileName = profile ? (profiles.find((p) => p.id === profile)?.name ?? profiles[0]?.name ?? 'Work') : (profiles[0]?.name ?? 'Work');
   return (
     <div style={{ maxWidth: 720, textAlign: 'center' }}>
       <div style={{
@@ -250,7 +298,7 @@ function OnbReady({ accent, profile, audio, tiles }: { accent: string; profile: 
       </div>
       <h1 style={{ fontSize: 48, fontWeight: 800, margin: '0 0 16px 0', letterSpacing: '-0.03em' }}>You're set.</h1>
       <p style={{ fontSize: 16, color: 'rgba(255,255,255,0.6)', lineHeight: 1.5, margin: '0 0 40px 0' }}>
-        Hub will launch with your <b style={{ color: accent }}>{profile || 'Work'}</b> profile, <b style={{ color: accent }}>{tileCount}</b> tiles, audio from <b style={{ color: accent }}>{audio === 'wasapi' ? 'system loopback' : audio}</b>.
+        Hub will launch with your <b style={{ color: accent }}>{profileName}</b> profile, <b style={{ color: accent }}>{tileCount}</b> tiles, audio from <b style={{ color: accent }}>{audio === 'wasapi' ? 'system loopback' : audio}</b>.
       </p>
       <div style={{
         padding: 20, borderRadius: 12, background: 'rgba(255,255,255,0.02)',
