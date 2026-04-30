@@ -80,6 +80,7 @@ export function TileFrame({
     return () => {
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
+      modeRef.current = { kind: 'idle' };
     };
   }, [editing, onChange]);
 
