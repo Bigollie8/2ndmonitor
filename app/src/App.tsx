@@ -319,7 +319,7 @@ export default function App() {
           label="Mode" value={t.vizMode}
           options={['bars', 'waveform', 'radial', 'particles', 'ambient']}
           onChange={(v) => setTweak('vizMode', v)} />
-        <TweakButton label="Browse all 17 styles" onClick={() => setShowGallery(true)} />
+        <TweakButton label="Browse all 27 styles" onClick={() => setShowGallery(true)} />
         <label style={{
           display: 'flex', alignItems: 'center', gap: 8, padding: '3px 0',
           cursor: 'pointer', userSelect: 'none', color: 'rgba(41,38,27,0.85)',

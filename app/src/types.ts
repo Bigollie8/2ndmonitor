@@ -3,7 +3,9 @@ export type VizMode =
   | 'bars' | 'waveform' | 'radial' | 'particles' | 'ambient'
   | 'neonbars' | 'splitmirror' | 'circular' | 'tunnel' | 'pixelled'
   | 'ribbon' | 'scope' | 'spectrogram' | 'vinyl' | 'kaleidoscope'
-  | 'freqgrid' | 'minimal';
+  | 'freqgrid' | 'minimal'
+  | 'starfield' | 'perlin' | 'orbital' | 'aurora' | 'city'
+  | 'strings' | 'hud' | 'liquid' | 'cassette' | 'constellation';
 export interface Profile {
   /** Stable id (UUID). Used for activeProfileId references. */
   id: string;

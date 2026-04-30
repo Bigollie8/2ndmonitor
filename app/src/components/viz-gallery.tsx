@@ -23,6 +23,16 @@ export const VIZ_STYLES: VizStyle[] = [
   { id: 'kaleidoscope', label: 'Kaleidoscope', desc: 'Symmetric petals' },
   { id: 'freqgrid',     label: 'Freq grid',    desc: 'Time × frequency cells' },
   { id: 'minimal',      label: 'Minimal dots', desc: 'Bass / Mid / Treble pulse' },
+  { id: 'starfield',    label: 'Starfield',    desc: 'Hyperspace · kick-flash bursts' },
+  { id: 'perlin',       label: 'Perlin flow',  desc: 'Noise-field particles · drifting' },
+  { id: 'orbital',      label: 'Orbital',      desc: 'Sun + 4 reactive frequency rings' },
+  { id: 'aurora',       label: 'Aurora',       desc: 'Veils over moonlit horizon' },
+  { id: 'city',         label: 'Neon city',    desc: 'Skyline w/ frequency-lit windows' },
+  { id: 'strings',      label: 'Strings',      desc: 'Plucked physical strings' },
+  { id: 'hud',          label: 'Aircraft HUD', desc: 'Reticle · pitch ladder · tapes' },
+  { id: 'liquid',       label: 'Liquid',       desc: 'Metaball lava · bass merges' },
+  { id: 'cassette',     label: 'Cassette',     desc: 'Tape deck · reels · VU meters' },
+  { id: 'constellation', label: 'Constellation', desc: 'Particles connect when near' },
 ];
 
 export function VizGallery({

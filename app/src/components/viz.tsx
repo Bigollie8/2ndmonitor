@@ -7,11 +7,19 @@ import {
   VizPixelLED, VizRibbon, VizOscilloscope, VizSpectrogram, VizVinyl,
   VizKaleidoscope, VizFreqGrid, VizMinimalDots,
 } from './viz-extra';
+import {
+  VizStarfield, VizPerlinFlow, VizOrbital, VizAurora, VizCityEqualizer,
+  VizStrings, VizHUD, VizLiquid, VizCassette, VizConstellation,
+} from './viz-extra2';
 
 /** Reads N values from spectrumRef.current.bands by resampling, applies
  *  sensitivity, and per-bin smooths. Falls back to a procedural fake
  *  spectrum when no live audio. Returns a callable that mutates `out`
- *  in place each frame — much faster than allocating per-frame. */
+ *  in place each frame — much faster than allocating per-frame.
+ *
+ *  Also exposes per-band means (`bands.bass/mid/treble`) and onset envelopes
+ *  (`onset.kick/snare/hat`) that decay between transients — these are stable
+ *  object references mutated in place each `read()` call. */
 export function makeSpectrumReader(
   N: number,
   spectrumRef: MutableRefObject<SpectrumState> | undefined,
@@ -21,30 +29,53 @@ export function makeSpectrumReader(
   const out = new Float32Array(N);
   const smoothed = new Float32Array(N);
   let t = 0;
+  // For onset detection: slow-tracked baseline per region.
+  let bassBaseline = 0, midBaseline = 0, trebleBaseline = 0;
+  // Decaying onset envelopes — peak on transient, decay over ~150ms.
+  let kickEnv = 0, snareEnv = 0, hatEnv = 0;
+  // Procedural beat clock for fallback (120 bpm).
+  let beatPhase = 0;
   const sm = Math.max(0, Math.min(0.95, smoothing));
+  const bands = { bass: 0, mid: 0, treble: 0 };
+  const onset = { kick: 0, snare: 0, hat: 0 };
   return {
     out,
-    /** Call once per frame; mutates `out` in place. Returns the bass scalar (mean of low ~10% of bins). */
+    bands,
+    onset,
+    /** Call once per frame; mutates `out`, `bands`, `onset` in place.
+     *  Returns the bass scalar (mean of low ~12.5% of bins). */
     read(): number {
       t += 0.04;
+      beatPhase += 0.04;
       const live = spectrumRef?.current.live === true;
-      const bands = spectrumRef?.current.bands;
-      const srcLen = bands?.length ?? 64;
-      let bassSum = 0;
-      const bassN = Math.max(1, Math.floor(N * 0.1));
+      const liveBands = spectrumRef?.current.bands;
+      const srcLen = liveBands?.length ?? 64;
+      let bassSum = 0, midSum = 0, trebleSum = 0;
+      const bassN = Math.max(1, Math.floor(N * 0.125));   // 12.5% lowest
+      const midEnd = Math.max(bassN + 1, Math.floor(N * 0.5));
+      let bassCount = 0, midCount = 0, trebleCount = 0;
       for (let i = 0; i < N; i++) {
         let raw: number;
-        if (live && bands) {
-          raw = bands[Math.floor((i / N) * srcLen)] ?? 0;
+        if (live && liveBands) {
+          raw = liveBands[Math.floor((i / N) * srcLen)] ?? 0;
         } else {
-          // Procedural fallback — same shape as the design's fake spectrum.
+          // Procedural fallback — same shape as the design's fake spectrum,
+          // with kick/snare/hat boosts so onset-driven visuals still animate.
           const x = i / N;
           const env = Math.pow(1 - x, 1.2) * 0.55 + 0.18;
           const a = Math.sin(t * 1.6 + i * 0.18) * 0.18;
           const b = Math.sin(t * 0.7 + i * 0.05) * 0.12;
           const c = Math.sin(t * 4.2 + i * 1.1) * 0.06;
           const noise = (Math.sin(i * 1.7 + t) * 0.5 + Math.cos(i * 0.9 + t * 2) * 0.5) * 0.08;
-          raw = env + a + b + c + noise;
+          // 120 bpm fake onsets
+          const beatT = (beatPhase % 0.5) / 0.5;
+          const fkick = beatT < 0.08 ? Math.exp(-beatT * 30) : 0;
+          const fsnare = (beatPhase % 0.5) > 0.25 && (beatPhase % 0.5) < 0.27 ? 1 : 0;
+          const fhat = (beatPhase * 4) % 1 < 0.04 ? 0.6 : 0;
+          const kickBoost = i < bassN ? fkick * 0.6 : 0;
+          const snareBoost = i >= bassN && i < midEnd ? fsnare * 0.4 : 0;
+          const hatBoost = i >= midEnd ? fhat * 0.3 : 0;
+          raw = env + a + b + c + noise + kickBoost + snareBoost + hatBoost;
         }
         const scaled = raw * sensitivity;
         const prev = smoothed[i] ?? 0;
@@ -52,9 +83,33 @@ export function makeSpectrumReader(
         smoothed[i] = v;
         const clamped = Math.max(0.04, Math.min(1, v));
         out[i] = clamped;
-        if (i < bassN) bassSum += clamped;
+        if (i < bassN) { bassSum += clamped; bassCount++; }
+        else if (i < midEnd) { midSum += clamped; midCount++; }
+        else { trebleSum += clamped; trebleCount++; }
       }
-      return bassSum / bassN;
+      const bass = bassSum / Math.max(1, bassCount);
+      const mid = midSum / Math.max(1, midCount);
+      const treble = trebleSum / Math.max(1, trebleCount);
+      bands.bass = bass;
+      bands.mid = mid;
+      bands.treble = treble;
+
+      // Onset detection: spike above slow baseline triggers a peak that
+      // decays over ~150ms. Threshold and decay tuned so kicks read distinctly.
+      bassBaseline = bassBaseline * 0.92 + bass * 0.08;
+      midBaseline = midBaseline * 0.92 + mid * 0.08;
+      trebleBaseline = trebleBaseline * 0.92 + treble * 0.08;
+      const kickHit = Math.max(0, bass - bassBaseline * 1.25);
+      const snareHit = Math.max(0, mid - midBaseline * 1.25);
+      const hatHit = Math.max(0, treble - trebleBaseline * 1.25);
+      kickEnv = Math.max(kickEnv * 0.82, Math.min(1, kickHit * 4));
+      snareEnv = Math.max(snareEnv * 0.82, Math.min(1, snareHit * 4));
+      hatEnv = Math.max(hatEnv * 0.82, Math.min(1, hatHit * 4));
+      onset.kick = kickEnv;
+      onset.snare = snareEnv;
+      onset.hat = hatEnv;
+
+      return bass;
     },
   };
 }
@@ -448,6 +503,16 @@ export function HiFiVizSurface({ mode, accent, accent2, spectrumRef, sensitivity
     case 'kaleidoscope': return <VizKaleidoscope {...props} />;
     case 'freqgrid':     return <VizFreqGrid {...props} />;
     case 'minimal':      return <VizMinimalDots {...props} />;
+    case 'starfield':     return <VizStarfield {...props} />;
+    case 'perlin':        return <VizPerlinFlow {...props} />;
+    case 'orbital':       return <VizOrbital {...props} />;
+    case 'aurora':        return <VizAurora {...props} />;
+    case 'city':          return <VizCityEqualizer {...props} />;
+    case 'strings':       return <VizStrings {...props} />;
+    case 'hud':           return <VizHUD {...props} />;
+    case 'liquid':        return <VizLiquid {...props} />;
+    case 'cassette':      return <VizCassette {...props} />;
+    case 'constellation': return <VizConstellation {...props} />;
     default:             return null;
   }
 }
