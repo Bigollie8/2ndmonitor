@@ -4,7 +4,7 @@ const STYLE = `
 .twk-panel{position:fixed;right:16px;bottom:16px;z-index:2147483646;width:280px;
   max-height:calc(100vh - 32px);display:flex;flex-direction:column;
   background:rgba(250,249,247,.78);color:#29261b;
-  -webkit-backdrop-filter:blur(24px) saturate(160%);backdrop-filter:blur(24px) saturate(160%);
+  -webkit-backdrop-filter:blur(12px) saturate(140%);backdrop-filter:blur(12px) saturate(140%);
   border:.5px solid rgba(255,255,255,.6);border-radius:14px;
   box-shadow:0 1px 0 rgba(255,255,255,.5) inset,0 12px 40px rgba(0,0,0,.18);
   font:11.5px/1.4 ui-sans-serif,system-ui,-apple-system,sans-serif;overflow:hidden}
@@ -40,7 +40,7 @@ select.twk-field{padding-right:22px;
 .twk-toggle-open{position:fixed;right:16px;bottom:16px;z-index:2147483645;
   appearance:none;border:0;height:34px;padding:0 14px;border-radius:10px;
   background:rgba(250,249,247,.85);color:#29261b;
-  -webkit-backdrop-filter:blur(20px) saturate(160%);backdrop-filter:blur(20px) saturate(160%);
+  -webkit-backdrop-filter:blur(10px) saturate(140%);backdrop-filter:blur(10px) saturate(140%);
   border:.5px solid rgba(255,255,255,.6);
   box-shadow:0 8px 24px rgba(0,0,0,.18);
   font:12px/1 ui-sans-serif,system-ui,-apple-system,sans-serif;font-weight:600;cursor:pointer}

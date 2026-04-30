@@ -13,6 +13,15 @@ import {
 } from './viz-extra2';
 import { VIZ_STYLES } from './viz-gallery';
 
+/** Per-frame DPR cap for viz canvases. On a 4K monitor at DPR=2, dropping to 1
+ *  cuts canvas pixel work 4x with no perceptible loss for music visualizers. */
+let vizDprCap = 1;
+export function setVizDprCap(cap: number) { vizDprCap = cap; }
+export function getVizDpr(): number {
+  const dpr = typeof window !== 'undefined' ? (window.devicePixelRatio || 1) : 1;
+  return Math.min(dpr, vizDprCap);
+}
+
 /** Reads N values from spectrumRef.current.bands by resampling, applies
  *  sensitivity, and per-bin smooths. Falls back to a procedural fake
  *  spectrum when no live audio. Returns a callable that mutates `out`
@@ -375,7 +384,7 @@ export function HiFiVizParticles({ accent, accent2, spectrumRef, sensitivity = 1
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
-    const dpr = window.devicePixelRatio || 1;
+    const dpr = getVizDpr();
     const resize = () => {
       const r = canvas.getBoundingClientRect();
       canvas.width = r.width * dpr;

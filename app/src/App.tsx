@@ -6,7 +6,7 @@ import type { GeocodeResult } from './state/weatherLocation';
 import { TRACKS, ACCENT_PALETTES } from './data';
 import { useTweaks } from './state/useTweaks';
 import { useSysmon, useNowPlaying, useSpectrumRef } from './state/tauri';
-import { VizHero } from './components/viz';
+import { VizHero, setVizDprCap } from './components/viz';
 import { VizGallery, VIZ_STYLES } from './components/viz-gallery';
 import {
   SpotifyTile, NotesTile,
@@ -37,6 +37,7 @@ interface TweakState extends Record<string, unknown> {
   vizSmoothing: number;
   vizColorOverride: VizColorOverride;
   lyricsOverlayEnabled: boolean;
+  perfMode: 'quality' | 'balanced' | 'battery';
   todos: Todo[];
   weatherLocation: WeatherLocation;
   // Profile system: layout + tile visibility live INSIDE the active profile.
@@ -54,6 +55,7 @@ const TWEAK_DEFAULTS: TweakState = {
   vizSmoothing: 0.0,
   vizColorOverride: { enabled: false, accent: '#a78bfa', accent2: '#ec4899' },
   lyricsOverlayEnabled: true,
+  perfMode: 'balanced',
   todos: [],
   weatherLocation: { label: 'Knoxville, TN', lat: 35.9606, lon: -83.9207 },
   profiles: [],
@@ -165,6 +167,24 @@ export default function App() {
   }, [accent, accent2]);
 
   useEffect(() => {
+    switch (t.perfMode) {
+      case 'quality':
+        setVizDprCap(window.devicePixelRatio || 1);
+        break;
+      case 'balanced':
+        setVizDprCap(1.25);
+        break;
+      case 'battery':
+        setVizDprCap(1.0);
+        break;
+    }
+    // Nudge canvases to re-read their bounding rect with the new DPR.
+    // ResizeObserver fires on subtree size changes; window resize is the cheap
+    // trigger that all our viz already listen to.
+    window.dispatchEvent(new Event('resize'));
+  }, [t.perfMode]);
+
+  useEffect(() => {
     // Whenever the saved location changes (including initial load from disk),
     // tell Rust so the next emit is for the right city.
     void import('./state/weatherLocation').then(({ pushLocationToRust }) =>
@@ -259,7 +279,7 @@ export default function App() {
             sensitivity={t.vizSensitivity}
             smoothing={t.vizSmoothing}
             lyricsOverlayEnabled={t.lyricsOverlayEnabled}
-            paused={showGallery}
+            paused={showGallery || (t.perfMode === 'battery' && livePlayback?.playing !== true)}
             onConfigure={() => setShowGallery(true)}
           />
         );
@@ -478,6 +498,18 @@ export default function App() {
           current={t.weatherLocation}
           onPick={(loc) => setTweak('weatherLocation', loc)}
         />
+        <TweakSection label="Performance" />
+        <TweakRadio<'quality' | 'balanced' | 'battery'>
+          label="Mode"
+          value={t.perfMode}
+          options={['quality', 'balanced', 'battery']}
+          onChange={(v) => setTweak('perfMode', v)}
+        />
+        <div style={{ fontSize: 10, color: 'rgba(41,38,27,0.55)', padding: '2px 0 6px', lineHeight: 1.45 }}>
+          {t.perfMode === 'quality'   && 'Native DPR · 60fps · no idle pause'}
+          {t.perfMode === 'balanced'  && 'DPR cap 1.25× · 60fps'}
+          {t.perfMode === 'battery'   && 'DPR cap 1× · hero pauses when track is paused'}
+        </div>
         <TweakSection label="Tiles · show / hide" />
         {ALL_TILES.filter(({ id }) => id !== 'viz').map((def) => {
           const visible = !hidden[def.id];
@@ -523,7 +555,7 @@ function TopChrome({ accent, editMode, setEditMode, accentLinked, track, profile
   return (
     <div style={{
       position: 'absolute', top: 0, left: 0, right: 0, height: 56,
-      background: 'rgba(8,9,12,0.85)', backdropFilter: 'blur(20px)',
+      background: 'rgba(8,9,12,0.85)', backdropFilter: 'blur(10px)',
       borderBottom: '1px solid rgba(255,255,255,0.05)',
       display: 'flex', alignItems: 'center', padding: '0 18px', gap: 16, zIndex: 10,
     }}>
@@ -696,7 +728,7 @@ function BottomStatus({
   return (
     <div style={{
       position: 'absolute', bottom: 0, left: 0, right: 0, height: 32,
-      background: 'rgba(8,9,12,0.85)', backdropFilter: 'blur(20px)',
+      background: 'rgba(8,9,12,0.85)', backdropFilter: 'blur(10px)',
       borderTop: '1px solid rgba(255,255,255,0.05)',
       display: 'flex', alignItems: 'center', padding: '0 18px', gap: 18, zIndex: 10,
       fontSize: 10.5, color: 'rgba(255,255,255,0.45)', fontFamily: '"JetBrains Mono", ui-monospace, monospace',

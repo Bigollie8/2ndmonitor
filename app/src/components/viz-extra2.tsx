@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { makeSpectrumReader, useAnimateGate, type VizProps } from './viz';
+import { makeSpectrumReader, useAnimateGate, getVizDpr, type VizProps } from './viz';
 
 // Helpers shared across multiple visualizers.
 function hex2(n: number): string {
@@ -17,7 +17,7 @@ export function VizStarfield({ accent, accent2, spectrumRef, sensitivity = 1, sm
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
-    const dpr = window.devicePixelRatio || 1;
+    const dpr = getVizDpr();
     const resize = () => {
       const r = canvas.getBoundingClientRect();
       canvas.width = r.width * dpr;
@@ -103,7 +103,7 @@ export function VizPerlinFlow({ accent, accent2, spectrumRef, sensitivity = 1, s
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
-    const dpr = window.devicePixelRatio || 1;
+    const dpr = getVizDpr();
     const resize = () => {
       const r = canvas.getBoundingClientRect();
       canvas.width = r.width * dpr;
@@ -179,7 +179,7 @@ export function VizOrbital({ accent, accent2, spectrumRef, sensitivity = 1, smoo
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
-    const dpr = window.devicePixelRatio || 1;
+    const dpr = getVizDpr();
     const resize = () => {
       const r = canvas.getBoundingClientRect();
       canvas.width = r.width * dpr;
@@ -279,7 +279,7 @@ export function VizAurora({ accent, accent2, spectrumRef, sensitivity = 1, smoot
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
-    const dpr = window.devicePixelRatio || 1;
+    const dpr = getVizDpr();
     const resize = () => {
       const r = canvas.getBoundingClientRect();
       canvas.width = r.width * dpr;
@@ -382,7 +382,7 @@ export function VizCityEqualizer({ accent, accent2, spectrumRef, sensitivity = 1
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
-    const dpr = window.devicePixelRatio || 1;
+    const dpr = getVizDpr();
     let buildings: Building[] = [];
     const resize = () => {
       const r = canvas.getBoundingClientRect();
@@ -505,7 +505,7 @@ export function VizStrings({ accent, accent2, spectrumRef, sensitivity = 1, smoo
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
-    const dpr = window.devicePixelRatio || 1;
+    const dpr = getVizDpr();
     const resize = () => {
       const r = canvas.getBoundingClientRect();
       canvas.width = r.width * dpr;
@@ -619,7 +619,7 @@ export function VizHUD({ accent, accent2, spectrumRef, sensitivity = 1, smoothin
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
-    const dpr = window.devicePixelRatio || 1;
+    const dpr = getVizDpr();
     const resize = () => {
       const r = canvas.getBoundingClientRect();
       canvas.width = r.width * dpr;
@@ -788,7 +788,7 @@ export function VizLiquid({ accent, accent2, spectrumRef, sensitivity = 1, smoot
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
-    const dpr = window.devicePixelRatio || 1;
+    const dpr = getVizDpr();
     const resize = () => {
       const r = canvas.getBoundingClientRect();
       canvas.width = r.width * dpr;
@@ -882,7 +882,7 @@ export function VizCassette({ accent, accent2, spectrumRef, sensitivity = 1, smo
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
-    const dpr = window.devicePixelRatio || 1;
+    const dpr = getVizDpr();
     const resize = () => {
       const r = canvas.getBoundingClientRect();
       canvas.width = r.width * dpr;
@@ -1027,7 +1027,7 @@ export function VizConstellation({ accent, accent2, spectrumRef, sensitivity = 1
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
-    const dpr = window.devicePixelRatio || 1;
+    const dpr = getVizDpr();
     const resize = () => {
       const r = canvas.getBoundingClientRect();
       canvas.width = r.width * dpr;
