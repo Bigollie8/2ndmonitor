@@ -21,7 +21,7 @@ use parking_lot::Mutex;
 use serde::Serialize;
 use serde_json::{json, Value};
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::HashMap,
     fs::{File, OpenOptions},
     io::{Read, Write},
     sync::{
