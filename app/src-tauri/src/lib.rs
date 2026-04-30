@@ -4,6 +4,7 @@ mod discord;
 mod discord_rpc;
 mod nowplaying;
 mod sysmon;
+mod tweaks;
 mod weather;
 mod webtiles;
 
@@ -23,6 +24,8 @@ pub fn run() {
             discord_rpc::discord_rpc_status,
             discord_rpc::discord_rpc_set_voice_settings,
             discord_rpc::discord_rpc_leave_voice,
+            tweaks::tweaks_load,
+            tweaks::tweaks_save,
         ])
         .setup(|app| {
             sysmon::spawn(app.handle().clone());
