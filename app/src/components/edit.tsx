@@ -1,121 +1,75 @@
 import React, { useState } from 'react';
-
-interface Rect { x: number; y: number; w: number; h: number }
-type TileKind = 'discord' | 'spotify' | 'claude' | 'notes' | 'web' | 'viz' | 'sysmon' | 'clock' | 'upnext';
-interface TileEntry { rect: Rect; label: string; kind: TileKind }
+import type { TileId, Rect, Layout } from '../state/layout';
+import { DEFAULT_LAYOUT, clampRect } from '../state/layout';
 
 export function EditModeOverlay({
-  accent, accent2, onExit, onRemove, hiddenIds = [],
+  accent, accent2, onExit, onRemove,
+  layout, setLayout,
+  selectedId, setSelectedId,
+  hiddenIds = [],
 }: {
   accent: string;
   accent2: string;
   onExit: () => void;
-  /** Removes a tile from the live layout. Receives the same id used in TILES. */
-  onRemove?: (id: string) => void;
-  hiddenIds?: string[];
+  onRemove?: (id: TileId) => void;
+  layout: Layout;
+  setLayout: (next: Layout) => void;
+  selectedId: TileId;
+  setSelectedId: (id: TileId) => void;
+  hiddenIds?: TileId[];
 }) {
   const [tool, setTool] = useState<'select' | 'move' | 'resize' | 'add' | 'comment'>('select');
-  const [selected, setSelected] = useState<string>('viz');
   const [showGuides, setShowGuides] = useState(true);
   const [showGrid, setShowGrid] = useState(true);
-  const [snap, setSnap] = useState(true);
+  const [snapEnabled, setSnapEnabled] = useState(true);
 
-  // Tile rectangles in the 2560x1440 canvas (matches the live grid layout).
-  const railX = 20, railY = 56 + 8, railW = 560;
-  const gap = 14;
-  const railH = 1440 - 56 - 32 - 16;
-  const railRows = [1.3, 0.95, 1.0, 0.55, 0.6];
-  const sumRows = railRows.reduce((a, b) => a + b, 0);
-  const rowUnit = (railH - gap * (railRows.length - 1)) / sumRows;
-  let yCursor = railY;
-  const railRects = railRows.map((r) => {
-    const h = r * rowUnit;
-    const rect = { x: railX, y: yCursor, w: railW, h };
-    yCursor += h + gap;
-    return rect;
-  });
-
-  const rightX = railX + railW + gap;
-  const rightW = 2560 - rightX - 20;
-  const bottomH = 360;
-  const vizRect = { x: rightX, y: railY, w: rightW, h: railH - bottomH - gap };
-  const bottomY = vizRect.y + vizRect.h + gap;
-  const bsCols = [1.6, 1, 1];
-  const bsSum = bsCols.reduce((a, b) => a + b, 0);
-  const bsUnit = (rightW - gap * 2) / bsSum;
-  let xCursor = rightX;
-  const bsRects = bsCols.map((c) => {
-    const w = c * bsUnit;
-    const rect = { x: xCursor, y: bottomY, w, h: bottomH };
-    xCursor += w + gap;
-    return rect;
-  });
-
-  const ALL_TILES: Record<string, TileEntry> = {
-    discord:  { rect: railRects[0]!, label: 'Discord', kind: 'discord' },
-    spotify:  { rect: railRects[1]!, label: 'Now playing', kind: 'spotify' },
-    claude:   { rect: railRects[2]!, label: 'Claude Code', kind: 'claude' },
-    notes:    { rect: railRects[3]!, label: 'Notes', kind: 'notes' },
-    linear:   { rect: railRects[4]!, label: 'Linear', kind: 'web' },
-    viz:      { rect: vizRect, label: 'Audio visualizer', kind: 'viz' },
-    sysmon:   { rect: bsRects[0]!, label: 'System monitor', kind: 'sysmon' },
-    clock:    { rect: bsRects[1]!, label: 'Clock & weather', kind: 'clock' },
-    upnext:   { rect: bsRects[2]!, label: 'Up next', kind: 'upnext' },
+  const ALL_LABELS: Record<TileId, string> = {
+    discord: 'Discord', spotify: 'Now playing', claude: 'Claude Code',
+    notes: 'Todos', sysmon: 'System monitor', clock: 'Now & forecast', viz: 'Audio visualizer',
   };
-  const TILES: Record<string, TileEntry> = Object.fromEntries(
-    Object.entries(ALL_TILES).filter(([id]) => !hiddenIds.includes(id))
-  );
 
-  const sel = TILES[selected] ?? ALL_TILES.viz!;
+  const allIds: TileId[] = ['discord', 'spotify', 'claude', 'notes', 'viz', 'sysmon', 'clock'];
+  const visibleIds = allIds.filter((id) => !hiddenIds.includes(id));
+  const tiles: Partial<Record<TileId, { rect: Rect; label: string }>> = {};
+  for (const id of visibleIds) {
+    tiles[id] = { rect: layout[id] ?? DEFAULT_LAYOUT[id], label: ALL_LABELS[id] };
+  }
+
+  const sel = tiles[selectedId] ?? tiles.viz!;
+  const setRect = (id: TileId, r: Rect) => setLayout({ ...layout, [id]: clampRect(r) });
 
   return (
     <div style={{
       position: 'absolute', inset: 0, zIndex: 50,
-      background: 'rgba(8,9,12,0.55)', backdropFilter: 'blur(2px)',
+      background: 'rgba(8,9,12,0.25)',
+      pointerEvents: 'none',
     }}>
-      <EditToolbar accent={accent} tool={tool} setTool={setTool}
-        showGuides={showGuides} setShowGuides={setShowGuides}
-        showGrid={showGrid} setShowGrid={setShowGrid}
-        snap={snap} setSnap={setSnap}
-        onExit={onExit} />
-      <EditLeftRail accent={accent} tool={tool} setTool={setTool} />
+      <div style={{ pointerEvents: 'auto' }}>
+        <EditToolbar accent={accent} tool={tool} setTool={setTool}
+          showGuides={showGuides} setShowGuides={setShowGuides}
+          showGrid={showGrid} setShowGrid={setShowGrid}
+          snap={snapEnabled} setSnap={setSnapEnabled}
+          onExit={onExit} />
+        <EditLeftRail accent={accent} tool={tool} setTool={setTool} />
+      </div>
       {showGrid && <GridOverlay />}
-      {Object.entries(TILES).map(([id, t]) => (
-        <div key={id} onClick={() => setSelected(id)} style={{
-          position: 'absolute',
-          left: t.rect.x, top: t.rect.y, width: t.rect.w, height: t.rect.h,
-          cursor: 'pointer',
-          border: id === selected ? `2px solid ${accent}` : '2px solid transparent',
-          borderRadius: 14,
-          boxShadow: id === selected ? `0 0 0 1px ${accent}55, 0 0 40px -8px ${accent}aa` : 'none',
-          transition: 'border-color .12s, box-shadow .12s',
-        }}>
-          {id === selected && (
-            <>
-              <SelectionHandles accent={accent} />
-              <SelectionLabel accent={accent} label={t.label} w={t.rect.w} h={t.rect.h} />
-            </>
-          )}
-        </div>
-      ))}
       {showGuides && sel && <SmartGuides rect={sel.rect} accent={accent2} />}
-      {sel && (
-        <PropertiesPanel
-          accent={accent}
-          tile={sel}
-          selectedId={selected}
-          onRemove={
-            onRemove && selected !== 'viz'
-              ? () => {
-                  onRemove(selected);
-                  // Move selection to viz so the panel doesn't try to render a stale tile.
-                  setSelected('viz');
-                }
-              : undefined
-          }
-        />
-      )}
-      <LayersPanel accent={accent} selected={selected} setSelected={setSelected} tiles={TILES} />
+      <div style={{ pointerEvents: 'auto' }}>
+        {sel && (
+          <PropertiesPanel
+            accent={accent}
+            tile={{ rect: sel.rect, label: sel.label, kind: selectedId }}
+            selectedId={selectedId}
+            onChangeRect={(r) => setRect(selectedId, r)}
+            onRemove={
+              onRemove && selectedId !== 'viz'
+                ? () => { onRemove(selectedId); setSelectedId('viz'); }
+                : undefined
+            }
+          />
+        )}
+        <LayersPanel accent={accent} selected={selectedId} setSelected={(id) => setSelectedId(id as TileId)} tiles={tiles} />
+      </div>
     </div>
   );
 }
@@ -229,42 +183,6 @@ function GridOverlay() {
   );
 }
 
-function SelectionHandles({ accent }: { accent: string }) {
-  const handle = (style: React.CSSProperties) => (
-    <div style={{
-      position: 'absolute', width: 10, height: 10,
-      background: '#06070a', border: `2px solid ${accent}`,
-      borderRadius: 2, ...style,
-    }} />
-  );
-  return (
-    <>
-      {handle({ top: -6, left: -6, cursor: 'nwse-resize' })}
-      {handle({ top: -6, right: -6, cursor: 'nesw-resize' })}
-      {handle({ bottom: -6, left: -6, cursor: 'nesw-resize' })}
-      {handle({ bottom: -6, right: -6, cursor: 'nwse-resize' })}
-      {handle({ top: -6, left: '50%', transform: 'translateX(-50%)', cursor: 'ns-resize' })}
-      {handle({ bottom: -6, left: '50%', transform: 'translateX(-50%)', cursor: 'ns-resize' })}
-      {handle({ left: -6, top: '50%', transform: 'translateY(-50%)', cursor: 'ew-resize' })}
-      {handle({ right: -6, top: '50%', transform: 'translateY(-50%)', cursor: 'ew-resize' })}
-    </>
-  );
-}
-
-function SelectionLabel({ accent, label, w, h }: { accent: string; label: string; w: number; h: number }) {
-  return (
-    <div style={{
-      position: 'absolute', top: -28, left: 0,
-      padding: '3px 10px', fontSize: 11, fontWeight: 600,
-      background: accent, color: '#000', borderRadius: 4,
-      fontFamily: '"JetBrains Mono", ui-monospace, monospace',
-      whiteSpace: 'nowrap',
-    }}>
-      {label} · {Math.round(w)}×{Math.round(h)}
-    </div>
-  );
-}
-
 function SmartGuides({ rect, accent }: { rect: Rect; accent: string }) {
   const cx = rect.x + rect.w / 2;
   const cy = rect.y + rect.h / 2;
@@ -307,7 +225,15 @@ function DistanceMarker({ x, y, w, h, accent, value, orient }: { x: number; y: n
   );
 }
 
-function PropertiesPanel({ accent, tile, selectedId, onRemove }: { accent: string; tile: TileEntry; selectedId: string; onRemove?: () => void }) {
+function PropertiesPanel({
+  accent, tile, selectedId, onChangeRect, onRemove,
+}: {
+  accent: string;
+  tile: { rect: Rect; label: string; kind: TileId };
+  selectedId: TileId;
+  onChangeRect: (r: Rect) => void;
+  onRemove?: () => void;
+}) {
   return (
     <div style={{
       position: 'absolute', top: 80, right: 16, width: 280,
@@ -325,31 +251,13 @@ function PropertiesPanel({ accent, tile, selectedId, onRemove }: { accent: strin
       </div>
       <div style={{ overflow: 'auto', padding: '4px 0' }}>
         <PropSection title="Position & size">
-          <PropRow label="X"><PropNum v={Math.round(tile.rect.x)} /></PropRow>
-          <PropRow label="Y"><PropNum v={Math.round(tile.rect.y)} /></PropRow>
-          <PropRow label="W"><PropNum v={Math.round(tile.rect.w)} /></PropRow>
-          <PropRow label="H"><PropNum v={Math.round(tile.rect.h)} /></PropRow>
-          <PropRow label="Lock"><EmToggle on={false} accent={accent} /></PropRow>
+          <PropRow label="X"><PropNum v={tile.rect.x} onChange={(x) => onChangeRect({ ...tile.rect, x })} /></PropRow>
+          <PropRow label="Y"><PropNum v={tile.rect.y} onChange={(y) => onChangeRect({ ...tile.rect, y })} /></PropRow>
+          <PropRow label="W"><PropNum v={tile.rect.w} onChange={(w) => onChangeRect({ ...tile.rect, w })} /></PropRow>
+          <PropRow label="H"><PropNum v={tile.rect.h} onChange={(h) => onChangeRect({ ...tile.rect, h })} /></PropRow>
         </PropSection>
-        <PropSection title="Appearance">
-          <PropRow label="Radius"><PropNum v={14} /></PropRow>
-          <PropRow label="Padding"><PropNum v={12} /></PropRow>
-          <PropRow label="Glass"><EmToggle on={true} accent={accent} /></PropRow>
-        </PropSection>
-        {tile.kind === 'viz' && (
-          <PropSection title="Visualizer">
-            <PropRow label="Mode"><span style={{ fontSize: 10.5, color: '#fff', padding: '2px 8px', background: accent + '20', borderRadius: 4 }}>Live</span></PropRow>
-            <PropRow label="Source"><span style={{ fontSize: 10.5, color: 'rgba(255,255,255,0.7)' }}>WASAPI loopback</span></PropRow>
-            <PropRow label="Theme link"><EmToggle on={true} accent={accent} /></PropRow>
-          </PropSection>
-        )}
       </div>
       <div style={{ borderTop: '1px solid rgba(255,255,255,0.06)', padding: 8, display: 'flex', gap: 6 }}>
-        <button style={{
-          flex: 1, padding: '7px', fontSize: 10.5, fontWeight: 600,
-          background: 'rgba(255,255,255,0.04)', color: 'rgba(255,255,255,0.7)',
-          border: '1px solid rgba(255,255,255,0.08)', borderRadius: 5, cursor: 'pointer',
-        }}>Duplicate</button>
         <button
           onClick={onRemove}
           disabled={!onRemove}
@@ -384,14 +292,22 @@ function PropRow({ label, children }: { label: string; children: React.ReactNode
   );
 }
 
-function PropNum({ v }: { v: number }) {
+function PropNum({ v, onChange }: { v: number; onChange: (n: number) => void }) {
   return (
-    <input defaultValue={v} style={{
-      flex: 1, fontSize: 11, padding: '4px 6px', borderRadius: 4,
-      background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)',
-      color: '#fff', fontFamily: '"JetBrains Mono", ui-monospace, monospace',
-      width: '100%',
-    }} />
+    <input
+      type="number"
+      value={Math.round(v)}
+      onChange={(e) => {
+        const n = parseInt(e.target.value, 10);
+        if (Number.isFinite(n)) onChange(n);
+      }}
+      style={{
+        flex: 1, fontSize: 11, padding: '4px 6px', borderRadius: 4,
+        background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)',
+        color: '#fff', fontFamily: '"JetBrains Mono", ui-monospace, monospace',
+        width: '100%',
+      }}
+    />
   );
 }
 
@@ -412,9 +328,16 @@ function EmToggle({ on, accent }: { on: boolean; accent: string }) {
   );
 }
 
-function LayersPanel({ accent, selected, setSelected, tiles }: { accent: string; selected: string; setSelected: (s: string) => void; tiles: Record<string, TileEntry> }) {
-  const order = ['viz', 'spotify', 'discord', 'claude', 'notes', 'linear', 'sysmon', 'clock', 'upnext'];
-  const kindIcon = (k: TileKind) => ({ viz: '◢', spotify: '♪', discord: '◇', claude: '⌘', notes: '✎', web: '◰', sysmon: '▤', clock: '◐', upnext: '▸' }[k] || '◰');
+function LayersPanel({ accent, selected, setSelected, tiles }: {
+  accent: string; selected: string;
+  setSelected: (s: string) => void;
+  tiles: Partial<Record<TileId, { rect: Rect; label: string }>>;
+}) {
+  const order: TileId[] = ['viz', 'spotify', 'discord', 'claude', 'notes', 'sysmon', 'clock'];
+  const kindIcon = (id: TileId): string => ({
+    viz: '◢', spotify: '♪', discord: '◇', claude: '⌘', notes: '✎',
+    sysmon: '▤', clock: '◐',
+  }[id]);
   return (
     <div style={{
       position: 'absolute', bottom: 16, left: 16, width: 240,
@@ -425,7 +348,7 @@ function LayersPanel({ accent, selected, setSelected, tiles }: { accent: string;
     }}>
       <div style={{ padding: '10px 14px', borderBottom: '1px solid rgba(255,255,255,0.06)', display: 'flex', alignItems: 'center', gap: 8 }}>
         <span style={{ fontSize: 11, fontWeight: 600, color: '#fff' }}>Layers</span>
-        <span style={{ fontSize: 9, color: 'rgba(255,255,255,0.4)', fontFamily: '"JetBrains Mono", ui-monospace, monospace', marginLeft: 'auto' }}>{order.length} tiles</span>
+        <span style={{ fontSize: 9, color: 'rgba(255,255,255,0.4)', fontFamily: '"JetBrains Mono", ui-monospace, monospace', marginLeft: 'auto' }}>{Object.keys(tiles).length} tiles</span>
       </div>
       <div style={{ padding: 6 }}>
         {order.map((id) => {
@@ -439,7 +362,7 @@ function LayersPanel({ accent, selected, setSelected, tiles }: { accent: string;
               color: selected === id ? '#fff' : 'rgba(255,255,255,0.7)',
               textAlign: 'left',
             }}>
-              <span style={{ fontSize: 11 }}>{kindIcon(t.kind)}</span>
+              <span style={{ fontSize: 11 }}>{kindIcon(id)}</span>
               <span style={{ fontSize: 11, flex: 1 }}>{t.label}</span>
               <span style={{ fontSize: 9, color: 'rgba(255,255,255,0.3)', fontFamily: '"JetBrains Mono", ui-monospace, monospace' }}>
                 {Math.round(t.rect.w)}×{Math.round(t.rect.h)}

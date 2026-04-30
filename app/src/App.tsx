@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import type { Track, Profile, AccentTheme, VizMode, Density } from './types';
 import type { Todo, WeatherLocation } from './types';
 import type { GeocodeResult } from './state/weatherLocation';
-import { TRACKS, ACCENT_PALETTES, getDensity } from './data';
+import { TRACKS, ACCENT_PALETTES } from './data';
 import { useTweaks } from './state/useTweaks';
 import { useSysmon, useNowPlaying, useSpectrumRef } from './state/tauri';
 import { VizHero } from './components/viz';
@@ -16,11 +16,12 @@ import { NowAndForecastTile } from './components/forecast-tile';
 import { EditModeOverlay } from './components/edit';
 import { ProfileSwitcher } from './components/profile';
 import { Onboarding } from './components/onboarding';
+import { TileFrame } from './components/TileFrame';
 import {
   TweaksPanel, TweakSection, TweakRadio, TweakSelect, TweakButton,
 } from './components/tweaks';
-
-type TileId = 'discord' | 'spotify' | 'claude' | 'notes' | 'linear' | 'sysmon' | 'clock' | 'upnext';
+import type { TileId, Rect, Layout } from './state/layout';
+import { DEFAULT_LAYOUT } from './state/layout';
 
 interface VizColorOverride {
   enabled: boolean;
@@ -39,6 +40,7 @@ interface TweakState extends Record<string, unknown> {
   vizColorOverride: VizColorOverride;
   todos: Todo[];
   weatherLocation: WeatherLocation;
+  layout: Layout;
 }
 
 const TWEAK_DEFAULTS: TweakState = {
@@ -52,18 +54,17 @@ const TWEAK_DEFAULTS: TweakState = {
   vizColorOverride: { enabled: false, accent: '#a78bfa', accent2: '#ec4899' },
   todos: [],
   weatherLocation: { label: 'Knoxville, TN', lat: 35.9606, lon: -83.9207 },
+  layout: {},
 };
 
-const RAIL_DEFS: { id: TileId; label: string; row: number }[] = [
-  { id: 'discord', label: 'Discord',     row: 1.1 },
-  { id: 'spotify', label: 'Now playing', row: 1.0 },
-  { id: 'claude',  label: 'Claude Code', row: 1.4 },
-  { id: 'notes',   label: 'Notes',       row: 0.6 },
-];
-
-const STRIP_DEFS: { id: TileId; label: string; col: number }[] = [
-  { id: 'sysmon', label: 'System monitor', col: 1.4 },
-  { id: 'clock',  label: 'Now & forecast', col: 2.0 },
+const ALL_TILES: { id: TileId; label: string }[] = [
+  { id: 'discord', label: 'Discord' },
+  { id: 'spotify', label: 'Now playing' },
+  { id: 'claude',  label: 'Claude Code' },
+  { id: 'notes',   label: 'Todos' },
+  { id: 'sysmon',  label: 'System monitor' },
+  { id: 'clock',   label: 'Now & forecast' },
+  { id: 'viz',     label: 'Audio visualizer' },
 ];
 
 export default function App() {
@@ -73,6 +74,7 @@ export default function App() {
   const [profile, setProfile] = useState<Profile>('work');
   const [showSwitcher, setShowSwitcher] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(false);
+  const [selectedTileId, setSelectedTileId] = useState<TileId>('viz');
   const sysmon = useSysmon();
   const spectrumRef = useSpectrumRef();
   const { track: livePlaying, playback: livePlayback } = useNowPlaying();
@@ -140,17 +142,14 @@ export default function App() {
     return () => window.removeEventListener('resize', fit);
   }, []);
 
-  const gap = getDensity(t.density).gap;
   const overlaysOpen = editMode || showSwitcher || showOnboarding;
   const hidden = t.hidden;
-  const visibleRail = RAIL_DEFS.filter((r) => !hidden[r.id]);
-  const visibleStrip = STRIP_DEFS.filter((c) => !hidden[c.id]);
 
   const setHidden = (id: TileId, hide: boolean) => {
     setTweak('hidden', { ...hidden, [id]: hide || undefined });
   };
 
-  const renderRailTile = (id: TileId) => {
+  const renderTile = (id: TileId) => {
     switch (id) {
       case 'discord':
         return <DiscordTile density={t.density} accent={accent} />;
@@ -159,30 +158,32 @@ export default function App() {
       case 'claude':
         return <ClaudeCodeTile density={t.density} accent={accent} />;
       case 'notes':
+        return <NotesTile density={t.density} accent={accent} todos={t.todos} setTodos={(next) => setTweak('todos', next)} />;
+      case 'sysmon':
+        return <SysMonTile density={t.density} accent={accent} accent2={accent2} history={sysmon} />;
+      case 'clock':
+        return <NowAndForecastTile density={t.density} accent={accent} accent2={accent2} />;
+      case 'viz':
         return (
-          <NotesTile
-            density={t.density}
-            accent={accent}
-            todos={t.todos}
-            setTodos={(next) => setTweak('todos', next)}
+          <VizHero
+            mode={t.vizMode}
+            setMode={(m) => setTweak('vizMode', m)}
+            accent={vizAccent}
+            accent2={vizAccent2}
+            track={track}
+            spectrumRef={spectrumRef}
+            playback={livePlayback}
+            showArtBg={t.vizArtBg}
+            sensitivity={t.vizSensitivity}
+            smoothing={t.vizSmoothing}
           />
         );
-      default:
-        return null;
-    }
-  };
-
-  const renderStripTile = (id: TileId) => {
-    switch (id) {
-      case 'sysmon': return <SysMonTile density={t.density} accent={accent} accent2={accent2} history={sysmon} />;
-      case 'clock':  return <NowAndForecastTile density={t.density} accent={accent} accent2={accent2} />;
-      default:       return null;
     }
   };
 
   return (
     <div style={{ width: '100vw', height: '100vh', background: '#000', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
-      <div style={{
+      <div data-canvas-root style={{
         width: 2560, height: 1440,
         transform: `scale(${scale})`, transformOrigin: 'center center',
         flexShrink: 0, background: '#06070a', position: 'relative', overflow: 'hidden', borderRadius: 8,
@@ -194,55 +195,35 @@ export default function App() {
           onSwitcher={() => setShowSwitcher(true)}
           onOnboarding={() => setShowOnboarding(true)}
         />
-        <div style={{
-          position: 'absolute', top: 56, bottom: 32, left: 20, right: 20,
-          display: 'grid',
-          gridTemplateColumns: '560px 1fr',
-          gridTemplateRows: '1fr',
-          gap,
-        }}>
-          <div style={{
-            display: 'grid',
-            gridTemplateRows: visibleRail.map((r) => `${r.row}fr`).join(' '),
-            gap,
-            minHeight: 0,
-          }}>
-            {visibleRail.map((r) => (
-              <div key={r.id} style={{ minHeight: 0 }}>{renderRailTile(r.id)}</div>
-            ))}
-          </div>
-          <div style={{ display: 'grid', gridTemplateRows: '1fr 360px', gap, minHeight: 0 }}>
-            <VizHero
-              mode={t.vizMode}
-              setMode={(m) => setTweak('vizMode', m)}
-              accent={vizAccent}
-              accent2={vizAccent2}
-              track={track}
-              spectrumRef={spectrumRef}
-              playback={livePlayback}
-              showArtBg={t.vizArtBg}
-              sensitivity={t.vizSensitivity}
-              smoothing={t.vizSmoothing}
-            />
-            <div style={{
-              display: 'grid',
-              gridTemplateColumns: visibleStrip.map((c) => `${c.col}fr`).join(' '),
-              gap,
-              minHeight: 0,
-            }}>
-              {visibleStrip.map((c) => (
-                <div key={c.id} style={{ minWidth: 0 }}>{renderStripTile(c.id)}</div>
-              ))}
-            </div>
-          </div>
-        </div>
+        {ALL_TILES.map(({ id }) => {
+          if (hidden[id]) return null;
+          const rect: Rect = t.layout[id] ?? DEFAULT_LAYOUT[id];
+          return (
+            <TileFrame
+              key={id}
+              id={id}
+              rect={rect}
+              editing={editMode}
+              selected={selectedTileId === id}
+              onSelect={() => setSelectedTileId(id)}
+              onChange={(r) => setTweak('layout', { ...t.layout, [id]: r })}
+              accent={accent}
+            >
+              {renderTile(id)}
+            </TileFrame>
+          );
+        })}
         <BottomStatus accent={accent} onSwitcher={() => setShowSwitcher(true)} profile={profile} />
         {editMode && (
           <EditModeOverlay
             accent={accent}
             accent2={accent2}
             onExit={() => setEditMode(false)}
-            onRemove={(id) => setHidden(id as TileId, true)}
+            onRemove={(id) => setHidden(id, true)}
+            layout={t.layout}
+            setLayout={(next) => setTweak('layout', next)}
+            selectedId={selectedTileId}
+            setSelectedId={setSelectedTileId}
             hiddenIds={(Object.keys(hidden) as TileId[]).filter((k) => hidden[k])}
           />
         )}
@@ -342,13 +323,14 @@ export default function App() {
           label="Tile density" value={t.density}
           options={['compact', 'regular', 'spacious']}
           onChange={(v) => setTweak('density', v)} />
+        <TweakButton label="Reset layout" onClick={() => setTweak('layout', {})} />
         <TweakSection label="Weather" />
         <WeatherSearch
           current={t.weatherLocation}
           onPick={(loc) => setTweak('weatherLocation', loc)}
         />
         <TweakSection label="Tiles · show / hide" />
-        {[...RAIL_DEFS, ...STRIP_DEFS].map((def) => {
+        {ALL_TILES.filter(({ id }) => id !== 'viz').map((def) => {
           const visible = !hidden[def.id];
           return (
             <label key={def.id} style={{
