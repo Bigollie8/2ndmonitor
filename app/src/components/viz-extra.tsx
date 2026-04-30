@@ -133,23 +133,34 @@ export function VizCircularPulse({ accent, accent2, spectrumRef, sensitivity = 1
 }
 
 // 4. WAVEFORM TUNNEL — layered waveforms w/ depth blur (pure procedural, no spectrum)
-export function VizWaveformTunnel({ accent, accent2 }: VizProps) {
+export function VizWaveformTunnel({ accent, accent2, spectrumRef, sensitivity = 1, smoothing = 0 }: VizProps) {
   const refs = useRef<(SVGPathElement | null)[]>([]);
   useEffect(() => {
+    const reader = makeSpectrumReader(64, spectrumRef, sensitivity, smoothing);
     let raf = 0;
     let t = 0;
     const tick = () => {
       t += 0.04;
+      reader.read();
+      const bass = reader.bands.bass;
+      const mid = reader.bands.mid;
+      const treble = reader.bands.treble;
       for (let l = 0; l < 6; l++) {
         const ref = refs.current[l];
         if (!ref) continue;
         const phase = l * 0.6;
-        const amp = 30 + l * 6;
+        // Each layer rides a different frequency band. Outer layers (smaller l)
+        // track bass, inner layers track higher frequencies.
+        const energy = l < 2 ? bass : l < 4 ? mid : treble;
+        const amp = (30 + l * 6) * (0.6 + energy * 1.8);
         const points: string[] = [];
         for (let i = 0; i <= 80; i++) {
           const x = (i / 80) * 100;
+          // Modulate per-bin via the spectrum so the wave shape itself reacts.
+          const spec = reader.out[Math.floor((i / 80) * 64)] ?? 0;
           const y = 50 + Math.sin(t * 1.5 + i * 0.3 + phase) * amp * 0.4
-                       + Math.sin(t * 0.7 + i * 0.1 + phase) * amp * 0.3;
+                       + Math.sin(t * 0.7 + i * 0.1 + phase) * amp * 0.3
+                       + (spec - 0.5) * amp * 0.5;
           points.push(`${x},${y}`);
         }
         ref.setAttribute('d', `M ${points.join(' L ')}`);
@@ -158,7 +169,7 @@ export function VizWaveformTunnel({ accent, accent2 }: VizProps) {
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, []);
+  }, [spectrumRef, sensitivity, smoothing]);
   return (
     <div style={{ position: 'absolute', inset: 0, background: '#04050a' }}>
       <svg viewBox="0 0 100 100" preserveAspectRatio="none" style={{ width: '100%', height: '100%' }}>
@@ -265,8 +276,8 @@ export function VizRibbon({ accent, accent2, spectrumRef, sensitivity = 1, smoot
   );
 }
 
-// 7. OSCILLOSCOPE — green CRT scope w/ phosphor trail (pure procedural)
-export function VizOscilloscope({ accent }: VizProps) {
+// 7. OSCILLOSCOPE — CRT phosphor scope, trace driven by audio
+export function VizOscilloscope({ accent, spectrumRef, sensitivity = 1, smoothing = 0 }: VizProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   useEffect(() => {
     const c = canvasRef.current;
@@ -276,10 +287,12 @@ export function VizOscilloscope({ accent }: VizProps) {
     const resize = () => { c.width = c.clientWidth; c.height = c.clientHeight; };
     resize();
     window.addEventListener('resize', resize);
+    const reader = makeSpectrumReader(128, spectrumRef, sensitivity, smoothing);
     let raf = 0;
     let t = 0;
     const tick = () => {
       t += 0.06;
+      reader.read();
       ctx.fillStyle = 'rgba(2, 8, 4, 0.18)';
       ctx.fillRect(0, 0, c.width, c.height);
       // Grid
@@ -291,7 +304,10 @@ export function VizOscilloscope({ accent }: VizProps) {
       for (let y = 0; y < c.height; y += c.height / 10) {
         ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(c.width, y); ctx.stroke();
       }
-      // Trace
+      // Trace — y combines spectrum-driven amplitude with a slow-moving carrier
+      // so it still feels CRT-scope-y rather than just a bar chart.
+      const overall = (reader.bands.bass + reader.bands.mid + reader.bands.treble) / 3;
+      const amp = c.height * (0.18 + overall * 0.28);
       ctx.strokeStyle = accent;
       ctx.shadowBlur = 12;
       ctx.shadowColor = accent;
@@ -299,10 +315,12 @@ export function VizOscilloscope({ accent }: VizProps) {
       ctx.beginPath();
       for (let x = 0; x < c.width; x += 2) {
         const u = x / c.width;
+        const specIdx = Math.min(127, Math.floor(u * 128));
+        const sp = (reader.out[specIdx] ?? 0) - 0.5;
         const y = c.height / 2
-          + Math.sin(u * Math.PI * 8 + t) * c.height * 0.15
-          + Math.sin(u * Math.PI * 24 + t * 2.3) * c.height * 0.08
-          + Math.sin(u * Math.PI * 3 + t * 0.6) * c.height * 0.18;
+          + sp * amp * 1.4
+          + Math.sin(u * Math.PI * 8 + t) * c.height * 0.05
+          + Math.sin(u * Math.PI * 24 + t * 2.3) * c.height * 0.025;
         if (x === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
       }
       ctx.stroke();
@@ -311,7 +329,7 @@ export function VizOscilloscope({ accent }: VizProps) {
     };
     raf = requestAnimationFrame(tick);
     return () => { cancelAnimationFrame(raf); window.removeEventListener('resize', resize); };
-  }, [accent]);
+  }, [accent, spectrumRef, sensitivity, smoothing]);
   return (
     <div style={{ position: 'absolute', inset: 0, background: '#020806' }}>
       <canvas ref={canvasRef} style={{ width: '100%', height: '100%', display: 'block' }} />
@@ -374,20 +392,38 @@ export function VizSpectrogram({ accent, accent2, spectrumRef, sensitivity = 1, 
   );
 }
 
-// 9. VINYL — spinning record w/ tonearm (pure procedural)
-export function VizVinyl({ accent, accent2 }: VizProps) {
+// 9. VINYL — spinning record; speed pulses with bass + glow flashes on kick
+export function VizVinyl({ accent, accent2, spectrumRef, sensitivity = 1, smoothing = 0 }: VizProps) {
   const ref = useRef<HTMLDivElement | null>(null);
+  const labelRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
+    const reader = makeSpectrumReader(64, spectrumRef, sensitivity, smoothing);
     let raf = 0;
     let r = 0;
     const tick = () => {
-      r += 0.6;
-      if (ref.current) ref.current.style.transform = `rotate(${r}deg)`;
+      reader.read();
+      const bass = reader.bands.bass;
+      const kick = reader.onset.kick;
+      // Base 33⅓ rpm vibe (~0.6deg/frame at 60fps); bass pulses speed up to ~2x.
+      r += 0.6 + bass * 0.7;
+      const disc = ref.current;
+      if (disc) {
+        disc.style.transform = `rotate(${r}deg)`;
+        // Glow intensity reacts to kicks.
+        const glow = 80 + kick * 120;
+        disc.style.boxShadow = `0 0 ${glow}px ${accent}${Math.round((0.2 + kick * 0.4) * 255).toString(16).padStart(2, '0')}, inset 0 0 60px rgba(0,0,0,0.8)`;
+      }
+      // Subtle scale-bump on the disc on kicks
+      const label = labelRef.current;
+      if (label) {
+        const s = 1 + kick * 0.06;
+        label.style.transform = `translate(-50%, -50%) scale(${s})`;
+      }
       raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, []);
+  }, [accent, spectrumRef, sensitivity, smoothing]);
   return (
     <div style={{ position: 'absolute', inset: 0, background: 'radial-gradient(circle at 30% 40%, #1a1a22 0%, #06070a 70%)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
       <div style={{ position: 'relative', width: '70%', aspectRatio: '1/1' }}>
@@ -396,7 +432,7 @@ export function VizVinyl({ accent, accent2 }: VizProps) {
           background: `radial-gradient(circle, ${accent2} 0%, ${accent2} 8%, #0a0a0c 8%, #0a0a0c 12%, ${accent} 12%, ${accent} 13%, #0a0a0c 13%, #0a0a0c 18%, repeating-radial-gradient(#0a0a0c, #0a0a0c 1px, #161618 2px, #0a0a0c 3px) 18%)`,
           boxShadow: `0 0 80px ${accent}33, inset 0 0 60px rgba(0,0,0,0.8)`,
         }}>
-          <div style={{ position: 'absolute', top: '50%', left: '50%', width: '4%', height: '4%', borderRadius: '50%', background: accent, transform: 'translate(-50%, -50%)', boxShadow: `0 0 20px ${accent}` }} />
+          <div ref={labelRef} style={{ position: 'absolute', top: '50%', left: '50%', width: '4%', height: '4%', borderRadius: '50%', background: accent, transform: 'translate(-50%, -50%)', boxShadow: `0 0 20px ${accent}` }} />
         </div>
         {/* Tonearm */}
         <div style={{

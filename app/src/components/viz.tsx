@@ -458,10 +458,32 @@ export function HiFiVizParticles({ accent, accent2, spectrumRef, sensitivity = 1
   return <canvas ref={ref} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }} />;
 }
 
-export function HiFiVizAmbient({ accent, accent2 }: VizProps) {
+export function HiFiVizAmbient({ accent, accent2, spectrumRef, sensitivity = 1, smoothing = 0 }: VizProps) {
+  const blobsRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const reader = makeSpectrumReader(48, spectrumRef, sensitivity, smoothing);
+    let raf = 0;
+    const tick = () => {
+      reader.read();
+      const bass = reader.bands.bass;
+      const mid = reader.bands.mid;
+      const el = blobsRef.current;
+      if (el) {
+        // Bass slowly inflates the blobs; mid gently nudges saturation.
+        const scale = 1 + bass * 0.18;
+        const sat = 1.2 + mid * 0.6;
+        const blur = 2 + (1 - bass) * 4; // softer when quiet, sharper on bass
+        el.style.transform = `scale(${scale})`;
+        el.style.filter = `blur(${blur}px) saturate(${sat})`;
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [spectrumRef, sensitivity, smoothing]);
   return (
     <div style={{ position: 'absolute', inset: 0, overflow: 'hidden', background: '#06080d' }}>
-      <div style={{
+      <div ref={blobsRef} style={{
         position: 'absolute', inset: '-10%',
         background: `
           radial-gradient(ellipse 50% 40% at 25% 35%, ${accent}77, transparent 65%),
@@ -471,12 +493,14 @@ export function HiFiVizAmbient({ accent, accent2 }: VizProps) {
         `,
         filter: 'blur(2px) saturate(1.2)',
         animation: 'amb-drift 22s ease-in-out infinite alternate',
+        transition: 'transform 120ms ease-out, filter 200ms ease-out',
+        willChange: 'transform, filter',
       }} />
       <style>{`
         @keyframes amb-drift {
-          0% { transform: translate(0, 0) scale(1); }
-          50% { transform: translate(3%, -2%) scale(1.08); }
-          100% { transform: translate(-2%, 3%) scale(0.95); }
+          0% { translate: 0 0; }
+          50% { translate: 3% -2%; }
+          100% { translate: -2% 3%; }
         }
       `}</style>
     </div>
