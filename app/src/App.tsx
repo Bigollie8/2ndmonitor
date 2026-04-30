@@ -300,7 +300,7 @@ export default function App() {
             sensitivity={t.vizSensitivity}
             smoothing={t.vizSmoothing}
             lyricsOverlayEnabled={t.lyricsOverlayEnabled}
-            paused={showGallery || (t.perfMode === 'battery' && livePlayback?.playing !== true)}
+            paused={showGallery || (t.perfMode !== 'uncapped' && livePlayback?.playing !== true)}
             onConfigure={() => setShowGallery(true)}
           />
         );
@@ -527,10 +527,10 @@ export default function App() {
           onChange={(v) => setTweak('perfMode', v)}
         />
         <div style={{ fontSize: 10, color: 'rgba(41,38,27,0.55)', padding: '2px 0 6px', lineHeight: 1.45 }}>
-          {t.perfMode === 'uncapped' && 'Native DPR · uncapped fps · 60 Hz audio · no idle pause'}
-          {t.perfMode === 'high'     && 'DPR cap 1.5× · 120 fps · 60 Hz audio'}
-          {t.perfMode === 'balanced' && 'DPR cap 1× · 60 fps · 30 Hz audio'}
-          {t.perfMode === 'battery'  && 'DPR cap 1× · 30 fps · 15 Hz audio · hero pauses when idle'}
+          {t.perfMode === 'uncapped' && 'Native DPR · uncapped fps · 60 Hz audio · always animating'}
+          {t.perfMode === 'high'     && 'DPR cap 1.5× · 120 fps · 60 Hz audio · pauses when nothing plays'}
+          {t.perfMode === 'balanced' && 'DPR cap 1× · 60 fps · 30 Hz audio · pauses when nothing plays'}
+          {t.perfMode === 'battery'  && 'DPR cap 1× · 30 fps · 15 Hz audio · pauses when nothing plays'}
         </div>
         <TweakSection label="Tiles · show / hide" />
         {ALL_TILES.filter(({ id }) => id !== 'viz').map((def) => {

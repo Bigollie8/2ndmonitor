@@ -107,7 +107,9 @@ fn collect(state: &Arc<Mutex<State>>) -> SysmonSample {
     // ── CPU ─────────────────────────────────────────────────────────────────
     s.sys.refresh_cpu_all();
     s.sys.refresh_memory();
-    s.sys.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
+    // `false` skips per-task (thread) refresh which is a real cost on Windows
+    // and we don't display thread info anywhere.
+    s.sys.refresh_processes(sysinfo::ProcessesToUpdate::All, false);
 
     let cpu_pct = s.sys.global_cpu_usage();
     let cpu_norm = (cpu_pct / 100.0).clamp(0.0, 1.0);
