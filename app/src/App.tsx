@@ -20,13 +20,21 @@ import {
 
 type TileId = 'discord' | 'spotify' | 'claude' | 'notes' | 'linear' | 'sysmon' | 'clock' | 'upnext';
 
+interface VizColorOverride {
+  enabled: boolean;
+  accent: string;
+  accent2: string;
+}
+
 interface TweakState extends Record<string, unknown> {
   vizMode: VizMode;
   accentTheme: AccentTheme;
   density: Density;
   hidden: Partial<Record<TileId, boolean>>;
-  /** When true, the viz hero shows a blurred album-art backdrop instead of pure black. */
   vizArtBg: boolean;
+  vizSensitivity: number;
+  vizSmoothing: number;
+  vizColorOverride: VizColorOverride;
 }
 
 const TWEAK_DEFAULTS: TweakState = {
@@ -35,6 +43,9 @@ const TWEAK_DEFAULTS: TweakState = {
   density: 'compact',
   hidden: {},
   vizArtBg: false,
+  vizSensitivity: 1.0,
+  vizSmoothing: 0.0,
+  vizColorOverride: { enabled: false, accent: '#a78bfa', accent2: '#ec4899' },
 };
 
 const RAIL_DEFS: { id: TileId; label: string; row: number }[] = [
@@ -68,6 +79,8 @@ export default function App() {
   const accent = palette.accent ?? track.accent;
   const accent2 = palette.accent2 ?? track.accent2;
   const accentLinked = t.accentTheme === 'auto';
+  const vizAccent  = t.vizColorOverride.enabled ? t.vizColorOverride.accent  : accent;
+  const vizAccent2 = t.vizColorOverride.enabled ? t.vizColorOverride.accent2 : accent2;
 
   useEffect(() => {
     document.documentElement.style.setProperty('--accent', accent);
@@ -181,12 +194,14 @@ export default function App() {
             <VizHero
               mode={t.vizMode}
               setMode={(m) => setTweak('vizMode', m)}
-              accent={accent}
-              accent2={accent2}
+              accent={vizAccent}
+              accent2={vizAccent2}
               track={track}
               spectrumRef={spectrumRef}
               playback={livePlayback}
               showArtBg={t.vizArtBg}
+              sensitivity={t.vizSensitivity}
+              smoothing={t.vizSmoothing}
             />
             <div style={{
               display: 'grid',
@@ -232,6 +247,63 @@ export default function App() {
           />
           <span style={{ fontSize: 11.5, fontWeight: 500 }}>Album-art backdrop</span>
         </label>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, padding: '4px 0' }}>
+          <label style={{ fontSize: 11, fontWeight: 500, color: 'rgba(41,38,27,0.85)', display: 'flex', justifyContent: 'space-between' }}>
+            <span>Sensitivity</span>
+            <span style={{ fontFamily: '"JetBrains Mono", ui-monospace, monospace', color: 'rgba(41,38,27,0.55)' }}>
+              {t.vizSensitivity.toFixed(2)}×
+            </span>
+          </label>
+          <input
+            type="range" min={0.3} max={2.5} step={0.05}
+            value={t.vizSensitivity}
+            onChange={(e) => setTweak('vizSensitivity', parseFloat(e.target.value))}
+            style={{ accentColor: '#29261b', width: '100%' }}
+          />
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, padding: '4px 0' }}>
+          <label style={{ fontSize: 11, fontWeight: 500, color: 'rgba(41,38,27,0.85)', display: 'flex', justifyContent: 'space-between' }}>
+            <span>Smoothing</span>
+            <span style={{ fontFamily: '"JetBrains Mono", ui-monospace, monospace', color: 'rgba(41,38,27,0.55)' }}>
+              {t.vizSmoothing.toFixed(2)}
+            </span>
+          </label>
+          <input
+            type="range" min={0} max={0.95} step={0.05}
+            value={t.vizSmoothing}
+            onChange={(e) => setTweak('vizSmoothing', parseFloat(e.target.value))}
+            style={{ accentColor: '#29261b', width: '100%' }}
+          />
+        </div>
+        <label style={{
+          display: 'flex', alignItems: 'center', gap: 8, padding: '3px 0',
+          cursor: 'pointer', userSelect: 'none', color: 'rgba(41,38,27,0.85)',
+        }}>
+          <input
+            type="checkbox"
+            checked={t.vizColorOverride.enabled}
+            onChange={(e) => setTweak('vizColorOverride', { ...t.vizColorOverride, enabled: e.target.checked })}
+            style={{ accentColor: '#29261b', width: 13, height: 13 }}
+          />
+          <span style={{ fontSize: 11.5, fontWeight: 500 }}>Color override (viz only)</span>
+        </label>
+        {t.vizColorOverride.enabled && (
+          <div style={{ display: 'flex', gap: 8, padding: '4px 0', alignItems: 'center' }}>
+            <input
+              type="color" value={t.vizColorOverride.accent}
+              onChange={(e) => setTweak('vizColorOverride', { ...t.vizColorOverride, accent: e.target.value })}
+              style={{ width: 28, height: 22, padding: 0, border: '1px solid rgba(0,0,0,0.1)', borderRadius: 4, cursor: 'pointer' }}
+            />
+            <input
+              type="color" value={t.vizColorOverride.accent2}
+              onChange={(e) => setTweak('vizColorOverride', { ...t.vizColorOverride, accent2: e.target.value })}
+              style={{ width: 28, height: 22, padding: 0, border: '1px solid rgba(0,0,0,0.1)', borderRadius: 4, cursor: 'pointer' }}
+            />
+            <span style={{ fontSize: 10, color: 'rgba(41,38,27,0.55)', fontFamily: '"JetBrains Mono", ui-monospace, monospace' }}>
+              accent / accent2
+            </span>
+          </div>
+        )}
         <TweakSection label="Accent color" />
         <TweakSelect<AccentTheme>
           label="Source" value={t.accentTheme}
