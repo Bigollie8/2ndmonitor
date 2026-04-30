@@ -232,12 +232,18 @@ export function useNowPlaying(): NowPlayingState {
         const p = e.payload;
         const track = payloadToTrack(p);
 
-        // Only re-anchor playback when there's a meaningful change. GSMTC's
-        // reported position lags real playback by ~200-800ms, so re-syncing on
-        // every 2s tick caused interpolated time to jump *backward* to the
-        // lagging GSMTC value — visible as lyrics getting in sync, then stepping
-        // back. Trust local interpolation between meaningful events.
-        const SEEK_DRIFT_THRESHOLD = 2.0; // seconds
+        // Drift detection is ASYMMETRIC. GSMTC's reported position routinely
+        // lags real playback by 200-1500ms (Spotify pushes position at ~1Hz),
+        // so a "negative drift" (GSMTC value < our interpolated value) is
+        // almost always a lag spike — re-syncing to it would yank lyrics
+        // backward. We only re-anchor on:
+        //   - track change / play-state change
+        //   - forward drift > 1s (we missed time, e.g. tab throttled, or user
+        //     seeked forward)
+        //   - very large backward drift > 15s (real backward seek; anything
+        //     smaller is treated as GSMTC jitter and ignored)
+        const FORWARD_RESYNC_THRESHOLD = 1.0;
+        const BIG_BACKWARD_SEEK = 15.0;
         setState((prev) => {
           let nextPlayback: Playback | null;
           if (!p.has_session) {
@@ -261,9 +267,10 @@ export function useNowPlaying(): NowPlayingState {
                 ? (performance.now() - prevPb.syncedAt) / 1000
                 : 0;
               const interpolated = prevPb.positionAtSync + elapsed;
-              const drift = Math.abs(p.position - interpolated);
-              if (drift > SEEK_DRIFT_THRESHOLD) {
-                // Big drift = user seeked.
+              const driftSigned = p.position - interpolated;
+              const isForwardJump = driftSigned > FORWARD_RESYNC_THRESHOLD;
+              const isBigBackwardSeek = driftSigned < -BIG_BACKWARD_SEEK;
+              if (isForwardJump || isBigBackwardSeek) {
                 nextPlayback = {
                   positionAtSync: p.position,
                   duration: p.duration,
@@ -271,11 +278,9 @@ export function useNowPlaying(): NowPlayingState {
                   syncedAt: performance.now(),
                 };
               } else if (prevPb.duration !== p.duration) {
-                // Just refresh duration; preserve anchor.
                 nextPlayback = { ...prevPb, duration: p.duration };
               } else {
-                // No-op — return same reference so React doesn't re-render
-                // the lyrics interval (which would itself cause a brief jump).
+                // Hold anchor — interpolation continues forward smoothly.
                 nextPlayback = prevPb;
               }
             }

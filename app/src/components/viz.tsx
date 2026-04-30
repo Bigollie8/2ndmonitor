@@ -619,28 +619,22 @@ export function VizHero({
   );
 }
 
+/** GSMTC's reported position lags real audio by ~300-800ms because Spotify
+ *  only pushes position to GSMTC at ~1Hz. Bumping the lyric position forward
+ *  by a fixed amount compensates so lines hit on time instead of late. */
+const LYRICS_FORWARD_OFFSET_SECS = 0.4;
+
 /** Returns the active synced-line index, recomputed on a 200ms interval against
- *  interpolated playback position. Only setState when the index actually changes.
- *  Anti-hop guard: tiny backward jumps (< 3s of LRC time) are treated as jitter
- *  from GSMTC re-sync stalls and ignored; large backward jumps (real seeks) pass. */
+ *  interpolated playback position. Only setState when the index actually changes. */
 function useCurrentLyricIndex(lines: import('../state/lyrics').LrcLine[], playback?: Playback | null): number {
   const [idx, setIdx] = useState(-1);
   useEffect(() => {
     if (!playback || lines.length === 0) { setIdx(-1); return; }
     const tick = () => {
       const elapsed = playback.playing ? (performance.now() - playback.syncedAt) / 1000 : 0;
-      const pos = playback.positionAtSync + elapsed;
+      const pos = playback.positionAtSync + elapsed + LYRICS_FORWARD_OFFSET_SECS;
       const next = currentLineIndex(lines, pos);
-      setIdx((prev) => {
-        if (prev === next) return prev;
-        // Anti-hop: don't go backward unless it's a real seek (>3s of lyric time).
-        if (next >= 0 && prev > next) {
-          const prevTs = lines[prev]?.tsMs ?? 0;
-          const nextTs = lines[next]?.tsMs ?? 0;
-          if ((prevTs - nextTs) < 3000) return prev;
-        }
-        return next;
-      });
+      setIdx((prev) => (prev === next ? prev : next));
     };
     tick();
     const id = setInterval(tick, 200);

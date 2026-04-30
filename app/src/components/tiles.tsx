@@ -452,29 +452,13 @@ function UpNextRow({ track, accent }: { track: SpotifyTrack; accent: string }) {
   );
 }
 
+// GSMTC lags real audio by ~300-800ms; same forward offset as the viz overlay.
+const LYRICS_FORWARD_OFFSET_SECS = 0.4;
+
 function SpotifyLyricsView({ accent, playback }: { accent: string; playback?: Playback | null }) {
   const lyrics = useLyrics();
   const pos = useLivePosition(playback ?? null);
-  const rawIdx = currentLineIndex(lyrics.syncedLines, pos);
-
-  // Anti-hop: if GSMTC re-sync briefly drops position, lyrics don't visibly
-  // bounce backward. Tiny backward jumps (< 3s) are ignored as jitter; real
-  // seeks (> 3s back) and track changes (idx resets via lines change) work.
-  const lastIdxRef = useRef<{ idx: number; trackKey: string | null }>({ idx: -1, trackKey: null });
-  const trackChanged = lastIdxRef.current.trackKey !== lyrics.trackKey;
-  if (trackChanged) {
-    lastIdxRef.current = { idx: rawIdx, trackKey: lyrics.trackKey };
-  } else if (rawIdx >= 0 && lastIdxRef.current.idx > rawIdx) {
-    const prevTs = lyrics.syncedLines[lastIdxRef.current.idx]?.tsMs ?? 0;
-    const nextTs = lyrics.syncedLines[rawIdx]?.tsMs ?? 0;
-    if ((prevTs - nextTs) >= 3000) {
-      lastIdxRef.current = { ...lastIdxRef.current, idx: rawIdx };
-    }
-  } else {
-    lastIdxRef.current = { ...lastIdxRef.current, idx: rawIdx };
-  }
-  const idx = lastIdxRef.current.idx;
-
+  const idx = currentLineIndex(lyrics.syncedLines, pos + LYRICS_FORWARD_OFFSET_SECS);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const activeRef = useRef<HTMLDivElement | null>(null);
 
