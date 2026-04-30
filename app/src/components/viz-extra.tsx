@@ -17,7 +17,7 @@ export function VizNeonBars({ accent, accent2, spectrumRef, sensitivity = 1, smo
     const reader = makeSpectrumReader(N, spectrumRef, sensitivity, smoothing);
     let raf = 0;
     const tick = () => {
-      if (gate.current) {
+      if (gate.shouldDraw()) {
         reader.read();
         for (let i = 0; i < N; i++) {
           const v = reader.out[i] ?? 0;
@@ -55,7 +55,7 @@ export function VizSplitMirror({ accent, accent2, spectrumRef, sensitivity = 1, 
     const reader = makeSpectrumReader(N, spectrumRef, sensitivity, smoothing);
     let raf = 0;
     const tick = () => {
-      if (gate.current) {
+      if (gate.shouldDraw()) {
         reader.read();
         for (let i = 0; i < N; i++) {
           const v = reader.out[i] ?? 0;
@@ -97,7 +97,7 @@ export function VizCircularPulse({ accent, accent2, spectrumRef, sensitivity = 1
     let raf = 0;
     let bassSm = 0;
     const tick = () => {
-      if (gate.current) {
+      if (gate.shouldDraw()) {
         const bass = reader.read();
         bassSm = bassSm * 0.7 + bass * 0.3;
         for (let i = 0; i < N; i++) {
@@ -150,7 +150,7 @@ export function VizWaveformTunnel({ accent, accent2, spectrumRef, sensitivity = 
     let raf = 0;
     let t = 0;
     const tick = () => {
-      if (gate.current) {
+      if (gate.shouldDraw()) {
         t += 0.04;
         reader.read();
         const bass = reader.bands.bass;
@@ -208,7 +208,7 @@ export function VizPixelLED({ accent, accent2, spectrumRef, sensitivity = 1, smo
     const reader = makeSpectrumReader(N, spectrumRef, sensitivity, smoothing);
     let raf = 0;
     const tick = () => {
-      if (gate.current) {
+      if (gate.shouldDraw()) {
         reader.read();
         for (let i = 0; i < N; i++) {
           const v = reader.out[i] ?? 0;
@@ -260,7 +260,7 @@ export function VizRibbon({ accent, accent2, spectrumRef, sensitivity = 1, smoot
     const reader = makeSpectrumReader(N, spectrumRef, sensitivity, smoothing);
     let raf = 0;
     const tick = () => {
-      if (gate.current) {
+      if (gate.shouldDraw()) {
         reader.read();
         const top: string[] = [];
         const bot: string[] = [];
@@ -310,7 +310,7 @@ export function VizOscilloscope({ accent, spectrumRef, sensitivity = 1, smoothin
     let raf = 0;
     let t = 0;
     const tick = () => {
-      if (gate.current) {
+      if (gate.shouldDraw()) {
         t += 0.06;
         reader.read();
         ctx.fillStyle = 'rgba(2, 8, 4, 0.18)';
@@ -376,7 +376,7 @@ export function VizSpectrogram({ accent, accent2, spectrumRef, sensitivity = 1, 
     const a2 = hexToRgb(accent2);
     let raf = 0;
     const tick = () => {
-      if (gate.current) {
+      if (gate.shouldDraw()) {
         reader.read();
         // Scroll left
         const img = ctx.getImageData(2, 0, c.width - 2, c.height);
@@ -426,7 +426,7 @@ export function VizVinyl({ accent, accent2, spectrumRef, sensitivity = 1, smooth
     let raf = 0;
     let r = 0;
     const tick = () => {
-      if (gate.current) {
+      if (gate.shouldDraw()) {
         reader.read();
         const bass = reader.bands.bass;
         const kick = reader.onset.kick;
@@ -486,7 +486,7 @@ export function VizKaleidoscope({ accent, accent2, spectrumRef, sensitivity = 1,
     let raf = 0;
     let t = 0;
     const tick = () => {
-      if (gate.current) {
+      if (gate.shouldDraw()) {
         t += 0.01;
         reader.read();
         for (let i = 0; i < N; i++) {
@@ -534,7 +534,7 @@ export function VizFreqGrid({ accent, accent2, spectrumRef, sensitivity = 1, smo
     const reader = makeSpectrumReader(ROWS, spectrumRef, sensitivity, smoothing);
     let raf = 0;
     const tick = () => {
-      if (gate.current) {
+      if (gate.shouldDraw()) {
         reader.read();
         // Advance ring head, then copy current spectrum into the new head row.
         headRef.current = (headRef.current + 1) % COLS;
@@ -588,7 +588,7 @@ export function VizMinimalDots({ accent, accent2, spectrumRef, sensitivity = 1, 
     const reader = makeSpectrumReader(16, spectrumRef, sensitivity, smoothing);
     let raf = 0;
     const tick = () => {
-      if (gate.current) {
+      if (gate.shouldDraw()) {
         reader.read();
         const s = reader.out;
         const bands = [

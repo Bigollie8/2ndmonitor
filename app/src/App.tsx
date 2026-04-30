@@ -6,7 +6,7 @@ import type { GeocodeResult } from './state/weatherLocation';
 import { TRACKS, ACCENT_PALETTES } from './data';
 import { useTweaks } from './state/useTweaks';
 import { useSysmon, useNowPlaying, useSpectrumRef } from './state/tauri';
-import { VizHero, setVizDprCap } from './components/viz';
+import { VizHero, setVizDprCap, setVizMaxFps } from './components/viz';
 import { VizGallery, VIZ_STYLES } from './components/viz-gallery';
 import {
   SpotifyTile, NotesTile,
@@ -170,12 +170,15 @@ export default function App() {
     switch (t.perfMode) {
       case 'quality':
         setVizDprCap(window.devicePixelRatio || 1);
+        setVizMaxFps(0);  // no cap — let rAF run at native rate
         break;
       case 'balanced':
         setVizDprCap(1.25);
+        setVizMaxFps(60);
         break;
       case 'battery':
         setVizDprCap(1.0);
+        setVizMaxFps(30);
         break;
     }
     // Nudge canvases to re-read their bounding rect with the new DPR.
@@ -506,9 +509,9 @@ export default function App() {
           onChange={(v) => setTweak('perfMode', v)}
         />
         <div style={{ fontSize: 10, color: 'rgba(41,38,27,0.55)', padding: '2px 0 6px', lineHeight: 1.45 }}>
-          {t.perfMode === 'quality'   && 'Native DPR · 60fps · no idle pause'}
-          {t.perfMode === 'balanced'  && 'DPR cap 1.25× · 60fps'}
-          {t.perfMode === 'battery'   && 'DPR cap 1× · hero pauses when track is paused'}
+          {t.perfMode === 'quality'   && 'Native DPR · native fps · no idle pause'}
+          {t.perfMode === 'balanced'  && 'DPR cap 1.25× · 60 fps cap'}
+          {t.perfMode === 'battery'   && 'DPR cap 1× · 30 fps cap · hero pauses when idle'}
         </div>
         <TweakSection label="Tiles · show / hide" />
         {ALL_TILES.filter(({ id }) => id !== 'viz').map((def) => {

@@ -22,6 +22,11 @@ export function getVizDpr(): number {
   return Math.min(dpr, vizDprCap);
 }
 
+/** Frames-per-second cap. 0 means no cap (native rAF). Otherwise, viz tick
+ *  bodies skip drawing when `now - lastDraw < 1000/maxFps`. */
+let vizMaxFps = 0;
+export function setVizMaxFps(fps: number) { vizMaxFps = fps; }
+
 /** Reads N values from spectrumRef.current.bands by resampling, applies
  *  sensitivity, and per-bin smooths. Falls back to a procedural fake
  *  spectrum when no live audio. Returns a callable that mutates `out`
@@ -138,14 +143,16 @@ export interface VizProps {
   paused?: boolean;
 }
 
-/** Returns a stable ref whose `.current` is `true` when the viz should run.
- *  False when `paused` is true OR the document is hidden (tab/window minimized).
- *  Each viz reads `gate.current` inside its rAF tick to decide whether to draw. */
-export function useAnimateGate(paused?: boolean): React.MutableRefObject<boolean> {
-  const ref = useRef(true);
+/** Combined visibility + frame-rate gate. Each viz calls `shouldDraw()` once
+ *  per rAF; returns true only when (a) not paused, (b) document not hidden,
+ *  and (c) enough time has elapsed since the last successful draw to honour
+ *  the global FPS cap. The rAF callback should still re-schedule unconditionally. */
+export function useAnimateGate(paused?: boolean): { shouldDraw(): boolean } {
+  const visibleRef = useRef(true);
+  const lastDrawRef = useRef(0);
   useEffect(() => {
     const update = () => {
-      ref.current = !paused && (typeof document === 'undefined' || document.visibilityState !== 'hidden');
+      visibleRef.current = !paused && (typeof document === 'undefined' || document.visibilityState !== 'hidden');
     };
     update();
     if (typeof document !== 'undefined') {
@@ -154,7 +161,19 @@ export function useAnimateGate(paused?: boolean): React.MutableRefObject<boolean
     }
     return undefined;
   }, [paused]);
-  return ref;
+
+  return {
+    shouldDraw(): boolean {
+      if (!visibleRef.current) return false;
+      if (vizMaxFps > 0) {
+        const now = performance.now();
+        const minDelta = 1000 / vizMaxFps;
+        if (now - lastDrawRef.current < minDelta) return false;
+        lastDrawRef.current = now;
+      }
+      return true;
+    },
+  };
 }
 
 export function HiFiVizBars({ accent, accent2, spectrumRef, sensitivity = 1, smoothing = 0, paused }: VizProps) {
@@ -168,7 +187,7 @@ export function HiFiVizBars({ accent, accent2, spectrumRef, sensitivity = 1, smo
   useEffect(() => {
     let t = 0;
     const tick = () => {
-      if (gate.current) {
+      if (gate.shouldDraw()) {
         t += 0.04;
         const live = spectrumRef?.current.live === true;
         const bands = spectrumRef?.current.bands;
@@ -240,7 +259,7 @@ export function HiFiVizWaveform({ accent, accent2, spectrumRef, sensitivity = 1,
     let raf = 0;
     const N = 200;
     const tick = () => {
-      if (gate.current) {
+      if (gate.shouldDraw()) {
         t += 0.05;
         const live = spectrumRef?.current.live === true;
         const bands = spectrumRef?.current.bands;
@@ -313,7 +332,7 @@ export function HiFiVizRadial({ accent, accent2, spectrumRef, sensitivity = 1, s
     let t = 0;
     let raf = 0;
     const tick = () => {
-      if (gate.current) {
+      if (gate.shouldDraw()) {
         t += 0.03;
         const live = spectrumRef?.current.live === true;
         const bands = spectrumRef?.current.bands;
@@ -415,7 +434,7 @@ export function HiFiVizParticles({ accent, accent2, spectrumRef, sensitivity = 1
     let bassSmoothed = 0;
     let bassReference = 0;  // slow-tracking baseline; spike = bass - reference
     const tick = () => {
-      if (gate.current) {
+      if (gate.shouldDraw()) {
         t += 0.02;
         const w = canvas.width, h = canvas.height;
         ctx.clearRect(0, 0, w, h);
@@ -509,7 +528,7 @@ export function HiFiVizAmbient({ accent, accent2, spectrumRef, sensitivity = 1, 
     const reader = makeSpectrumReader(48, spectrumRef, sensitivity, smoothing);
     let raf = 0;
     const tick = () => {
-      if (gate.current) {
+      if (gate.shouldDraw()) {
         reader.read();
         const bass = reader.bands.bass;
         const mid = reader.bands.mid;

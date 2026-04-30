@@ -40,7 +40,7 @@ export function VizStarfield({ accent, accent2, spectrumRef, sensitivity = 1, sm
 
     let raf = 0;
     const tick = () => {
-      if (gate.current) {
+      if (gate.shouldDraw()) {
         reader.read();
         const w = canvas.width / dpr, h = canvas.height / dpr;
         const cx = w / 2, cy = h / 2;
@@ -130,7 +130,7 @@ export function VizPerlinFlow({ accent, accent2, spectrumRef, sensitivity = 1, s
     let t = 0;
     let raf = 0;
     const tick = () => {
-      if (gate.current) {
+      if (gate.shouldDraw()) {
         reader.read();
         t += 0.04;
         const w = canvas.width / dpr, h = canvas.height / dpr;
@@ -195,7 +195,7 @@ export function VizOrbital({ accent, accent2, spectrumRef, sensitivity = 1, smoo
     let t = 0;
     let raf = 0;
     const tick = () => {
-      if (gate.current) {
+      if (gate.shouldDraw()) {
         reader.read();
         t += 0.04;
         const w = canvas.width / dpr, h = canvas.height / dpr;
@@ -295,7 +295,7 @@ export function VizAurora({ accent, accent2, spectrumRef, sensitivity = 1, smoot
     let t = 0;
     let raf = 0;
     const tick = () => {
-      if (gate.current) {
+      if (gate.shouldDraw()) {
         reader.read();
         t += 0.04;
         const w = canvas.width / dpr, h = canvas.height / dpr;
@@ -412,7 +412,7 @@ export function VizCityEqualizer({ accent, accent2, spectrumRef, sensitivity = 1
     let t = 0;
     let raf = 0;
     const tick = () => {
-      if (gate.current) {
+      if (gate.shouldDraw()) {
         reader.read();
         t += 0.04;
         const w = canvas.width / dpr, h = canvas.height / dpr;
@@ -531,7 +531,7 @@ export function VizStrings({ accent, accent2, spectrumRef, sensitivity = 1, smoo
 
     let raf = 0;
     const tick = () => {
-      if (gate.current) {
+      if (gate.shouldDraw()) {
         reader.read();
         const w = canvas.width / dpr, h = canvas.height / dpr;
         const kick = reader.onset.kick;
@@ -659,7 +659,7 @@ export function VizHUD({ accent, accent2, spectrumRef, sensitivity = 1, smoothin
     let t = 0;
     let raf = 0;
     const tick = () => {
-      if (gate.current) {
+      if (gate.shouldDraw()) {
         reader.read();
         t += 0.04;
         const w = canvas.width / dpr, h = canvas.height / dpr;
@@ -811,7 +811,7 @@ export function VizLiquid({ accent, accent2, spectrumRef, sensitivity = 1, smoot
     let t = 0;
     let raf = 0;
     const tick = () => {
-      if (gate.current) {
+      if (gate.shouldDraw()) {
         reader.read();
         t += 0.04;
         const w = canvas.width / dpr, h = canvas.height / dpr;
@@ -945,7 +945,7 @@ export function VizCassette({ accent, accent2, spectrumRef, sensitivity = 1, smo
     let reel = 0;
     let raf = 0;
     const tick = () => {
-      if (gate.current) {
+      if (gate.shouldDraw()) {
         reader.read();
         const w = canvas.width / dpr, h = canvas.height / dpr;
         const bass = reader.bands.bass;
@@ -1050,7 +1050,7 @@ export function VizConstellation({ accent, accent2, spectrumRef, sensitivity = 1
     let t = 0;
     let raf = 0;
     const tick = () => {
-      if (gate.current) {
+      if (gate.shouldDraw()) {
         reader.read();
         t += 0.04;
         const w = canvas.width / dpr, h = canvas.height / dpr;
