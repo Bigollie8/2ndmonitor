@@ -181,20 +181,46 @@ static LAST_ART: once_cell::sync::Lazy<Mutex<Option<String>>> =
     once_cell::sync::Lazy::new(|| Mutex::new(None));
 
 pub fn spawn<R: Runtime>(app: AppHandle<R>) {
-    std::thread::spawn(move || loop {
-        let mut np = windows_impl::poll();
-        // Re-attach the cached art if this poll didn't re-extract (i.e. track
-        // hasn't changed). Frontend gets a complete payload every time.
-        let mut cached = LAST_ART.lock();
-        if let Some(new_art) = np.art_data_url.as_ref() {
-            *cached = Some(new_art.clone());
-        } else if np.has_session {
-            np.art_data_url = cached.clone();
-        }
-        drop(cached);
+    std::thread::spawn(move || {
+        let mut last_track_key: Option<String> = None;
+        loop {
+            let mut np = windows_impl::poll();
+            // Re-attach the cached art if this poll didn't re-extract.
+            let mut cached = LAST_ART.lock();
+            if let Some(new_art) = np.art_data_url.as_ref() {
+                *cached = Some(new_art.clone());
+            } else if np.has_session {
+                np.art_data_url = cached.clone();
+            }
+            drop(cached);
 
-        let _ = app.emit("nowplaying:tick", &np);
-        std::thread::sleep(std::time::Duration::from_secs(2));
+            // Track-change signal for the lyrics worker.
+            if np.has_session {
+                let key = format!("{}\0{}\0{}", np.artist, np.title, np.album);
+                if last_track_key.as_deref() != Some(key.as_str()) {
+                    last_track_key = Some(key);
+                    if let Some(tx) = crate::lyrics::track_sender() {
+                        let _ = tx.send(crate::lyrics::TrackInfo {
+                            title: np.title.clone(),
+                            artist: np.artist.clone(),
+                            album: np.album.clone(),
+                            duration_secs: np.duration,
+                        });
+                    }
+                }
+            } else if last_track_key.is_some() {
+                last_track_key = None;
+                if let Some(tx) = crate::lyrics::track_sender() {
+                    let _ = tx.send(crate::lyrics::TrackInfo {
+                        title: String::new(), artist: String::new(),
+                        album: String::new(), duration_secs: 0.0,
+                    });
+                }
+            }
+
+            let _ = app.emit("nowplaying:tick", &np);
+            std::thread::sleep(std::time::Duration::from_secs(2));
+        }
     });
 }
 

@@ -2,6 +2,7 @@ mod audio;
 mod claude;
 mod discord;
 mod discord_rpc;
+mod lyrics;
 mod nowplaying;
 mod sysmon;
 mod tweaks;
@@ -31,6 +32,7 @@ pub fn run() {
         .setup(|app| {
             sysmon::spawn(app.handle().clone());
             nowplaying::spawn(app.handle().clone());
+            lyrics::spawn(app.handle().clone());
             audio::spawn(app.handle().clone());
             claude::spawn(app.handle().clone());
             weather::spawn(app.handle().clone());
