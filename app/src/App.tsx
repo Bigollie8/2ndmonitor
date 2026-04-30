@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { Track, Profile, AccentTheme, VizMode, Density } from './types';
+import type { Todo } from './types';
 import { TRACKS, ACCENT_PALETTES, getDensity } from './data';
 import { useTweaks } from './state/useTweaks';
 import { useSysmon, useNowPlaying, useSpectrumRef } from './state/tauri';
@@ -35,6 +36,7 @@ interface TweakState extends Record<string, unknown> {
   vizSensitivity: number;
   vizSmoothing: number;
   vizColorOverride: VizColorOverride;
+  todos: Todo[];
 }
 
 const TWEAK_DEFAULTS: TweakState = {
@@ -46,6 +48,7 @@ const TWEAK_DEFAULTS: TweakState = {
   vizSensitivity: 1.0,
   vizSmoothing: 0.0,
   vizColorOverride: { enabled: false, accent: '#a78bfa', accent2: '#ec4899' },
+  todos: [],
 };
 
 const RAIL_DEFS: { id: TileId; label: string; row: number }[] = [
@@ -145,7 +148,14 @@ export default function App() {
       case 'claude':
         return <ClaudeCodeTile density={t.density} accent={accent} />;
       case 'notes':
-        return <NotesTile density={t.density} accent={accent} />;
+        return (
+          <NotesTile
+            density={t.density}
+            accent={accent}
+            todos={t.todos}
+            setTodos={(next) => setTweak('todos', next)}
+          />
+        );
       default:
         return null;
     }

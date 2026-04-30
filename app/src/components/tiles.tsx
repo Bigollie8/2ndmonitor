@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState, type MutableRefObject } from 'react';
 import { getDensity } from '../data';
 import type { Density, Track, SysmonHistory } from '../types';
+import type { Todo } from '../types';
 import { type Playback, type SpectrumState, mediaControls } from '../state/tauri';
 
 export function HFTile({
@@ -350,19 +351,133 @@ export function CalendarTile({ density, accent }: { density: Density; accent: st
 }
 
 // ── Notes ────────────────────────────────────────────────────────────────────
-export function NotesTile({ density, accent }: { density: Density; accent: string }) {
+export function NotesTile({
+  density, accent, todos, setTodos,
+}: {
+  density: Density;
+  accent: string;
+  todos: Todo[];
+  setTodos: (next: Todo[]) => void;
+}) {
+  const [draft, setDraft] = useState('');
+  const [hoveredId, setHoveredId] = useState<string | null>(null);
+
+  const sorted = [...todos].sort((a, b) => {
+    if (a.done !== b.done) return a.done ? 1 : -1;
+    return b.createdAt - a.createdAt;
+  });
+  const undoneCount = todos.filter((t) => !t.done).length;
+
+  const addTodo = () => {
+    const text = draft.trim();
+    if (!text) return;
+    const id = (typeof crypto !== 'undefined' && crypto.randomUUID)
+      ? crypto.randomUUID() : `t_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+    let next: Todo[] = [...todos, { id, text, done: false, createdAt: Date.now() }];
+    if (next.length > 50) {
+      // Drop oldest done item, or oldest of any if none are done.
+      const idxDone = next.findIndex((t) => t.done);
+      next.splice(idxDone >= 0 ? idxDone : 0, 1);
+    }
+    setTodos(next);
+    setDraft('');
+  };
+
+  const toggleTodo = (id: string) => {
+    setTodos(todos.map((t) => (t.id === id ? { ...t, done: !t.done } : t)));
+  };
+
+  const removeTodo = (id: string) => {
+    setTodos(todos.filter((t) => t.id !== id));
+  };
+
   return (
-    <HFTile title="Notes" density={density}
-            headRight={<span style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)' }}>scratch.md · auto-save</span>}
-            style={{ height: '100%' }}>
-      <div style={{ position: 'absolute', inset: 0, padding: 10, fontSize: 11, color: 'rgba(255,255,255,0.85)', lineHeight: 1.5, fontFamily: '"JetBrains Mono", ui-monospace, monospace', overflow: 'hidden' }}>
-        <div style={{ color: accent, marginBottom: 6 }}># todo</div>
-        <div>☑ <s style={{ color: 'rgba(255,255,255,0.4)' }}>fix peak-hold decay</s></div>
-        <div>☐ try particle count up to 200</div>
-        <div>☐ ship preset import/export</div>
-        <div style={{ marginTop: 12, color: accent }}># questions</div>
-        <div style={{ color: 'rgba(255,255,255,0.7)' }}>– WebGPU stable enough by Q3?</div>
-        <div style={{ color: 'rgba(255,255,255,0.7)' }}>– lazy-init for plugins?</div>
+    <HFTile
+      title="Todos"
+      density={density}
+      headRight={
+        <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)', fontFamily: '"JetBrains Mono", ui-monospace, monospace' }}>
+          {undoneCount} / {todos.length}
+        </span>
+      }
+      style={{ height: '100%' }}
+    >
+      <div style={{
+        position: 'absolute', inset: 0, padding: 10, fontSize: 11,
+        color: 'rgba(255,255,255,0.85)', lineHeight: 1.5,
+        fontFamily: '"JetBrains Mono", ui-monospace, monospace',
+        display: 'flex', flexDirection: 'column', gap: 2, overflow: 'hidden',
+      }}>
+        {todos.length === 0 && (
+          <div style={{ color: 'rgba(255,255,255,0.4)' }}>No todos yet — type below to add.</div>
+        )}
+        <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 2 }}>
+          {sorted.map((todo) => (
+            <div
+              key={todo.id}
+              onMouseEnter={() => setHoveredId(todo.id)}
+              onMouseLeave={() => setHoveredId(null)}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 6,
+                padding: '2px 4px', borderRadius: 3,
+                background: hoveredId === todo.id ? 'rgba(255,255,255,0.04)' : 'transparent',
+              }}
+            >
+              <button
+                onClick={() => toggleTodo(todo.id)}
+                style={{
+                  width: 13, height: 13, padding: 0, flexShrink: 0,
+                  border: `1px solid ${todo.done ? accent : 'rgba(255,255,255,0.4)'}`,
+                  background: todo.done ? accent : 'transparent',
+                  borderRadius: 3, cursor: 'pointer',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  fontSize: 9, color: '#000', fontWeight: 700, lineHeight: 1,
+                }}
+                aria-label={todo.done ? 'Mark not done' : 'Mark done'}
+              >
+                {todo.done ? '✓' : ''}
+              </button>
+              <span
+                title={todo.text}
+                style={{
+                  flex: 1, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis',
+                  textDecoration: todo.done ? 'line-through' : 'none',
+                  color: todo.done ? 'rgba(255,255,255,0.4)' : 'rgba(255,255,255,0.85)',
+                }}
+              >{todo.text}</span>
+              {hoveredId === todo.id && (
+                <button
+                  onClick={() => removeTodo(todo.id)}
+                  style={{
+                    background: 'transparent', border: 'none', cursor: 'pointer',
+                    color: 'rgba(255,255,255,0.5)', fontSize: 12, padding: '0 2px', lineHeight: 1,
+                  }}
+                  aria-label="Delete todo"
+                >×</button>
+              )}
+            </div>
+          ))}
+        </div>
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 6, paddingTop: 6,
+          borderTop: '1px solid rgba(255,255,255,0.06)', marginTop: 4, flexShrink: 0,
+        }}>
+          <span style={{ color: accent, width: 13, textAlign: 'center', flexShrink: 0 }}>+</span>
+          <input
+            type="text"
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') { e.preventDefault(); addTodo(); }
+              else if (e.key === 'Escape') { e.preventDefault(); setDraft(''); }
+            }}
+            placeholder="Add a todo…"
+            style={{
+              flex: 1, background: 'transparent', border: 'none', outline: 'none',
+              color: '#fff', fontFamily: 'inherit', fontSize: 11,
+            }}
+          />
+        </div>
       </div>
     </HFTile>
   );
