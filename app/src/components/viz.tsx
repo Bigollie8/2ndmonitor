@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState, type MutableRefObject } from 'react';
 import type { VizMode, Track } from '../types';
 import { type SpectrumState, type Playback, mediaControls } from '../state/tauri';
+import { useLyrics, currentLineIndex } from '../state/lyrics';
 
 interface VizProps {
   accent: string;
@@ -449,7 +450,7 @@ export function VizOverlay({
 
 export function VizHero({
   mode, setMode, accent, accent2, track, spectrumRef, playback,
-  showArtBg = false, sensitivity = 1, smoothing = 0,
+  showArtBg = false, sensitivity = 1, smoothing = 0, lyricsOverlayEnabled = true,
 }: {
   mode: VizMode;
   setMode: (m: VizMode) => void;
@@ -462,6 +463,7 @@ export function VizHero({
   showArtBg?: boolean;
   sensitivity?: number;
   smoothing?: number;
+  lyricsOverlayEnabled?: boolean;
 }) {
   return (
     <div style={{
@@ -490,9 +492,74 @@ export function VizHero({
         position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: 2,
         background: 'linear-gradient(180deg, rgba(0,0,0,0.5) 0%, transparent 18%, transparent 75%, rgba(0,0,0,0.55) 100%)',
       }} />
+      <LyricsOverlay accent={accent} playback={playback} enabled={lyricsOverlayEnabled} />
       <div style={{ position: 'absolute', inset: 0, zIndex: 3 }}>
         <VizOverlay track={track} mode={mode} setMode={setMode} accent={accent} accent2={accent2} playback={playback} />
       </div>
+    </div>
+  );
+}
+
+function useLivePositionForLyrics(playback?: Playback | null): number {
+  const [t, setT] = useState(0);
+  useEffect(() => {
+    if (!playback) { setT(0); return; }
+    let raf = 0;
+    const tick = () => {
+      const elapsed = playback.playing ? (performance.now() - playback.syncedAt) / 1000 : 0;
+      setT(playback.positionAtSync + elapsed);
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [playback]);
+  return t;
+}
+
+export function LyricsOverlay({
+  accent, playback, enabled,
+}: {
+  accent: string;
+  playback?: Playback | null;
+  enabled: boolean;
+}) {
+  const lyrics = useLyrics();
+  const pos = useLivePositionForLyrics(playback);
+  const idx = currentLineIndex(lyrics.syncedLines, pos);
+  const line = idx >= 0 ? lyrics.syncedLines[idx]?.text ?? '' : '';
+
+  // Hide unless we have synced lyrics, the user enabled the overlay, and a
+  // track is actively playing.
+  if (!enabled) return null;
+  if (lyrics.syncedLines.length === 0) return null;
+  if (!playback?.playing) return null;
+  if (!line) return null;
+
+  return (
+    <div
+      key={idx}
+      style={{
+        position: 'absolute', top: 32, left: 0, right: 0,
+        textAlign: 'center', pointerEvents: 'none',
+        zIndex: 2,
+        animation: 'lyricsFade 400ms ease-out',
+      }}
+    >
+      <div style={{
+        display: 'inline-block',
+        padding: '6px 18px',
+        fontSize: 28, fontWeight: 600,
+        color: '#fff',
+        textShadow: `0 0 24px ${accent}cc, 0 2px 8px rgba(0,0,0,0.85)`,
+        letterSpacing: '-0.01em',
+        maxWidth: '80%',
+      }}>{line}</div>
+      <style>{`
+        @keyframes lyricsFade {
+          from { opacity: 0; transform: translateY(-6px); }
+          to   { opacity: 1; transform: translateY(0);    }
+        }
+      `}</style>
     </div>
   );
 }

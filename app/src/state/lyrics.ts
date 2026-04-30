@@ -1,0 +1,96 @@
+import { useEffect, useState } from 'react';
+
+const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
+
+export interface LrcLine { tsMs: number; text: string }
+
+export interface LyricsState {
+  trackKey: string | null;
+  syncedLines: LrcLine[];
+  plainLines: string[];
+  instrumental: boolean;
+}
+
+const EMPTY: LyricsState = { trackKey: null, syncedLines: [], plainLines: [], instrumental: false };
+
+interface LyricsPayload {
+  track_key: string;
+  synced_lrc: string | null;
+  plain_lyrics: string | null;
+  instrumental: boolean;
+}
+
+/** Parse LRC into [{ tsMs, text }]. Multiple [mm:ss.xx] tags on one line emit
+ *  multiple entries. Tag lines like [ar:...], [ti:...], [length:...] are dropped. */
+export function parseLrc(lrc: string): LrcLine[] {
+  if (!lrc) return [];
+  const lines = lrc.split(/\r?\n/);
+  const out: LrcLine[] = [];
+  // [mm:ss.xx] or [mm:ss]
+  const tsRe = /\[(\d+):(\d{1,2}(?:\.\d+)?)\]/g;
+  // tag line: [name:value]
+  const tagRe = /^\[(?:ar|ti|al|by|length|offset|re|ve|tool|au|lr|t_time):/i;
+  for (const raw of lines) {
+    if (!raw) continue;
+    if (tagRe.test(raw)) continue;
+    // Collect all leading timestamps (handle e.g. "[00:01.50][00:30.00]chorus").
+    const stamps: number[] = [];
+    let lastIdx = 0;
+    tsRe.lastIndex = 0;
+    let m: RegExpExecArray | null;
+    while ((m = tsRe.exec(raw)) !== null) {
+      // Only count timestamps that form a contiguous prefix.
+      if (m.index !== lastIdx) break;
+      const mm = parseInt(m[1]!, 10);
+      const ss = parseFloat(m[2]!);
+      stamps.push(Math.round((mm * 60 + ss) * 1000));
+      lastIdx = m.index + m[0]!.length;
+    }
+    if (stamps.length === 0) continue;
+    const text = raw.slice(lastIdx).trim();
+    for (const ts of stamps) out.push({ tsMs: ts, text });
+  }
+  out.sort((a, b) => a.tsMs - b.tsMs);
+  return out;
+}
+
+/** Returns the current synced-line index, or -1 if before the first line. */
+export function currentLineIndex(lines: LrcLine[], positionSecs: number): number {
+  if (lines.length === 0) return -1;
+  const ms = positionSecs * 1000;
+  let lo = -1;
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i]!.tsMs <= ms) lo = i; else break;
+  }
+  return lo;
+}
+
+export function useLyrics(): LyricsState {
+  const [state, setState] = useState<LyricsState>(EMPTY);
+  useEffect(() => {
+    if (!isTauri) return;
+    let cancelled = false;
+    let cleanup: Array<() => void> = [];
+    (async () => {
+      const { listen } = await import('@tauri-apps/api/event');
+      const onUpdate = await listen<LyricsPayload>('lyrics:update', (e) => {
+        if (cancelled) return;
+        const p = e.payload;
+        setState({
+          trackKey: p.track_key,
+          syncedLines: parseLrc(p.synced_lrc ?? ''),
+          plainLines: (p.plain_lyrics ?? '').split(/\r?\n/).filter((l) => l.length > 0),
+          instrumental: p.instrumental,
+        });
+      });
+      const onClear = await listen<unknown>('lyrics:clear', () => {
+        if (cancelled) return;
+        setState(EMPTY);
+      });
+      cleanup = [onUpdate, onClear];
+      if (cancelled) cleanup.forEach((fn) => fn());
+    })().catch((err) => console.warn('lyrics listen failed:', err));
+    return () => { cancelled = true; cleanup.forEach((fn) => fn()); };
+  }, []);
+  return state;
+}

@@ -35,6 +35,7 @@ interface TweakState extends Record<string, unknown> {
   vizSensitivity: number;
   vizSmoothing: number;
   vizColorOverride: VizColorOverride;
+  lyricsOverlayEnabled: boolean;
   todos: Todo[];
   weatherLocation: WeatherLocation;
   // Profile system: layout + tile visibility live INSIDE the active profile.
@@ -50,6 +51,7 @@ const TWEAK_DEFAULTS: TweakState = {
   vizSensitivity: 1.0,
   vizSmoothing: 0.0,
   vizColorOverride: { enabled: false, accent: '#a78bfa', accent2: '#ec4899' },
+  lyricsOverlayEnabled: true,
   todos: [],
   weatherLocation: { label: 'Knoxville, TN', lat: 35.9606, lon: -83.9207 },
   profiles: [],
@@ -225,6 +227,7 @@ export default function App() {
             showArtBg={t.vizArtBg}
             sensitivity={t.vizSensitivity}
             smoothing={t.vizSmoothing}
+            lyricsOverlayEnabled={t.lyricsOverlayEnabled}
           />
         );
     }
@@ -370,6 +373,19 @@ export default function App() {
             </span>
           </div>
         )}
+        <TweakSection label="Lyrics" />
+        <label style={{
+          display: 'flex', alignItems: 'center', gap: 8, padding: '3px 0',
+          cursor: 'pointer', userSelect: 'none', color: 'rgba(41,38,27,0.85)',
+        }}>
+          <input
+            type="checkbox"
+            checked={t.lyricsOverlayEnabled}
+            onChange={(e) => setTweak('lyricsOverlayEnabled', e.target.checked)}
+            style={{ accentColor: '#29261b', width: 13, height: 13 }}
+          />
+          <span style={{ fontSize: 11.5, fontWeight: 500 }}>Show lyrics over visualizer</span>
+        </label>
         <TweakSection label="Accent color" />
         <TweakSelect<AccentTheme>
           label="Source" value={t.accentTheme}
