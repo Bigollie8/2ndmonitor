@@ -46,7 +46,7 @@ function startMockSysmon(onSample: (s: SysmonSample) => void): () => void {
         { name: 'Discord.exe', cpu: 3.1 },
         { name: 'Code.exe', cpu: 4.7 },
       ],
-      app: { cpu: 1.5 + Math.random() * 2, ram_mb: 130 + Math.random() * 30 },
+      app: { cpu: 1.5 + Math.random() * 2, ram_mb: 130 + Math.random() * 30, gpu: 2 + Math.random() * 4 },
     });
   }, 1000);
   return () => clearInterval(id);

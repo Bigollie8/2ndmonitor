@@ -36,8 +36,10 @@ export interface Tweaks {
 }
 
 export interface AppMetrics {
-  cpu: number;     // % CPU used by THIS app's process (can exceed 100 on multicore)
-  ram_mb: number;  // resident memory in MB
+  cpu: number;     // % CPU used by THIS app's process tree (can exceed 100 on multicore)
+  ram_mb: number;  // resident memory in MB across the app's process tree
+  /** GPU usage % for this app via NVML per-process sampling. null on AMD/Intel. */
+  gpu: number | null;
 }
 
 export interface SysmonSample {

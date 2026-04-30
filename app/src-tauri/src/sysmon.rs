@@ -19,10 +19,13 @@ pub struct TopProcess {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct AppMetrics {
-    /// CPU% used by THIS app's process. 0..N where N can exceed 100 on multi-core.
+    /// CPU% used by THIS app's process tree. 0..N where N can exceed 100 on multi-core.
     pub cpu: f32,
-    /// Resident memory in MB.
+    /// Resident memory in MB across the app's process tree.
     pub ram_mb: f32,
+    /// GPU utilization% for this app via NVML process-util sampling.
+    /// None when NVML unavailable (AMD/Intel) or no recent samples for our PIDs.
+    pub gpu: Option<f32>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -49,6 +52,9 @@ struct State {
     sys: System,
     networks: Networks,
     nvml: Option<Nvml>,
+    /// Microsecond timestamp of the last NVML process-util sample we processed.
+    /// Used to ask NVML only for samples newer than this on each tick.
+    last_gpu_sample_ts: u64,
 }
 
 pub fn spawn<R: Runtime>(app: AppHandle<R>) {
@@ -70,7 +76,7 @@ pub fn spawn<R: Runtime>(app: AppHandle<R>) {
         }
     };
 
-    let state = Arc::new(Mutex::new(State { sys, networks, nvml }));
+    let state = Arc::new(Mutex::new(State { sys, networks, nvml, last_gpu_sample_ts: 0 }));
 
     // Prime CPU readings — sysinfo needs two refreshes to compute deltas.
     {
@@ -127,11 +133,35 @@ fn collect(state: &Arc<Mutex<State>>) -> SysmonSample {
     let total_gb = total_mem / 1024.0 / 1024.0 / 1024.0;
 
     // ── Top processes + this app's own metrics ────────────────────────────
+    // Tauri spawns WebView2 helper processes (renderer, GPU, audio) — the
+    // visualizer GPU work happens in a child process, not our main exe.
+    // Walk the descendant tree so the perf tracker reflects the *full* app cost.
     let our_pid = sysinfo::Pid::from_u32(std::process::id());
-    let app_metrics = s.sys.process(our_pid).map(|p| AppMetrics {
-        cpu: p.cpu_usage(),
-        ram_mb: (p.memory() as f64 / 1024.0 / 1024.0) as f32,
-    });
+    let our_pids: Vec<sysinfo::Pid> = collect_descendants(&s.sys, our_pid);
+    let mut app_cpu = 0.0f32;
+    let mut app_ram_bytes: u64 = 0;
+    for pid in &our_pids {
+        if let Some(p) = s.sys.process(*pid) {
+            app_cpu += p.cpu_usage();
+            app_ram_bytes += p.memory();
+        }
+    }
+
+    // GPU per-process via NVML. Sums sm_util across our PIDs since the last
+    // tick. NVML returns u32 percentages; multiple samples per PID are averaged.
+    let mut last_ts = s.last_gpu_sample_ts;
+    let app_gpu = sample_app_gpu(s.nvml.as_ref(), &our_pids, &mut last_ts);
+    s.last_gpu_sample_ts = last_ts;
+
+    let app_metrics = if our_pids.is_empty() {
+        None
+    } else {
+        Some(AppMetrics {
+            cpu: app_cpu,
+            ram_mb: (app_ram_bytes as f64 / 1024.0 / 1024.0) as f32,
+            gpu: app_gpu,
+        })
+    };
     let mut procs: Vec<(String, f32)> = s
         .sys
         .processes()
@@ -179,6 +209,63 @@ fn collect(state: &Arc<Mutex<State>>) -> SysmonSample {
         top,
         app: app_metrics,
     }
+}
+
+/// Walks the process table to find all descendants of `root` (inclusive).
+/// Used to attribute WebView2 helper CPU/RAM/GPU to our app.
+fn collect_descendants(sys: &System, root: sysinfo::Pid) -> Vec<sysinfo::Pid> {
+    let mut out = Vec::with_capacity(8);
+    let mut stack = vec![root];
+    while let Some(parent) = stack.pop() {
+        if !out.contains(&parent) {
+            out.push(parent);
+        }
+        for (pid, p) in sys.processes() {
+            if p.parent() == Some(parent) && !out.contains(pid) {
+                stack.push(*pid);
+            }
+        }
+    }
+    out
+}
+
+/// Returns the summed GPU utilization (in %) across our PIDs since the previous
+/// tick. None when NVML isn't available or no samples were returned. Updates
+/// `last_ts` so the next call only sees fresh samples.
+fn sample_app_gpu(
+    nvml: Option<&Nvml>,
+    our_pids: &[sysinfo::Pid],
+    last_ts: &mut u64,
+) -> Option<f32> {
+    let nvml = nvml?;
+    let device = nvml.device_by_index(0).ok()?;
+    let samples = device.process_utilization_stats(*last_ts).ok()?;
+
+    // Track the max sample timestamp so the next call asks for newer samples only.
+    let mut max_ts = *last_ts;
+    let mut total: f64 = 0.0;
+    let mut count: u32 = 0;
+    let pid_set: std::collections::HashSet<u32> = our_pids.iter().map(|p| p.as_u32()).collect();
+    for s in samples {
+        if s.timestamp > max_ts {
+            max_ts = s.timestamp;
+        }
+        if pid_set.contains(&s.pid) {
+            total += s.sm_util as f64;
+            count += 1;
+        }
+    }
+    *last_ts = max_ts;
+
+    if count == 0 {
+        // No fresh samples for our pids in this window. Could mean GPU work
+        // happened but is older than this tick — or simply nothing yet.
+        // Return Some(0.0) rather than None when NVML *is* working; that way
+        // the UI shows "0%" instead of "—".
+        return Some(0.0);
+    }
+    // Cap at 100% — multiple WebView2 children can each report up to 100% sm_util.
+    Some((total / count as f64).clamp(0.0, 100.0) as f32)
 }
 
 fn sample_gpu(nvml: Option<&Nvml>) -> (f32, String, String) {

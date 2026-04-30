@@ -689,6 +689,7 @@ function BottomStatus({
 }) {
   const cpuText = app ? `${app.cpu.toFixed(1)}%` : '—';
   const ramText = app ? (app.ram_mb >= 1024 ? `${(app.ram_mb / 1024).toFixed(2)} GB` : `${Math.round(app.ram_mb)} MB`) : '—';
+  const gpuText = app && app.gpu != null ? `${app.gpu.toFixed(0)}%` : '—';
   const fpsText = `${fps} fps`;
   // Color FPS based on health: green ≥ 55, amber 30-54, red < 30.
   const fpsColor = fps >= 55 ? '#22c55e' : fps >= 30 ? '#facc15' : '#fb7185';
@@ -703,6 +704,7 @@ function BottomStatus({
       <span style={{ color: accent }}>● {tileCount} tile{tileCount === 1 ? '' : 's'}</span>
       <span title="App CPU usage">CPU {cpuText}</span>
       <span title="App resident memory">RAM {ramText}</span>
+      <span title="App GPU usage (via NVML, NVIDIA only)">GPU {gpuText}</span>
       <span title="Render frame rate" style={{ color: fpsColor }}>{fpsText}</span>
       <span>Audio: WASAPI loopback</span>
       <div style={{ flex: 1 }} />
