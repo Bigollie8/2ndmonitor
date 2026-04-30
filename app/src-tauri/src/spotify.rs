@@ -468,7 +468,14 @@ fn percent_decode(s: &str) -> String {
 fn open_browser(url: &str) -> Result<(), String> {
     #[cfg(windows)]
     {
-        std::process::Command::new("cmd").args(["/c", "start", "", url]).spawn().map_err(|e| e.to_string())?;
+        // Avoid `cmd /C start ...` — cmd interprets `&` as a command separator,
+        // which silently strips everything after the first `&` in our query
+        // string (client_id, redirect_uri, etc. all get lost). rundll32 isn't
+        // a shell, so the URL is passed through to the default browser intact.
+        std::process::Command::new("rundll32.exe")
+            .args(["url.dll,FileProtocolHandler", url])
+            .spawn()
+            .map_err(|e| format!("open browser: {e}"))?;
         return Ok(());
     }
     #[cfg(not(windows))]
