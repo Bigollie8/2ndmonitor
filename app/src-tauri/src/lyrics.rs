@@ -122,27 +122,79 @@ enum FetchErr { NotFound, Http(String) }
 use FetchErr::NotFound;
 
 fn fetch(t: &TrackInfo) -> Result<LyricsPayload, FetchErr> {
-    let url = format!(
-        "https://lrclib.net/api/get?track_name={}&artist_name={}&album_name={}&duration={}",
-        urlencode(&t.title), urlencode(&t.artist), urlencode(&t.album),
-        t.duration_secs.round() as i64,
-    );
-    let resp = ureq::get(&url)
-        .timeout(Duration::from_secs(HTTP_TIMEOUT_SECS))
-        .call();
-    match resp {
-        Ok(r) => {
-            let parsed: LrcResp = r.into_json().map_err(|e| FetchErr::Http(e.to_string()))?;
-            Ok(LyricsPayload {
-                track_key: track_key(t),
-                synced_lrc: parsed.synced_lyrics,
-                plain_lyrics: parsed.plain_lyrics,
-                instrumental: parsed.instrumental,
-            })
+    eprintln!("lyrics: fetching '{}' / '{}' (album '{}', dur {:.0}s)",
+        t.title, t.artist, t.album, t.duration_secs);
+
+    // Strategy 1: strict /api/get with all four fields (requires duration match
+    // within ~2 seconds). When LRCLIB has the track and our metadata is clean
+    // this is fastest and gives the best-quality match.
+    if t.duration_secs > 0.0 && !t.album.is_empty() {
+        if let Some(payload) = try_get(t, true) {
+            eprintln!("lyrics:   ✓ /api/get hit (synced={})", payload.synced_lrc.is_some());
+            return Ok(payload);
         }
-        Err(ureq::Error::Status(404, _)) => Err(NotFound),
-        Err(e) => Err(FetchErr::Http(e.to_string())),
     }
+    // Strategy 2: drop album (Spotify GSMTC sometimes reports the SINGLE name
+    // instead of the ALBUM name, which kills /get).
+    if t.duration_secs > 0.0 {
+        if let Some(payload) = try_get(t, false) {
+            eprintln!("lyrics:   ✓ /api/get hit without album");
+            return Ok(payload);
+        }
+    }
+    // Strategy 3: fuzzy /api/search by track + artist. Pick the first hit.
+    match try_search(t) {
+        Some(payload) => {
+            eprintln!("lyrics:   ✓ /api/search hit (synced={})", payload.synced_lrc.is_some());
+            Ok(payload)
+        }
+        None => {
+            eprintln!("lyrics:   ✗ no match");
+            Err(NotFound)
+        }
+    }
+}
+
+fn try_get(t: &TrackInfo, with_album: bool) -> Option<LyricsPayload> {
+    let url = if with_album {
+        format!(
+            "https://lrclib.net/api/get?track_name={}&artist_name={}&album_name={}&duration={}",
+            urlencode(&t.title), urlencode(&t.artist), urlencode(&t.album),
+            t.duration_secs.round() as i64,
+        )
+    } else {
+        format!(
+            "https://lrclib.net/api/get?track_name={}&artist_name={}&duration={}",
+            urlencode(&t.title), urlencode(&t.artist),
+            t.duration_secs.round() as i64,
+        )
+    };
+    let resp = ureq::get(&url).timeout(Duration::from_secs(HTTP_TIMEOUT_SECS)).call();
+    match resp {
+        Ok(r) => r.into_json::<LrcResp>().ok().map(|p| LyricsPayload {
+            track_key: track_key(t),
+            synced_lrc: p.synced_lyrics,
+            plain_lyrics: p.plain_lyrics,
+            instrumental: p.instrumental,
+        }),
+        Err(_) => None,
+    }
+}
+
+fn try_search(t: &TrackInfo) -> Option<LyricsPayload> {
+    let url = format!(
+        "https://lrclib.net/api/search?track_name={}&artist_name={}",
+        urlencode(&t.title), urlencode(&t.artist),
+    );
+    let resp = ureq::get(&url).timeout(Duration::from_secs(HTTP_TIMEOUT_SECS)).call().ok()?;
+    let arr: Vec<LrcResp> = resp.into_json().ok()?;
+    let first = arr.into_iter().next()?;
+    Some(LyricsPayload {
+        track_key: track_key(t),
+        synced_lrc: first.synced_lyrics,
+        plain_lyrics: first.plain_lyrics,
+        instrumental: first.instrumental,
+    })
 }
 
 /// Minimal URL-encoder for query string values.

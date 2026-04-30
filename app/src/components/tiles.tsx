@@ -376,7 +376,7 @@ function SpotifyUpNextView({ accent }: { accent: string }) {
           <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.7)', lineHeight: 1.5, padding: 10, borderRadius: 6, background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)' }}>
             <ol style={{ margin: 0, paddingLeft: 18, display: 'flex', flexDirection: 'column', gap: 4 }}>
               <li>Go to <span style={{ color: accent, fontFamily: '"JetBrains Mono", ui-monospace, monospace' }}>developer.spotify.com/dashboard</span></li>
-              <li>Create an app. Add <span style={{ color: accent, fontFamily: '"JetBrains Mono", ui-monospace, monospace' }}>http://localhost:14202/callback</span> as a Redirect URI.</li>
+              <li>Create an app. Add <span style={{ color: accent, fontFamily: '"JetBrains Mono", ui-monospace, monospace' }}>http://127.0.0.1:14202/callback</span> as a Redirect URI. Spotify deprecated <code>localhost</code> — must be the literal IP.</li>
               <li>Copy the Client ID, paste it above.</li>
               <li>Click Connect — the browser opens, click Authorize.</li>
             </ol>

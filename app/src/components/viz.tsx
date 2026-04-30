@@ -244,14 +244,14 @@ export function HiFiVizParticles({ accent, accent2, spectrumRef, sensitivity = 1
     const N = 140;
     const pts = Array.from({ length: N }, () => ({
       x: Math.random(), y: Math.random(),
-      vx: (Math.random() - 0.5) * 0.0008,
-      vy: (Math.random() - 0.5) * 0.0008,
+      vx: 0, vy: 0,
       r: 0.5 + Math.random() * 1.8,
       hue: Math.random(),
     }));
     let t = 0;
     let raf = 0;
     let bassSmoothed = 0;
+    let bassReference = 0;  // slow-tracking baseline; spike = bass - reference
     const tick = () => {
       t += 0.02;
       const w = canvas.width, h = canvas.height;
@@ -275,13 +275,41 @@ export function HiFiVizParticles({ accent, accent2, spectrumRef, sensitivity = 1
       const scaled = bassRaw * sensitivity;
       bassSmoothed = bassSmoothed * sm + scaled * (1 - sm);
       const bass = Math.min(1.5, bassSmoothed);
+
+      // Spike detection: bass exceeding the slow-tracked reference is "the beat".
+      // The reference catches up slowly so a sustained loud passage still has beats.
+      bassReference = bassReference * 0.92 + bass * 0.08;
+      const spike = Math.max(0, bass - bassReference); // 0..~0.6 typical
+
       ctx.fillStyle = accent2 + '11';
       ctx.fillRect(0, 0, w, h);
+
+      // Outward kick on beats — particles closer to center get bigger pushes
+      // (more dramatic than uniform). Velocities decay so they settle between hits.
+      const kickStrength = spike * 0.020;
+      const drag = 0.90;
+
       for (const p of pts) {
-        p.x += p.vx + Math.sin(t + p.y * 8) * 0.0006;
-        p.y += p.vy + Math.cos(t + p.x * 8) * 0.0006;
+        const dx = p.x - 0.5;
+        const dy = p.y - 0.5;
+        const dist = Math.sqrt(dx * dx + dy * dy) + 0.0001;
+        const inv = 1 / dist;
+        // Falloff makes near-center particles fly out more, edge particles barely
+        // move — feels like a shockwave from the middle on each kick.
+        const falloff = 1 / (1 + dist * 6);
+        p.vx += (dx * inv) * kickStrength * falloff;
+        p.vy += (dy * inv) * kickStrength * falloff;
+
+        p.vx *= drag;
+        p.vy *= drag;
+
+        p.x += p.vx;
+        p.y += p.vy;
+
+        // Wrap so particles re-enter from the opposite side instead of clipping.
         if (p.x < 0) p.x += 1; if (p.x > 1) p.x -= 1;
         if (p.y < 0) p.y += 1; if (p.y > 1) p.y -= 1;
+
         const px = p.x * w, py = p.y * h;
         const r = p.r * dpr * (0.3 + bass * 2.8);
         const grad = ctx.createRadialGradient(px, py, 0, px, py, r * 4);

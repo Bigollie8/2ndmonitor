@@ -16,7 +16,7 @@ use std::path::PathBuf;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, Manager, Runtime};
 
-const REDIRECT_URI: &str = "http://localhost:14202/callback";
+const REDIRECT_URI: &str = "http://127.0.0.1:14202/callback";
 const CALLBACK_PORT: u16 = 14202;
 const QUEUE_POLL_SECS: u64 = 10;
 const SCOPES: &str = "user-read-currently-playing user-read-playback-state";
