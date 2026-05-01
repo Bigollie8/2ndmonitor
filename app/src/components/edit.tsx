@@ -25,10 +25,11 @@ export function EditModeOverlay({
 
   const ALL_LABELS: Record<TileId, string> = {
     discord: 'Discord', spotify: 'Now playing', claude: 'Claude Code',
+    mixer: 'Audio mixer',
     notes: 'Todos', sysmon: 'System monitor', clock: 'Now & forecast', viz: 'Audio visualizer',
   };
 
-  const allIds: TileId[] = ['discord', 'spotify', 'claude', 'notes', 'viz', 'sysmon', 'clock'];
+  const allIds: TileId[] = ['discord', 'spotify', 'claude', 'mixer', 'notes', 'viz', 'sysmon', 'clock'];
   const visibleIds = allIds.filter((id) => !hiddenIds.includes(id));
   const tiles: Partial<Record<TileId, { rect: Rect; label: string }>> = {};
   for (const id of visibleIds) {
@@ -333,9 +334,9 @@ function LayersPanel({ accent, selected, setSelected, tiles }: {
   setSelected: (s: string) => void;
   tiles: Partial<Record<TileId, { rect: Rect; label: string }>>;
 }) {
-  const order: TileId[] = ['viz', 'spotify', 'discord', 'claude', 'notes', 'sysmon', 'clock'];
+  const order: TileId[] = ['viz', 'spotify', 'discord', 'claude', 'mixer', 'notes', 'sysmon', 'clock'];
   const kindIcon = (id: TileId): string => ({
-    viz: '◢', spotify: '♪', discord: '◇', claude: '⌘', notes: '✎',
+    viz: '◢', spotify: '♪', discord: '◇', claude: '⌘', mixer: '♬', notes: '✎',
     sysmon: '▤', clock: '◐',
   }[id]);
   return (

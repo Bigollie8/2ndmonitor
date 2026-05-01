@@ -51,6 +51,18 @@ export function VizGallery({
   const cols = size === 'compact' ? 4 : size === 'regular' ? 3 : 2;
   const [focused, setFocused] = useState<VizMode | null>(null);
 
+  // Stagger surface mounts in batches across rAF ticks so opening the gallery
+  // doesn't try to allocate 27 canvases + state buffers in a single commit.
+  const MOUNT_BATCH = 4;
+  const [mountedCount, setMountedCount] = useState(MOUNT_BATCH);
+  useEffect(() => {
+    if (mountedCount >= VIZ_STYLES.length) return;
+    const raf = requestAnimationFrame(() => {
+      setMountedCount((n) => Math.min(VIZ_STYLES.length, n + MOUNT_BATCH));
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [mountedCount]);
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
@@ -125,6 +137,7 @@ export function VizGallery({
               active={s.id === currentMode}
               sensitivity={sensitivity}
               smoothing={smoothing}
+              surfaceMounted={i < mountedCount || s.id === currentMode}
               onPick={() => { onPick(s.id); onClose(); }}
               onFocus={() => setFocused(s.id)}
             />
@@ -171,7 +184,7 @@ export function VizGallery({
 
 function GalleryCard({
   style, index, accent, accent2, spectrumRef, active, sensitivity, smoothing,
-  onPick, onFocus,
+  surfaceMounted, onPick, onFocus,
 }: {
   style: VizStyle;
   index: number;
@@ -179,16 +192,15 @@ function GalleryCard({
   spectrumRef?: MutableRefObject<SpectrumState>;
   active: boolean;
   sensitivity: number; smoothing: number;
+  surfaceMounted: boolean;
   onPick: () => void;
   onFocus: () => void;
 }) {
   const [hovered, setHovered] = useState(false);
-  const [warmupOver, setWarmupOver] = useState(false);
-  useEffect(() => {
-    const id = setTimeout(() => setWarmupOver(true), 1200);
-    return () => clearTimeout(id);
-  }, []);
-  const paused = !active && !hovered && warmupOver;
+  // Only the active card and the hovered card animate. Previously every card
+  // ran at full fps for a 1200ms "warmup" window, which caused a hard freeze
+  // when the gallery opened (~27 canvases ticking simultaneously).
+  const paused = !active && !hovered;
 
   return (
     <div style={{
@@ -211,9 +223,11 @@ function GalleryCard({
     }}
     onClick={onPick}>
       <div style={{ position: 'relative', width: '100%', aspectRatio: '16/9', background: '#06070a' }}>
-        <HiFiVizSurface mode={style.id} accent={accent} accent2={accent2}
-          spectrumRef={spectrumRef} sensitivity={sensitivity} smoothing={smoothing}
-          paused={paused} />
+        {surfaceMounted && (
+          <HiFiVizSurface mode={style.id} accent={accent} accent2={accent2}
+            spectrumRef={spectrumRef} sensitivity={sensitivity} smoothing={smoothing}
+            paused={paused} />
+        )}
         <div style={{
           position: 'absolute', top: 12, left: 12,
           padding: '3px 8px', fontSize: 10, fontWeight: 600,

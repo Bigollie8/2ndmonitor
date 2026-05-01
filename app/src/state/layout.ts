@@ -1,4 +1,4 @@
-export type TileId = 'discord' | 'spotify' | 'claude' | 'notes' | 'sysmon' | 'clock' | 'viz';
+export type TileId = 'discord' | 'spotify' | 'claude' | 'notes' | 'mixer' | 'sysmon' | 'clock' | 'viz';
 export interface Rect { x: number; y: number; w: number; h: number }
 export type Layout = Partial<Record<TileId, Rect>>;
 
@@ -16,6 +16,7 @@ const RAIL_ROWS: { id: TileId; weight: number }[] = [
   { id: 'discord', weight: 1.1 },
   { id: 'spotify', weight: 1.0 },
   { id: 'claude',  weight: 1.4 },
+  { id: 'mixer',   weight: 0.9 },
   { id: 'notes',   weight: 0.6 },
 ];
 

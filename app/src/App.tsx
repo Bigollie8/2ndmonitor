@@ -7,7 +7,10 @@ import { TRACKS, ACCENT_PALETTES } from './data';
 import { useTweaks } from './state/useTweaks';
 import { useSysmon, useNowPlaying, useSpectrumRef } from './state/tauri';
 import { VizHero, setVizDprCap, setVizMaxFps, getVizMaxFps } from './components/viz';
+import * as perfDebug from './perf/debug';
+import { PerfDebugHUD } from './perf/PerfDebugHUD';
 import { VizGallery, VIZ_STYLES } from './components/viz-gallery';
+import { parseYouTubeId } from './components/video-player';
 import {
   SpotifyTile, NotesTile,
   SysMonTile,
@@ -15,6 +18,7 @@ import {
 import { ClaudeCodeTile } from './components/claude-tile';
 import { DiscordTile } from './components/discord-tile';
 import { NowAndForecastTile } from './components/forecast-tile';
+import { AudioMixerTile } from './components/audio-mixer-tile';
 import { EditModeOverlay } from './components/edit';
 import { ProfileSwitcher } from './components/profile';
 import { Onboarding } from './components/onboarding';
@@ -37,7 +41,21 @@ interface TweakState extends Record<string, unknown> {
   vizSmoothing: number;
   vizColorOverride: VizColorOverride;
   lyricsOverlayEnabled: boolean;
+  /** When true AND `videoUrl` parses to a valid YouTube ID, the viz tile renders
+   *  a YouTube embed instead of the audio visualizer. The viz surface and
+   *  album-art backdrop are skipped (and `paused` flips on) to save GPU. */
+  videoEnabled: boolean;
+  /** Raw URL the user pasted in Tweaks. Validated at render time; an empty or
+   *  unparseable URL leaves `videoEnabled` effectively off. */
+  videoUrl: string;
   perfMode: 'uncapped' | 'high' | 'balanced' | 'battery';
+  /** When true, mounts the perf-debug HUD and starts long-task / GPU spike
+   *  instrumentation. Off by default; flip from the Tweaks panel when
+   *  investigating GPU spikes. */
+  perfDebug: boolean;
+  /** When true, the small live/fps/levels readout overlays the viz. Off by
+   *  default — only useful for diagnosing why a viz isn't reacting. */
+  audioDebug: boolean;
   todos: Todo[];
   weatherLocation: WeatherLocation;
   // Profile system: layout + tile visibility live INSIDE the active profile.
@@ -55,7 +73,11 @@ const TWEAK_DEFAULTS: TweakState = {
   vizSmoothing: 0.0,
   vizColorOverride: { enabled: false, accent: '#a78bfa', accent2: '#ec4899' },
   lyricsOverlayEnabled: true,
+  videoEnabled: false,
+  videoUrl: '',
   perfMode: 'balanced',
+  perfDebug: false,
+  audioDebug: false,
   todos: [],
   weatherLocation: { label: 'Knoxville, TN', lat: 35.9606, lon: -83.9207 },
   profiles: [],
@@ -83,38 +105,58 @@ function migrateTweaks(loaded: Record<string, unknown>): Record<string, unknown>
   // legacy layout, no todos). Used below to seed demo todos.
   const isFirstLaunch = !loaded.profiles && !loaded.todos && !loaded.layout;
 
+  let result: Record<string, unknown>;
   if (Array.isArray(profilesField) && profilesField.length > 0) {
-    return loaded;
-  }
-  const legacyLayout = (loaded.layout as Layout | undefined) ?? {};
-  const legacyHidden = (loaded.hidden as Partial<Record<TileId, boolean>> | undefined) ?? {};
-  const next: Record<string, unknown> = { ...loaded };
-  delete next.layout;
-  delete next.hidden;
+    result = loaded;
+  } else {
+    const legacyLayout = (loaded.layout as Layout | undefined) ?? {};
+    const legacyHidden = (loaded.hidden as Partial<Record<TileId, boolean>> | undefined) ?? {};
+    const next: Record<string, unknown> = { ...loaded };
+    delete next.layout;
+    delete next.hidden;
 
-  const seeded: Profile[] = [
-    { id: newId(), name: 'Work',   color: PROFILE_DEFAULT_COLORS[0]!, layout: legacyLayout, hidden: legacyHidden },
-    { id: newId(), name: 'Gaming', color: PROFILE_DEFAULT_COLORS[1]!, layout: {},           hidden: {} },
-    { id: newId(), name: 'Chill',  color: PROFILE_DEFAULT_COLORS[2]!, layout: {},           hidden: {} },
-  ];
-  next.profiles = seeded;
-  next.activeProfileId = seeded[0]!.id;
-
-  // Seed two demo todos on absolute-first launch (only when nothing was loaded)
-  // so the Notes tile isn't empty when a friend opens the app.
-  if (isFirstLaunch) {
-    next.todos = [
-      { id: newId(), text: 'Try clicking ⛶ on the visualizer for immersive mode', done: false, createdAt: Date.now() - 2000 },
-      { id: newId(), text: 'Press V to cycle visualizer styles', done: false, createdAt: Date.now() - 1000 },
+    const seeded: Profile[] = [
+      { id: newId(), name: 'Work',   color: PROFILE_DEFAULT_COLORS[0]!, layout: legacyLayout, hidden: legacyHidden },
+      { id: newId(), name: 'Gaming', color: PROFILE_DEFAULT_COLORS[1]!, layout: {},           hidden: {} },
+      { id: newId(), name: 'Chill',  color: PROFILE_DEFAULT_COLORS[2]!, layout: {},           hidden: {} },
     ];
+    next.profiles = seeded;
+    next.activeProfileId = seeded[0]!.id;
+
+    // Seed two demo todos on absolute-first launch (only when nothing was loaded)
+    // so the Notes tile isn't empty when a friend opens the app.
+    if (isFirstLaunch) {
+      next.todos = [
+        { id: newId(), text: 'Try clicking ⛶ on the visualizer for immersive mode', done: false, createdAt: Date.now() - 2000 },
+        { id: newId(), text: 'Press V to cycle visualizer styles', done: false, createdAt: Date.now() - 1000 },
+      ];
+    }
+    result = next;
   }
-  return next;
+
+  // Mixer tile (added 2026-05): hide it on profiles that already have a saved
+  // layout — those rail positions were anchored before the new tile existed,
+  // so auto-inserting would visually overlap them. Fresh installs and brand-new
+  // profiles get the mixer visible by default. Idempotent via flag.
+  if (!result.mixer_migration_v1) {
+    const profiles = result.profiles as Profile[] | undefined;
+    if (profiles) {
+      result.profiles = profiles.map((p) =>
+        Object.keys(p.layout ?? {}).length > 0
+          ? { ...p, hidden: { ...p.hidden, mixer: true } }
+          : p
+      );
+    }
+    result.mixer_migration_v1 = true;
+  }
+  return result;
 }
 
 const ALL_TILES: { id: TileId; label: string }[] = [
   { id: 'discord', label: 'Discord' },
   { id: 'spotify', label: 'Now playing' },
   { id: 'claude',  label: 'Claude Code' },
+  { id: 'mixer',   label: 'Audio mixer' },
   { id: 'notes',   label: 'Todos' },
   { id: 'sysmon',  label: 'System monitor' },
   { id: 'clock',   label: 'Now & forecast' },
@@ -169,6 +211,27 @@ export default function App() {
     document.documentElement.style.setProperty('--accent', accent);
     document.documentElement.style.setProperty('--accent2', accent2);
   }, [accent, accent2]);
+
+  // Perf-debug instrumentation: enable/disable the long-task observer +
+  // ResizeObserver-wrap + window-resize counter as the user toggles. When off,
+  // every record* call short-circuits, so the data feeds below cost ~nothing.
+  useEffect(() => {
+    if (t.perfDebug) perfDebug.enable();
+    else perfDebug.disable();
+  }, [t.perfDebug]);
+
+  // Feed perf-mode + viz-mode into the debug context so spike snapshots include
+  // them; cheap unconditional call, the module ignores when not enabled.
+  useEffect(() => {
+    perfDebug.recordContext(t.perfMode, t.vizMode);
+  }, [t.perfMode, t.vizMode]);
+
+  // Push every sysmon GPU sample (1Hz from the Rust core) into the spike
+  // detector. The detector keeps a rolling baseline and snapshots when delta
+  // crosses the threshold.
+  useEffect(() => {
+    perfDebug.recordGpuSample(sysmon.latest.app?.gpu);
+  }, [sysmon.latest.app?.gpu]);
 
   useEffect(() => {
     let audioHz = 30;
@@ -280,6 +343,8 @@ export default function App() {
         return <SpotifyTile density={t.density} accent={accent} accent2={accent2} track={track} onPick={setTrack} playback={livePlayback} spectrumRef={spectrumRef} />;
       case 'claude':
         return <ClaudeCodeTile density={t.density} accent={accent} />;
+      case 'mixer':
+        return <AudioMixerTile density={t.density} accent={accent} accent2={accent2} spectrumRef={spectrumRef} />;
       case 'notes':
         return <NotesTile density={t.density} accent={accent} todos={t.todos} setTodos={(next) => setTweak('todos', next)} />;
       case 'sysmon':
@@ -300,8 +365,13 @@ export default function App() {
             sensitivity={t.vizSensitivity}
             smoothing={t.vizSmoothing}
             lyricsOverlayEnabled={t.lyricsOverlayEnabled}
-            paused={showGallery || (t.perfMode !== 'uncapped' && livePlayback?.playing !== true)}
+            videoEnabled={t.videoEnabled}
+            videoUrl={t.videoUrl}
+            videoAvailable={parseYouTubeId(t.videoUrl) !== null}
+            onToggleVideo={() => setTweak('videoEnabled', !t.videoEnabled)}
+            paused={(t.videoEnabled && parseYouTubeId(t.videoUrl) !== null) || showGallery || (t.perfMode !== 'uncapped' && livePlayback?.playing !== true)}
             onConfigure={() => setShowGallery(true)}
+            audioDebug={t.audioDebug}
           />
         );
     }
@@ -426,6 +496,18 @@ export default function App() {
           />
           <span style={{ fontSize: 11.5, fontWeight: 500 }}>Album-art backdrop</span>
         </label>
+        <label style={{
+          display: 'flex', alignItems: 'center', gap: 8, padding: '3px 0',
+          cursor: 'pointer', userSelect: 'none', color: 'rgba(41,38,27,0.85)',
+        }}>
+          <input
+            type="checkbox"
+            checked={t.audioDebug}
+            onChange={(e) => setTweak('audioDebug', e.target.checked)}
+            style={{ accentColor: '#29261b', width: 13, height: 13 }}
+          />
+          <span style={{ fontSize: 11.5, fontWeight: 500 }}>Audio debug HUD</span>
+        </label>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 4, padding: '4px 0' }}>
           <label style={{ fontSize: 11, fontWeight: 500, color: 'rgba(41,38,27,0.85)', display: 'flex', justifyContent: 'space-between' }}>
             <span>Sensitivity</span>
@@ -496,6 +578,13 @@ export default function App() {
           />
           <span style={{ fontSize: 11.5, fontWeight: 500 }}>Show lyrics over visualizer</span>
         </label>
+        <TweakSection label="Video" />
+        <VideoTweak
+          enabled={t.videoEnabled}
+          url={t.videoUrl}
+          setEnabled={(v) => setTweak('videoEnabled', v)}
+          setUrl={(v) => setTweak('videoUrl', v)}
+        />
         <TweakSection label="Accent color" />
         <TweakSelect<AccentTheme>
           label="Source" value={t.accentTheme}
@@ -555,7 +644,26 @@ export default function App() {
         <TweakButton label="Edit mode" onClick={() => setEditMode(true)} />
         <TweakButton label="Profile switcher" onClick={() => setShowSwitcher(true)} />
         <TweakButton label="First-launch onboarding" onClick={() => setShowOnboarding(true)} />
+        <TweakSection label="Diagnostics" />
+        <label style={{
+          display: 'flex', alignItems: 'center', gap: 8, padding: '3px 0',
+          cursor: 'pointer', userSelect: 'none', color: 'rgba(41,38,27,0.85)',
+        }}>
+          <input
+            type="checkbox"
+            checked={t.perfDebug}
+            onChange={(e) => setTweak('perfDebug', e.target.checked)}
+            style={{ accentColor: '#29261b', width: 13, height: 13 }}
+          />
+          <span style={{ fontSize: 11.5, fontWeight: 500 }}>Perf debug HUD</span>
+        </label>
+        <div style={{ fontSize: 10, color: 'rgba(41,38,27,0.55)', padding: '2px 0 6px', lineHeight: 1.45 }}>
+          Long-task observer + GPU spike ring buffer + per-viz draw-rate +
+          ResizeObserver counter. HUD overlay shows live data and snapshots
+          what was on screen at the moment of each spike.
+        </div>
       </TweaksPanel>
+      {t.perfDebug && <PerfDebugHUD />}
     </div>
   );
 }
@@ -708,8 +816,76 @@ function WeatherSearch({
   );
 }
 
+/** Tweaks-panel UI for the video-embed feature: enable checkbox + URL input
+ *  with live "valid YouTube ID" feedback. The checkbox is disabled when the
+ *  URL doesn't parse, so the user can't toggle on a broken link by accident. */
+function VideoTweak({
+  enabled, url, setEnabled, setUrl,
+}: {
+  enabled: boolean;
+  url: string;
+  setEnabled: (v: boolean) => void;
+  setUrl: (v: string) => void;
+}) {
+  const id = parseYouTubeId(url);
+  const trimmed = url.trim();
+  const status: { color: string; text: string } | null =
+    trimmed === '' ? null
+    : id ? { color: '#16a34a', text: `✓ Valid · id ${id}` }
+    : { color: '#b91c1c', text: '✗ Couldn\'t parse a YouTube ID' };
+
+  // If the user clears or breaks the URL while video is enabled, auto-disable
+  // so the tile doesn't get stuck on the placeholder card.
+  useEffect(() => {
+    if (enabled && !id) setEnabled(false);
+  }, [enabled, id, setEnabled]);
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: '4px 0' }}>
+      <label style={{
+        display: 'flex', alignItems: 'center', gap: 8, padding: '3px 0',
+        cursor: id ? 'pointer' : 'not-allowed', userSelect: 'none',
+        color: id ? 'rgba(41,38,27,0.85)' : 'rgba(41,38,27,0.45)',
+      }} title={id ? '' : 'Paste a valid YouTube URL first'}>
+        <input
+          type="checkbox"
+          checked={enabled && !!id}
+          disabled={!id}
+          onChange={(e) => setEnabled(e.target.checked)}
+          style={{ accentColor: '#29261b', width: 13, height: 13 }}
+        />
+        <span style={{ fontSize: 11.5, fontWeight: 500 }}>Play video instead of visualizer</span>
+      </label>
+      <input
+        type="text"
+        value={url}
+        onChange={(e) => setUrl(e.target.value)}
+        placeholder="https://www.youtube.com/watch?v=…"
+        spellCheck={false}
+        style={{
+          fontSize: 11, padding: '5px 8px',
+          background: 'rgba(41,38,27,0.05)', border: '1px solid rgba(41,38,27,0.15)',
+          borderRadius: 4, color: 'rgba(41,38,27,0.9)',
+          fontFamily: '"JetBrains Mono", ui-monospace, monospace',
+        }}
+      />
+      {status && (
+        <div style={{
+          fontSize: 10, color: status.color,
+          fontFamily: '"JetBrains Mono", ui-monospace, monospace',
+        }}>{status.text}</div>
+      )}
+      <div style={{ fontSize: 10, color: 'rgba(41,38,27,0.55)', lineHeight: 1.45 }}>
+        Audio plays through your speakers. When you toggle viz back on, the
+        bars will react to whatever the video is playing (system audio loopback).
+      </div>
+    </div>
+  );
+}
+
 /** Measures actual rAF frame interval as a rolling average and returns FPS.
- *  Updates state once per second so we don't trash React with 60Hz re-renders. */
+ *  Updates state once per second so we don't trash React with 60Hz re-renders.
+ *  Also pushes the rolling rate into perf-debug for spike snapshots. */
 function useFrameRate(): number {
   const [fps, setFps] = useState(60);
   useEffect(() => {
@@ -719,7 +895,9 @@ function useFrameRate(): number {
     const tick = (now: number) => {
       frames++;
       if (now - last >= 1000) {
-        setFps(Math.round((frames * 1000) / (now - last)));
+        const rate = Math.round((frames * 1000) / (now - last));
+        setFps(rate);
+        perfDebug.recordFps(rate);
         frames = 0;
         last = now;
       }

@@ -167,6 +167,13 @@ fn process_loop<R: Runtime>(
         .collect();
 
     let band_edges = log_band_edges(SPECTRUM_BANDS, FFT_SIZE / 2, sample_rate, 30.0, 16_000.0);
+    // Per-band perceptual tilt: music has a natural pink-noise spectrum (~-3 dB/oct
+    // roll-off in PSD), so without compensation every visualizer reads bass-heavy
+    // and mids/treble feel inert. We boost +3 dB/octave above 1 kHz (and cut below)
+    // so kick, vocals, and hi-hats all compete for visual attention. Capped at
+    // [-15, +12] so an idle high-band noise floor (~-90 dB on WASAPI loopback)
+    // still clamps to zero.
+    let band_tilt_db = band_tilt_db(SPECTRUM_BANDS, FFT_SIZE / 2, sample_rate, 30.0, 16_000.0);
     let mut workspace = vec![Complex32::default(); FFT_SIZE];
     let mut samples = vec![0f32; FFT_SIZE];
     let mut smoothed = vec![0f32; SPECTRUM_BANDS];
@@ -213,9 +220,10 @@ fn process_loop<R: Runtime>(
                 sum_sq += c.re * c.re + c.im * c.im;
             }
             let avg = (sum_sq / (end - start) as f32).sqrt();
-            // Convert to dB-ish then normalize -60 dB → 0, 0 dB → 1.
+            // Convert to dB-ish, apply perceptual tilt, then normalize -60 dB → 0, 0 dB → 1.
             let db = 20.0 * (avg + 1e-10).log10() - 20.0 * (FFT_SIZE as f32).log10();
-            let n = ((db + 60.0) / 60.0).clamp(0.0, 1.0);
+            let db_tilted = db + band_tilt_db[b];
+            let n = ((db_tilted + 60.0) / 60.0).clamp(0.0, 1.0);
             // Peak-hold with exponential decay — the look most viz folks expect.
             let prev = smoothed[b];
             let next = if n > prev { n } else { prev * 0.86 + n * 0.14 };
@@ -233,6 +241,21 @@ fn process_loop<R: Runtime>(
 
         let _ = app.emit("audio:spectrum", AudioFrame { bands, level });
     }
+}
+
+/// Per-band tilt in dB, applied additively before normalization. Centered at 1 kHz
+/// so mid-range music sits at the original normalization, with bass attenuated and
+/// treble boosted at +3 dB/octave. Clamped to [-15, +12] dB to keep an idle noise
+/// floor below the displayable range.
+fn band_tilt_db(bands: usize, _max_bin: usize, _sample_rate: f32, fmin: f32, fmax: f32) -> Vec<f32> {
+    let log_min = fmin.log10();
+    let log_max = fmax.log10();
+    (0..bands)
+        .map(|b| {
+            let center = 10f32.powf(log_min + (log_max - log_min) * (b as f32 + 0.5) / bands as f32);
+            (3.0 * (center / 1000.0).log2()).clamp(-15.0, 12.0)
+        })
+        .collect()
 }
 
 fn log_band_edges(bands: usize, max_bin: usize, sample_rate: f32, fmin: f32, fmax: f32) -> Vec<(usize, usize)> {

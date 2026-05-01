@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState, type MutableRefObject } from 'react
 import type { VizMode, Track } from '../types';
 import { type SpectrumState, type Playback, mediaControls } from '../state/tauri';
 import { useLyrics, currentLineIndex } from '../state/lyrics';
+import { recordDraw, useRegisterSurface } from '../perf/debug';
 import {
   VizNeonBars, VizSplitMirror, VizCircularPulse, VizWaveformTunnel,
   VizPixelLED, VizRibbon, VizOscilloscope, VizSpectrogram, VizVinyl,
@@ -12,6 +13,7 @@ import {
   VizStrings, VizHUD, VizLiquid, VizCassette, VizConstellation,
 } from './viz-extra2';
 import { VIZ_STYLES } from './viz-gallery';
+import { VideoPlayer } from './video-player';
 
 /** Per-frame DPR cap for viz canvases. On a 4K monitor at DPR=2, dropping to 1
  *  cuts canvas pixel work 4x with no perceptible loss for music visualizers. */
@@ -68,8 +70,12 @@ export function makeSpectrumReader(
       const liveBands = spectrumRef?.current.bands;
       const srcLen = liveBands?.length ?? 64;
       let bassSum = 0, midSum = 0, trebleSum = 0;
-      const bassN = Math.max(1, Math.floor(N * 0.125));   // 12.5% lowest
-      const midEnd = Math.max(bassN + 1, Math.floor(N * 0.5));
+      // Musical thirds in log-frequency space (Rust emits 30Hz–16kHz log-spaced).
+      // bass = 30–250Hz (kick, bass guitar), mid = 250Hz–2kHz (vocals, snare body),
+      // treble = 2–16kHz (cymbals, air). Old 12.5/37.5/50 split made "bass" cover
+      // only sub-bass (30–66Hz) so kicks read as mid and reactivity felt skewed.
+      const bassN = Math.max(1, Math.floor(N * 0.338));
+      const midEnd = Math.max(bassN + 1, Math.floor(N * 0.669));
       let bassCount = 0, midCount = 0, trebleCount = 0;
       for (let i = 0; i < N; i++) {
         let raw: number;
@@ -143,13 +149,31 @@ export interface VizProps {
   /** When true, viz freezes — skips reader.read() and drawing each frame.
    *  rAF is still scheduled so resume is instant on unpause. */
   paused?: boolean;
+  /** Currently playing track. Visualizers that surface album art (e.g. vinyl)
+   *  read `track.cover` — a CSS background string that's either a gradient
+   *  fallback or `center / cover no-repeat url("...")` when GSMTC has art. */
+  track?: Track;
+  /** Live playback state. Used by playback-aware viz (vinyl stops spinning
+   *  when not playing; cassette shows the track length on the label). */
+  playback?: Playback | null;
+}
+
+/** Format seconds as M:SS. Exported so playback-aware visualizers (cassette)
+ *  can label their UI with the track length. */
+export function fmtTime(seconds: number): string {
+  if (!isFinite(seconds) || seconds <= 0) return '—';
+  const total = Math.floor(seconds);
+  return `${Math.floor(total / 60)}:${(total % 60).toString().padStart(2, '0')}`;
 }
 
 /** Combined visibility + frame-rate gate. Each viz calls `shouldDraw()` once
  *  per rAF; returns true only when (a) not paused, (b) document not hidden,
  *  and (c) enough time has elapsed since the last successful draw to honour
- *  the global FPS cap. The rAF callback should still re-schedule unconditionally. */
-export function useAnimateGate(paused?: boolean): { shouldDraw(): boolean } {
+ *  the global FPS cap. The rAF callback should still re-schedule unconditionally.
+ *
+ *  `name` (optional): when provided + perfDebug is on, every successful draw is
+ *  recorded for per-viz draw-rate attribution and long-task heuristic tagging. */
+export function useAnimateGate(paused?: boolean, name?: string): { shouldDraw(): boolean } {
   const visibleRef = useRef(true);
   const lastDrawRef = useRef(0);
   useEffect(() => {
@@ -173,6 +197,7 @@ export function useAnimateGate(paused?: boolean): { shouldDraw(): boolean } {
         if (now - lastDrawRef.current < minDelta) return false;
         lastDrawRef.current = now;
       }
+      if (name) recordDraw(name);
       return true;
     },
   };
@@ -184,7 +209,7 @@ export function HiFiVizBars({ accent, accent2, spectrumRef, sensitivity = 1, smo
   const peaksRef = useRef<number[]>(new Array(count).fill(0));
   const smoothedRef = useRef<number[]>(new Array(count).fill(0));
   const rafRef = useRef(0);
-  const gate = useAnimateGate(paused);
+  const gate = useAnimateGate(paused, 'bars');
 
   useEffect(() => {
     let t = 0;
@@ -255,7 +280,7 @@ export function HiFiVizWaveform({ accent, accent2, spectrumRef, sensitivity = 1,
   const ref = useRef<SVGPolylineElement | null>(null);
   const ref2 = useRef<SVGPolylineElement | null>(null);
   const smoothedRef = useRef<number[]>(new Array(200).fill(0));
-  const gate = useAnimateGate(paused);
+  const gate = useAnimateGate(paused, 'waveform');
   useEffect(() => {
     let t = 0;
     let raf = 0;
@@ -329,7 +354,7 @@ export function HiFiVizRadial({ accent, accent2, spectrumRef, sensitivity = 1, s
   const groupRef = useRef<SVGGElement | null>(null);
   const N = 96;
   const smoothedRef = useRef<number[]>(new Array(N).fill(0));
-  const gate = useAnimateGate(paused);
+  const gate = useAnimateGate(paused, 'radial');
   useEffect(() => {
     let t = 0;
     let raf = 0;
@@ -399,7 +424,7 @@ export function HiFiVizRadial({ accent, accent2, spectrumRef, sensitivity = 1, s
 
 export function HiFiVizParticles({ accent, accent2, spectrumRef, sensitivity = 1, smoothing = 0, paused }: VizProps) {
   const ref = useRef<HTMLCanvasElement | null>(null);
-  const gate = useAnimateGate(paused);
+  const gate = useAnimateGate(paused, 'particles');
   useEffect(() => {
     const canvas = ref.current;
     if (!canvas) return;
@@ -525,7 +550,7 @@ export function HiFiVizParticles({ accent, accent2, spectrumRef, sensitivity = 1
 
 export function HiFiVizAmbient({ accent, accent2, spectrumRef, sensitivity = 1, smoothing = 0, paused }: VizProps) {
   const blobsRef = useRef<HTMLDivElement | null>(null);
-  const gate = useAnimateGate(paused);
+  const gate = useAnimateGate(paused, 'ambient');
   useEffect(() => {
     const reader = makeSpectrumReader(48, spectrumRef, sensitivity, smoothing);
     let raf = 0;
@@ -575,8 +600,11 @@ export function HiFiVizAmbient({ accent, accent2, spectrumRef, sensitivity = 1, 
   );
 }
 
-export function HiFiVizSurface({ mode, accent, accent2, spectrumRef, sensitivity, smoothing, paused }: { mode: VizMode } & VizProps) {
-  const props = { accent, accent2, spectrumRef, sensitivity, smoothing, paused };
+export function HiFiVizSurface({ mode, accent, accent2, spectrumRef, sensitivity, smoothing, paused, track, playback }: { mode: VizMode } & VizProps) {
+  // Register the active viz mode as the mounted surface; the HUD displays it
+  // and spike snapshots include it under `vizMode`.
+  useRegisterSurface(`viz:${mode}${paused ? ':paused' : ''}`);
+  const props = { accent, accent2, spectrumRef, sensitivity, smoothing, paused, track, playback };
   switch (mode) {
     case 'bars':         return <HiFiVizBars {...props} />;
     case 'waveform':     return <HiFiVizWaveform {...props} />;
@@ -641,6 +669,7 @@ function useLivePos(playback: Playback | null): number {
 
 export function VizOverlay({
   track, mode, setMode, accent, accent2, playback, onConfigure, onToggleImmersive, immersive = false,
+  videoEnabled = false, videoAvailable = false, onToggleVideo,
 }: {
   track: Track;
   mode: VizMode;
@@ -651,6 +680,12 @@ export function VizOverlay({
   onConfigure?: () => void;
   onToggleImmersive?: () => void;
   immersive?: boolean;
+  /** Whether the video embed is currently active. Drives the 📺 button highlight. */
+  videoEnabled?: boolean;
+  /** Whether the saved URL parses to a valid YouTube ID. Disables the 📺 button when false. */
+  videoAvailable?: boolean;
+  /** Called when the user clicks 📺 to flip video on/off. */
+  onToggleVideo?: () => void;
 }) {
   const position = useLivePos(playback ?? null);
   const duration = playback?.duration ?? 0;
@@ -700,6 +735,22 @@ export function VizOverlay({
         </div>
         <div style={{ display: 'flex', gap: 6 }}>
           <button onClick={onConfigure} style={overlayBtn} title="Browse all visualizers">⚙ Configure</button>
+          <button
+            onClick={videoAvailable ? onToggleVideo : undefined}
+            disabled={!videoAvailable}
+            title={
+              videoAvailable
+                ? (videoEnabled ? 'Switch back to visualizer' : 'Play video instead of visualizer')
+                : 'Paste a YouTube URL in Tweaks → Video first'
+            }
+            style={{
+              ...overlayBtn,
+              background: videoEnabled ? `${accent}33` : overlayBtn.background,
+              borderColor: videoEnabled ? `${accent}99` : (overlayBtn.borderColor as string | undefined),
+              color: videoEnabled ? accent : (videoAvailable ? overlayBtn.color : 'rgba(255,255,255,0.3)'),
+              cursor: videoAvailable ? 'pointer' : 'not-allowed',
+            }}
+          >📺</button>
           <button onClick={onToggleImmersive} style={overlayBtn} title={immersive ? 'Show overlay (Esc)' : 'Immersive mode'}>{immersive ? '⛶' : '⛶'}</button>
         </div>
       </div>
@@ -743,10 +794,98 @@ export function VizOverlay({
   );
 }
 
+/** TEMP: live audio-pipeline HUD for validating that visualizers are actually
+ *  reading real WASAPI loopback data. Reads spectrumRef directly each rAF
+ *  (no React state churn). Remove once reactivity is verified. */
+function AudioDebugHud({ spectrumRef, paused }: {
+  spectrumRef?: MutableRefObject<SpectrumState>;
+  paused?: boolean;
+}) {
+  const ref = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!spectrumRef) return;
+    let raf = 0;
+    let frameCount = 0;
+    let lastFrameStamp = 0;
+    let framesPerSec = 0;
+    let lastBandsHash = -1;
+    const tick = () => {
+      const s = spectrumRef.current;
+      const bands = s.bands;
+      let bassSum = 0, midSum = 0, trebSum = 0;
+      const N = bands.length;
+      const lowN = Math.max(1, Math.floor(N * 0.125));
+      const midEnd = Math.max(lowN + 1, Math.floor(N * 0.5));
+      let bassCount = 0, midCount = 0, trebCount = 0;
+      let max = 0;
+      let nonZero = 0;
+      // Hash to detect frames actually changing (catches "stuck at zero" vs "no frames").
+      let hash = 0;
+      for (let i = 0; i < N; i++) {
+        const v = bands[i] ?? 0;
+        hash = (hash * 31 + Math.floor(v * 1000)) | 0;
+        if (v > 0.001) nonZero++;
+        if (v > max) max = v;
+        if (i < lowN) { bassSum += v; bassCount++; }
+        else if (i < midEnd) { midSum += v; midCount++; }
+        else { trebSum += v; trebCount++; }
+      }
+      // Track frames-per-second of *changing* spectrum data.
+      if (hash !== lastBandsHash) {
+        frameCount++;
+        lastBandsHash = hash;
+      }
+      const now = performance.now();
+      if (now - lastFrameStamp >= 1000) {
+        framesPerSec = frameCount * 1000 / (now - lastFrameStamp);
+        frameCount = 0;
+        lastFrameStamp = now;
+      }
+      const bass = bassSum / Math.max(1, bassCount);
+      const mid = midSum / Math.max(1, midCount);
+      const treb = trebSum / Math.max(1, trebCount);
+      const liveColor = s.live ? '#4ade80' : '#f87171';
+      const fpsColor = framesPerSec > 5 ? '#4ade80' : framesPerSec > 0 ? '#fbbf24' : '#f87171';
+      const levelColor = s.level > 0.02 ? '#4ade80' : '#fbbf24';
+      const el = ref.current;
+      if (el) {
+        el.innerHTML = [
+          `<div style="color:${liveColor}">live: ${s.live ? 'TRUE' : 'FALSE'}</div>`,
+          `<div style="color:${fpsColor}">fps:  ${framesPerSec.toFixed(1)}</div>`,
+          `<div style="color:${levelColor}">lvl:  ${s.level.toFixed(3)}</div>`,
+          `<div>max:  ${max.toFixed(3)}</div>`,
+          `<div>nz:   ${nonZero}/${N}</div>`,
+          `<div>bass: ${bass.toFixed(3)}</div>`,
+          `<div>mid:  ${mid.toFixed(3)}</div>`,
+          `<div>treb: ${treb.toFixed(3)}</div>`,
+          `<div style="color:${paused ? '#f87171' : '#4ade80'}">paused: ${paused ? 'YES' : 'no'}</div>`,
+        ].join('');
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [spectrumRef, paused]);
+  return (
+    <div ref={ref} style={{
+      position: 'absolute', top: 12, left: 12, zIndex: 5,
+      padding: '8px 10px', borderRadius: 6,
+      background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(8px)',
+      border: '1px solid rgba(255,255,255,0.12)',
+      color: 'rgba(255,255,255,0.85)',
+      fontFamily: '"JetBrains Mono", ui-monospace, monospace',
+      fontSize: 11, lineHeight: 1.45,
+      pointerEvents: 'none',
+      whiteSpace: 'pre',
+    }} />
+  );
+}
+
 export function VizHero({
   mode, setMode, accent, accent2, track, spectrumRef, playback,
   showArtBg = false, sensitivity = 1, smoothing = 0, lyricsOverlayEnabled = true,
-  paused = false, onConfigure,
+  videoEnabled = false, videoUrl = '', videoAvailable = false, onToggleVideo,
+  paused = false, onConfigure, audioDebug = false,
 }: {
   mode: VizMode;
   setMode: (m: VizMode) => void;
@@ -760,9 +899,21 @@ export function VizHero({
   sensitivity?: number;
   smoothing?: number;
   lyricsOverlayEnabled?: boolean;
+  /** When true AND `videoAvailable`, replace the viz with a YouTube embed. */
+  videoEnabled?: boolean;
+  /** Raw URL pasted in Tweaks. Forwarded to `<VideoPlayer>` only when active. */
+  videoUrl?: string;
+  /** True when `videoUrl` parses to a valid YouTube ID. Drives the 📺 toggle's
+   *  enabled/disabled state in the overlay. */
+  videoAvailable?: boolean;
+  /** Click handler for the overlay 📺 button. */
+  onToggleVideo?: () => void;
   paused?: boolean;
   /** Called when the user clicks "⚙ Configure" or "+ More" — opens the viz gallery. */
   onConfigure?: () => void;
+  /** When true, overlay the live audio-pipeline HUD (live/fps/level/bands)
+   *  on the viz. Useful for diagnosing why a viz isn't reacting. */
+  audioDebug?: boolean;
 }) {
   const [immersive, setImmersive] = useState(false);
   useEffect(() => {
@@ -774,6 +925,10 @@ export function VizHero({
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
   }, [immersive]);
+  // Video takes over the tile only when explicitly enabled AND we have a
+  // parseable URL. Both conditions are checked here (not just at render-time)
+  // so the album-art backdrop and audio-debug HUD also know to step aside.
+  const showVideo = videoEnabled && videoAvailable;
   return (
     <div style={{
       position: 'relative', overflow: 'hidden',
@@ -783,7 +938,7 @@ export function VizHero({
       border: '1px solid rgba(255,255,255,0.05)',
       boxShadow: `0 0 32px -16px ${accent}66`,
     }}>
-      {showArtBg && (
+      {showArtBg && !showVideo && (
         <div style={{
           position: 'absolute', inset: '-8%',  // overscan so the blur edges don't show
           background: track.cover,
@@ -796,21 +951,31 @@ export function VizHero({
         }} />
       )}
       <div style={{ position: 'absolute', inset: 0, zIndex: 1 }}>
-        <HiFiVizSurface mode={mode} accent={accent} accent2={accent2} spectrumRef={spectrumRef} sensitivity={sensitivity} smoothing={smoothing} paused={paused} />
+        {showVideo ? (
+          <VideoPlayer url={videoUrl} />
+        ) : (
+          <HiFiVizSurface mode={mode} accent={accent} accent2={accent2} spectrumRef={spectrumRef} sensitivity={sensitivity} smoothing={smoothing} paused={paused} track={track} playback={playback} />
+        )}
       </div>
-      <div style={{
-        position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: 2,
-        background: 'linear-gradient(180deg, rgba(0,0,0,0.5) 0%, transparent 18%, transparent 75%, rgba(0,0,0,0.55) 100%)',
-      }} />
-      <LyricsOverlay accent={accent} playback={playback} enabled={lyricsOverlayEnabled} />
+      {!showVideo && (
+        <div style={{
+          position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: 2,
+          background: 'linear-gradient(180deg, rgba(0,0,0,0.5) 0%, transparent 18%, transparent 75%, rgba(0,0,0,0.55) 100%)',
+        }} />
+      )}
+      {!showVideo && <LyricsOverlay accent={accent} playback={playback} enabled={lyricsOverlayEnabled} />}
+      {!showVideo && audioDebug && <AudioDebugHud spectrumRef={spectrumRef} paused={paused} />}
       {!immersive && (
-        <div style={{ position: 'absolute', inset: 0, zIndex: 3 }}>
+        <div style={{ position: 'absolute', inset: 0, zIndex: 3, pointerEvents: 'none' }}>
           <VizOverlay
             track={track} mode={mode} setMode={setMode}
             accent={accent} accent2={accent2} playback={playback}
             onConfigure={onConfigure}
             onToggleImmersive={() => setImmersive(true)}
             immersive={immersive}
+            videoEnabled={videoEnabled}
+            videoAvailable={videoAvailable}
+            onToggleVideo={onToggleVideo}
           />
         </div>
       )}

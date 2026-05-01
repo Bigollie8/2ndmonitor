@@ -3,6 +3,7 @@ mod claude;
 mod discord;
 mod discord_rpc;
 mod lyrics;
+mod mixer;
 mod nowplaying;
 mod spotify;
 mod sysmon;
@@ -34,12 +35,19 @@ pub fn run() {
             tweaks::tweaks_save,
             weather::set_weather_location,
             audio::set_audio_emit_hz,
+            mixer::mixer_set_master_volume,
+            mixer::mixer_set_master_mute,
+            mixer::mixer_set_session_volume,
+            mixer::mixer_set_session_mute,
+            mixer::mixer_set_default_output,
+            mixer::mixer_refresh,
         ])
         .setup(|app| {
             sysmon::spawn(app.handle().clone());
             nowplaying::spawn(app.handle().clone());
             lyrics::spawn(app.handle().clone());
             audio::spawn(app.handle().clone());
+            mixer::spawn(app.handle().clone());
             claude::spawn(app.handle().clone());
             weather::spawn(app.handle().clone());
             discord::spawn(app.handle().clone());

@@ -664,3 +664,97 @@ export function useClaudeSessions(): ClaudeSession[] {
   return sessions;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Audio mixer — Windows Core Audio: master volume, output devices, per-app sessions.
+// Listens to `mixer:state` events; setter helpers invoke the matching Rust commands.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface MixerMaster {
+  volume: number;
+  mute: boolean;
+  device_id: string;
+  device_name: string;
+}
+
+export interface MixerOutputDevice {
+  id: string;
+  name: string;
+  is_default: boolean;
+}
+
+export interface MixerAppSession {
+  pid: number;
+  name: string;
+  volume: number;
+  mute: boolean;
+  is_system_sounds: boolean;
+  /** `data:image/png;base64,…` for the exe's shell icon, or null. */
+  icon: string | null;
+}
+
+export interface MixerState {
+  master: MixerMaster | null;
+  devices: MixerOutputDevice[];
+  sessions: MixerAppSession[];
+}
+
+const MIXER_MOCK: MixerState = {
+  master: { volume: 0.62, mute: false, device_id: 'mock_default', device_name: 'Speakers (Realtek)' },
+  devices: [
+    { id: 'mock_default', name: 'Speakers (Realtek)', is_default: true },
+    { id: 'mock_headset', name: 'Headset (USB)', is_default: false },
+  ],
+  sessions: [
+    { pid: 0, name: 'System sounds', volume: 0.85, mute: false, is_system_sounds: true, icon: null },
+    { pid: 1234, name: 'Spotify.exe', volume: 0.74, mute: false, is_system_sounds: false, icon: null },
+    { pid: 5678, name: 'chrome.exe', volume: 0.5, mute: false, is_system_sounds: false, icon: null },
+    { pid: 9012, name: 'Discord.exe', volume: 0.4, mute: true, is_system_sounds: false, icon: null },
+  ],
+};
+
+export function useMixerState(): MixerState | null {
+  const [state, setState] = useState<MixerState | null>(isTauri ? null : MIXER_MOCK);
+
+  useEffect(() => {
+    if (!isTauri) return;
+    let cancelled = false;
+    let cleanup: (() => void) | null = null;
+    import('@tauri-apps/api/event')
+      .then(({ listen }) => listen<MixerState>('mixer:state', (e) => {
+        if (cancelled) return;
+        setState(e.payload);
+      }))
+      .then((unlisten) => {
+        if (cancelled) { unlisten(); return; }
+        cleanup = unlisten;
+      })
+      .catch((err) => console.error('mixer listen failed', err));
+    // Kick the worker to emit immediately so the UI doesn't wait up to a second
+    // on first render.
+    import('@tauri-apps/api/core')
+      .then(({ invoke }) => invoke('mixer_refresh').catch(() => {}))
+      .catch(() => {});
+    return () => { cancelled = true; cleanup?.(); };
+  }, []);
+  return state;
+}
+
+async function invokeMixer(cmd: string, args?: Record<string, unknown>): Promise<void> {
+  if (!isTauri) return;
+  try {
+    const { invoke } = await import('@tauri-apps/api/core');
+    await invoke(cmd, args);
+  } catch (err) {
+    console.error(`${cmd} failed`, err);
+  }
+}
+
+export const mixerControls = {
+  setMasterVolume: (v: number) => invokeMixer('mixer_set_master_volume', { v }),
+  setMasterMute:   (m: boolean) => invokeMixer('mixer_set_master_mute', { m }),
+  setSessionVolume: (pid: number, v: number) => invokeMixer('mixer_set_session_volume', { pid, v }),
+  setSessionMute:   (pid: number, m: boolean) => invokeMixer('mixer_set_session_mute', { pid, m }),
+  setDefaultOutput: (deviceId: string) => invokeMixer('mixer_set_default_output', { deviceId }),
+  refresh: () => invokeMixer('mixer_refresh'),
+};
+

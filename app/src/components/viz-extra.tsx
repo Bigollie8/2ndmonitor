@@ -12,7 +12,7 @@ function hexToRgb(hex: string): { r: number; g: number; b: number } {
 export function VizNeonBars({ accent, accent2, spectrumRef, sensitivity = 1, smoothing = 0, paused }: VizProps) {
   const N = 56;
   const barsRef = useRef<(HTMLDivElement | null)[]>([]);
-  const gate = useAnimateGate(paused);
+  const gate = useAnimateGate(paused, 'neonbars');
   useEffect(() => {
     const reader = makeSpectrumReader(N, spectrumRef, sensitivity, smoothing);
     let raf = 0;
@@ -50,7 +50,7 @@ export function VizNeonBars({ accent, accent2, spectrumRef, sensitivity = 1, smo
 export function VizSplitMirror({ accent, accent2, spectrumRef, sensitivity = 1, smoothing = 0, paused }: VizProps) {
   const N = 80;
   const barsRef = useRef<(HTMLDivElement | null)[]>([]);
-  const gate = useAnimateGate(paused);
+  const gate = useAnimateGate(paused, 'splitmirror');
   useEffect(() => {
     const reader = makeSpectrumReader(N, spectrumRef, sensitivity, smoothing);
     let raf = 0;
@@ -91,7 +91,7 @@ export function VizCircularPulse({ accent, accent2, spectrumRef, sensitivity = 1
   const N = 96;
   const linesRef = useRef<(SVGLineElement | null)[]>([]);
   const discRef = useRef<SVGCircleElement | null>(null);
-  const gate = useAnimateGate(paused);
+  const gate = useAnimateGate(paused, 'circular');
   useEffect(() => {
     const reader = makeSpectrumReader(N, spectrumRef, sensitivity, smoothing);
     let raf = 0;
@@ -144,7 +144,7 @@ export function VizCircularPulse({ accent, accent2, spectrumRef, sensitivity = 1
 // 4. WAVEFORM TUNNEL — layered waveforms w/ depth blur (pure procedural, no spectrum)
 export function VizWaveformTunnel({ accent, accent2, spectrumRef, sensitivity = 1, smoothing = 0, paused }: VizProps) {
   const refs = useRef<(SVGPathElement | null)[]>([]);
-  const gate = useAnimateGate(paused);
+  const gate = useAnimateGate(paused, 'tunnel');
   useEffect(() => {
     const reader = makeSpectrumReader(64, spectrumRef, sensitivity, smoothing);
     let raf = 0;
@@ -203,7 +203,7 @@ export function VizPixelLED({ accent, accent2, spectrumRef, sensitivity = 1, smo
   const N = 32;
   const ROWS = 20;
   const cellRefs = useRef<(HTMLDivElement | null)[]>([]);
-  const gate = useAnimateGate(paused);
+  const gate = useAnimateGate(paused, 'pixelled');
   useEffect(() => {
     const reader = makeSpectrumReader(N, spectrumRef, sensitivity, smoothing);
     let raf = 0;
@@ -255,7 +255,7 @@ export function VizPixelLED({ accent, accent2, spectrumRef, sensitivity = 1, smo
 export function VizRibbon({ accent, accent2, spectrumRef, sensitivity = 1, smoothing = 0, paused }: VizProps) {
   const N = 48;
   const pathRef = useRef<SVGPathElement | null>(null);
-  const gate = useAnimateGate(paused);
+  const gate = useAnimateGate(paused, 'ribbon');
   useEffect(() => {
     const reader = makeSpectrumReader(N, spectrumRef, sensitivity, smoothing);
     let raf = 0;
@@ -297,7 +297,7 @@ export function VizRibbon({ accent, accent2, spectrumRef, sensitivity = 1, smoot
 // 7. OSCILLOSCOPE — CRT phosphor scope, trace driven by audio
 export function VizOscilloscope({ accent, spectrumRef, sensitivity = 1, smoothing = 0, paused }: VizProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const gate = useAnimateGate(paused);
+  const gate = useAnimateGate(paused, 'scope');
   useEffect(() => {
     const c = canvasRef.current;
     if (!c) return;
@@ -361,7 +361,7 @@ export function VizOscilloscope({ accent, spectrumRef, sensitivity = 1, smoothin
 // 8. SPECTROGRAM — scrolling waterfall heatmap
 export function VizSpectrogram({ accent, accent2, spectrumRef, sensitivity = 1, smoothing = 0, paused }: VizProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const gate = useAnimateGate(paused);
+  const gate = useAnimateGate(paused, 'spectrogram');
   useEffect(() => {
     const c = canvasRef.current;
     if (!c) return;
@@ -416,61 +416,168 @@ export function VizSpectrogram({ accent, accent2, spectrumRef, sensitivity = 1, 
   );
 }
 
-// 9. VINYL — spinning record; speed pulses with bass + glow flashes on kick
-export function VizVinyl({ accent, accent2, spectrumRef, sensitivity = 1, smoothing = 0, paused }: VizProps) {
-  const ref = useRef<HTMLDivElement | null>(null);
-  const labelRef = useRef<HTMLDivElement | null>(null);
-  const gate = useAnimateGate(paused);
+// 9. VINYL — spinning record with album art as the label. Disc rotates only
+//    while playback is *playing* (so a paused track parks the disc) at a
+//    pleasant ~16 rpm — real 33⅓ rpm at 60fps reads as a blur on screen.
+//    Bass pulses add a small speed bump; kicks flash the glow ring (which
+//    doesn't rotate so the highlight stays anchored). The tonearm is a
+//    multi-piece SVG (counterweight + pivot + tube + headshell + cartridge)
+//    that swings to a parked angle when not playing.
+export function VizVinyl({ accent, accent2, spectrumRef, sensitivity = 1, smoothing = 0, paused, track, playback }: VizProps) {
+  const discRef = useRef<HTMLDivElement | null>(null);
+  const glowRef = useRef<HTMLDivElement | null>(null);
+  const gate = useAnimateGate(paused, 'vinyl');
+  // When playback is unknown (no GSMTC sync yet), default to spinning so the
+  // viz looks alive on first paint; only stop once we *know* it's paused.
+  const isPlaying = playback?.playing !== false;
   useEffect(() => {
     const reader = makeSpectrumReader(64, spectrumRef, sensitivity, smoothing);
     let raf = 0;
-    let r = 0;
+    let rot = 0;
+    let rotVel = 0;  // angular velocity (deg/frame), eased toward target each frame
     const tick = () => {
       if (gate.shouldDraw()) {
         reader.read();
         const bass = reader.bands.bass;
         const kick = reader.onset.kick;
-        // Base 33⅓ rpm vibe (~0.6deg/frame at 60fps); bass pulses speed up to ~2x.
-        r += 0.6 + bass * 0.7;
-        const disc = ref.current;
+        // Target ~16 rpm at 60fps (~1.6°/frame), with bass adding up to ~10
+        // rpm more. When paused the target ramps to 0 so the disc smoothly
+        // winds down instead of stopping mid-stride.
+        const target = isPlaying ? (1.6 + bass * 1.0) : 0;
+        rotVel += (target - rotVel) * 0.06;
+        rot += rotVel;
+        const disc = discRef.current;
         if (disc) {
-          disc.style.transform = `rotate(${r}deg)`;
-          // Glow intensity reacts to kicks.
-          const glow = 80 + kick * 120;
-          disc.style.boxShadow = `0 0 ${glow}px ${accent}${Math.round((0.2 + kick * 0.4) * 255).toString(16).padStart(2, '0')}, inset 0 0 60px rgba(0,0,0,0.8)`;
+          disc.style.transform = `rotate(${rot}deg)`;
         }
-        // Subtle scale-bump on the disc on kicks
-        const label = labelRef.current;
-        if (label) {
-          const s = 1 + kick * 0.06;
-          label.style.transform = `translate(-50%, -50%) scale(${s})`;
+        // Glow ring around the disc reacts to kicks without rotating. Damped
+        // when paused so a stopped record reads as quiet.
+        const glow = glowRef.current;
+        if (glow) {
+          const kickEff = isPlaying ? kick : 0;
+          const blur = 60 + kickEff * 90;
+          const alpha = Math.round((0.18 + kickEff * 0.45) * 255).toString(16).padStart(2, '0');
+          glow.style.boxShadow = `0 0 ${blur}px ${accent}${alpha}, inset 0 0 60px rgba(0,0,0,0.8)`;
+          const s = 1 + kickEff * 0.04;
+          glow.style.transform = `scale(${s})`;
         }
       }
       raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [accent, spectrumRef, sensitivity, smoothing]);
+  }, [accent, spectrumRef, sensitivity, smoothing, isPlaying]);
+  // The label is the album-art circle in the middle of the disc. When no art
+  // is available (gradient fallback in track.cover), we just use that gradient
+  // — it still reads as an "album cover" because the palette is art-derived.
+  const labelBg = track?.cover ?? `linear-gradient(135deg, ${accent}, ${accent2})`;
+  // Tonearm angle — when playing, the cartridge sits over the record near
+  // the outer track; when paused it swings back to a rest position so the
+  // headshell is off the disc. CSS transition handles the smooth swing.
+  const armAngle = isPlaying ? -22 : -52;
   return (
     <div style={{ position: 'absolute', inset: 0, background: 'radial-gradient(circle at 30% 40%, #1a1a22 0%, #06070a 70%)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-      <div style={{ position: 'relative', width: '70%', aspectRatio: '1/1' }}>
-        <div ref={ref} style={{
+      <div style={{ position: 'relative', width: 'min(90%, 90vh)', aspectRatio: '1/1' }}>
+        {/* Glow ring — sits behind the disc, doesn't rotate, pulses on kicks */}
+        <div ref={glowRef} style={{
           position: 'absolute', inset: 0, borderRadius: '50%',
-          background: `radial-gradient(circle, ${accent2} 0%, ${accent2} 8%, #0a0a0c 8%, #0a0a0c 12%, ${accent} 12%, ${accent} 13%, #0a0a0c 13%, #0a0a0c 18%, repeating-radial-gradient(#0a0a0c, #0a0a0c 1px, #161618 2px, #0a0a0c 3px) 18%)`,
           boxShadow: `0 0 80px ${accent}33, inset 0 0 60px rgba(0,0,0,0.8)`,
-        }}>
-          <div ref={labelRef} style={{ position: 'absolute', top: '50%', left: '50%', width: '4%', height: '4%', borderRadius: '50%', background: accent, transform: 'translate(-50%, -50%)', boxShadow: `0 0 20px ${accent}` }} />
-        </div>
-        {/* Tonearm */}
-        <div style={{
-          position: 'absolute', top: '8%', right: '-2%',
-          width: '60%', height: '6%',
-          background: 'linear-gradient(90deg, #2a2a32 0%, #1a1a22 100%)',
-          borderRadius: 4,
-          transformOrigin: '95% 50%',
-          transform: 'rotate(-22deg)',
-          boxShadow: '0 4px 12px rgba(0,0,0,0.4)',
+          transition: 'box-shadow 60ms linear',
+          pointerEvents: 'none',
         }} />
+        {/* Disc — rotates as one unit (vinyl + grooves + label) */}
+        <div ref={discRef} style={{
+          position: 'absolute', inset: 0, borderRadius: '50%',
+          // Three layers: a subtle 1px-period groove pattern, an outer black ring,
+          // and the dark vinyl base. Keeping these as separate `background-image`
+          // layers (not one nested gradient) is what makes the grooves render.
+          backgroundImage: `
+            repeating-radial-gradient(circle, rgba(255,255,255,0.04) 0 1px, transparent 1px 3px),
+            radial-gradient(circle, #0a0a0c 0%, #0a0a0c 96%, #050507 96%, #050507 100%)
+          `,
+          backgroundColor: '#0a0a0c',
+        }}>
+          {/* Highlight sheen — sits on top of the rotating disc but masked to the surface */}
+          <div style={{
+            position: 'absolute', inset: 0, borderRadius: '50%',
+            background: 'radial-gradient(ellipse 60% 40% at 30% 30%, rgba(255,255,255,0.08), transparent 70%)',
+            pointerEvents: 'none',
+          }} />
+          {/* Album-art label — circular, ~38% of disc diameter, with center spindle hole */}
+          <div style={{
+            position: 'absolute', top: '50%', left: '50%',
+            width: '38%', height: '38%',
+            transform: 'translate(-50%, -50%)',
+            borderRadius: '50%',
+            background: labelBg,
+            backgroundSize: 'cover',
+            backgroundPosition: 'center',
+            backgroundRepeat: 'no-repeat',
+            boxShadow: `inset 0 0 0 2px rgba(0,0,0,0.4), 0 0 24px ${accent}55`,
+            overflow: 'hidden',
+          }}>
+            {/* Spindle hole */}
+            <div style={{
+              position: 'absolute', top: '50%', left: '50%',
+              width: '8%', height: '8%',
+              transform: 'translate(-50%, -50%)',
+              borderRadius: '50%',
+              background: '#06070a',
+              boxShadow: 'inset 0 0 4px rgba(0,0,0,0.9)',
+            }} />
+          </div>
+        </div>
+        {/* Tonearm assembly — drawn in SVG so all parts (counterweight,
+            pivot, arm tube, headshell, cartridge) scale together. The pivot
+            sits at viewBox x=92, just past the upper-right edge of the disc.
+            transformOrigin '92% 50%' rotates the whole assembly around it. */}
+        <svg
+          viewBox="0 0 110 14"
+          preserveAspectRatio="xMidYMid meet"
+          style={{
+            position: 'absolute', top: '4%', right: '-6%',
+            width: '70%', height: '14%',
+            transformOrigin: '83.6% 50%',  // x=92 of 110 ≈ 83.6%
+            transform: `rotate(${armAngle}deg)`,
+            transition: 'transform 900ms cubic-bezier(0.55, 0.05, 0.4, 1)',
+            overflow: 'visible',
+            pointerEvents: 'none',
+            filter: 'drop-shadow(0 0.4px 1.2px rgba(0,0,0,0.7))',
+          }}
+        >
+          <defs>
+            <linearGradient id="vinyl-arm-tube" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" stopColor="#5a5a64" />
+              <stop offset="0.45" stopColor="#2a2a34" />
+              <stop offset="1" stopColor="#1a1a22" />
+            </linearGradient>
+            <linearGradient id="vinyl-arm-cw" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" stopColor="#3a3a44" />
+              <stop offset="1" stopColor="#0e0e16" />
+            </linearGradient>
+            <radialGradient id="vinyl-arm-pivot" cx="35%" cy="35%" r="65%">
+              <stop offset="0" stopColor="#7a7a86" />
+              <stop offset="0.55" stopColor="#2a2a34" />
+              <stop offset="1" stopColor="#08080c" />
+            </radialGradient>
+          </defs>
+          {/* Counterweight — chunky cylinder behind the pivot (right of x=92) */}
+          <rect x="98" y="4" width="10" height="6" rx="1.4" fill="url(#vinyl-arm-cw)" />
+          <line x1="100.5" y1="4.4" x2="100.5" y2="9.6" stroke="rgba(255,255,255,0.08)" strokeWidth="0.3" />
+          {/* Arm tube — main length from headshell to pivot */}
+          <rect x="9" y="6" width="83" height="2" rx="1" fill="url(#vinyl-arm-tube)" />
+          <rect x="9" y="6.1" width="83" height="0.35" fill="rgba(255,255,255,0.18)" />
+          {/* Pivot bearing — circular hub at x=92 */}
+          <circle cx="92" cy="7" r="3.6" fill="url(#vinyl-arm-pivot)" />
+          <circle cx="92" cy="7" r="3.6" fill="none" stroke="rgba(0,0,0,0.5)" strokeWidth="0.3" />
+          <circle cx="92" cy="7" r="1" fill="#08080c" />
+          {/* Headshell — angled block at the cartridge end (left), with the
+              cartridge body hanging just below it */}
+          <path d="M 2 4 L 12 5 L 12 9 L 2 10 Z" fill="#1a1a22" stroke="rgba(0,0,0,0.6)" strokeWidth="0.3" />
+          <rect x="4" y="9.5" width="6" height="2.6" rx="0.4" fill="#06070a" stroke="rgba(255,255,255,0.06)" strokeWidth="0.2" />
+          {/* Stylus tip — accent dot under the cartridge, dim when parked */}
+          <circle cx="7" cy="12.6" r="0.35" fill={accent} opacity={isPlaying ? 0.95 : 0.3} />
+        </svg>
       </div>
     </div>
   );
@@ -480,7 +587,7 @@ export function VizVinyl({ accent, accent2, spectrumRef, sensitivity = 1, smooth
 export function VizKaleidoscope({ accent, accent2, spectrumRef, sensitivity = 1, smoothing = 0, paused }: VizProps) {
   const N = 12;
   const refs = useRef<(SVGPolygonElement | null)[]>([]);
-  const gate = useAnimateGate(paused);
+  const gate = useAnimateGate(paused, 'kaleidoscope');
   useEffect(() => {
     const reader = makeSpectrumReader(N, spectrumRef, sensitivity, smoothing);
     let raf = 0;
@@ -529,7 +636,7 @@ export function VizFreqGrid({ accent, accent2, spectrumRef, sensitivity = 1, smo
   );
   const headRef = useRef(0);
   const cellRefs = useRef<(HTMLDivElement | null)[]>([]);
-  const gate = useAnimateGate(paused);
+  const gate = useAnimateGate(paused, 'freqgrid');
   useEffect(() => {
     const reader = makeSpectrumReader(ROWS, spectrumRef, sensitivity, smoothing);
     let raf = 0;
@@ -583,7 +690,7 @@ export function VizFreqGrid({ accent, accent2, spectrumRef, sensitivity = 1, smo
 // 12. MINIMAL DOTS — three dots size-pulse to bass/mid/treble
 export function VizMinimalDots({ accent, accent2, spectrumRef, sensitivity = 1, smoothing = 0, paused }: VizProps) {
   const refs = useRef<(HTMLDivElement | null)[]>([]);
-  const gate = useAnimateGate(paused);
+  const gate = useAnimateGate(paused, 'minimal');
   useEffect(() => {
     const reader = makeSpectrumReader(16, spectrumRef, sensitivity, smoothing);
     let raf = 0;

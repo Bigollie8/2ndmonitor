@@ -65,32 +65,54 @@ export function currentLineIndex(lines: LrcLine[], positionSecs: number): number
   return lo;
 }
 
+// Module-level store. The Tauri event bus broadcasts `lyrics:update` once per
+// track change with no replay, so a per-component listener that mounts late
+// (e.g. when the user finally clicks the Lyrics tab) misses it. Sharing one
+// listener + state across all consumers fixes that race.
+let storeState: LyricsState = EMPTY;
+const subscribers = new Set<() => void>();
+let listenersAttached = false;
+let attachInFlight: Promise<void> | null = null;
+
+function setStoreState(next: LyricsState) {
+  storeState = next;
+  for (const fn of subscribers) fn();
+}
+
+function attachListenersOnce(): Promise<void> {
+  if (listenersAttached) return Promise.resolve();
+  if (attachInFlight) return attachInFlight;
+  if (!isTauri) return Promise.resolve();
+  attachInFlight = (async () => {
+    const { listen } = await import('@tauri-apps/api/event');
+    await listen<LyricsPayload>('lyrics:update', (e) => {
+      const p = e.payload;
+      setStoreState({
+        trackKey: p.track_key,
+        syncedLines: parseLrc(p.synced_lrc ?? ''),
+        plainLines: (p.plain_lyrics ?? '').split(/\r?\n/).filter((l) => l.length > 0),
+        instrumental: p.instrumental,
+      });
+    });
+    await listen<unknown>('lyrics:clear', () => {
+      setStoreState(EMPTY);
+    });
+    listenersAttached = true;
+  })().catch((err) => {
+    console.warn('lyrics listen failed:', err);
+    attachInFlight = null;
+  });
+  return attachInFlight;
+}
+
 export function useLyrics(): LyricsState {
-  const [state, setState] = useState<LyricsState>(EMPTY);
+  const [state, setState] = useState<LyricsState>(storeState);
   useEffect(() => {
-    if (!isTauri) return;
-    let cancelled = false;
-    let cleanup: Array<() => void> = [];
-    (async () => {
-      const { listen } = await import('@tauri-apps/api/event');
-      const onUpdate = await listen<LyricsPayload>('lyrics:update', (e) => {
-        if (cancelled) return;
-        const p = e.payload;
-        setState({
-          trackKey: p.track_key,
-          syncedLines: parseLrc(p.synced_lrc ?? ''),
-          plainLines: (p.plain_lyrics ?? '').split(/\r?\n/).filter((l) => l.length > 0),
-          instrumental: p.instrumental,
-        });
-      });
-      const onClear = await listen<unknown>('lyrics:clear', () => {
-        if (cancelled) return;
-        setState(EMPTY);
-      });
-      cleanup = [onUpdate, onClear];
-      if (cancelled) cleanup.forEach((fn) => fn());
-    })().catch((err) => console.warn('lyrics listen failed:', err));
-    return () => { cancelled = true; cleanup.forEach((fn) => fn()); };
+    void attachListenersOnce();
+    const update = () => setState(storeState);
+    subscribers.add(update);
+    update();
+    return () => { subscribers.delete(update); };
   }, []);
   return state;
 }

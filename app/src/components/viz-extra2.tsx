@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { makeSpectrumReader, useAnimateGate, getVizDpr, type VizProps } from './viz';
+import { makeSpectrumReader, useAnimateGate, getVizDpr, fmtTime, type VizProps } from './viz';
 
 // Helpers shared across multiple visualizers.
 function hex2(n: number): string {
@@ -11,7 +11,7 @@ function hex2(n: number): string {
 // ─────────────────────────────────────────────────────────────────
 export function VizStarfield({ accent, accent2, spectrumRef, sensitivity = 1, smoothing = 0, paused }: VizProps) {
   const ref = useRef<HTMLCanvasElement | null>(null);
-  const gate = useAnimateGate(paused);
+  const gate = useAnimateGate(paused, 'starfield');
   useEffect(() => {
     const canvas = ref.current;
     if (!canvas) return;
@@ -97,7 +97,7 @@ export function VizStarfield({ accent, accent2, spectrumRef, sensitivity = 1, sm
 // ─────────────────────────────────────────────────────────────────
 export function VizPerlinFlow({ accent, accent2, spectrumRef, sensitivity = 1, smoothing = 0, paused }: VizProps) {
   const ref = useRef<HTMLCanvasElement | null>(null);
-  const gate = useAnimateGate(paused);
+  const gate = useAnimateGate(paused, 'perlin');
   useEffect(() => {
     const canvas = ref.current;
     if (!canvas) return;
@@ -173,7 +173,7 @@ export function VizPerlinFlow({ accent, accent2, spectrumRef, sensitivity = 1, s
 // ─────────────────────────────────────────────────────────────────
 export function VizOrbital({ accent, accent2, spectrumRef, sensitivity = 1, smoothing = 0, paused }: VizProps) {
   const ref = useRef<HTMLCanvasElement | null>(null);
-  const gate = useAnimateGate(paused);
+  const gate = useAnimateGate(paused, 'orbital');
   useEffect(() => {
     const canvas = ref.current;
     if (!canvas) return;
@@ -273,7 +273,7 @@ export function VizOrbital({ accent, accent2, spectrumRef, sensitivity = 1, smoo
 // ─────────────────────────────────────────────────────────────────
 export function VizAurora({ accent, accent2, spectrumRef, sensitivity = 1, smoothing = 0, paused }: VizProps) {
   const ref = useRef<HTMLCanvasElement | null>(null);
-  const gate = useAnimateGate(paused);
+  const gate = useAnimateGate(paused, 'aurora');
   useEffect(() => {
     const canvas = ref.current;
     if (!canvas) return;
@@ -319,22 +319,39 @@ export function VizAurora({ accent, accent2, spectrumRef, sensitivity = 1, smoot
           ctx.fillRect(sx, sy, 1, 1);
         }
 
-        // Aurora veils — 3 layers
+        // Aurora veils — 3 layers, each tied to a frequency band so the
+        // *shape* of the curtain bends with the music, not just brightness.
+        const kick = reader.onset.kick;
         ctx.globalCompositeOperation = 'screen';
         const VEILS = [
-          { color: accent, speed: 0.2, freq: 0.6, amp: 0.3, opacity: 0.55 + treble * 0.35 },
-          { color: accent2, speed: 0.13, freq: 0.4, amp: 0.45, opacity: 0.45 + mid * 0.3 },
-          { color: accent, speed: 0.08, freq: 0.25, amp: 0.55, opacity: 0.3 + bass * 0.4 },
+          // High curtain — treble drives ripple amplitude; bin 50–63 spans 4–16kHz
+          { color: accent,  speed: 0.2,  freq: 0.6,  amp: 0.3,  opacity: 0.55 + treble * 0.35, energy: treble, binStart: 50, binEnd: 63 },
+          // Mid curtain — vocals/snare body
+          { color: accent2, speed: 0.13, freq: 0.4,  amp: 0.45, opacity: 0.45 + mid * 0.3,    energy: mid,    binStart: 22, binEnd: 42 },
+          // Low curtain — bass + kicks bulge the whole veil upward
+          { color: accent,  speed: 0.08, freq: 0.25, amp: 0.55, opacity: 0.3  + bass * 0.4,   energy: bass,   binStart: 0,  binEnd: 22 },
         ];
+        const points = 80;
         for (const v of VEILS) {
+          // Audio mod: this veil's own band level inflates the wave amplitude,
+          // and a kick lifts the baseline upward briefly.
+          const ampMod = 1 + v.energy * 2.2 + kick * 0.4;
+          const baseLift = v.energy * h * 0.18 + kick * h * 0.08;
           ctx.beginPath();
           const baseY = h * 0.45;
-          const points = 80;
           ctx.moveTo(0, h);
           for (let i = 0; i <= points; i++) {
             const x = (i / points) * w;
-            const wav = Math.sin(i * v.freq + t * v.speed * 5) * 0.5 + Math.cos(i * v.freq * 0.4 + t * v.speed * 3) * 0.5;
-            const y = baseY + wav * h * v.amp - h * 0.1;
+            // Time-driven shape (the original sin/cos pattern)
+            const wav = Math.sin(i * v.freq + t * v.speed * 5) * 0.5
+                      + Math.cos(i * v.freq * 0.4 + t * v.speed * 3) * 0.5;
+            // Spectral bend: sample the band's bin range across x so the
+            // curtain has localized peaks where loud frequencies are.
+            const binSpan = v.binEnd - v.binStart;
+            const binIdx = v.binStart + Math.floor((i / points) * binSpan);
+            const specV = reader.out[binIdx] ?? 0;
+            const specBend = (specV - 0.3) * h * 0.18; // negative = pushes up
+            const y = baseY + wav * h * v.amp * ampMod - h * 0.1 - baseLift - specBend;
             ctx.lineTo(x, y);
           }
           ctx.lineTo(w, h);
@@ -376,7 +393,7 @@ interface Building { x: number; w: number; h: number; freqIdx: number; depth: 0 
 
 export function VizCityEqualizer({ accent, accent2, spectrumRef, sensitivity = 1, smoothing = 0, paused }: VizProps) {
   const ref = useRef<HTMLCanvasElement | null>(null);
-  const gate = useAnimateGate(paused);
+  const gate = useAnimateGate(paused, 'city');
   useEffect(() => {
     const canvas = ref.current;
     if (!canvas) return;
@@ -499,7 +516,7 @@ export function VizCityEqualizer({ accent, accent2, spectrumRef, sensitivity = 1
 // ─────────────────────────────────────────────────────────────────
 export function VizStrings({ accent, accent2, spectrumRef, sensitivity = 1, smoothing = 0, paused }: VizProps) {
   const ref = useRef<HTMLCanvasElement | null>(null);
-  const gate = useAnimateGate(paused);
+  const gate = useAnimateGate(paused, 'strings');
   useEffect(() => {
     const canvas = ref.current;
     if (!canvas) return;
@@ -520,14 +537,21 @@ export function VizStrings({ accent, accent2, spectrumRef, sensitivity = 1, smoo
     const N = 32;
     const reader = makeSpectrumReader(N, spectrumRef, sensitivity, smoothing);
 
+    // Each string is tied to one freq band & one onset, so kicks pluck the
+    // bass strings, snares pluck the mid strings, hats pluck the high strings.
+    // Old code only plucked on kick (strings 0–2) and snare (strings 3+) — and
+    // with snare onsets rarely firing, the top half of the fretboard sat dead.
+    type Onset = 'kick' | 'snare' | 'hat';
     const strings = Array.from({ length: STRINGS }, (_, i) => ({
       amp: 0,
       vel: 0,
       phase: 0,
       freq: 4 + i * 1.5,
       idx: Math.floor(i * (N / STRINGS)),
+      // 0–1 = bass/kick, 2–4 = mid/snare, 5–6 = treble/hat
+      onset: (i < 2 ? 'kick' : i < 5 ? 'snare' : 'hat') as Onset,
     }));
-    let lastKick = 0;
+    let lastOnset = { kick: 0, snare: 0, hat: 0 };
 
     let raf = 0;
     const tick = () => {
@@ -536,6 +560,7 @@ export function VizStrings({ accent, accent2, spectrumRef, sensitivity = 1, smoo
         const w = canvas.width / dpr, h = canvas.height / dpr;
         const kick = reader.onset.kick;
         const snare = reader.onset.snare;
+        const hat = reader.onset.hat;
 
         // Background
         const grad = ctx.createLinearGradient(0, 0, w, h);
@@ -544,14 +569,23 @@ export function VizStrings({ accent, accent2, spectrumRef, sensitivity = 1, smoo
         ctx.fillStyle = grad;
         ctx.fillRect(0, 0, w, h);
 
-        // Pluck strings on onsets
-        if (kick > 0.4 && lastKick < 0.1) {
-          for (let i = 0; i < 3; i++) strings[i].vel += 0.5 + Math.random() * 0.5;
+        // Pluck strings on onset edges (rising past a low threshold). Edge-
+        // detect against the prior frame's value so a sustained kick doesn't
+        // pluck every frame — only the *transition* from quiet to loud counts.
+        const triggers = {
+          kick:  kick  > 0.18 && lastOnset.kick  < 0.08,
+          snare: snare > 0.18 && lastOnset.snare < 0.08,
+          hat:   hat   > 0.18 && lastOnset.hat   < 0.08,
+        };
+        for (let i = 0; i < STRINGS; i++) {
+          if (triggers[strings[i].onset]) {
+            const strength = strings[i].onset === 'kick' ? kick
+                           : strings[i].onset === 'snare' ? snare
+                           : hat;
+            strings[i].vel += 0.4 + strength * 0.8 + Math.random() * 0.3;
+          }
         }
-        if (snare > 0.3) {
-          for (let i = 3; i < STRINGS; i++) strings[i].vel += 0.4;
-        }
-        lastKick = kick;
+        lastOnset = { kick, snare, hat };
 
         // Update + draw strings
         const margin = 60;
@@ -564,9 +598,11 @@ export function VizStrings({ accent, accent2, spectrumRef, sensitivity = 1, smoo
           s.amp *= 0.96;
           s.vel *= 0.97;
           s.phase += s.freq * 0.4;
-          // Continuous excitation from spectrum
-          const spec = reader.out[s.idx] || 0;
-          s.amp += spec * 0.03;
+          // Continuous excitation from this string's own spectrum bin —
+          // subtract the silence floor (~0.04) so quiet passages stay quiet
+          // instead of pumping every string with constant low-level energy.
+          const spec = Math.max(0, (reader.out[s.idx] || 0) - 0.05);
+          s.amp += spec * 0.07;
 
           const y = margin + i * space;
           const segments = 80;
@@ -579,7 +615,8 @@ export function VizStrings({ accent, accent2, spectrumRef, sensitivity = 1, smoo
             ctx.lineTo(px, py);
           }
           const intensity = Math.min(1, Math.abs(s.amp) * 4);
-          const col = i < 3 ? accent : accent2;
+          // Color tracks the string's onset family — bass=accent, mid/treble=accent2
+          const col = s.onset === 'kick' ? accent : accent2;
           ctx.strokeStyle = col + hex2(120 + intensity * 135);
           ctx.lineWidth = 1 + intensity * 2.5;
           ctx.shadowColor = col;
@@ -613,7 +650,7 @@ export function VizStrings({ accent, accent2, spectrumRef, sensitivity = 1, smoo
 // ─────────────────────────────────────────────────────────────────
 export function VizHUD({ accent, accent2, spectrumRef, sensitivity = 1, smoothing = 0, paused }: VizProps) {
   const ref = useRef<HTMLCanvasElement | null>(null);
-  const gate = useAnimateGate(paused);
+  const gate = useAnimateGate(paused, 'hud');
   useEffect(() => {
     const canvas = ref.current;
     if (!canvas) return;
@@ -782,7 +819,7 @@ export function VizHUD({ accent, accent2, spectrumRef, sensitivity = 1, smoothin
 // ─────────────────────────────────────────────────────────────────
 export function VizLiquid({ accent, accent2, spectrumRef, sensitivity = 1, smoothing = 0, paused }: VizProps) {
   const ref = useRef<HTMLCanvasElement | null>(null);
-  const gate = useAnimateGate(paused);
+  const gate = useAnimateGate(paused, 'liquid');
   useEffect(() => {
     const canvas = ref.current;
     if (!canvas) return;
@@ -874,9 +911,15 @@ export function VizLiquid({ accent, accent2, spectrumRef, sensitivity = 1, smoot
 // ─────────────────────────────────────────────────────────────────
 // 9. CASSETTE — animated tape deck, reels rotate w/ bass, VU meters
 // ─────────────────────────────────────────────────────────────────
-export function VizCassette({ accent, accent2, spectrumRef, sensitivity = 1, smoothing = 0, paused }: VizProps) {
+export function VizCassette({ accent, accent2, spectrumRef, sensitivity = 1, smoothing = 0, paused, track, playback }: VizProps) {
   const ref = useRef<HTMLCanvasElement | null>(null);
-  const gate = useAnimateGate(paused);
+  const gate = useAnimateGate(paused, 'cassette');
+  // Refs let the canvas tick read fresh track/playback data without
+  // re-running the entire setup effect on every 250ms position update.
+  const trackRef = useRef(track);
+  const playbackRef = useRef(playback);
+  trackRef.current = track;
+  playbackRef.current = playback;
   useEffect(() => {
     const canvas = ref.current;
     if (!canvas) return;
@@ -964,49 +1007,89 @@ export function VizCassette({ accent, accent2, spectrumRef, sensitivity = 1, smo
           ctx.fillRect(0, y, w, 1);
         }
 
-        // Cassette body — dark plastic
-        const bw = w * 0.78, bh = h * 0.55;
-        const bx = (w - bw) / 2, by = (h - bh) / 2 - 10;
+        // Cassette body — fit to the canvas while keeping a real-cassette
+        // aspect ratio of ~10:6. Pick the limiting dimension and let the body
+        // claim ~92% of it; the other dimension follows from the ratio.
+        const ASPECT = 10 / 6;
+        const maxW = w * 0.94;
+        const maxH = h * 0.86;
+        let bw: number, bh: number;
+        if (maxW / ASPECT <= maxH) { bw = maxW; bh = bw / ASPECT; }
+        else                       { bh = maxH; bw = bh * ASPECT; }
+        const bx = (w - bw) / 2, by = (h - bh) / 2;
+        // u = scale unit: 1u ≈ 1% of body width — every fixed-pixel constant
+        // below was tuned at the old 600px-wide body, hence /600.
+        const u = bw / 100;
         ctx.fillStyle = '#08090d';
-        roundRect(bx, by, bw, bh, 8); ctx.fill();
+        roundRect(bx, by, bw, bh, u * 1.6); ctx.fill();
         // Inner label area
-        const labelH = bh * 0.35;
+        const labelPadX = u * 5;
+        const labelPadY = u * 3;
+        const labelH = bh * 0.42;
         ctx.fillStyle = accent + '22';
-        roundRect(bx + 30, by + 16, bw - 60, labelH, 4); ctx.fill();
+        roundRect(bx + labelPadX, by + labelPadY, bw - labelPadX * 2, labelH, u * 0.8); ctx.fill();
+        const titleSize = Math.max(12, u * 2.6);
+        const subSize = Math.max(10, u * 2);
         ctx.fillStyle = accent;
-        ctx.font = 'bold 14px JetBrains Mono, monospace';
-        ctx.fillText('SIDE A · 60min', bx + 42, by + 36);
-        ctx.font = '11px JetBrains Mono, monospace';
+        ctx.font = `bold ${titleSize}px JetBrains Mono, monospace`;
+        // Headline: "SIDE A · <track length>" — falls back to "SIDE A" alone
+        // when no duration is reported (e.g. before GSMTC syncs).
+        const dur = playbackRef.current?.duration ?? 0;
+        const lengthLabel = dur > 0 ? fmtTime(dur) : '';
+        const headline = lengthLabel ? `SIDE A · ${lengthLabel}` : 'SIDE A';
+        ctx.fillText(headline, bx + labelPadX + u * 2, by + labelPadY + titleSize + u);
+        ctx.font = `${subSize}px JetBrains Mono, monospace`;
         ctx.fillStyle = accent + 'aa';
-        ctx.fillText('NOW PLAYING', bx + 42, by + 54);
-        // Volume bars in label
-        for (let i = 0; i < 32; i++) {
+        // Subline: track title in caps (cassette label aesthetic). Truncate
+        // visually with ellipsis when the canvas can't fit the full string.
+        const rawTitle = (trackRef.current?.title ?? 'NOW PLAYING').toUpperCase();
+        const subMaxW = bw - labelPadX * 2 - u * 4;
+        let subText = rawTitle;
+        if (ctx.measureText(rawTitle).width > subMaxW) {
+          // Trim until it fits with an ellipsis appended.
+          let end = rawTitle.length;
+          while (end > 1 && ctx.measureText(rawTitle.slice(0, end) + '…').width > subMaxW) end--;
+          subText = rawTitle.slice(0, end) + '…';
+        }
+        ctx.fillText(subText, bx + labelPadX + u * 2, by + labelPadY + titleSize + subSize + u * 2.5);
+        // Volume bars in label — span the full label width
+        const barCount = 32;
+        const barAreaX = bx + labelPadX + u * 2;
+        const barAreaW = bw - labelPadX * 2 - u * 4;
+        const barW = Math.max(2, barAreaW / barCount * 0.55);
+        const barGap = barAreaW / barCount;
+        const barBaseY = by + labelPadY + labelH - u * 2;
+        for (let i = 0; i < barCount; i++) {
           const v = reader.out[i] || 0;
-          const x = bx + 42 + i * 6;
-          const barH = v * 16;
+          const x = barAreaX + i * barGap;
+          const barH = v * (labelH * 0.4);
           ctx.fillStyle = accent + 'dd';
-          ctx.fillRect(x, by + 70 - barH, 4, barH);
+          ctx.fillRect(x, barBaseY - barH, barW, barH);
         }
 
-        // Two reels
-        const reelY = by + bh - 70;
-        const reelR = 40;
-        drawReel(bx + 90, reelY, reelR, reel, accent2);
-        drawReel(bx + bw - 90, reelY, reelR, -reel, accent2);
+        // Two reels — scaled to body size, sitting in the lower window of the body
+        const reelR = Math.min(bw * 0.085, bh * 0.18);
+        const reelOffset = bw * 0.16;
+        const reelY = by + bh - bh * 0.27;
+        drawReel(bx + reelOffset, reelY, reelR, reel, accent2);
+        drawReel(bx + bw - reelOffset, reelY, reelR, -reel, accent2);
 
         // Tape between reels
         ctx.strokeStyle = '#2a2018';
-        ctx.lineWidth = 4;
+        ctx.lineWidth = Math.max(2, u * 0.6);
         ctx.beginPath();
-        ctx.moveTo(bx + 90 + reelR, reelY);
-        ctx.lineTo(bx + bw - 90 - reelR, reelY);
+        ctx.moveTo(bx + reelOffset + reelR, reelY);
+        ctx.lineTo(bx + bw - reelOffset - reelR, reelY);
         ctx.stroke();
 
-        // Bottom — VU meters L/R
-        const meterY = by + bh + 18;
-        const meterH = 14;
-        drawVU(bx + 30, meterY, bw / 2 - 50, meterH, mid, accent, 'L');
-        drawVU(bx + bw / 2 + 20, meterY, bw / 2 - 50, meterH, treble, accent, 'R');
+        // Bottom — VU meters L/R, sitting just under the body
+        const meterY = Math.min(by + bh + u, h - u * 4);
+        const meterH = Math.max(10, u * 2.5);
+        const meterPad = u * 5;
+        const meterGap = u * 2;
+        const meterW = (bw - meterPad * 2 - meterGap) / 2;
+        drawVU(bx + meterPad, meterY, meterW, meterH, mid, accent, 'L');
+        drawVU(bx + meterPad + meterW + meterGap, meterY, meterW, meterH, treble, accent, 'R');
       }
       raf = requestAnimationFrame(tick);
     };
@@ -1021,7 +1104,7 @@ export function VizCassette({ accent, accent2, spectrumRef, sensitivity = 1, smo
 // ─────────────────────────────────────────────────────────────────
 export function VizConstellation({ accent, accent2, spectrumRef, sensitivity = 1, smoothing = 0, paused }: VizProps) {
   const ref = useRef<HTMLCanvasElement | null>(null);
-  const gate = useAnimateGate(paused);
+  const gate = useAnimateGate(paused, 'constellation');
   useEffect(() => {
     const canvas = ref.current;
     if (!canvas) return;
@@ -1040,12 +1123,23 @@ export function VizConstellation({ accent, accent2, spectrumRef, sensitivity = 1
 
     const reader = makeSpectrumReader(64, spectrumRef, sensitivity, smoothing);
 
-    const parts = Array.from({ length: 70 }, () => ({
-      x: Math.random(), y: Math.random(),
-      vx: (Math.random() - 0.5) * 0.0008,
-      vy: (Math.random() - 0.5) * 0.0008,
-      r: 1 + Math.random() * 2,
-    }));
+    // Each particle has its own home + drift, so the cloud stays alive even
+    // in silence. Spring force keeps them near home, kicks displace them.
+    const parts = Array.from({ length: 70 }, () => {
+      const x = Math.random();
+      const y = Math.random();
+      return {
+        x, y,
+        homeX: x, homeY: y,
+        // Slow autonomous drift of the home position — bounces off a small
+        // inner margin so homes never reach the corners.
+        vhomeX: (Math.random() - 0.5) * 0.0014,
+        vhomeY: (Math.random() - 0.5) * 0.0014,
+        vx: (Math.random() - 0.5) * 0.004,
+        vy: (Math.random() - 0.5) * 0.004,
+        r: 1 + Math.random() * 2,
+      };
+    });
 
     let t = 0;
     let raf = 0;
@@ -1056,27 +1150,62 @@ export function VizConstellation({ accent, accent2, spectrumRef, sensitivity = 1
         const w = canvas.width / dpr, h = canvas.height / dpr;
         const bass = reader.bands.bass;
         const mid = reader.bands.mid;
+        const kick = reader.onset.kick;
+        const snare = reader.onset.snare;
         ctx.fillStyle = '#020308';
         ctx.fillRect(0, 0, w, h);
 
+        // Outward shockwave on kicks — falls off with distance from center,
+        // so inner particles get knocked harder than edge ones. This is the
+        // *only* center-related force; there's no constant attraction, which
+        // means the cloud never collapses inward.
+        const kickStrength = kick * 0.012;
+        const springK = 0.012;  // gentle pull-back-to-home
+        const drag = 0.94;
+
         for (const p of parts) {
-          // Magnet to center on bass
-          const dx = 0.5 - p.x;
-          const dy = 0.5 - p.y;
-          p.vx += dx * bass * 0.0005;
-          p.vy += dy * bass * 0.0005;
-          // Drift
-          p.x += p.vx + Math.sin(t * 0.5 + p.r * 7) * 0.0002;
-          p.y += p.vy + Math.cos(t * 0.4 + p.r * 5) * 0.0002;
-          // Bounce
-          if (p.x < 0 || p.x > 1) p.vx *= -1;
-          if (p.y < 0 || p.y > 1) p.vy *= -1;
-          p.x = Math.max(0, Math.min(1, p.x));
-          p.y = Math.max(0, Math.min(1, p.y));
-          p.vx *= 0.99; p.vy *= 0.99;
+          // Drift the home position so the field keeps moving when silent.
+          p.homeX += p.vhomeX;
+          p.homeY += p.vhomeY;
+          if (p.homeX < 0.08) { p.homeX = 0.08; p.vhomeX = -p.vhomeX; }
+          else if (p.homeX > 0.92) { p.homeX = 0.92; p.vhomeX = -p.vhomeX; }
+          if (p.homeY < 0.08) { p.homeY = 0.08; p.vhomeY = -p.vhomeY; }
+          else if (p.homeY > 0.92) { p.homeY = 0.92; p.vhomeY = -p.vhomeY; }
+
+          // Spring toward (drifting) home
+          p.vx += (p.homeX - p.x) * springK;
+          p.vy += (p.homeY - p.y) * springK;
+
+          // Outward kick from center on bass spikes
+          const dx = p.x - 0.5;
+          const dy = p.y - 0.5;
+          const dist = Math.sqrt(dx * dx + dy * dy) + 0.0001;
+          const inv = 1 / dist;
+          const falloff = 1 / (1 + dist * 5);
+          p.vx += (dx * inv) * kickStrength * falloff;
+          p.vy += (dy * inv) * kickStrength * falloff;
+
+          // Snare jitter — small lateral hits add chaos to the dance
+          if (snare > 0.3) {
+            p.vx += (Math.random() - 0.5) * snare * 0.008;
+            p.vy += (Math.random() - 0.5) * snare * 0.008;
+          }
+
+          p.vx *= drag;
+          p.vy *= drag;
+
+          p.x += p.vx;
+          p.y += p.vy;
+
+          // Soft bounds — flip velocity at edges
+          if (p.x < 0.02) { p.x = 0.02; p.vx = Math.abs(p.vx); }
+          else if (p.x > 0.98) { p.x = 0.98; p.vx = -Math.abs(p.vx); }
+          if (p.y < 0.02) { p.y = 0.02; p.vy = Math.abs(p.vy); }
+          else if (p.y > 0.98) { p.y = 0.98; p.vy = -Math.abs(p.vy); }
         }
 
-        // Connect nearby
+        // Connect nearby — threshold widens with mid energy so the web
+        // "fills in" during loud passages.
         const threshold = 0.18 + mid * 0.12;
         ctx.lineWidth = 1;
         for (let i = 0; i < parts.length; i++) {
@@ -1102,7 +1231,7 @@ export function VizConstellation({ accent, accent2, spectrumRef, sensitivity = 1
           ctx.shadowColor = accent2;
           ctx.shadowBlur = 8 + bass * 12;
           ctx.beginPath();
-          ctx.arc(px, py, p.r * (1 + bass * 0.8), 0, Math.PI * 2);
+          ctx.arc(px, py, p.r * (1 + bass * 0.6 + kick * 0.4), 0, Math.PI * 2);
           ctx.fill();
           ctx.shadowBlur = 0;
         }

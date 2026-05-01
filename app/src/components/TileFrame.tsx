@@ -31,6 +31,8 @@ export function TileFrame({
   children: React.ReactNode;
 }) {
   const modeRef = useRef<Mode>({ kind: 'idle' });
+  const onChangeRef = useRef(onChange);
+  onChangeRef.current = onChange;
   const [, force] = useState(0);
 
   useEffect(() => {
@@ -69,7 +71,7 @@ export function TileFrame({
           next.h = Math.max(MIN_SIZE.h, snap(next.h));
         }
       }
-      onChange(clampRect(next));
+      onChangeRef.current(clampRect(next));
     };
     const onUp = () => {
       modeRef.current = { kind: 'idle' };
@@ -82,7 +84,7 @@ export function TileFrame({
       window.removeEventListener('pointerup', onUp);
       modeRef.current = { kind: 'idle' };
     };
-  }, [editing, onChange]);
+  }, [editing]);
 
   const startMove = (e: React.PointerEvent) => {
     onSelect();

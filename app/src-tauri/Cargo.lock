@@ -3219,6 +3219,7 @@ dependencies = [
  "nvml-wrapper",
  "once_cell",
  "parking_lot",
+ "png",
  "rand 0.8.6",
  "rustfft",
  "serde",
