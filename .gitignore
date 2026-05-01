@@ -14,3 +14,8 @@ Thumbs.db
 
 # Tauri
 app/src-tauri/gen/
+
+# Internal design references and planning docs (kept local)
+/index.html
+design/
+docs/superpowers/
