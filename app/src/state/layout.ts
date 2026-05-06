@@ -1,3 +1,5 @@
+import { useEffect, useState } from 'react';
+
 export type TileId = 'discord' | 'spotify' | 'claude' | 'notes' | 'mixer' | 'sysmon' | 'clock' | 'viz';
 export interface Rect { x: number; y: number; w: number; h: number }
 export type Layout = Partial<Record<TileId, Rect>>;
@@ -130,4 +132,48 @@ export function legacyRectToFraction(r: Rect): Rect {
     w: r.w / 2560,
     h: r.h / 1440,
   };
+}
+
+/** 'landscape' when canvas is at least as wide as tall (with hysteresis when
+ *  switching). 'portrait' otherwise. */
+export type Orientation = 'landscape' | 'portrait';
+
+/** Pure decision used by `useOrientation`. Exported for testability.
+ *  - aspect ≤ 0.95: portrait
+ *  - aspect ≥ 1.05: landscape
+ *  - between: hold the previous value (or default to landscape on first call) */
+export function decideOrientation(
+  size: { w: number; h: number },
+  prev: Orientation | undefined,
+): Orientation {
+  const aspect = size.w / size.h;
+  if (aspect <= 0.95) return 'portrait';
+  if (aspect >= 1.05) return 'landscape';
+  return prev ?? 'landscape';
+}
+
+/** Live viewport size in CSS pixels. Re-renders on window resize. */
+export function useCanvas(): { w: number; h: number } {
+  const [size, setSize] = useState(() => ({
+    w: typeof window !== 'undefined' ? window.innerWidth : 2560,
+    h: typeof window !== 'undefined' ? window.innerHeight : 1440,
+  }));
+  useEffect(() => {
+    const onResize = () => setSize({ w: window.innerWidth, h: window.innerHeight });
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+  return size;
+}
+
+/** Returns the current orientation, applying hysteresis as the viewport changes. */
+export function useOrientation(): Orientation {
+  const canvas = useCanvas();
+  const [orientation, setOrientation] = useState<Orientation>(() =>
+    decideOrientation(canvas, undefined),
+  );
+  useEffect(() => {
+    setOrientation((prev) => decideOrientation(canvas, prev));
+  }, [canvas.w, canvas.h]);
+  return orientation;
 }

@@ -68,3 +68,40 @@ test('snapFrac: rounds to nearest increment', () => {
   const off2 = SNAP_FRAC * 5 + SNAP_FRAC * 0.6;
   assert.equal(snapFrac(off2), SNAP_FRAC * 6);
 });
+
+import { decideOrientation } from './layout';
+
+test('decideOrientation: tall viewport at first call → portrait', () => {
+  assert.equal(decideOrientation({ w: 1080, h: 1920 }, undefined), 'portrait');
+});
+
+test('decideOrientation: wide viewport at first call → landscape', () => {
+  assert.equal(decideOrientation({ w: 2560, h: 1440 }, undefined), 'landscape');
+});
+
+test('decideOrientation: hysteresis holds previous when aspect is between thresholds', () => {
+  // aspect 1.0 — between 0.95 and 1.05, hold whatever was there before.
+  const square = { w: 1000, h: 1000 };
+  assert.equal(decideOrientation(square, 'portrait'), 'portrait');
+  assert.equal(decideOrientation(square, 'landscape'), 'landscape');
+});
+
+test('decideOrientation: switches to portrait when aspect drops to ≤ 0.95', () => {
+  const fromLand = decideOrientation({ w: 950, h: 1000 }, 'landscape');
+  assert.equal(fromLand, 'portrait');
+});
+
+test('decideOrientation: switches to landscape when aspect rises to ≥ 1.05', () => {
+  const fromPort = decideOrientation({ w: 1050, h: 1000 }, 'portrait');
+  assert.equal(fromPort, 'landscape');
+});
+
+test('decideOrientation: does not switch on aspect 1.04 from portrait', () => {
+  const r = decideOrientation({ w: 1040, h: 1000 }, 'portrait');
+  assert.equal(r, 'portrait');
+});
+
+test('decideOrientation: does not switch on aspect 0.96 from landscape', () => {
+  const r = decideOrientation({ w: 960, h: 1000 }, 'landscape');
+  assert.equal(r, 'landscape');
+});
