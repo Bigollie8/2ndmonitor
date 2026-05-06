@@ -219,6 +219,7 @@ export default function App() {
   }, []);
   const [manualTrack, setManualTrack] = useState<Track>(TRACKS[0]!);
   const [editMode, setEditMode] = useState(false);
+  const [snapEnabled, setSnapEnabled] = useState(true);
   const [showSwitcher, setShowSwitcher] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [showGallery, setShowGallery] = useState(false);
@@ -436,6 +437,7 @@ export default function App() {
               onSelect={() => setSelectedTileId(id)}
               onChange={(r) => updateActiveOrientation({ layout: { ...activeLayout, [id]: r } })}
               accent={accent}
+              snap={snapEnabled}
             >
               {renderTile(id)}
             </TileFrame>
@@ -460,6 +462,8 @@ export default function App() {
             selectedId={selectedTileId}
             setSelectedId={setSelectedTileId}
             hiddenIds={(Object.keys(hidden) as TileId[]).filter((k) => hidden[k])}
+            snap={snapEnabled}
+            setSnap={setSnapEnabled}
           />
         )}
         {showSwitcher && (

@@ -27,7 +27,7 @@ function getCanvasPx(): { w: number; h: number } {
 }
 
 export function TileFrame({
-  id, rect, editing, selected, onSelect, onChange, accent, children,
+  id, rect, editing, selected, onSelect, onChange, accent, children, snap: snapEnabled = true,
 }: {
   id: string;
   rect: Rect;
@@ -37,11 +37,13 @@ export function TileFrame({
   onChange: (next: Rect) => void;
   accent: string;
   children: React.ReactNode;
+  snap?: boolean;
 }) {
   const modeRef = useRef<Mode>({ kind: 'idle' });
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
-  const snapRef = useRef(true);
+  const snapRef = useRef(snapEnabled);
+  snapRef.current = snapEnabled;
   const [, force] = useState(0);
 
   useEffect(() => {
