@@ -4,6 +4,7 @@ import type { Density, Track, SysmonHistory } from '../types';
 import type { Todo } from '../types';
 import { type Playback, type SpectrumState, mediaControls, useSpotify, type SpotifyTrack } from '../state/tauri';
 import { useLyrics, currentLineIndex } from '../state/lyrics';
+import { Slider } from './Slider';
 
 export function HFTile({
   title, badge, headRight, children, accent, density = 'regular', noHead, style, onClick,
@@ -319,6 +320,8 @@ function SpotifyNowView({ accent, accent2, track, playback, spectrumRef }: {
         >{playback?.playing ? '⏸' : '⏵'}</button>
         <button title="Next" onClick={() => mediaControls.next()} style={{ ...iconBtn(), width: 32, height: 32 }}>⏭</button>
       </div>
+      {/* Spotify Web API volume */}
+      <SpotifyVolumeRow accent={accent} accent2={accent2} />
       {/* Mini reactive visualizer */}
       {spectrumRef && <SpotifyMiniViz accent={accent} accent2={accent2} spectrumRef={spectrumRef} />}
     </>
@@ -530,6 +533,86 @@ function SpotifyLyricsView({ accent, playback }: { accent: string; playback?: Pl
       {lyrics.plainLines.map((line, i) => (
         <div key={i}>{line || ' '}</div>
       ))}
+    </div>
+  );
+}
+
+function SpotifyVolumeRow({ accent, accent2 }: { accent: string; accent2: string }) {
+  const { state, setVolume } = useSpotify();
+
+  // Resolve disabled reason in priority order. First match wins.
+  let disabled = false;
+  let hint: string | null = null;
+  let value = 0;
+  if (!state.connected) {
+    disabled = true;
+    hint = 'Connect Spotify (Up next tab)';
+  } else if (state.needs_reauth) {
+    disabled = true;
+    hint = 'Reconnect Spotify for playback control';
+  } else if (state.premium_required) {
+    disabled = true;
+    hint = 'Spotify Premium required';
+  } else if (state.volume_percent === null) {
+    disabled = true;
+    hint = 'Open Spotify on a device';
+  } else if (!state.volume_supported) {
+    disabled = true;
+    hint = "This device doesn't support remote volume";
+    value = state.volume_percent / 100;
+  } else {
+    value = state.volume_percent / 100;
+  }
+
+  const onCommit = (v: number) => {
+    if (disabled) return;
+    setVolume(v * 100).catch((err) => console.error('spotify setVolume failed', err));
+  };
+
+  const percentLabel = state.volume_percent !== null
+    ? `${state.volume_percent}%`
+    : '—';
+  const subLine = hint ?? state.device_name ?? '';
+
+  return (
+    <div
+      title={hint ?? undefined}
+      style={{
+        padding: '2px 14px 8px',
+        flexShrink: 0,
+        display: 'flex',
+        alignItems: 'center',
+        gap: 10,
+      }}
+    >
+      <span style={{
+        fontSize: 13,
+        color: disabled ? 'rgba(255,255,255,0.35)' : 'rgba(255,255,255,0.7)',
+        flexShrink: 0,
+      }} aria-hidden>🔊</span>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{
+          display: 'flex', justifyContent: 'space-between',
+          fontSize: 9, letterSpacing: '.06em', textTransform: 'uppercase',
+          color: 'rgba(255,255,255,0.45)',
+          marginBottom: 2, gap: 8,
+          fontFamily: '"JetBrains Mono", ui-monospace, monospace',
+        }}>
+          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {subLine}
+          </span>
+          <span style={{ flexShrink: 0, color: 'rgba(255,255,255,0.7)' }}>{percentLabel}</span>
+        </div>
+        <Slider
+          value={value}
+          disabled={disabled}
+          dimmed={false}
+          accent={accent}
+          accent2={accent2}
+          onCommit={onCommit}
+          throttleMs={250}
+        />
+      </div>
     </div>
   );
 }
