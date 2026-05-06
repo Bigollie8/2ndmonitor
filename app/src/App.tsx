@@ -465,6 +465,7 @@ export default function App() {
             hiddenIds={(Object.keys(hidden) as TileId[]).filter((k) => hidden[k])}
             snap={snapEnabled}
             setSnap={setSnapEnabled}
+            profileName={activeProfile.name}
           />
         )}
         {showSwitcher && (

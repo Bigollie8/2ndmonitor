@@ -14,6 +14,7 @@ export function EditModeOverlay({
   selectedId, setSelectedId,
   hiddenIds = [],
   snap, setSnap,
+  profileName,
 }: {
   accent: string;
   accent2: string;
@@ -26,6 +27,7 @@ export function EditModeOverlay({
   hiddenIds?: TileId[];
   snap: boolean;
   setSnap: (enabled: boolean) => void;
+  profileName: string;
 }) {
   const [tool, setTool] = useState<'select' | 'move' | 'resize' | 'add' | 'comment'>('select');
   const [showGuides, setShowGuides] = useState(true);
@@ -68,6 +70,7 @@ export function EditModeOverlay({
           showGuides={showGuides} setShowGuides={setShowGuides}
           showGrid={showGrid} setShowGrid={setShowGrid}
           snap={snap} setSnap={setSnap}
+          profileName={profileName}
           onExit={onExit} />
         <EditLeftRail accent={accent} tool={tool} setTool={setTool} />
       </div>
@@ -95,7 +98,21 @@ export function EditModeOverlay({
   );
 }
 
-function EditToolbar({ accent, tool, setTool, showGuides, setShowGuides, showGrid, setShowGrid, snap, setSnap, onExit }: any) {
+function EditToolbar({
+  accent, tool, setTool, showGuides, setShowGuides, showGrid, setShowGrid, snap, setSnap, onExit, profileName,
+}: {
+  accent: string;
+  tool: 'select' | 'move' | 'resize' | 'add' | 'comment';
+  setTool: (t: 'select' | 'move' | 'resize' | 'add' | 'comment') => void;
+  showGuides: boolean;
+  setShowGuides: (b: boolean) => void;
+  showGrid: boolean;
+  setShowGrid: (b: boolean) => void;
+  snap: boolean;
+  setSnap: (b: boolean) => void;
+  onExit: () => void;
+  profileName: string;
+}) {
   return (
     <div style={{
       position: 'absolute', top: 16, left: '50%', transform: 'translateX(-50%)',
@@ -115,7 +132,7 @@ function EditToolbar({ accent, tool, setTool, showGuides, setShowGuides, showGri
       <ToolToggle label="Guides" active={showGuides} onClick={() => setShowGuides(!showGuides)} accent={accent} />
       <Divider />
       <span style={{ fontSize: 10.5, color: 'rgba(255,255,255,0.45)', fontFamily: '"JetBrains Mono", ui-monospace, monospace', padding: '0 8px' }}>
-        Editing · "Work"
+        Editing · "{profileName}"
       </span>
       <Divider />
       <button onClick={onExit} style={{
