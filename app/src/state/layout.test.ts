@@ -10,6 +10,7 @@ import {
   MIN_SIZE_PX,
   SNAP_FRAC,
   DEFAULT_LANDSCAPE_LAYOUT,
+  DEFAULT_PORTRAIT_LAYOUT,
   DEFAULT_LAYOUT,
 } from './layout';
 
@@ -118,4 +119,24 @@ test('DEFAULT_LANDSCAPE_LAYOUT matches the legacy 2560x1440 DEFAULT_LAYOUT (with
     assert.ok(Math.abs(frac.w - legacy.w / 2560) < eps, `${id} w mismatch`);
     assert.ok(Math.abs(frac.h - legacy.h / 1440) < eps, `${id} h mismatch`);
   }
+});
+
+test('DEFAULT_PORTRAIT_LAYOUT contains all 8 tiles', () => {
+  const ids = Object.keys(DEFAULT_PORTRAIT_LAYOUT).sort();
+  assert.deepEqual(ids, ['claude', 'clock', 'discord', 'mixer', 'notes', 'spotify', 'sysmon', 'viz']);
+});
+
+test('DEFAULT_PORTRAIT_LAYOUT: every rect lies within [0,1] and has positive size', () => {
+  for (const [id, r] of Object.entries(DEFAULT_PORTRAIT_LAYOUT)) {
+    assert.ok(r.x >= 0 && r.x + r.w <= 1, `${id} x out of bounds`);
+    assert.ok(r.y >= 0 && r.y + r.h <= 1, `${id} y out of bounds`);
+    assert.ok(r.w > 0 && r.h > 0, `${id} non-positive size`);
+  }
+});
+
+test('DEFAULT_PORTRAIT_LAYOUT: tiles in the same row do not overlap', () => {
+  const { discord, mixer } = DEFAULT_PORTRAIT_LAYOUT;
+  assert.ok(discord.x + discord.w <= mixer.x + 1e-9, 'discord/mixer overlap horizontally');
+  const { sysmon, clock } = DEFAULT_PORTRAIT_LAYOUT;
+  assert.ok(sysmon.x + sysmon.w <= clock.x + 1e-9, 'sysmon/clock overlap horizontally');
 });

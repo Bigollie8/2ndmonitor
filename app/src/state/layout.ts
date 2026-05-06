@@ -138,6 +138,57 @@ export const DEFAULT_LANDSCAPE_LAYOUT: Record<TileId, Rect> = {
   viz: VIZ_RECT_F,
 };
 
+// Portrait template. Single column from top to bottom: viz dominates, then
+// now-playing, two 2-up rows for related tiles, claude, sysmon+clock, notes.
+// Heights chosen so the column sums to 1 minus chrome reserved areas.
+const P_SIDE = 14 / 1080;       // ~14px on 1080w portrait
+const P_GAP = 10 / 1080;        // tighter gap on portrait
+const P_TOP = TOP_F;            // share top chrome height with landscape
+const P_BOTTOM = BOTTOM_F;
+const P_LEFT = P_SIDE;
+const P_FULL_W = 1 - 2 * P_SIDE;
+const P_HALF_W = (P_FULL_W - P_GAP) / 2;
+
+// Row heights (fractions of canvas height). Tuned for ~1080x1920.
+const P_VIZ_H = 0.40;
+const P_NOWP_H = 0.10;
+const P_2UP1_H = 0.12;          // discord + mixer
+const P_CLAUDE_H = 0.11;
+const P_2UP2_H = 0.11;          // sysmon + clock
+const P_NOTES_H = 0.06;
+
+let py = P_TOP + 8 / 1920;
+
+const P_VIZ: Rect = { x: P_LEFT, y: py, w: P_FULL_W, h: P_VIZ_H };
+py += P_VIZ_H + P_GAP;
+
+const P_SPOTIFY: Rect = { x: P_LEFT, y: py, w: P_FULL_W, h: P_NOWP_H };
+py += P_NOWP_H + P_GAP;
+
+const P_DISCORD: Rect = { x: P_LEFT, y: py, w: P_HALF_W, h: P_2UP1_H };
+const P_MIXER: Rect   = { x: P_LEFT + P_HALF_W + P_GAP, y: py, w: P_HALF_W, h: P_2UP1_H };
+py += P_2UP1_H + P_GAP;
+
+const P_CLAUDE: Rect = { x: P_LEFT, y: py, w: P_FULL_W, h: P_CLAUDE_H };
+py += P_CLAUDE_H + P_GAP;
+
+const P_SYSMON: Rect = { x: P_LEFT, y: py, w: P_HALF_W, h: P_2UP2_H };
+const P_CLOCK: Rect  = { x: P_LEFT + P_HALF_W + P_GAP, y: py, w: P_HALF_W, h: P_2UP2_H };
+py += P_2UP2_H + P_GAP;
+
+const P_NOTES: Rect = { x: P_LEFT, y: py, w: P_FULL_W, h: P_NOTES_H };
+
+export const DEFAULT_PORTRAIT_LAYOUT: Record<TileId, Rect> = {
+  viz: P_VIZ,
+  spotify: P_SPOTIFY,
+  discord: P_DISCORD,
+  mixer: P_MIXER,
+  claude: P_CLAUDE,
+  sysmon: P_SYSMON,
+  clock: P_CLOCK,
+  notes: P_NOTES,
+};
+
 export const DEFAULT_LAYOUT: Record<TileId, Rect> = {
   ...(railRects() as Record<TileId, Rect>),
   ...(stripRects() as Record<TileId, Rect>),
