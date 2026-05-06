@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import type { Profile } from '../types';
 import type { TileId, Rect } from './../state/layout';
-import { DEFAULT_LAYOUT, DEFAULT_LANDSCAPE_LAYOUT, CANVAS, migrateLegacyProfileToOrientations } from './../state/layout';
+import { DEFAULT_LANDSCAPE_LAYOUT, migrateLegacyProfileToOrientations } from './../state/layout';
 
 const CARD_PALETTE = [
   '#a78bfa', '#f59e0b', '#22d3ee', '#22c55e',
@@ -138,8 +138,7 @@ function ProfileCard({
     setEditingName(false);
   };
 
-  // Match the preview: count visible tiles (i.e. not hidden), regardless of
-  // whether their rect is custom or falls back to DEFAULT_LAYOUT.
+  // Count visible tiles (i.e. not hidden) for the preview card summary.
   const ALL_TILES: TileId[] = ['discord', 'spotify', 'claude', 'notes', 'sysmon', 'clock', 'viz'];
   const tileCount = ALL_TILES.filter((id) => !profile.landscape.hidden[id]).length;
 
@@ -231,36 +230,33 @@ function ProfileCard({
 /** New: render the profile's actual layout as a small SVG. Used by the switcher. */
 function LayoutPreview({ profile }: { profile: Profile }) {
   const W = 480, H = 270;
-  const sx = W / CANVAS.w;
-  const sy = H / CANVAS.h;
 
   const tileIds: TileId[] = ['discord', 'spotify', 'claude', 'notes', 'sysmon', 'clock', 'viz'];
   const visible = tileIds.filter((id) => !profile.landscape.hidden[id]);
 
   const rectFor = (id: TileId): Rect => {
-    const r = profile.landscape.layout[id] ?? DEFAULT_LANDSCAPE_LAYOUT[id];
-    // Fractional coords — scale to SVG canvas pixels
-    return { x: r.x * CANVAS.w, y: r.y * CANVAS.h, w: r.w * CANVAS.w, h: r.h * CANVAS.h };
+    // Fractional coords (0–1) — fall back to default landscape positions
+    return profile.landscape.layout[id] ?? DEFAULT_LANDSCAPE_LAYOUT[id];
   };
 
   return (
     <svg viewBox={`0 0 ${W} ${H}`} style={{ width: '100%', display: 'block', background: '#06070a' }}>
-      <rect x="0" y="0" width={W} height={56 * sy} fill="rgba(255,255,255,0.04)" />
+      <rect x="0" y="0" width={W} height={56 / 1440 * H} fill="rgba(255,255,255,0.04)" />
       {visible.map((id) => {
         const r = rectFor(id);
         const isViz = id === 'viz';
         return (
           <rect
             key={id}
-            x={r.x * sx} y={r.y * sy}
-            width={r.w * sx} height={r.h * sy}
+            x={r.x * W} y={r.y * H}
+            width={r.w * W} height={r.h * H}
             fill={isViz ? `${profile.color}40` : 'rgba(255,255,255,0.03)'}
             stroke={isViz ? `${profile.color}88` : 'rgba(255,255,255,0.06)'}
             rx={3}
           />
         );
       })}
-      <rect x="0" y={H - 32 * sy} width={W} height={32 * sy} fill="rgba(255,255,255,0.04)" />
+      <rect x="0" y={H - 32 / 1440 * H} width={W} height={32 / 1440 * H} fill="rgba(255,255,255,0.04)" />
     </svg>
   );
 }

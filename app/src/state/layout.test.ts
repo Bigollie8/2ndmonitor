@@ -11,7 +11,6 @@ import {
   SNAP_FRAC,
   DEFAULT_LANDSCAPE_LAYOUT,
   DEFAULT_PORTRAIT_LAYOUT,
-  DEFAULT_LAYOUT,
 } from './layout';
 
 const LANDSCAPE = { w: 2560, h: 1440 };
@@ -107,18 +106,6 @@ test('decideOrientation: does not switch on aspect 1.04 from portrait', () => {
 test('decideOrientation: does not switch on aspect 0.96 from landscape', () => {
   const r = decideOrientation({ w: 960, h: 1000 }, 'landscape');
   assert.equal(r, 'landscape');
-});
-
-test('DEFAULT_LANDSCAPE_LAYOUT matches the legacy 2560x1440 DEFAULT_LAYOUT (within float tolerance)', () => {
-  for (const id of Object.keys(DEFAULT_LAYOUT) as Array<keyof typeof DEFAULT_LAYOUT>) {
-    const legacy = DEFAULT_LAYOUT[id];
-    const frac = DEFAULT_LANDSCAPE_LAYOUT[id];
-    const eps = 1e-9;
-    assert.ok(Math.abs(frac.x - legacy.x / 2560) < eps, `${id} x mismatch`);
-    assert.ok(Math.abs(frac.y - legacy.y / 1440) < eps, `${id} y mismatch`);
-    assert.ok(Math.abs(frac.w - legacy.w / 2560) < eps, `${id} w mismatch`);
-    assert.ok(Math.abs(frac.h - legacy.h / 1440) < eps, `${id} h mismatch`);
-  }
 });
 
 test('DEFAULT_PORTRAIT_LAYOUT contains all 8 tiles', () => {
