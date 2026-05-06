@@ -1,9 +1,8 @@
 /** Live performance-debug HUD.
  *
- * Renders a fixed-position panel in the top-right of the viewport (outside the
- * 2560x1440 design canvas so it isn't scaled). Subscribes to the perf debug
- * store and refreshes ~4Hz. Cheap to render — only rebuilds when the store
- * notifies. Hidden entirely unless `tweaks.perfDebug` is on.
+ * Renders a fixed-position panel in the top-right of the viewport. Subscribes
+ * to the perf debug store and refreshes ~4Hz. Cheap to render — only rebuilds
+ * when the store notifies. Hidden entirely unless `tweaks.perfDebug` is on.
  */
 
 import { useEffect, useState } from 'react';

@@ -6,9 +6,9 @@ import type { Density } from '../types';
 /**
  * Renders the tile chrome (header, border, rounded body) and reserves a body
  * rect that a native WebView2 child paints over. The body div's screen-space
- * rect — measured AFTER the 2560×1440 canvas is `transform: scale()`'d to fit
- * the viewport — is pushed to Rust via `position_tile`, which adds (or moves)
- * a child webview inside the main window at exactly that rect.
+ * rect (measured via getBoundingClientRect against the viewport-filling
+ * canvas) is pushed to Rust via `position_tile`, which adds (or moves) a
+ * child webview inside the main window at exactly that rect.
  *
  * Non-Tauri (web preview) renders an inline placeholder showing the URL.
  */

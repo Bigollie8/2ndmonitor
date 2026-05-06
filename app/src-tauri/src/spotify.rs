@@ -3,8 +3,10 @@
 //! User pastes their Spotify Developer App's Client ID. We open the system
 //! browser to the authorize URL with redirect to http://localhost:14202/callback,
 //! catch the code, exchange for an access + refresh token, and store both at
-//! `app_config_dir()/spotify.json`. A polling worker calls `/me/player/queue`
-//! every 10 seconds and emits `spotify:queue` events.
+//! `app_config_dir()/spotify.json`. A unified polling worker hits `/me/player`
+//! every 5 s for current device + volume, and `/me/player/queue` every other
+//! tick (10 s effective) for the upcoming-track list. State diffs emit on
+//! `spotify:state`; queue snapshots also emit on `spotify:queue`.
 
 use base64::Engine;
 use parking_lot::Mutex;
@@ -18,8 +20,10 @@ use tauri::{AppHandle, Emitter, Manager, Runtime};
 
 const REDIRECT_URI: &str = "http://127.0.0.1:14202/callback";
 const CALLBACK_PORT: u16 = 14202;
-const QUEUE_POLL_SECS: u64 = 10;
-const SCOPES: &str = "user-read-currently-playing user-read-playback-state";
+const PLAYER_POLL_SECS: u64 = 5;
+// /me/player/queue is hit every other player tick (so 10 s effective cadence,
+// matching the previous QUEUE_POLL_SECS behaviour).
+const SCOPES: &str = "user-read-currently-playing user-read-playback-state user-modify-playback-state";
 
 #[derive(Default, Serialize, Deserialize, Clone)]
 struct StoredCreds {
@@ -46,6 +50,11 @@ pub struct SpotifyState {
     pub error: Option<String>,
     pub queue: Vec<SpotifyTrack>,
     pub premium_required: bool,
+    pub volume_percent: Option<u8>,    // 0..=100, None when no active device
+    pub device_id: Option<String>,
+    pub device_name: Option<String>,
+    pub volume_supported: bool,         // mirrors device.supports_volume
+    pub needs_reauth: bool,             // true when API returned insufficient_scope
 }
 
 static CREDS: once_cell::sync::Lazy<Mutex<StoredCreds>> = once_cell::sync::Lazy::new(|| Mutex::new(StoredCreds::default()));
@@ -115,49 +124,99 @@ pub fn spawn<R: Runtime>(app: AppHandle<R>) {
     emit_state(&app);
 
     let app_poll = app.clone();
-    std::thread::spawn(move || queue_poll_worker(app_poll));
+    std::thread::spawn(move || poll_worker(app_poll));
 }
 
-fn queue_poll_worker<R: Runtime>(app: AppHandle<R>) {
+fn poll_worker<R: Runtime>(app: AppHandle<R>) {
+    let mut tick: u64 = 0;
     loop {
         let connected = STATE.lock().connected;
         if connected {
-            match fetch_queue(&app) {
-                Ok(queue) => {
-                    {
-                        let mut s = STATE.lock();
-                        s.queue = queue.clone();
-                        s.error = None;
-                        s.premium_required = false;
-                    }
-                    emit_state(&app);
-                    emit_queue(&app, &queue);
-                }
-                Err(QueueErr::PremiumRequired) => {
-                    let mut s = STATE.lock();
-                    s.premium_required = true;
-                    s.queue.clear();
-                    drop(s);
-                    emit_state(&app);
-                }
-                Err(QueueErr::Unauthorized) => {
-                    let mut s = STATE.lock();
-                    s.error = Some("Spotify auth expired — reconnect".into());
-                    s.connected = false;
-                    drop(s);
-                    emit_state(&app);
-                }
-                Err(QueueErr::Other(e)) => {
-                    eprintln!("spotify queue: {e}");
-                }
+            apply_player(&app);
+            // Hit /me/player/queue every other tick → 10 s effective cadence.
+            if tick % 2 == 0 {
+                apply_queue(&app);
             }
         }
-        std::thread::sleep(Duration::from_secs(QUEUE_POLL_SECS));
+        tick = tick.wrapping_add(1);
+        std::thread::sleep(Duration::from_secs(PLAYER_POLL_SECS));
+    }
+}
+
+fn apply_player<R: Runtime>(app: &AppHandle<R>) {
+    match fetch_player(app) {
+        Ok(Some(d)) => {
+            let mut s = STATE.lock();
+            s.volume_percent = d.volume_percent;
+            s.device_id = d.id;
+            s.device_name = d.name;
+            s.volume_supported = d.supports_volume.unwrap_or(false);
+            s.error = None;
+            drop(s);
+            emit_state(app);
+        }
+        Ok(None) => {
+            let mut s = STATE.lock();
+            s.volume_percent = None;
+            s.device_id = None;
+            s.device_name = None;
+            s.volume_supported = false;
+            drop(s);
+            emit_state(app);
+        }
+        Err(ApiErr::PremiumRequired) => {
+            let mut s = STATE.lock();
+            s.premium_required = true;
+            drop(s);
+            emit_state(app);
+        }
+        Err(ApiErr::Unauthorized) => {
+            let mut s = STATE.lock();
+            s.error = Some("Spotify auth expired — reconnect".into());
+            s.connected = false;
+            drop(s);
+            emit_state(app);
+        }
+        Err(ApiErr::Other(e)) => {
+            eprintln!("spotify player: {e}");
+        }
+    }
+}
+
+fn apply_queue<R: Runtime>(app: &AppHandle<R>) {
+    match fetch_queue(app) {
+        Ok(queue) => {
+            {
+                let mut s = STATE.lock();
+                s.queue = queue.clone();
+                s.error = None;
+                s.premium_required = false;
+            }
+            emit_state(app);
+            emit_queue(app, &queue);
+        }
+        Err(ApiErr::PremiumRequired) => {
+            let mut s = STATE.lock();
+            s.premium_required = true;
+            s.queue.clear();
+            drop(s);
+            emit_state(app);
+        }
+        Err(ApiErr::Unauthorized) => {
+            let mut s = STATE.lock();
+            s.error = Some("Spotify auth expired — reconnect".into());
+            s.connected = false;
+            drop(s);
+            emit_state(app);
+        }
+        Err(ApiErr::Other(e)) => {
+            eprintln!("spotify queue: {e}");
+        }
     }
 }
 
 #[derive(Debug)]
-enum QueueErr { PremiumRequired, Unauthorized, Other(String) }
+enum ApiErr { PremiumRequired, Unauthorized, Other(String) }
 
 #[derive(Deserialize)]
 struct QueueResp {
@@ -183,35 +242,85 @@ struct SpotifyAlbum {
 #[allow(dead_code)]
 struct SpotifyImage { url: String, width: Option<u32>, height: Option<u32> }
 
-fn fetch_queue<R: Runtime>(app: &AppHandle<R>) -> Result<Vec<SpotifyTrack>, QueueErr> {
-    let token = ensure_fresh_token(app).ok_or(QueueErr::Unauthorized)?;
+#[derive(Deserialize)]
+struct PlayerResp {
+    device: Option<PlayerDevice>,
+}
+
+#[derive(Deserialize)]
+struct PlayerDevice {
+    id: Option<String>,
+    name: Option<String>,
+    volume_percent: Option<u8>,
+    supports_volume: Option<bool>,
+}
+
+fn fetch_queue<R: Runtime>(app: &AppHandle<R>) -> Result<Vec<SpotifyTrack>, ApiErr> {
+    let token = ensure_fresh_token(app).ok_or(ApiErr::Unauthorized)?;
     let resp = ureq::get("https://api.spotify.com/v1/me/player/queue")
         .set("Authorization", &format!("Bearer {token}"))
         .timeout(Duration::from_secs(8))
         .call();
     match resp {
         Ok(r) => {
-            let q: QueueResp = r.into_json().map_err(|e| QueueErr::Other(e.to_string()))?;
+            let q: QueueResp = r.into_json().map_err(|e| ApiErr::Other(e.to_string()))?;
             let items = q.queue.unwrap_or_default();
             Ok(items.into_iter().take(20).map(map_item).collect())
         }
         Err(ureq::Error::Status(401, _)) => {
             // One more refresh attempt then bail.
             if try_refresh(app) {
-                let token = CREDS.lock().access_token.clone().ok_or(QueueErr::Unauthorized)?;
+                let token = CREDS.lock().access_token.clone().ok_or(ApiErr::Unauthorized)?;
                 let r2 = ureq::get("https://api.spotify.com/v1/me/player/queue")
                     .set("Authorization", &format!("Bearer {token}"))
                     .timeout(Duration::from_secs(8))
-                    .call().map_err(|e| QueueErr::Other(e.to_string()))?;
-                let q: QueueResp = r2.into_json().map_err(|e| QueueErr::Other(e.to_string()))?;
+                    .call().map_err(|e| ApiErr::Other(e.to_string()))?;
+                let q: QueueResp = r2.into_json().map_err(|e| ApiErr::Other(e.to_string()))?;
                 Ok(q.queue.unwrap_or_default().into_iter().take(20).map(map_item).collect())
             } else {
-                Err(QueueErr::Unauthorized)
+                Err(ApiErr::Unauthorized)
             }
         }
-        Err(ureq::Error::Status(403, _)) => Err(QueueErr::PremiumRequired),
+        Err(ureq::Error::Status(403, _)) => Err(ApiErr::PremiumRequired),
         Err(ureq::Error::Status(404, _)) => Ok(Vec::new()), // no active player
-        Err(e) => Err(QueueErr::Other(e.to_string())),
+        Err(e) => Err(ApiErr::Other(e.to_string())),
+    }
+}
+
+fn fetch_player<R: Runtime>(app: &AppHandle<R>) -> Result<Option<PlayerDevice>, ApiErr> {
+    let token = ensure_fresh_token(app).ok_or(ApiErr::Unauthorized)?;
+    let resp = ureq::get("https://api.spotify.com/v1/me/player")
+        .set("Authorization", &format!("Bearer {token}"))
+        .timeout(Duration::from_secs(8))
+        .call();
+    match resp {
+        Ok(r) => {
+            // Spotify returns 204 No Content when no device is active. ureq
+            // surfaces 204 as Ok with an empty body — `into_json` would fail,
+            // so check status first.
+            if r.status() == 204 {
+                return Ok(None);
+            }
+            let p: PlayerResp = r.into_json().map_err(|e| ApiErr::Other(e.to_string()))?;
+            Ok(p.device)
+        }
+        Err(ureq::Error::Status(401, _)) => {
+            if try_refresh(app) {
+                let token = CREDS.lock().access_token.clone().ok_or(ApiErr::Unauthorized)?;
+                let r2 = ureq::get("https://api.spotify.com/v1/me/player")
+                    .set("Authorization", &format!("Bearer {token}"))
+                    .timeout(Duration::from_secs(8))
+                    .call().map_err(|e| ApiErr::Other(e.to_string()))?;
+                if r2.status() == 204 { return Ok(None); }
+                let p: PlayerResp = r2.into_json().map_err(|e| ApiErr::Other(e.to_string()))?;
+                Ok(p.device)
+            } else {
+                Err(ApiErr::Unauthorized)
+            }
+        }
+        Err(ureq::Error::Status(403, _)) => Err(ApiErr::PremiumRequired),
+        Err(ureq::Error::Status(404, _)) => Ok(None), // no active player
+        Err(e) => Err(ApiErr::Other(e.to_string())),
     }
 }
 

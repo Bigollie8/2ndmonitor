@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import type { Rect } from '../state/layout';
-import { CANVAS, MIN_SIZE, clampRect, snap } from '../state/layout';
+import { MIN_SIZE_PX, clampRectFrac, snapFrac } from '../state/layout';
 
 type Mode =
   | { kind: 'idle' }
@@ -9,17 +9,25 @@ type Mode =
 
 type ResizeEdge = 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw';
 
-function pointerToCanvas(e: PointerEvent | React.PointerEvent): { x: number; y: number } {
+function pointerToFraction(e: PointerEvent | React.PointerEvent): { x: number; y: number } {
   const root = document.querySelector<HTMLElement>('[data-canvas-root]');
-  if (!root) return { x: e.clientX, y: e.clientY };
+  if (!root) return { x: 0, y: 0 };
   const r = root.getBoundingClientRect();
-  const sx = r.width / CANVAS.w;
-  const sy = r.height / CANVAS.h;
-  return { x: (e.clientX - r.left) / sx, y: (e.clientY - r.top) / sy };
+  return {
+    x: (e.clientX - r.left) / r.width,
+    y: (e.clientY - r.top) / r.height,
+  };
+}
+
+function getCanvasPx(): { w: number; h: number } {
+  const root = document.querySelector<HTMLElement>('[data-canvas-root]');
+  if (!root) return { w: window.innerWidth, h: window.innerHeight };
+  const r = root.getBoundingClientRect();
+  return { w: r.width, h: r.height };
 }
 
 export function TileFrame({
-  id, rect, editing, selected, onSelect, onChange, accent, children,
+  id, rect, editing, selected, onSelect, onChange, accent, children, snap: snapEnabled = true,
 }: {
   id: string;
   rect: Rect;
@@ -29,10 +37,13 @@ export function TileFrame({
   onChange: (next: Rect) => void;
   accent: string;
   children: React.ReactNode;
+  snap?: boolean;
 }) {
   const modeRef = useRef<Mode>({ kind: 'idle' });
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
+  const snapRef = useRef(snapEnabled);
+  snapRef.current = snapEnabled;
   const [, force] = useState(0);
 
   useEffect(() => {
@@ -40,14 +51,17 @@ export function TileFrame({
     const onMove = (e: PointerEvent) => {
       const m = modeRef.current;
       if (m.kind === 'idle') return;
-      const p = pointerToCanvas(e);
-      const free = e.altKey;
+      const p = pointerToFraction(e);
+      const canvasPx = getCanvasPx();
+      const minWFrac = MIN_SIZE_PX.w / canvasPx.w;
+      const minHFrac = MIN_SIZE_PX.h / canvasPx.h;
+      const free = !snapRef.current || e.altKey;
       let next: Rect;
       if (m.kind === 'move') {
         const dx = p.x - m.startX;
         const dy = p.y - m.startY;
         next = { ...m.orig, x: m.orig.x + dx, y: m.orig.y + dy };
-        if (!free) { next.x = snap(next.x); next.y = snap(next.y); }
+        if (!free) { next.x = snapFrac(next.x); next.y = snapFrac(next.y); }
       } else {
         const dx = p.x - m.startX;
         const dy = p.y - m.startY;
@@ -56,22 +70,22 @@ export function TileFrame({
         if (m.edge.includes('s')) next.h = m.orig.h + dy;
         if (m.edge.includes('w')) { next.x = m.orig.x + dx; next.w = m.orig.w - dx; }
         if (m.edge.includes('n')) { next.y = m.orig.y + dy; next.h = m.orig.h - dy; }
-        if (next.w < MIN_SIZE.w) {
-          if (m.edge.includes('w')) next.x = m.orig.x + m.orig.w - MIN_SIZE.w;
-          next.w = MIN_SIZE.w;
+        if (next.w < minWFrac) {
+          if (m.edge.includes('w')) next.x = m.orig.x + m.orig.w - minWFrac;
+          next.w = minWFrac;
         }
-        if (next.h < MIN_SIZE.h) {
-          if (m.edge.includes('n')) next.y = m.orig.y + m.orig.h - MIN_SIZE.h;
-          next.h = MIN_SIZE.h;
+        if (next.h < minHFrac) {
+          if (m.edge.includes('n')) next.y = m.orig.y + m.orig.h - minHFrac;
+          next.h = minHFrac;
         }
         if (!free) {
-          next.x = snap(next.x);
-          next.y = snap(next.y);
-          next.w = Math.max(MIN_SIZE.w, snap(next.w));
-          next.h = Math.max(MIN_SIZE.h, snap(next.h));
+          next.x = snapFrac(next.x);
+          next.y = snapFrac(next.y);
+          next.w = Math.max(minWFrac, snapFrac(next.w));
+          next.h = Math.max(minHFrac, snapFrac(next.h));
         }
       }
-      onChangeRef.current(clampRect(next));
+      onChangeRef.current(clampRectFrac(next, canvasPx));
     };
     const onUp = () => {
       modeRef.current = { kind: 'idle' };
@@ -88,14 +102,14 @@ export function TileFrame({
 
   const startMove = (e: React.PointerEvent) => {
     onSelect();
-    const p = pointerToCanvas(e);
+    const p = pointerToFraction(e);
     modeRef.current = { kind: 'move', startX: p.x, startY: p.y, orig: rect };
     force((n) => n + 1);
     e.preventDefault();
   };
   const startResize = (edge: ResizeEdge) => (e: React.PointerEvent) => {
     onSelect();
-    const p = pointerToCanvas(e);
+    const p = pointerToFraction(e);
     modeRef.current = { kind: 'resize', startX: p.x, startY: p.y, orig: rect, edge };
     force((n) => n + 1);
     e.preventDefault();
@@ -107,7 +121,10 @@ export function TileFrame({
       data-tile-id={id}
       style={{
         position: 'absolute',
-        left: rect.x, top: rect.y, width: rect.w, height: rect.h,
+        left: `${rect.x * 100}%`,
+        top: `${rect.y * 100}%`,
+        width: `${rect.w * 100}%`,
+        height: `${rect.h * 100}%`,
         outline: editing && selected ? `2px solid ${accent}` : 'none',
         outlineOffset: 2,
         borderRadius: 14,
