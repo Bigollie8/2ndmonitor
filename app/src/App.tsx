@@ -188,6 +188,7 @@ export default function App() {
   }, []);
   const [manualTrack, setManualTrack] = useState<Track>(TRACKS[0]!);
   const [editMode, setEditMode] = useState(false);
+  const [snapEnabled, setSnapEnabled] = useState(true);
   const [showSwitcher, setShowSwitcher] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [showGallery, setShowGallery] = useState(false);
@@ -402,6 +403,7 @@ export default function App() {
               id={id}
               rect={rect}
               editing={editMode}
+              snap={snapEnabled}
               selected={selectedTileId === id}
               onSelect={() => setSelectedTileId(id)}
               onChange={(r) => updateActiveProfile({ layout: { ...activeLayout, [id]: r } })}
@@ -430,6 +432,8 @@ export default function App() {
             selectedId={selectedTileId}
             setSelectedId={setSelectedTileId}
             hiddenIds={(Object.keys(hidden) as TileId[]).filter((k) => hidden[k])}
+            snap={snapEnabled}
+            setSnap={setSnapEnabled}
           />
         )}
         {showSwitcher && (

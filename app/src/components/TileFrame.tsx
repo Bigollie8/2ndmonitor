@@ -19,7 +19,7 @@ function pointerToCanvas(e: PointerEvent | React.PointerEvent): { x: number; y: 
 }
 
 export function TileFrame({
-  id, rect, editing, selected, onSelect, onChange, accent, children,
+  id, rect, editing, selected, onSelect, onChange, accent, children, snap: snapEnabled = true,
 }: {
   id: string;
   rect: Rect;
@@ -29,10 +29,15 @@ export function TileFrame({
   onChange: (next: Rect) => void;
   accent: string;
   children: React.ReactNode;
+  snap?: boolean;
 }) {
   const modeRef = useRef<Mode>({ kind: 'idle' });
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
+  // Read live inside the global pointermove closure — the effect attaches once
+  // per `editing` change, so closure-captured props would go stale on toggle.
+  const snapRef = useRef(snapEnabled);
+  snapRef.current = snapEnabled;
   const [, force] = useState(0);
 
   useEffect(() => {
@@ -41,7 +46,7 @@ export function TileFrame({
       const m = modeRef.current;
       if (m.kind === 'idle') return;
       const p = pointerToCanvas(e);
-      const free = e.altKey;
+      const free = !snapRef.current || e.altKey;
       let next: Rect;
       if (m.kind === 'move') {
         const dx = p.x - m.startX;

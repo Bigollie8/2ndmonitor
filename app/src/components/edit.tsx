@@ -7,6 +7,7 @@ export function EditModeOverlay({
   layout, setLayout,
   selectedId, setSelectedId,
   hiddenIds = [],
+  snap, setSnap,
 }: {
   accent: string;
   accent2: string;
@@ -17,11 +18,12 @@ export function EditModeOverlay({
   selectedId: TileId;
   setSelectedId: (id: TileId) => void;
   hiddenIds?: TileId[];
+  snap: boolean;
+  setSnap: (b: boolean) => void;
 }) {
   const [tool, setTool] = useState<'select' | 'move' | 'resize' | 'add' | 'comment'>('select');
   const [showGuides, setShowGuides] = useState(true);
   const [showGrid, setShowGrid] = useState(true);
-  const [snapEnabled, setSnapEnabled] = useState(true);
 
   const ALL_LABELS: Record<TileId, string> = {
     discord: 'Discord', spotify: 'Now playing', claude: 'Claude Code',
@@ -38,6 +40,13 @@ export function EditModeOverlay({
 
   const sel = tiles[selectedId] ?? tiles.viz!;
   const setRect = (id: TileId, r: Rect) => setLayout({ ...layout, [id]: clampRect(r) });
+  // Drop the entry so the tile falls back to DEFAULT_LAYOUT[id] — needed
+  // because snapped (40px-aligned) values can't reach the non-aligned defaults.
+  const resetRect = (id: TileId) => {
+    const next: Layout = { ...layout };
+    delete next[id];
+    setLayout(next);
+  };
 
   return (
     <div style={{
@@ -49,7 +58,7 @@ export function EditModeOverlay({
         <EditToolbar accent={accent} tool={tool} setTool={setTool}
           showGuides={showGuides} setShowGuides={setShowGuides}
           showGrid={showGrid} setShowGrid={setShowGrid}
-          snap={snapEnabled} setSnap={setSnapEnabled}
+          snap={snap} setSnap={setSnap}
           onExit={onExit} />
         <EditLeftRail accent={accent} tool={tool} setTool={setTool} />
       </div>
@@ -62,6 +71,7 @@ export function EditModeOverlay({
             tile={{ rect: sel.rect, label: sel.label, kind: selectedId }}
             selectedId={selectedId}
             onChangeRect={(r) => setRect(selectedId, r)}
+            onReset={() => resetRect(selectedId)}
             onRemove={
               onRemove && selectedId !== 'viz'
                 ? () => { onRemove(selectedId); setSelectedId('viz'); }
@@ -227,12 +237,13 @@ function DistanceMarker({ x, y, w, h, accent, value, orient }: { x: number; y: n
 }
 
 function PropertiesPanel({
-  accent, tile, selectedId, onChangeRect, onRemove,
+  accent, tile, selectedId, onChangeRect, onReset, onRemove,
 }: {
   accent: string;
   tile: { rect: Rect; label: string; kind: TileId };
   selectedId: TileId;
   onChangeRect: (r: Rect) => void;
+  onReset?: () => void;
   onRemove?: () => void;
 }) {
   return (
@@ -259,6 +270,17 @@ function PropertiesPanel({
         </PropSection>
       </div>
       <div style={{ borderTop: '1px solid rgba(255,255,255,0.06)', padding: 8, display: 'flex', gap: 6 }}>
+        <button
+          onClick={onReset}
+          disabled={!onReset}
+          title="Restore this tile to its default position and size"
+          style={{
+            flex: 1, padding: '7px', fontSize: 10.5, fontWeight: 600,
+            background: 'rgba(255,255,255,0.04)', color: 'rgba(255,255,255,0.75)',
+            border: '1px solid rgba(255,255,255,0.1)', borderRadius: 5,
+            cursor: onReset ? 'pointer' : 'not-allowed',
+          }}
+        >Reset</button>
         <button
           onClick={onRemove}
           disabled={!onRemove}
