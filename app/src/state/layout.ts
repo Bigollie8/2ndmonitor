@@ -346,3 +346,32 @@ export function findEmptyRect(
 
   return best ?? preferred;
 }
+
+/** Find the first instance of a given type. For singleton types this is "the" instance. */
+export function findInstance(tiles: TileInstance[], type: TileType): TileInstance | undefined {
+  return tiles.find((t) => t.type === type);
+}
+
+/** Get an instance by id. */
+export function getInstance(tiles: TileInstance[], instanceId: string): TileInstance | undefined {
+  return tiles.find((t) => t.instanceId === instanceId);
+}
+
+/** Append an instance immutably. */
+export function addInstance(tiles: TileInstance[], instance: TileInstance): TileInstance[] {
+  return [...tiles, instance];
+}
+
+/** Remove an instance by id immutably. */
+export function removeInstance(tiles: TileInstance[], instanceId: string): TileInstance[] {
+  return tiles.filter((t) => t.instanceId !== instanceId);
+}
+
+/** Patch an instance immutably. Non-matching instances are returned by reference. */
+export function updateInstance(
+  tiles: TileInstance[],
+  instanceId: string,
+  patch: Partial<TileInstance>,
+): TileInstance[] {
+  return tiles.map((t) => (t.instanceId === instanceId ? { ...t, ...patch } : t));
+}
