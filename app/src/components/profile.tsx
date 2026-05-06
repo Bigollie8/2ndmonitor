@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import type { Profile } from '../types';
-import type { TileId, Rect } from './../state/layout';
+import type { TileType, Rect } from './../state/layout';
 import { DEFAULT_LANDSCAPE_LAYOUT, migrateLegacyProfileToOrientations } from './../state/layout';
 
 const CARD_PALETTE = [
@@ -139,7 +139,7 @@ function ProfileCard({
   };
 
   // Count visible tiles (i.e. not hidden) for the preview card summary.
-  const ALL_TILES: TileId[] = ['discord', 'spotify', 'claude', 'notes', 'sysmon', 'clock', 'viz'];
+  const ALL_TILES: TileType[] = ['discord', 'spotify', 'claude', 'notes', 'sysmon', 'clock', 'viz'];
   const tileCount = ALL_TILES.filter((id) => !profile.landscape.hidden[id]).length;
 
   return (
@@ -220,7 +220,7 @@ function ProfileCard({
           >🗑</button>
         </div>
         <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.35)', fontFamily: '"JetBrains Mono", ui-monospace, monospace' }}>
-          {tileCount} tile{tileCount === 1 ? '' : 's'} · {Object.keys(profile.landscape.hidden).filter((k) => profile.landscape.hidden[k as TileId]).length} hidden
+          {tileCount} tile{tileCount === 1 ? '' : 's'} · {Object.keys(profile.landscape.hidden).filter((k) => profile.landscape.hidden[k as TileType]).length} hidden
         </div>
       </div>
     </div>
@@ -231,10 +231,10 @@ function ProfileCard({
 function LayoutPreview({ profile }: { profile: Profile }) {
   const W = 480, H = 270;
 
-  const tileIds: TileId[] = ['discord', 'spotify', 'claude', 'notes', 'sysmon', 'clock', 'viz'];
+  const tileIds: TileType[] = ['discord', 'spotify', 'claude', 'notes', 'sysmon', 'clock', 'viz'];
   const visible = tileIds.filter((id) => !profile.landscape.hidden[id]);
 
-  const rectFor = (id: TileId): Rect => {
+  const rectFor = (id: TileType): Rect => {
     // Fractional coords (0–1) — fall back to default landscape positions
     return profile.landscape.layout[id] ?? DEFAULT_LANDSCAPE_LAYOUT[id];
   };

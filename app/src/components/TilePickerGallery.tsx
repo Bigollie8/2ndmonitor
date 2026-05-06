@@ -1,23 +1,23 @@
 import React, { useEffect } from 'react';
-import type { TileId, Rect, Layout, Orientation } from '../state/layout';
+import type { TileType, Rect, Layout, Orientation } from '../state/layout';
 import {
   DEFAULT_LANDSCAPE_LAYOUT,
   DEFAULT_PORTRAIT_LAYOUT,
   findEmptyRect,
 } from '../state/layout';
 
-const TILE_META: Record<TileId, { icon: string; label: string; description: string }> = {
-  viz:     { icon: '◢', label: 'Audio visualizer',  description: '27 styles reactive to system audio' },
-  spotify: { icon: '♪', label: 'Now playing',       description: 'Track, lyrics, queue, volume' },
-  discord: { icon: '◇', label: 'Discord voice',     description: 'Voice channel members + speaking' },
-  claude:  { icon: '⌘', label: 'Claude Code',       description: 'Active session log' },
-  mixer:   { icon: '♬', label: 'Audio mixer',       description: 'Master volume + per-app sessions' },
-  notes:   { icon: '✎', label: 'Todos',             description: 'Quick task list' },
-  sysmon:  { icon: '▤', label: 'System monitor',    description: 'CPU / RAM / GPU / network' },
-  clock:   { icon: '◐', label: 'Now & forecast',    description: 'Time + weather' },
+const TILE_META: Record<TileType, { icon: string; label: string; description: string; multiInstance: boolean }> = {
+  viz:     { icon: '◢', label: 'Audio visualizer',  description: '27 styles reactive to system audio',  multiInstance: false },
+  spotify: { icon: '♪', label: 'Now playing',       description: 'Track, lyrics, queue, volume',         multiInstance: false },
+  discord: { icon: '◇', label: 'Discord voice',     description: 'Voice channel members + speaking',     multiInstance: false },
+  claude:  { icon: '⌘', label: 'Claude Code',       description: 'Active session log',                   multiInstance: false },
+  mixer:   { icon: '♬', label: 'Audio mixer',       description: 'Master volume + per-app sessions',     multiInstance: false },
+  notes:   { icon: '✎', label: 'Todos',             description: 'Quick task list',                      multiInstance: false },
+  sysmon:  { icon: '▤', label: 'System monitor',    description: 'CPU / RAM / GPU / network',            multiInstance: false },
+  clock:   { icon: '◐', label: 'Now & forecast',    description: 'Time + weather',                       multiInstance: false },
 };
 
-const ORDER: TileId[] = ['viz', 'spotify', 'discord', 'claude', 'mixer', 'notes', 'sysmon', 'clock'];
+const ORDER: TileType[] = ['viz', 'spotify', 'discord', 'claude', 'mixer', 'notes', 'sysmon', 'clock'];
 
 export function TilePickerGallery({
   orientation, canvas, layout, hidden, profileName, accent,
@@ -26,11 +26,11 @@ export function TilePickerGallery({
   orientation: Orientation;
   canvas: { w: number; h: number };
   layout: Layout;
-  hidden: Partial<Record<TileId, boolean>>;
+  hidden: Partial<Record<TileType, boolean>>;
   profileName: string;
   accent: string;
-  onAdd: (id: TileId, rect: Rect) => void;
-  onRemove: (id: TileId) => void;
+  onAdd: (id: TileType, rect: Rect) => void;
+  onRemove: (id: TileType) => void;
   onClose: () => void;
 }) {
   // Esc closes the modal.
@@ -47,7 +47,7 @@ export function TilePickerGallery({
 
   const defaults = orientation === 'portrait' ? DEFAULT_PORTRAIT_LAYOUT : DEFAULT_LANDSCAPE_LAYOUT;
 
-  const visibleRects = (Object.keys(layout) as TileId[])
+  const visibleRects = (Object.keys(layout) as TileType[])
     .filter((id) => !hidden[id] && layout[id])
     .map((id) => layout[id]!)
     // Also include tiles that are visible but use the default rect (no entry in layout):
@@ -55,7 +55,7 @@ export function TilePickerGallery({
       ORDER.filter((id) => !hidden[id] && !layout[id]).map((id) => defaults[id]),
     );
 
-  const handleClick = (id: TileId) => {
+  const handleClick = (id: TileType) => {
     if (hidden[id]) {
       const preferred = layout[id] ?? defaults[id];
       const rect = findEmptyRect(visibleRects, preferred, canvas);

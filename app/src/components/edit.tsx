@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import type { TileId, Rect, Layout } from '../state/layout';
+import type { TileType, Rect, Layout } from '../state/layout';
 import {
   DEFAULT_LANDSCAPE_LAYOUT,
   DEFAULT_PORTRAIT_LAYOUT,
@@ -20,13 +20,13 @@ export function EditModeOverlay({
   accent: string;
   accent2: string;
   onExit: () => void;
-  onRemove?: (id: TileId) => void;
-  onAdd: (id: TileId, rect: Rect) => void;
+  onRemove?: (id: TileType) => void;
+  onAdd: (id: TileType, rect: Rect) => void;
   layout: Layout;
   setLayout: (next: Layout) => void;
-  selectedId: TileId;
-  setSelectedId: (id: TileId) => void;
-  hiddenIds?: TileId[];
+  selectedId: TileType;
+  setSelectedId: (id: TileType) => void;
+  hiddenIds?: TileType[];
   snap: boolean;
   setSnap: (enabled: boolean) => void;
   profileName: string;
@@ -36,27 +36,27 @@ export function EditModeOverlay({
   const [showGrid, setShowGrid] = useState(true);
   const [pickerOpen, setPickerOpen] = useState(false);
 
-  const ALL_LABELS: Record<TileId, string> = {
+  const ALL_LABELS: Record<TileType, string> = {
     discord: 'Discord', spotify: 'Now playing', claude: 'Claude Code',
     mixer: 'Audio mixer',
     notes: 'Todos', sysmon: 'System monitor', clock: 'Now & forecast', viz: 'Audio visualizer',
   };
 
-  const allIds: TileId[] = ['discord', 'spotify', 'claude', 'mixer', 'notes', 'viz', 'sysmon', 'clock'];
+  const allIds: TileType[] = ['discord', 'spotify', 'claude', 'mixer', 'notes', 'viz', 'sysmon', 'clock'];
   const visibleIds = allIds.filter((id) => !hiddenIds.includes(id));
   const orientation = useOrientation();
   const canvas = useCanvas();
   const defaults = orientation === 'portrait' ? DEFAULT_PORTRAIT_LAYOUT : DEFAULT_LANDSCAPE_LAYOUT;
-  const tiles: Partial<Record<TileId, { rect: Rect; label: string }>> = {};
+  const tiles: Partial<Record<TileType, { rect: Rect; label: string }>> = {};
   for (const id of visibleIds) {
     tiles[id] = { rect: layout[id] ?? defaults[id], label: ALL_LABELS[id] };
   }
 
   const sel = tiles[selectedId] ?? tiles.viz!;
-  const setRect = (id: TileId, r: Rect) => setLayout({ ...layout, [id]: clampRectFrac(r, canvas) });
+  const setRect = (id: TileType, r: Rect) => setLayout({ ...layout, [id]: clampRectFrac(r, canvas) });
   // Drop the entry so the tile falls back to the orientation default — needed
   // because snapped values can't reach the non-aligned defaults.
-  const resetRect = (id: TileId) => {
+  const resetRect = (id: TileType) => {
     const next: Layout = { ...layout };
     delete next[id];
     setLayout(next);
@@ -96,7 +96,7 @@ export function EditModeOverlay({
             }
           />
         )}
-        <LayersPanel accent={accent} selected={selectedId} setSelected={(id) => setSelectedId(id as TileId)} tiles={tiles} canvas={canvas} />
+        <LayersPanel accent={accent} selected={selectedId} setSelected={(id) => setSelectedId(id as TileType)} tiles={tiles} canvas={canvas} />
       </div>
       {pickerOpen && (
         <div style={{ pointerEvents: 'auto' }}>
@@ -104,7 +104,7 @@ export function EditModeOverlay({
             orientation={orientation}
             canvas={canvas}
             layout={layout}
-            hidden={Object.fromEntries((hiddenIds as TileId[]).map((id) => [id, true])) as Partial<Record<TileId, boolean>>}
+            hidden={Object.fromEntries((hiddenIds as TileType[]).map((id) => [id, true])) as Partial<Record<TileType, boolean>>}
             profileName={profileName}
             accent={accent}
             onAdd={(id, rect) => onAdd(id, rect)}
@@ -288,8 +288,8 @@ function PropertiesPanel({
   accent, tile, selectedId, canvas, onChangeRect, onReset, onRemove,
 }: {
   accent: string;
-  tile: { rect: Rect; label: string; kind: TileId };
-  selectedId: TileId;
+  tile: { rect: Rect; label: string; kind: TileType };
+  selectedId: TileType;
   canvas: { w: number; h: number };
   onChangeRect: (r: Rect) => void;
   onReset?: () => void;
@@ -403,11 +403,11 @@ function EmToggle({ on, accent }: { on: boolean; accent: string }) {
 function LayersPanel({ accent, selected, setSelected, tiles, canvas }: {
   accent: string; selected: string;
   setSelected: (s: string) => void;
-  tiles: Partial<Record<TileId, { rect: Rect; label: string }>>;
+  tiles: Partial<Record<TileType, { rect: Rect; label: string }>>;
   canvas: { w: number; h: number };
 }) {
-  const order: TileId[] = ['viz', 'spotify', 'discord', 'claude', 'mixer', 'notes', 'sysmon', 'clock'];
-  const kindIcon = (id: TileId): string => ({
+  const order: TileType[] = ['viz', 'spotify', 'discord', 'claude', 'mixer', 'notes', 'sysmon', 'clock'];
+  const kindIcon = (id: TileType): string => ({
     viz: '◢', spotify: '♪', discord: '◇', claude: '⌘', mixer: '♬', notes: '✎',
     sysmon: '▤', clock: '◐',
   }[id]);

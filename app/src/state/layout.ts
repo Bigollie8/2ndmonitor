@@ -1,8 +1,24 @@
 import { useEffect, useState } from 'react';
 
-export type TileId = 'discord' | 'spotify' | 'claude' | 'notes' | 'mixer' | 'sysmon' | 'clock' | 'viz';
+/** Stable id generator. Uses crypto.randomUUID when available, else falls back
+ *  to a Math.random-based string (sufficient for instance ids that don't need
+ *  cryptographic uniqueness). */
+export function newId(): string {
+  return (typeof crypto !== 'undefined' && crypto.randomUUID)
+    ? crypto.randomUUID()
+    : `id_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+}
+
+export type TileType = 'discord' | 'spotify' | 'claude' | 'notes' | 'mixer' | 'sysmon' | 'clock' | 'viz';
+
+/** Canonical render order for tile types. Used by tile-picker, layers panel,
+ *  and the legacy → tiles-array migration. */
+export const ALL_TILE_TYPES: TileType[] = [
+  'viz', 'spotify', 'discord', 'claude', 'mixer', 'notes', 'sysmon', 'clock',
+];
+
 export interface Rect { x: number; y: number; w: number; h: number }
-export type Layout = Partial<Record<TileId, Rect>>;
+export type Layout = Partial<Record<TileType, Rect>>;
 
 /** Top chrome bar height in CSS pixels. Same value at any viewport. */
 export const CHROME_TOP_PX = 56;
@@ -19,7 +35,26 @@ export const SNAP_FRAC = 40 / 2560;
 /** One orientation's full layout state — tile rects (fractional) and visibility. */
 export interface OrientationLayout {
   layout: Layout;
-  hidden: Partial<Record<TileId, boolean>>;
+  hidden: Partial<Record<TileType, boolean>>;
+}
+
+/** A single placed tile in a profile's layout. Multiple instances of the same
+ *  type are allowed for tile types where `multiInstance: true` (currently none —
+ *  Stream Deck in Phase 2b will be the first). Singleton types render at most
+ *  one instance per profile/orientation. */
+export interface TileInstance {
+  /** Stable UUID. Survives across drag/resize/profile-switch/reload. */
+  instanceId: string;
+  /** Which kind of tile renders. */
+  type: TileType;
+  /** Position + size, fractional [0,1] coordinates. */
+  rect: Rect;
+  /** Tile-type-specific settings. Empty for singleton tiles today;
+   *  Stream Deck will populate it with button definitions. */
+  config?: Record<string, unknown>;
+  /** Optional user-set name. Useful for disambiguating multiple instances
+   *  of the same type. No UI sets/reads this in 2a. */
+  name?: string;
 }
 
 const TOP = 56;
@@ -29,7 +64,7 @@ const GAP = 14;
 
 const RAIL_W = 560;
 
-const RAIL_ROWS: { id: TileId; weight: number }[] = [
+const RAIL_ROWS: { id: TileType; weight: number }[] = [
   { id: 'discord', weight: 1.1 },
   { id: 'spotify', weight: 1.0 },
   { id: 'claude',  weight: 1.4 },
@@ -39,7 +74,7 @@ const RAIL_ROWS: { id: TileId; weight: number }[] = [
 
 const STRIP_H = 360;
 
-const STRIP_COLS: { id: TileId; weight: number }[] = [
+const STRIP_COLS: { id: TileType; weight: number }[] = [
   { id: 'sysmon', weight: 1.4 },
   { id: 'clock',  weight: 2.0 },
 ];
@@ -95,9 +130,9 @@ function stripRectsFrac(): Record<string, Rect> {
   return out;
 }
 
-export const DEFAULT_LANDSCAPE_LAYOUT: Record<TileId, Rect> = {
-  ...(railRectsFrac() as Record<TileId, Rect>),
-  ...(stripRectsFrac() as Record<TileId, Rect>),
+export const DEFAULT_LANDSCAPE_LAYOUT: Record<TileType, Rect> = {
+  ...(railRectsFrac() as Record<TileType, Rect>),
+  ...(stripRectsFrac() as Record<TileType, Rect>),
   viz: VIZ_RECT_F,
 };
 
@@ -141,7 +176,7 @@ py += P_2UP2_H + P_GAP;
 
 const P_NOTES: Rect = { x: P_LEFT, y: py, w: P_FULL_W, h: P_NOTES_H };
 
-export const DEFAULT_PORTRAIT_LAYOUT: Record<TileId, Rect> = {
+export const DEFAULT_PORTRAIT_LAYOUT: Record<TileType, Rect> = {
   viz: P_VIZ,
   spotify: P_SPOTIFY,
   discord: P_DISCORD,
@@ -235,7 +270,7 @@ export function useOrientation(): Orientation {
 export function migrateLegacyProfileToOrientations<T extends {
   id: string; name: string; color: string;
   layout?: Layout;
-  hidden?: Partial<Record<TileId, boolean>>;
+  hidden?: Partial<Record<TileType, boolean>>;
   landscape?: OrientationLayout;
   portrait?: OrientationLayout;
 }>(p: T): {
@@ -260,7 +295,7 @@ export function migrateLegacyProfileToOrientations<T extends {
   const legacyLayout = p.layout ?? {};
   const legacyHidden = p.hidden ?? {};
   const convertedLayout: Layout = {};
-  for (const k of Object.keys(legacyLayout) as TileId[]) {
+  for (const k of Object.keys(legacyLayout) as TileType[]) {
     const r = legacyLayout[k];
     if (r) convertedLayout[k] = legacyRectToFraction(r);
   }

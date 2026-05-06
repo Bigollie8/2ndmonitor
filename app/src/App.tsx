@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react';
-import type { TileId, Layout, OrientationLayout } from './state/layout';
+import type { TileType, Layout, OrientationLayout } from './state/layout';
 import {
   DEFAULT_LANDSCAPE_LAYOUT,
   DEFAULT_PORTRAIT_LAYOUT,
   migrateLegacyProfileToOrientations,
   useCanvas,
   useOrientation,
+  newId,
 } from './state/layout';
 import type { Track, Profile, AccentTheme, VizMode, Density, Todo, WeatherLocation, AppMetrics } from './types';
 import type { GeocodeResult } from './state/weatherLocation';
@@ -93,12 +94,6 @@ const TWEAK_DEFAULTS: TweakState = {
 
 const PROFILE_DEFAULT_COLORS = ['#a78bfa', '#f59e0b', '#22d3ee', '#22c55e', '#f472b6', '#60a5fa', '#facc15', '#f97316'];
 
-function newId(): string {
-  return (typeof crypto !== 'undefined' && crypto.randomUUID)
-    ? crypto.randomUUID()
-    : `p_${Date.now()}_${Math.random().toString(36).slice(2)}`;
-}
-
 /** Migration: legacy shape (top-level `layout`/`hidden`, no `profiles`) → new
  *  profile-shaped state. Idempotent: returns input unchanged if already migrated. */
 function migrateTweaks(loaded: Record<string, unknown>): Record<string, unknown> {
@@ -116,7 +111,7 @@ function migrateTweaks(loaded: Record<string, unknown>): Record<string, unknown>
     result = loaded;
   } else {
     const legacyLayout = (loaded.layout as Layout | undefined) ?? {};
-    const legacyHidden = (loaded.hidden as Partial<Record<TileId, boolean>> | undefined) ?? {};
+    const legacyHidden = (loaded.hidden as Partial<Record<TileType, boolean>> | undefined) ?? {};
     const next: Record<string, unknown> = { ...loaded };
     delete next.layout;
     delete next.hidden;
@@ -184,7 +179,7 @@ function migrateTweaks(loaded: Record<string, unknown>): Record<string, unknown>
   return result;
 }
 
-const ALL_TILES: { id: TileId; label: string }[] = [
+const ALL_TILES: { id: TileType; label: string }[] = [
   { id: 'discord', label: 'Discord' },
   { id: 'spotify', label: 'Now playing' },
   { id: 'claude',  label: 'Claude Code' },
@@ -224,7 +219,7 @@ export default function App() {
   const [showSwitcher, setShowSwitcher] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [showGallery, setShowGallery] = useState(false);
-  const [selectedTileId, setSelectedTileId] = useState<TileId>('viz');
+  const [selectedTileId, setSelectedTileId] = useState<TileType>('viz');
   const sysmon = useSysmon();
   const spectrumRef = useSpectrumRef();
   const { track: livePlaying, playback: livePlayback } = useNowPlaying();
@@ -363,11 +358,11 @@ export default function App() {
       [orientation]: { ...activeOrientation, ...patch },
     } as Partial<Profile>);
   };
-  const setHidden = (id: TileId, hide: boolean) => {
+  const setHidden = (id: TileType, hide: boolean) => {
     updateActiveOrientation({ hidden: { ...hidden, [id]: hide || undefined } });
   };
 
-  const renderTile = (id: TileId) => {
+  const renderTile = (id: TileType) => {
     switch (id) {
       case 'discord':
         return <DiscordTile density={t.density} accent={accent} />;
@@ -466,7 +461,7 @@ export default function App() {
             setLayout={(next) => updateActiveOrientation({ layout: next })}
             selectedId={selectedTileId}
             setSelectedId={setSelectedTileId}
-            hiddenIds={(Object.keys(hidden) as TileId[]).filter((k) => hidden[k])}
+            hiddenIds={(Object.keys(hidden) as TileType[]).filter((k) => hidden[k])}
             snap={snapEnabled}
             setSnap={setSnapEnabled}
             profileName={activeProfile.name}
