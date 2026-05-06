@@ -39,6 +39,8 @@ import { TileFrame } from './components/TileFrame';
 import {
   TweaksPanel, TweakSection, TweakRadio, TweakSelect, TweakButton,
 } from './components/tweaks';
+import { StreamDeckTile } from './components/StreamDeckTile';
+import { parseStreamDeckConfig } from './state/actions';
 interface VizColorOverride {
   enabled: boolean;
   accent: string;
@@ -461,9 +463,21 @@ export default function App() {
           />
         );
       case 'streamDeck':
-        // Placeholder — actual component lands in a later task. Render nothing
-        // so the tile slot is reserved without crashing.
-        return null;
+        return (
+          <StreamDeckTile
+            config={parseStreamDeckConfig(instance.config)}
+            setConfig={(next) => updateActiveOrientation({
+              tiles: updateInstance(activeOrientation.tiles, instance.instanceId, { config: next as unknown as Record<string, unknown> }),
+            })}
+            editing={editMode}
+            density={t.density}
+            accent={accent}
+            vizMode={t.vizMode}
+            setVizMode={(m) => setTweak('vizMode', m)}
+            profiles={t.profiles}
+            setActiveProfileId={(id) => setTweak('activeProfileId', id)}
+          />
+        );
     }
   };
 
