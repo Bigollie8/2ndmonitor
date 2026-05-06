@@ -31,6 +31,7 @@ pub fn run() {
             spotify::spotify_connect,
             spotify::spotify_disconnect,
             spotify::spotify_get_client_id,
+            spotify::spotify_set_volume,
             tweaks::tweaks_load,
             tweaks::tweaks_save,
             weather::set_weather_location,
