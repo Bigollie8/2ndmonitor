@@ -161,6 +161,7 @@ fn apply_player<R: Runtime>(app: &AppHandle<R>) {
             s.device_id = None;
             s.device_name = None;
             s.volume_supported = false;
+            s.error = None;
             drop(s);
             emit_state(app);
         }
