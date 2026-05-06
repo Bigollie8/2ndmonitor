@@ -228,3 +228,36 @@ test('updateInstance: patches matching instance, leaves others unchanged', () =>
   assert.equal(after[1]?.rect.x, 0);
   assert.equal(before[0]?.rect.x, 0);
 });
+
+import { migrateLayoutHiddenToTiles, ALL_TILE_TYPES } from './layout';
+
+test('migrateLayoutHiddenToTiles: empty layout+hidden produces full default tile list', () => {
+  const tiles = migrateLayoutHiddenToTiles({}, {}, DEFAULT_LANDSCAPE_LAYOUT);
+  assert.equal(tiles.length, ALL_TILE_TYPES.length);
+  // Each instance has a unique instanceId
+  const ids = tiles.map((t) => t.instanceId);
+  assert.equal(new Set(ids).size, ids.length);
+});
+
+test('migrateLayoutHiddenToTiles: hidden type is excluded from result', () => {
+  const tiles = migrateLayoutHiddenToTiles({}, { discord: true }, DEFAULT_LANDSCAPE_LAYOUT);
+  assert.equal(tiles.length, ALL_TILE_TYPES.length - 1);
+  assert.equal(tiles.find((t) => t.type === 'discord'), undefined);
+});
+
+test('migrateLayoutHiddenToTiles: custom layout rect is preserved, others use defaults', () => {
+  const customRect = { x: 0.5, y: 0.5, w: 0.3, h: 0.3 };
+  const layout: Layout = { viz: customRect };
+  const tiles = migrateLayoutHiddenToTiles(layout, {}, DEFAULT_LANDSCAPE_LAYOUT);
+  const vizInst = tiles.find((t) => t.type === 'viz');
+  assert.deepEqual(vizInst?.rect, customRect);
+  // Spotify uses default
+  const spotifyInst = tiles.find((t) => t.type === 'spotify');
+  assert.deepEqual(spotifyInst?.rect, DEFAULT_LANDSCAPE_LAYOUT.spotify);
+});
+
+test('migrateLayoutHiddenToTiles: result preserves ALL_TILE_TYPES order', () => {
+  const tiles = migrateLayoutHiddenToTiles({}, {}, DEFAULT_LANDSCAPE_LAYOUT);
+  const types = tiles.map((t) => t.type);
+  assert.deepEqual(types, ALL_TILE_TYPES);
+});

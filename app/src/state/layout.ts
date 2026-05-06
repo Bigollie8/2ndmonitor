@@ -375,3 +375,24 @@ export function updateInstance(
 ): TileInstance[] {
   return tiles.map((t) => (t.instanceId === instanceId ? { ...t, ...patch } : t));
 }
+
+/** Convert legacy {layout, hidden} shape to the new tiles array.
+ *  Walks ALL_TILE_TYPES order. For each type:
+ *    - if hidden[type] → skip
+ *    - else create instance { instanceId: newId(), type, rect: layout[type] ?? defaults[type] }
+ *
+ *  Pure function; deterministic given the same inputs (other than the fresh
+ *  instanceIds). Idempotency at the call-site level is the caller's concern. */
+export function migrateLayoutHiddenToTiles(
+  layout: Layout,
+  hidden: Partial<Record<TileType, boolean>>,
+  defaults: Record<TileType, Rect>,
+): TileInstance[] {
+  const out: TileInstance[] = [];
+  for (const type of ALL_TILE_TYPES) {
+    if (hidden[type]) continue;
+    const rect = layout[type] ?? defaults[type];
+    out.push({ instanceId: newId(), type, rect });
+  }
+  return out;
+}
