@@ -4,6 +4,7 @@ import {
   DEFAULT_LANDSCAPE_LAYOUT,
   DEFAULT_PORTRAIT_LAYOUT,
   migrateLegacyProfileToOrientations,
+  useCanvas,
   useOrientation,
 } from './state/layout';
 import type { Track, Profile, AccentTheme, VizMode, Density, Todo, WeatherLocation, AppMetrics } from './types';
@@ -716,6 +717,7 @@ function TopChrome({ accent, editMode, setEditMode, accentLinked, track, profile
   onSwitcher: () => void;
   onOnboarding: () => void;
 }) {
+  const canvas = useCanvas();
   const visibleProfiles = profiles.slice(0, 4);
   const overflow = Math.max(0, profiles.length - visibleProfiles.length);
   return (
@@ -767,7 +769,7 @@ function TopChrome({ accent, editMode, setEditMode, accentLinked, track, profile
         border: editMode ? 'none' : '1px solid rgba(255,255,255,0.1)',
         cursor: 'pointer', fontWeight: 600,
       }}>✎ Edit</button>
-      <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)', fontFamily: '"JetBrains Mono", ui-monospace, monospace' }}>2560×1440</span>
+      <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)', fontFamily: '"JetBrains Mono", ui-monospace, monospace' }}>{Math.round(canvas.w)}×{Math.round(canvas.h)}</span>
     </div>
   );
 }
