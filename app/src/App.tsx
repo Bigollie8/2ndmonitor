@@ -491,7 +491,11 @@ export default function App() {
                 const targetId = result.profileId ?? t.activeProfileId;
                 setTweak('profiles', t.profiles.map((p) =>
                   p.id === targetId
-                    ? { ...p, landscape: { ...p.landscape, hidden: result.hiddenForActive! } }
+                    ? {
+                        ...p,
+                        landscape: { ...p.landscape, hidden: result.hiddenForActive! },
+                        portrait:  { ...p.portrait,  hidden: result.hiddenForActive! },
+                      }
                     : p
                 ));
               }

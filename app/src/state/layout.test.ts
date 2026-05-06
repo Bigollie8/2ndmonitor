@@ -127,3 +127,14 @@ test('DEFAULT_PORTRAIT_LAYOUT: tiles in the same row do not overlap', () => {
   const { sysmon, clock } = DEFAULT_PORTRAIT_LAYOUT;
   assert.ok(sysmon.x + sysmon.w <= clock.x + 1e-9, 'sysmon/clock overlap horizontally');
 });
+
+test('DEFAULT_PORTRAIT_LAYOUT: bottom edges do not overlap bottom chrome on a 1920h canvas', () => {
+  const CANVAS_H = 1920;
+  const bottomReserved = CHROME_BOTTOM_PX / CANVAS_H;
+  for (const [id, r] of Object.entries(DEFAULT_PORTRAIT_LAYOUT)) {
+    assert.ok(
+      r.y + r.h <= 1 - bottomReserved + 1e-6,
+      `${id} bottom edge ${r.y + r.h} exceeds 1 - bottomReserved (${1 - bottomReserved}) on a 1920h canvas`,
+    );
+  }
+});

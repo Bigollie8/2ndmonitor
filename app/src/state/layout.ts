@@ -118,7 +118,7 @@ const P_NOWP_H = 0.10;
 const P_2UP1_H = 0.12;          // discord + mixer
 const P_CLAUDE_H = 0.11;
 const P_2UP2_H = 0.11;          // sysmon + clock
-const P_NOTES_H = 0.06;
+const P_NOTES_H = 0.045;
 
 let py = P_TOP + 8 / 1920;
 
