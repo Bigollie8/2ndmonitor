@@ -1,18 +1,12 @@
 import { useState } from 'react';
 import type { Profile } from '../types';
-import type { TileType, Rect } from './../state/layout';
-import { DEFAULT_LANDSCAPE_LAYOUT, migrateLegacyProfileToOrientations } from './../state/layout';
+import type { TileInstance } from './../state/layout';
+import { newId } from './../state/layout';
 
 const CARD_PALETTE = [
   '#a78bfa', '#f59e0b', '#22d3ee', '#22c55e',
   '#f472b6', '#60a5fa', '#facc15', '#f97316',
 ];
-
-function newId(): string {
-  return (typeof crypto !== 'undefined' && crypto.randomUUID)
-    ? crypto.randomUUID()
-    : `p_${Date.now()}_${Math.random().toString(36).slice(2)}`;
-}
 
 export function ProfileSwitcher({
   accent, profiles, activeProfileId, setActiveProfileId, setProfiles, onClose,
@@ -45,13 +39,16 @@ export function ProfileSwitcher({
     const usedColors = new Set(profiles.map((p) => p.color));
     const color = CARD_PALETTE.find((c) => !usedColors.has(c)) ?? CARD_PALETTE[profiles.length % CARD_PALETTE.length]!;
     const baseName = `Profile ${profiles.length + 1}`;
-    const created: Profile = migrateLegacyProfileToOrientations({
+    // Clone source tiles with fresh instanceIds so the new profile is independent.
+    const cloneTiles = (ts: TileInstance[]): TileInstance[] =>
+      ts.map((t) => ({ ...t, instanceId: newId() }));
+    const created: Profile = {
       id: newId(),
       name: baseName,
       color,
-      layout: source ? { ...source.landscape.layout } : {},
-      hidden: source ? { ...source.landscape.hidden } : {},
-    });
+      landscape: { tiles: source ? cloneTiles(source.landscape.tiles) : [] },
+      portrait:  { tiles: source ? cloneTiles(source.portrait.tiles)  : [] },
+    };
     setProfiles([...profiles, created]);
     setActiveProfileId(created.id);
   };
@@ -138,10 +135,6 @@ function ProfileCard({
     setEditingName(false);
   };
 
-  // Count visible tiles (i.e. not hidden) for the preview card summary.
-  const ALL_TILES: TileType[] = ['discord', 'spotify', 'claude', 'notes', 'sysmon', 'clock', 'viz'];
-  const tileCount = ALL_TILES.filter((id) => !profile.landscape.hidden[id]).length;
-
   return (
     <div style={{
       borderRadius: 12, overflow: 'hidden',
@@ -220,7 +213,7 @@ function ProfileCard({
           >🗑</button>
         </div>
         <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.35)', fontFamily: '"JetBrains Mono", ui-monospace, monospace' }}>
-          {tileCount} tile{tileCount === 1 ? '' : 's'} · {Object.keys(profile.landscape.hidden).filter((k) => profile.landscape.hidden[k as TileType]).length} hidden
+          {profile.landscape.tiles.length} tile{profile.landscape.tiles.length === 1 ? '' : 's'}
         </div>
       </div>
     </div>
@@ -231,23 +224,15 @@ function ProfileCard({
 function LayoutPreview({ profile }: { profile: Profile }) {
   const W = 480, H = 270;
 
-  const tileIds: TileType[] = ['discord', 'spotify', 'claude', 'notes', 'sysmon', 'clock', 'viz'];
-  const visible = tileIds.filter((id) => !profile.landscape.hidden[id]);
-
-  const rectFor = (id: TileType): Rect => {
-    // Fractional coords (0–1) — fall back to default landscape positions
-    return profile.landscape.layout[id] ?? DEFAULT_LANDSCAPE_LAYOUT[id];
-  };
-
   return (
     <svg viewBox={`0 0 ${W} ${H}`} style={{ width: '100%', display: 'block', background: '#06070a' }}>
       <rect x="0" y="0" width={W} height={56 / 1440 * H} fill="rgba(255,255,255,0.04)" />
-      {visible.map((id) => {
-        const r = rectFor(id);
-        const isViz = id === 'viz';
+      {profile.landscape.tiles.map((inst) => {
+        const r = inst.rect;
+        const isViz = inst.type === 'viz';
         return (
           <rect
-            key={id}
+            key={inst.instanceId}
             x={r.x * W} y={r.y * H}
             width={r.w * W} height={r.h * H}
             fill={isViz ? `${profile.color}40` : 'rgba(255,255,255,0.03)'}

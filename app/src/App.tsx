@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import type { TileType, Layout, OrientationLayout } from './state/layout';
+import { useEffect, useMemo, useState } from 'react';
+import type { TileType, Layout, TileInstance, OrientationLayout, Rect } from './state/layout';
 import {
   DEFAULT_LANDSCAPE_LAYOUT,
   DEFAULT_PORTRAIT_LAYOUT,
@@ -7,6 +7,12 @@ import {
   useCanvas,
   useOrientation,
   newId,
+  ALL_TILE_TYPES,
+  migrateLayoutHiddenToTiles,
+  findInstance,
+  addInstance,
+  removeInstance,
+  updateInstance,
 } from './state/layout';
 import type { Track, Profile, AccentTheme, VizMode, Density, Todo, WeatherLocation, AppMetrics } from './types';
 import type { GeocodeResult } from './state/weatherLocation';
@@ -163,18 +169,54 @@ function migrateTweaks(loaded: Record<string, unknown>): Record<string, unknown>
   // so auto-inserting would visually overlap them. Fresh installs and brand-new
   // profiles get the mixer visible by default. Idempotent via flag.
   if (!result.mixer_migration_v1) {
-    const profiles = result.profiles as Profile[] | undefined;
+    const profiles = result.profiles as Array<Record<string, unknown>> | undefined;
     if (profiles) {
       result.profiles = profiles.map((p) => {
-        const hasCustomLandscape = Object.keys(p.landscape?.layout ?? {}).length > 0;
+        const landscape = p.landscape as { layout?: Layout; hidden?: Partial<Record<TileType, boolean>> } | undefined;
+        const hasCustomLandscape = Object.keys(landscape?.layout ?? {}).length > 0;
         if (!hasCustomLandscape) return p;
         return {
           ...p,
-          landscape: { ...p.landscape, hidden: { ...p.landscape.hidden, mixer: true } },
+          landscape: { ...landscape, hidden: { ...landscape?.hidden, mixer: true } },
         };
       });
     }
     result.mixer_migration_v1 = true;
+  }
+
+  // Tile-array migration: each orientation's {layout, hidden} becomes {tiles}.
+  // Idempotent via the v1 flag. Defensive fallback: if migration produces an
+  // empty array but the source had data, use full defaults.
+  if (!result.tile_array_migration_v1) {
+    const profiles = result.profiles as Array<Record<string, unknown>> | undefined;
+    if (profiles) {
+      result.profiles = profiles.map((p) => {
+        const profile = p as Record<string, unknown>;
+        const migrateOrientation = (
+          slotRaw: unknown,
+          defaults: Record<TileType, Rect>,
+        ): { tiles: TileInstance[] } => {
+          const slot = slotRaw as { layout?: Layout; hidden?: Partial<Record<TileType, boolean>>; tiles?: TileInstance[] } | undefined;
+          if (slot?.tiles) return { tiles: slot.tiles };
+          const layout = slot?.layout ?? {};
+          const hidden = slot?.hidden ?? {};
+          let tiles = migrateLayoutHiddenToTiles(layout, hidden, defaults);
+          const hadData = Object.keys(layout).length > 0 || Object.keys(hidden).length > 0;
+          if (tiles.length === 0 && hadData) {
+            tiles = ALL_TILE_TYPES.map((type) => ({
+              instanceId: newId(), type, rect: defaults[type],
+            }));
+          }
+          return { tiles };
+        };
+        return {
+          ...profile,
+          landscape: migrateOrientation(profile.landscape, DEFAULT_LANDSCAPE_LAYOUT),
+          portrait: migrateOrientation(profile.portrait, DEFAULT_PORTRAIT_LAYOUT),
+        };
+      });
+    }
+    result.tile_array_migration_v1 = true;
   }
   return result;
 }
@@ -219,7 +261,7 @@ export default function App() {
   const [showSwitcher, setShowSwitcher] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [showGallery, setShowGallery] = useState(false);
-  const [selectedTileId, setSelectedTileId] = useState<TileType>('viz');
+  const [selectedInstanceId, setSelectedInstanceId] = useState<string>('');
   const sysmon = useSysmon();
   const spectrumRef = useSpectrumRef();
   const { track: livePlaying, playback: livePlayback } = useNowPlaying();
@@ -336,16 +378,18 @@ export default function App() {
   const orientation = useOrientation();
 
   const overlaysOpen = editMode || showSwitcher || showOnboarding;
-  const fallbackProfile: Profile = {
+  const fallbackProfile = useMemo<Profile>(() => ({
     id: '_fallback', name: 'Default', color: '#a78bfa',
-    landscape: { layout: {}, hidden: {} },
-    portrait: { layout: { ...DEFAULT_PORTRAIT_LAYOUT }, hidden: {} },
-  };
+    landscape: { tiles: ALL_TILE_TYPES.map((type) => ({ instanceId: newId(), type, rect: DEFAULT_LANDSCAPE_LAYOUT[type] })) },
+    portrait:  { tiles: ALL_TILE_TYPES.map((type) => ({ instanceId: newId(), type, rect: DEFAULT_PORTRAIT_LAYOUT[type] })) },
+  }), []);
   const activeProfile: Profile = t.profiles.find((p) => p.id === t.activeProfileId) ?? t.profiles[0] ?? fallbackProfile;
   const activeOrientation = activeProfile[orientation];
-  const hidden = activeOrientation.hidden;
-  const activeLayout: Layout = activeOrientation.layout;
-  const visibleTileCount = ALL_TILES.filter(({ id }) => !hidden[id]).length;
+  const visibleTileCount = activeOrientation.tiles.length;
+  useEffect(() => {
+    if (selectedInstanceId && activeOrientation.tiles.some((t) => t.instanceId === selectedInstanceId)) return;
+    setSelectedInstanceId(activeOrientation.tiles[0]?.instanceId ?? '');
+  }, [activeOrientation.tiles, selectedInstanceId]);
   const fps = useFrameRate();
 
   const updateActiveProfile = (patch: Partial<Profile>) => {
@@ -358,8 +402,23 @@ export default function App() {
       [orientation]: { ...activeOrientation, ...patch },
     } as Partial<Profile>);
   };
-  const setHidden = (id: TileType, hide: boolean) => {
-    updateActiveOrientation({ hidden: { ...hidden, [id]: hide || undefined } });
+  const removeTileByType = (type: TileType) => {
+    const inst = findInstance(activeOrientation.tiles, type);
+    if (!inst) return;
+    updateActiveOrientation({ tiles: removeInstance(activeOrientation.tiles, inst.instanceId) });
+  };
+  const addTileByType = (type: TileType) => {
+    if (findInstance(activeOrientation.tiles, type)) return;
+    const defaults = orientation === 'portrait' ? DEFAULT_PORTRAIT_LAYOUT : DEFAULT_LANDSCAPE_LAYOUT;
+    updateActiveOrientation({
+      tiles: addInstance(activeOrientation.tiles, {
+        instanceId: newId(), type, rect: defaults[type],
+      }),
+    });
+  };
+  const setTileVisibility = (type: TileType, visible: boolean) => {
+    if (visible) addTileByType(type);
+    else removeTileByType(type);
   };
 
   const renderTile = (id: TileType) => {
@@ -419,23 +478,22 @@ export default function App() {
           onSwitcher={() => setShowSwitcher(true)}
           onOnboarding={() => setShowOnboarding(true)}
         />
-        {ALL_TILES.map(({ id }) => {
-          if (hidden[id]) return null;
-          const defaults = orientation === 'portrait' ? DEFAULT_PORTRAIT_LAYOUT : DEFAULT_LANDSCAPE_LAYOUT;
-          const rect = activeLayout[id] ?? defaults[id];
+        {activeOrientation.tiles.map((instance) => {
           return (
             <TileFrame
-              key={id}
-              id={id}
-              rect={rect}
+              key={instance.instanceId}
+              id={instance.instanceId}
+              rect={instance.rect}
               editing={editMode}
               snap={snapEnabled}
-              selected={selectedTileId === id}
-              onSelect={() => setSelectedTileId(id)}
-              onChange={(r) => updateActiveOrientation({ layout: { ...activeLayout, [id]: r } })}
+              selected={selectedInstanceId === instance.instanceId}
+              onSelect={() => setSelectedInstanceId(instance.instanceId)}
+              onChange={(r) => updateActiveOrientation({
+                tiles: updateInstance(activeOrientation.tiles, instance.instanceId, { rect: r }),
+              })}
               accent={accent}
             >
-              {renderTile(id)}
+              {renderTile(instance.type)}
             </TileFrame>
           );
         })}
@@ -452,16 +510,18 @@ export default function App() {
             accent={accent}
             accent2={accent2}
             onExit={() => setEditMode(false)}
-            onRemove={(id) => setHidden(id, true)}
-            onAdd={(id, rect) => updateActiveOrientation({
-              layout: { ...activeLayout, [id]: rect },
-              hidden: { ...hidden, [id]: undefined },
+            onRemove={(instanceId) => updateActiveOrientation({
+              tiles: removeInstance(activeOrientation.tiles, instanceId),
             })}
-            layout={activeLayout}
-            setLayout={(next) => updateActiveOrientation({ layout: next })}
-            selectedId={selectedTileId}
-            setSelectedId={setSelectedTileId}
-            hiddenIds={(Object.keys(hidden) as TileType[]).filter((k) => hidden[k])}
+            onAdd={(type, rect) => updateActiveOrientation({
+              tiles: addInstance(activeOrientation.tiles, {
+                instanceId: newId(), type, rect,
+              }),
+            })}
+            tiles={activeOrientation.tiles}
+            setTiles={(next) => updateActiveOrientation({ tiles: next })}
+            selectedInstanceId={selectedInstanceId}
+            setSelectedInstanceId={setSelectedInstanceId}
             snap={snapEnabled}
             setSnap={setSnapEnabled}
             profileName={activeProfile.name}
@@ -489,15 +549,20 @@ export default function App() {
               }
               if (result?.hiddenForActive) {
                 const targetId = result.profileId ?? t.activeProfileId;
-                setTweak('profiles', t.profiles.map((p) =>
-                  p.id === targetId
-                    ? {
-                        ...p,
-                        landscape: { ...p.landscape, hidden: result.hiddenForActive! },
-                        portrait:  { ...p.portrait,  hidden: result.hiddenForActive! },
-                      }
-                    : p
-                ));
+                const hiddenMap = result.hiddenForActive!;
+                setTweak('profiles', t.profiles.map((p) => {
+                  if (p.id !== targetId) return p;
+                  const hideTypes = (Object.keys(hiddenMap) as TileType[]).filter((type) => hiddenMap[type]);
+                  let landTiles = p.landscape.tiles;
+                  let portTiles = p.portrait.tiles;
+                  for (const type of hideTypes) {
+                    const li = findInstance(landTiles, type);
+                    if (li) landTiles = removeInstance(landTiles, li.instanceId);
+                    const pi = findInstance(portTiles, type);
+                    if (pi) portTiles = removeInstance(portTiles, pi.instanceId);
+                  }
+                  return { ...p, landscape: { tiles: landTiles }, portrait: { tiles: portTiles } };
+                }));
               }
               setTweak('onboardingDone', true);
               setShowOnboarding(false);
@@ -643,7 +708,14 @@ export default function App() {
           label="Tile density" value={t.density}
           options={['compact', 'regular', 'spacious']}
           onChange={(v) => setTweak('density', v)} />
-        <TweakButton label="Reset layout" onClick={() => updateActiveOrientation({ layout: {} })} />
+        <TweakButton label="Reset layout" onClick={() => {
+          const defaults = orientation === 'portrait' ? DEFAULT_PORTRAIT_LAYOUT : DEFAULT_LANDSCAPE_LAYOUT;
+          updateActiveOrientation({
+            tiles: ALL_TILE_TYPES.map((type) => ({
+              instanceId: newId(), type, rect: defaults[type],
+            })),
+          });
+        }} />
         <TweakSection label="Weather" />
         <WeatherSearch
           current={t.weatherLocation}
@@ -664,7 +736,7 @@ export default function App() {
         </div>
         <TweakSection label="Tiles · show / hide" />
         {ALL_TILES.filter(({ id }) => id !== 'viz').map((def) => {
-          const visible = !hidden[def.id];
+          const visible = findInstance(activeOrientation.tiles, def.id) !== undefined;
           return (
             <label key={def.id} style={{
               display: 'flex', alignItems: 'center', gap: 8, padding: '3px 0',
@@ -673,8 +745,8 @@ export default function App() {
             }}>
               <input
                 type="checkbox"
-                checked={visible}
-                onChange={(e) => setHidden(def.id, !e.target.checked)}
+                checked={findInstance(activeOrientation.tiles, def.id) !== undefined}
+                onChange={(e) => setTileVisibility(def.id, e.target.checked)}
                 style={{ accentColor: '#29261b', width: 13, height: 13 }}
               />
               <span style={{ fontSize: 11.5, fontWeight: 500 }}>{def.label}</span>

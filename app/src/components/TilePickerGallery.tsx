@@ -1,9 +1,10 @@
 import React, { useEffect } from 'react';
-import type { TileType, Rect, Layout, Orientation } from '../state/layout';
+import type { TileType, TileInstance, Rect, Orientation } from '../state/layout';
 import {
   DEFAULT_LANDSCAPE_LAYOUT,
   DEFAULT_PORTRAIT_LAYOUT,
   findEmptyRect,
+  findInstance,
 } from '../state/layout';
 
 const TILE_META: Record<TileType, { icon: string; label: string; description: string; multiInstance: boolean }> = {
@@ -20,17 +21,16 @@ const TILE_META: Record<TileType, { icon: string; label: string; description: st
 const ORDER: TileType[] = ['viz', 'spotify', 'discord', 'claude', 'mixer', 'notes', 'sysmon', 'clock'];
 
 export function TilePickerGallery({
-  orientation, canvas, layout, hidden, profileName, accent,
+  orientation, canvas, tiles, profileName, accent,
   onAdd, onRemove, onClose,
 }: {
   orientation: Orientation;
   canvas: { w: number; h: number };
-  layout: Layout;
-  hidden: Partial<Record<TileType, boolean>>;
+  tiles: TileInstance[];
   profileName: string;
   accent: string;
-  onAdd: (id: TileType, rect: Rect) => void;
-  onRemove: (id: TileType) => void;
+  onAdd: (type: TileType, rect: Rect) => void;
+  onRemove: (instanceId: string) => void;
   onClose: () => void;
 }) {
   // Esc closes the modal.
@@ -47,26 +47,21 @@ export function TilePickerGallery({
 
   const defaults = orientation === 'portrait' ? DEFAULT_PORTRAIT_LAYOUT : DEFAULT_LANDSCAPE_LAYOUT;
 
-  const visibleRects = (Object.keys(layout) as TileType[])
-    .filter((id) => !hidden[id] && layout[id])
-    .map((id) => layout[id]!)
-    // Also include tiles that are visible but use the default rect (no entry in layout):
-    .concat(
-      ORDER.filter((id) => !hidden[id] && !layout[id]).map((id) => defaults[id]),
-    );
+  const visibleRects = tiles.map((t) => t.rect);
 
-  const handleClick = (id: TileType) => {
-    if (hidden[id]) {
-      const preferred = layout[id] ?? defaults[id];
+  const handleClick = (type: TileType) => {
+    const existingInstance = findInstance(tiles, type);
+    if (!existingInstance) {
+      const preferred = defaults[type];
       const rect = findEmptyRect(visibleRects, preferred, canvas);
-      onAdd(id, rect);
+      onAdd(type, rect);
       onClose();
-    } else if (id === 'viz') {
+    } else if (type === 'viz') {
       // Viz cannot be removed. Defensive guard; the card is also rendered
       // disabled below.
       return;
     } else {
-      onRemove(id);
+      onRemove(existingInstance.instanceId);
       onClose();
     }
   };
@@ -114,7 +109,7 @@ export function TilePickerGallery({
         }}>
           {ORDER.map((id) => {
             const meta = TILE_META[id];
-            const isHidden = !!hidden[id];
+            const isHidden = !findInstance(tiles, id);
             const isViz = id === 'viz';
             const disabled = isViz && !isHidden;
             const cursor = disabled ? 'not-allowed' : 'pointer';

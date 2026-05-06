@@ -1,32 +1,34 @@
 import React, { useState } from 'react';
-import type { TileType, Rect, Layout } from '../state/layout';
+import type { TileType, TileInstance, Rect } from '../state/layout';
 import {
   DEFAULT_LANDSCAPE_LAYOUT,
   DEFAULT_PORTRAIT_LAYOUT,
   clampRectFrac,
   useCanvas,
   useOrientation,
+  findInstance,
+  getInstance,
+  removeInstance,
+  updateInstance,
 } from '../state/layout';
 import { TilePickerGallery } from './TilePickerGallery';
 
 export function EditModeOverlay({
   accent, accent2, onExit, onRemove, onAdd,
-  layout, setLayout,
-  selectedId, setSelectedId,
-  hiddenIds = [],
+  tiles, setTiles,
+  selectedInstanceId, setSelectedInstanceId,
   snap, setSnap,
   profileName,
 }: {
   accent: string;
   accent2: string;
   onExit: () => void;
-  onRemove?: (id: TileType) => void;
-  onAdd: (id: TileType, rect: Rect) => void;
-  layout: Layout;
-  setLayout: (next: Layout) => void;
-  selectedId: TileType;
-  setSelectedId: (id: TileType) => void;
-  hiddenIds?: TileType[];
+  onRemove?: (instanceId: string) => void;
+  onAdd: (type: TileType, rect: Rect) => void;
+  tiles: TileInstance[];
+  setTiles: (next: TileInstance[]) => void;
+  selectedInstanceId: string;
+  setSelectedInstanceId: (id: string) => void;
   snap: boolean;
   setSnap: (enabled: boolean) => void;
   profileName: string;
@@ -42,24 +44,24 @@ export function EditModeOverlay({
     notes: 'Todos', sysmon: 'System monitor', clock: 'Now & forecast', viz: 'Audio visualizer',
   };
 
-  const allIds: TileType[] = ['discord', 'spotify', 'claude', 'mixer', 'notes', 'viz', 'sysmon', 'clock'];
-  const visibleIds = allIds.filter((id) => !hiddenIds.includes(id));
   const orientation = useOrientation();
   const canvas = useCanvas();
   const defaults = orientation === 'portrait' ? DEFAULT_PORTRAIT_LAYOUT : DEFAULT_LANDSCAPE_LAYOUT;
-  const tiles: Partial<Record<TileType, { rect: Rect; label: string }>> = {};
-  for (const id of visibleIds) {
-    tiles[id] = { rect: layout[id] ?? defaults[id], label: ALL_LABELS[id] };
+
+  const tileMap: Record<string, { rect: Rect; label: string; type: TileType }> = {};
+  for (const inst of tiles) {
+    tileMap[inst.instanceId] = { rect: inst.rect, label: ALL_LABELS[inst.type], type: inst.type };
   }
 
-  const sel = tiles[selectedId] ?? tiles.viz!;
-  const setRect = (id: TileType, r: Rect) => setLayout({ ...layout, [id]: clampRectFrac(r, canvas) });
-  // Drop the entry so the tile falls back to the orientation default — needed
-  // because snapped values can't reach the non-aligned defaults.
-  const resetRect = (id: TileType) => {
-    const next: Layout = { ...layout };
-    delete next[id];
-    setLayout(next);
+  const sel = tileMap[selectedInstanceId] ?? (tiles[0] ? { rect: tiles[0].rect, label: ALL_LABELS[tiles[0].type], type: tiles[0].type } : undefined);
+
+  const setRect = (instanceId: string, r: Rect) =>
+    setTiles(updateInstance(tiles, instanceId, { rect: clampRectFrac(r, canvas) }));
+
+  const resetRect = (instanceId: string) => {
+    const inst = getInstance(tiles, instanceId);
+    if (!inst) return;
+    setTiles(updateInstance(tiles, instanceId, { rect: defaults[inst.type] }));
   };
 
   return (
@@ -81,34 +83,37 @@ export function EditModeOverlay({
       {showGrid && <GridOverlay />}
       {showGuides && sel && <SmartGuides rect={sel.rect} accent={accent2} canvas={canvas} />}
       <div style={{ pointerEvents: 'auto' }}>
-        {sel && (
+        {sel && selectedInstanceId && (
           <PropertiesPanel
             accent={accent}
-            tile={{ rect: sel.rect, label: sel.label, kind: selectedId }}
-            selectedId={selectedId}
+            tile={{ rect: sel.rect, label: sel.label, kind: sel.type }}
+            selectedInstanceId={selectedInstanceId}
             canvas={canvas}
-            onChangeRect={(r) => setRect(selectedId, r)}
-            onReset={() => resetRect(selectedId)}
+            onChangeRect={(r) => setRect(selectedInstanceId, r)}
+            onReset={() => resetRect(selectedInstanceId)}
             onRemove={
-              onRemove && selectedId !== 'viz'
-                ? () => { onRemove(selectedId); setSelectedId('viz'); }
+              onRemove && sel.type !== 'viz'
+                ? () => {
+                    onRemove(selectedInstanceId);
+                    const next = tiles.find((t) => t.instanceId !== selectedInstanceId);
+                    setSelectedInstanceId(next?.instanceId ?? '');
+                  }
                 : undefined
             }
           />
         )}
-        <LayersPanel accent={accent} selected={selectedId} setSelected={(id) => setSelectedId(id as TileType)} tiles={tiles} canvas={canvas} />
+        <LayersPanel accent={accent} selectedInstanceId={selectedInstanceId} setSelectedInstanceId={setSelectedInstanceId} tiles={tiles} canvas={canvas} labels={ALL_LABELS} />
       </div>
       {pickerOpen && (
         <div style={{ pointerEvents: 'auto' }}>
           <TilePickerGallery
             orientation={orientation}
             canvas={canvas}
-            layout={layout}
-            hidden={Object.fromEntries((hiddenIds as TileType[]).map((id) => [id, true])) as Partial<Record<TileType, boolean>>}
+            tiles={tiles}
             profileName={profileName}
             accent={accent}
-            onAdd={(id, rect) => onAdd(id, rect)}
-            onRemove={(id) => onRemove && onRemove(id)}
+            onAdd={(type, rect) => onAdd(type, rect)}
+            onRemove={(instanceId) => onRemove && onRemove(instanceId)}
             onClose={() => setPickerOpen(false)}
           />
         </div>
@@ -285,11 +290,11 @@ function DistanceMarker({ x, y, w, h, accent, value, orient }: { x: number; y: n
 }
 
 function PropertiesPanel({
-  accent, tile, selectedId, canvas, onChangeRect, onReset, onRemove,
+  accent, tile, selectedInstanceId, canvas, onChangeRect, onReset, onRemove,
 }: {
   accent: string;
   tile: { rect: Rect; label: string; kind: TileType };
-  selectedId: TileType;
+  selectedInstanceId: string;
   canvas: { w: number; h: number };
   onChangeRect: (r: Rect) => void;
   onReset?: () => void;
@@ -308,7 +313,7 @@ function PropertiesPanel({
       <div style={{ padding: '10px 14px', borderBottom: '1px solid rgba(255,255,255,0.06)', display: 'flex', alignItems: 'center', gap: 8 }}>
         <div style={{ width: 8, height: 8, background: accent, borderRadius: 2 }} />
         <span style={{ fontSize: 12, fontWeight: 600, color: '#fff' }}>{tile.label}</span>
-        <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)', fontFamily: '"JetBrains Mono", ui-monospace, monospace', marginLeft: 'auto' }}>#{selectedId}</span>
+        <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)', fontFamily: '"JetBrains Mono", ui-monospace, monospace', marginLeft: 'auto' }}>{tile.kind} · {selectedInstanceId.slice(0, 8)}</span>
       </div>
       <div style={{ overflow: 'auto', padding: '4px 0' }}>
         <PropSection title="Position & size">
@@ -400,17 +405,18 @@ function EmToggle({ on, accent }: { on: boolean; accent: string }) {
   );
 }
 
-function LayersPanel({ accent, selected, setSelected, tiles, canvas }: {
-  accent: string; selected: string;
-  setSelected: (s: string) => void;
-  tiles: Partial<Record<TileType, { rect: Rect; label: string }>>;
+function LayersPanel({ accent, selectedInstanceId, setSelectedInstanceId, tiles, canvas, labels }: {
+  accent: string;
+  selectedInstanceId: string;
+  setSelectedInstanceId: (id: string) => void;
+  tiles: TileInstance[];
   canvas: { w: number; h: number };
+  labels: Record<TileType, string>;
 }) {
-  const order: TileType[] = ['viz', 'spotify', 'discord', 'claude', 'mixer', 'notes', 'sysmon', 'clock'];
-  const kindIcon = (id: TileType): string => ({
+  const kindIcon = (type: TileType): string => ({
     viz: '◢', spotify: '♪', discord: '◇', claude: '⌘', mixer: '♬', notes: '✎',
     sysmon: '▤', clock: '◐',
-  }[id]);
+  }[type]);
   return (
     <div style={{
       position: 'absolute', bottom: 16, left: 16, width: 240,
@@ -421,24 +427,23 @@ function LayersPanel({ accent, selected, setSelected, tiles, canvas }: {
     }}>
       <div style={{ padding: '10px 14px', borderBottom: '1px solid rgba(255,255,255,0.06)', display: 'flex', alignItems: 'center', gap: 8 }}>
         <span style={{ fontSize: 11, fontWeight: 600, color: '#fff' }}>Layers</span>
-        <span style={{ fontSize: 9, color: 'rgba(255,255,255,0.4)', fontFamily: '"JetBrains Mono", ui-monospace, monospace', marginLeft: 'auto' }}>{Object.keys(tiles).length} tiles</span>
+        <span style={{ fontSize: 9, color: 'rgba(255,255,255,0.4)', fontFamily: '"JetBrains Mono", ui-monospace, monospace', marginLeft: 'auto' }}>{tiles.length} tiles</span>
       </div>
       <div style={{ padding: 6 }}>
-        {order.map((id) => {
-          const t = tiles[id];
-          if (!t) return null;
+        {tiles.map((inst) => {
+          const isSelected = selectedInstanceId === inst.instanceId;
           return (
-            <button key={id} onClick={() => setSelected(id)} style={{
+            <button key={inst.instanceId} onClick={() => setSelectedInstanceId(inst.instanceId)} style={{
               width: '100%', display: 'flex', alignItems: 'center', gap: 8,
               padding: '6px 8px', borderRadius: 5, border: 'none', cursor: 'pointer',
-              background: selected === id ? `${accent}25` : 'transparent',
-              color: selected === id ? '#fff' : 'rgba(255,255,255,0.7)',
+              background: isSelected ? `${accent}25` : 'transparent',
+              color: isSelected ? '#fff' : 'rgba(255,255,255,0.7)',
               textAlign: 'left',
             }}>
-              <span style={{ fontSize: 11 }}>{kindIcon(id)}</span>
-              <span style={{ fontSize: 11, flex: 1 }}>{t.label}</span>
+              <span style={{ fontSize: 11 }}>{kindIcon(inst.type)}</span>
+              <span style={{ fontSize: 11, flex: 1 }}>{inst.name ?? labels[inst.type]}</span>
               <span style={{ fontSize: 9, color: 'rgba(255,255,255,0.3)', fontFamily: '"JetBrains Mono", ui-monospace, monospace' }}>
-                {Math.round(t.rect.w * canvas.w)}×{Math.round(t.rect.h * canvas.h)}
+                {Math.round(inst.rect.w * canvas.w)}×{Math.round(inst.rect.h * canvas.h)}
               </span>
             </button>
           );

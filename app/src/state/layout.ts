@@ -32,10 +32,9 @@ export const MIN_SIZE_PX = { w: 200, h: 140 } as const;
  *  today's snap feel on a landscape monitor. */
 export const SNAP_FRAC = 40 / 2560;
 
-/** One orientation's full layout state — tile rects (fractional) and visibility. */
+/** One orientation's full layout state — an ordered list of placed tile instances. */
 export interface OrientationLayout {
-  layout: Layout;
-  hidden: Partial<Record<TileType, boolean>>;
+  tiles: TileInstance[];
 }
 
 /** A single placed tile in a profile's layout. Multiple instances of the same
@@ -264,45 +263,52 @@ export function useOrientation(): Orientation {
 }
 
 /** Convert a legacy profile shape (top-level `layout`/`hidden` in 2560x1440 px)
- *  to the new orientation-aware shape, preserving custom layouts on landscape
- *  and seeding portrait from the default. Idempotent — if `landscape`/`portrait`
- *  are already present, returns the input unchanged. */
+ *  to the new orientation-aware shape using TileInstance arrays. Idempotent —
+ *  if both orientations already have `tiles`, returns them unchanged. */
 export function migrateLegacyProfileToOrientations<T extends {
   id: string; name: string; color: string;
   layout?: Layout;
   hidden?: Partial<Record<TileType, boolean>>;
-  landscape?: OrientationLayout;
-  portrait?: OrientationLayout;
+  landscape?: { layout?: Layout; hidden?: Partial<Record<TileType, boolean>>; tiles?: TileInstance[] };
+  portrait?: { layout?: Layout; hidden?: Partial<Record<TileType, boolean>>; tiles?: TileInstance[] };
 }>(p: T): {
   id: string; name: string; color: string;
   landscape: OrientationLayout;
   portrait: OrientationLayout;
 } {
-  if (p.landscape && p.portrait) {
+  const slotToTiles = (
+    slot: { layout?: Layout; hidden?: Partial<Record<TileType, boolean>>; tiles?: TileInstance[] } | undefined,
+    defaults: Record<TileType, Rect>,
+  ): TileInstance[] => {
+    if (slot?.tiles) return slot.tiles;
+    const layout = slot?.layout ?? {};
+    const hidden = slot?.hidden ?? {};
+    return migrateLayoutHiddenToTiles(layout, hidden, defaults);
+  };
+
+  if (p.landscape?.tiles && p.portrait?.tiles) {
     return {
       id: p.id, name: p.name, color: p.color,
-      landscape: p.landscape, portrait: p.portrait,
+      landscape: { tiles: p.landscape.tiles },
+      portrait: { tiles: p.portrait.tiles },
     };
   }
-  if (p.landscape && !p.portrait) {
-    // Already has landscape — synthesise portrait without clobbering landscape data.
-    return {
-      id: p.id, name: p.name, color: p.color,
-      landscape: p.landscape,
-      portrait: { layout: { ...DEFAULT_PORTRAIT_LAYOUT }, hidden: { ...p.landscape.hidden } },
-    };
-  }
+
   const legacyLayout = p.layout ?? {};
   const legacyHidden = p.hidden ?? {};
-  const convertedLayout: Layout = {};
+  const convertedTopLayout: Layout = {};
   for (const k of Object.keys(legacyLayout) as TileType[]) {
     const r = legacyLayout[k];
-    if (r) convertedLayout[k] = legacyRectToFraction(r);
+    if (r) convertedTopLayout[k] = legacyRectToFraction(r);
   }
+
+  const landscapeSrc = p.landscape ?? { layout: convertedTopLayout, hidden: legacyHidden };
+  const portraitSrc = p.portrait ?? { layout: {}, hidden: legacyHidden };
+
   return {
     id: p.id, name: p.name, color: p.color,
-    landscape: { layout: convertedLayout, hidden: legacyHidden },
-    portrait: { layout: { ...DEFAULT_PORTRAIT_LAYOUT }, hidden: { ...legacyHidden } },
+    landscape: { tiles: slotToTiles(landscapeSrc, DEFAULT_LANDSCAPE_LAYOUT) },
+    portrait:  { tiles: slotToTiles(portraitSrc, DEFAULT_PORTRAIT_LAYOUT) },
   };
 }
 
