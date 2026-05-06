@@ -389,10 +389,40 @@ function SpotifyUpNextView({ accent }: { accent: string }) {
     );
   }
 
+  const reauthBanner = state.needs_reauth ? (
+    <div style={{
+      margin: '6px 10px 0',
+      padding: '6px 10px',
+      borderRadius: 6,
+      background: 'rgba(245, 158, 11, 0.10)',
+      border: '1px solid rgba(245, 158, 11, 0.35)',
+      color: '#fbbf24',
+      fontSize: 11,
+      lineHeight: 1.45,
+    }}>
+      Reconnect to enable playback control (volume).
+      <button
+        onClick={() => disconnect()}
+        style={{
+          marginLeft: 8,
+          background: 'transparent',
+          border: '1px solid rgba(245, 158, 11, 0.55)',
+          color: '#fbbf24',
+          fontSize: 10,
+          padding: '2px 8px',
+          borderRadius: 4,
+          cursor: 'pointer',
+          fontFamily: '"JetBrains Mono", ui-monospace, monospace',
+        }}
+      >sign out</button>
+    </div>
+  ) : null;
+
   if (state.premium_required) {
     return (
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
         <SpotifyConnectionHeader onDisconnect={() => disconnect()} />
+        {reauthBanner}
         <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 18, textAlign: 'center', color: 'rgba(255,255,255,0.55)', fontSize: 11, lineHeight: 1.55 }}>
           <div>
             <div style={{ fontSize: 13, fontWeight: 600, color: '#fff', marginBottom: 6 }}>Premium required</div>
@@ -407,6 +437,7 @@ function SpotifyUpNextView({ accent }: { accent: string }) {
     return (
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
         <SpotifyConnectionHeader onDisconnect={() => disconnect()} />
+        {reauthBanner}
         <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'rgba(255,255,255,0.45)', fontSize: 11 }}>
           Nothing queued.
         </div>
@@ -417,6 +448,7 @@ function SpotifyUpNextView({ accent }: { accent: string }) {
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
       <SpotifyConnectionHeader onDisconnect={() => disconnect()} />
+      {reauthBanner}
       <div style={{ flex: 1, overflowY: 'auto', padding: '4px 8px 10px' }}>
         {state.queue.map((q, i) => <UpNextRow key={(q.id || q.title) + ':' + i} track={q} accent={accent} />)}
       </div>
