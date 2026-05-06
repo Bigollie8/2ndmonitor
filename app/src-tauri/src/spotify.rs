@@ -18,8 +18,10 @@ use tauri::{AppHandle, Emitter, Manager, Runtime};
 
 const REDIRECT_URI: &str = "http://127.0.0.1:14202/callback";
 const CALLBACK_PORT: u16 = 14202;
-const QUEUE_POLL_SECS: u64 = 10;
-const SCOPES: &str = "user-read-currently-playing user-read-playback-state";
+const PLAYER_POLL_SECS: u64 = 5;
+// /me/player/queue is hit every other player tick (so 10 s effective cadence,
+// matching the previous QUEUE_POLL_SECS behaviour).
+const SCOPES: &str = "user-read-currently-playing user-read-playback-state user-modify-playback-state";
 
 #[derive(Default, Serialize, Deserialize, Clone)]
 struct StoredCreds {
@@ -46,6 +48,11 @@ pub struct SpotifyState {
     pub error: Option<String>,
     pub queue: Vec<SpotifyTrack>,
     pub premium_required: bool,
+    pub volume_percent: Option<u8>,    // 0..=100, None when no active device
+    pub device_id: Option<String>,
+    pub device_name: Option<String>,
+    pub volume_supported: bool,         // mirrors device.supports_volume
+    pub needs_reauth: bool,             // true when API returned insufficient_scope
 }
 
 static CREDS: once_cell::sync::Lazy<Mutex<StoredCreds>> = once_cell::sync::Lazy::new(|| Mutex::new(StoredCreds::default()));
@@ -152,7 +159,7 @@ fn queue_poll_worker<R: Runtime>(app: AppHandle<R>) {
                 }
             }
         }
-        std::thread::sleep(Duration::from_secs(QUEUE_POLL_SECS));
+        std::thread::sleep(Duration::from_secs(PLAYER_POLL_SECS * 2));
     }
 }
 
@@ -182,6 +189,21 @@ struct SpotifyAlbum {
 #[derive(Deserialize)]
 #[allow(dead_code)]
 struct SpotifyImage { url: String, width: Option<u32>, height: Option<u32> }
+
+#[allow(dead_code)]
+#[derive(Deserialize)]
+struct PlayerResp {
+    device: Option<PlayerDevice>,
+}
+
+#[allow(dead_code)]
+#[derive(Deserialize)]
+struct PlayerDevice {
+    id: Option<String>,
+    name: Option<String>,
+    volume_percent: Option<u8>,
+    supports_volume: Option<bool>,
+}
 
 fn fetch_queue<R: Runtime>(app: &AppHandle<R>) -> Result<Vec<SpotifyTrack>, QueueErr> {
     let token = ensure_fresh_token(app).ok_or(QueueErr::Unauthorized)?;
