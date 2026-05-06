@@ -1,6 +1,12 @@
 import React, { useState } from 'react';
 import type { TileId, Rect, Layout } from '../state/layout';
-import { DEFAULT_LAYOUT, clampRect } from '../state/layout';
+import {
+  DEFAULT_LANDSCAPE_LAYOUT,
+  DEFAULT_PORTRAIT_LAYOUT,
+  clampRectFrac,
+  useCanvas,
+  useOrientation,
+} from '../state/layout';
 
 export function EditModeOverlay({
   accent, accent2, onExit, onRemove,
@@ -33,13 +39,16 @@ export function EditModeOverlay({
 
   const allIds: TileId[] = ['discord', 'spotify', 'claude', 'mixer', 'notes', 'viz', 'sysmon', 'clock'];
   const visibleIds = allIds.filter((id) => !hiddenIds.includes(id));
+  const orientation = useOrientation();
+  const canvas = useCanvas();
+  const defaults = orientation === 'portrait' ? DEFAULT_PORTRAIT_LAYOUT : DEFAULT_LANDSCAPE_LAYOUT;
   const tiles: Partial<Record<TileId, { rect: Rect; label: string }>> = {};
   for (const id of visibleIds) {
-    tiles[id] = { rect: layout[id] ?? DEFAULT_LAYOUT[id], label: ALL_LABELS[id] };
+    tiles[id] = { rect: layout[id] ?? defaults[id], label: ALL_LABELS[id] };
   }
 
   const sel = tiles[selectedId] ?? tiles.viz!;
-  const setRect = (id: TileId, r: Rect) => setLayout({ ...layout, [id]: clampRect(r) });
+  const setRect = (id: TileId, r: Rect) => setLayout({ ...layout, [id]: clampRectFrac(r, canvas) });
 
   return (
     <div style={{
@@ -56,13 +65,14 @@ export function EditModeOverlay({
         <EditLeftRail accent={accent} tool={tool} setTool={setTool} />
       </div>
       {showGrid && <GridOverlay />}
-      {showGuides && sel && <SmartGuides rect={sel.rect} accent={accent2} />}
+      {showGuides && sel && <SmartGuides rect={sel.rect} accent={accent2} canvas={canvas} />}
       <div style={{ pointerEvents: 'auto' }}>
         {sel && (
           <PropertiesPanel
             accent={accent}
             tile={{ rect: sel.rect, label: sel.label, kind: selectedId }}
             selectedId={selectedId}
+            canvas={canvas}
             onChangeRect={(r) => setRect(selectedId, r)}
             onRemove={
               onRemove && selectedId !== 'viz'
@@ -71,7 +81,7 @@ export function EditModeOverlay({
             }
           />
         )}
-        <LayersPanel accent={accent} selected={selectedId} setSelected={(id) => setSelectedId(id as TileId)} tiles={tiles} />
+        <LayersPanel accent={accent} selected={selectedId} setSelected={(id) => setSelectedId(id as TileId)} tiles={tiles} canvas={canvas} />
       </div>
     </div>
   );
@@ -186,9 +196,11 @@ function GridOverlay() {
   );
 }
 
-function SmartGuides({ rect, accent }: { rect: Rect; accent: string }) {
-  const cx = rect.x + rect.w / 2;
-  const cy = rect.y + rect.h / 2;
+function SmartGuides({ rect, accent, canvas }: { rect: Rect; accent: string; canvas: { w: number; h: number } }) {
+  // rect is fractional; convert to canvas-pixel space for placement.
+  const px = { x: rect.x * canvas.w, y: rect.y * canvas.h, w: rect.w * canvas.w, h: rect.h * canvas.h };
+  const cx = px.x + px.w / 2;
+  const cy = px.y + px.h / 2;
   const lineStyle: React.CSSProperties = {
     position: 'absolute', background: accent, pointerEvents: 'none',
     boxShadow: `0 0 6px ${accent}`, zIndex: 44,
@@ -197,10 +209,10 @@ function SmartGuides({ rect, accent }: { rect: Rect; accent: string }) {
     <>
       <div style={{ ...lineStyle, left: cx - 0.5, top: 0, width: 1, height: '100%', opacity: 0.5 }} />
       <div style={{ ...lineStyle, top: cy - 0.5, left: 0, width: '100%', height: 1, opacity: 0.5 }} />
-      <DistanceMarker x={rect.x} y={0} w={0} h={rect.y} accent={accent} value={rect.y} orient="vertical" />
-      <DistanceMarker x={rect.x} y={rect.y + rect.h} w={0} h={1440 - rect.y - rect.h} accent={accent} value={1440 - rect.y - rect.h} orient="vertical" />
-      <DistanceMarker x={0} y={rect.y} w={rect.x} h={0} accent={accent} value={rect.x} orient="horizontal" />
-      <DistanceMarker x={rect.x + rect.w} y={rect.y} w={2560 - rect.x - rect.w} h={0} accent={accent} value={2560 - rect.x - rect.w} orient="horizontal" />
+      <DistanceMarker x={px.x} y={0} w={0} h={px.y} accent={accent} value={px.y} orient="vertical" />
+      <DistanceMarker x={px.x} y={px.y + px.h} w={0} h={canvas.h - px.y - px.h} accent={accent} value={canvas.h - px.y - px.h} orient="vertical" />
+      <DistanceMarker x={0} y={px.y} w={px.x} h={0} accent={accent} value={px.x} orient="horizontal" />
+      <DistanceMarker x={px.x + px.w} y={px.y} w={canvas.w - px.x - px.w} h={0} accent={accent} value={canvas.w - px.x - px.w} orient="horizontal" />
     </>
   );
 }
@@ -229,11 +241,12 @@ function DistanceMarker({ x, y, w, h, accent, value, orient }: { x: number; y: n
 }
 
 function PropertiesPanel({
-  accent, tile, selectedId, onChangeRect, onRemove,
+  accent, tile, selectedId, canvas, onChangeRect, onRemove,
 }: {
   accent: string;
   tile: { rect: Rect; label: string; kind: TileId };
   selectedId: TileId;
+  canvas: { w: number; h: number };
   onChangeRect: (r: Rect) => void;
   onRemove?: () => void;
 }) {
@@ -254,10 +267,10 @@ function PropertiesPanel({
       </div>
       <div style={{ overflow: 'auto', padding: '4px 0' }}>
         <PropSection title="Position & size">
-          <PropRow label="X"><PropNum v={tile.rect.x} onChange={(x) => onChangeRect({ ...tile.rect, x })} /></PropRow>
-          <PropRow label="Y"><PropNum v={tile.rect.y} onChange={(y) => onChangeRect({ ...tile.rect, y })} /></PropRow>
-          <PropRow label="W"><PropNum v={tile.rect.w} onChange={(w) => onChangeRect({ ...tile.rect, w })} /></PropRow>
-          <PropRow label="H"><PropNum v={tile.rect.h} onChange={(h) => onChangeRect({ ...tile.rect, h })} /></PropRow>
+          <PropRow label="X"><PropNum v={tile.rect.x * canvas.w} onChange={(px) => onChangeRect({ ...tile.rect, x: px / canvas.w })} /></PropRow>
+          <PropRow label="Y"><PropNum v={tile.rect.y * canvas.h} onChange={(px) => onChangeRect({ ...tile.rect, y: px / canvas.h })} /></PropRow>
+          <PropRow label="W"><PropNum v={tile.rect.w * canvas.w} onChange={(px) => onChangeRect({ ...tile.rect, w: px / canvas.w })} /></PropRow>
+          <PropRow label="H"><PropNum v={tile.rect.h * canvas.h} onChange={(px) => onChangeRect({ ...tile.rect, h: px / canvas.h })} /></PropRow>
         </PropSection>
       </div>
       <div style={{ borderTop: '1px solid rgba(255,255,255,0.06)', padding: 8, display: 'flex', gap: 6 }}>
@@ -331,10 +344,11 @@ function EmToggle({ on, accent }: { on: boolean; accent: string }) {
   );
 }
 
-function LayersPanel({ accent, selected, setSelected, tiles }: {
+function LayersPanel({ accent, selected, setSelected, tiles, canvas }: {
   accent: string; selected: string;
   setSelected: (s: string) => void;
   tiles: Partial<Record<TileId, { rect: Rect; label: string }>>;
+  canvas: { w: number; h: number };
 }) {
   const order: TileId[] = ['viz', 'spotify', 'discord', 'claude', 'mixer', 'notes', 'sysmon', 'clock'];
   const kindIcon = (id: TileId): string => ({
@@ -368,7 +382,7 @@ function LayersPanel({ accent, selected, setSelected, tiles }: {
               <span style={{ fontSize: 11 }}>{kindIcon(id)}</span>
               <span style={{ fontSize: 11, flex: 1 }}>{t.label}</span>
               <span style={{ fontSize: 9, color: 'rgba(255,255,255,0.3)', fontFamily: '"JetBrains Mono", ui-monospace, monospace' }}>
-                {Math.round(t.rect.w)}×{Math.round(t.rect.h)}
+                {Math.round(t.rect.w * canvas.w)}×{Math.round(t.rect.h * canvas.h)}
               </span>
             </button>
           );
