@@ -16,9 +16,10 @@ const TILE_META: Record<TileType, { icon: string; label: string; description: st
   notes:   { icon: '✎', label: 'Todos',             description: 'Quick task list',                      multiInstance: false },
   sysmon:  { icon: '▤', label: 'System monitor',    description: 'CPU / RAM / GPU / network',            multiInstance: false },
   clock:   { icon: '◐', label: 'Now & forecast',    description: 'Time + weather',                       multiInstance: false },
+  streamDeck: { icon: '▦', label: 'Stream Deck',     description: 'Programmable button grid — actions, profile switching, playback', multiInstance: true },
 };
 
-const ORDER: TileType[] = ['viz', 'spotify', 'discord', 'claude', 'mixer', 'notes', 'sysmon', 'clock'];
+const ORDER: TileType[] = ['viz', 'spotify', 'discord', 'claude', 'mixer', 'notes', 'sysmon', 'clock', 'streamDeck'];
 
 export function TilePickerGallery({
   orientation, canvas, tiles, profileName, accent,

@@ -421,8 +421,8 @@ export default function App() {
     else removeTileByType(type);
   };
 
-  const renderTile = (id: TileType) => {
-    switch (id) {
+  const renderTile = (instance: TileInstance) => {
+    switch (instance.type) {
       case 'discord':
         return <DiscordTile density={t.density} accent={accent} />;
       case 'spotify':
@@ -460,6 +460,10 @@ export default function App() {
             audioDebug={t.audioDebug}
           />
         );
+      case 'streamDeck':
+        // Placeholder — actual component lands in a later task. Render nothing
+        // so the tile slot is reserved without crashing.
+        return null;
     }
   };
 
@@ -493,7 +497,7 @@ export default function App() {
               })}
               accent={accent}
             >
-              {renderTile(instance.type)}
+              {renderTile(instance)}
             </TileFrame>
           );
         })}
