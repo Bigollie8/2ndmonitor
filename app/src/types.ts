@@ -13,10 +13,10 @@ export interface Profile {
   name: string;
   /** Hex color used as accent in the switcher card and top-chrome button. */
   color: string;
-  /** Tile rectangles for this profile. Empty = use DEFAULT_LAYOUT. */
-  layout: import('./state/layout').Layout;
-  /** Tile visibility map. */
-  hidden: Partial<Record<import('./state/layout').TileId, boolean>>;
+  /** Landscape-orientation layout + visibility (active when viewport is wider than tall). */
+  landscape: import('./state/layout').OrientationLayout;
+  /** Portrait-orientation layout + visibility (active when viewport is taller than wide). */
+  portrait: import('./state/layout').OrientationLayout;
 }
 export type AccentTheme = 'auto' | 'mint' | 'coral' | 'indigo' | 'amber';
 

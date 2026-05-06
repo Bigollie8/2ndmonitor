@@ -1,6 +1,12 @@
 import { useEffect, useState } from 'react';
-import type { TileId, Layout } from './state/layout';
-import { DEFAULT_LAYOUT } from './state/layout';
+import type { TileId, Layout, OrientationLayout } from './state/layout';
+import {
+  DEFAULT_LANDSCAPE_LAYOUT,
+  DEFAULT_PORTRAIT_LAYOUT,
+  migrateLegacyProfileToOrientations,
+  useCanvas,
+  useOrientation,
+} from './state/layout';
 import type { Track, Profile, AccentTheme, VizMode, Density, Todo, WeatherLocation, AppMetrics } from './types';
 import type { GeocodeResult } from './state/weatherLocation';
 import { TRACKS, ACCENT_PALETTES } from './data';
@@ -116,9 +122,18 @@ function migrateTweaks(loaded: Record<string, unknown>): Record<string, unknown>
     delete next.hidden;
 
     const seeded: Profile[] = [
-      { id: newId(), name: 'Work',   color: PROFILE_DEFAULT_COLORS[0]!, layout: legacyLayout, hidden: legacyHidden },
-      { id: newId(), name: 'Gaming', color: PROFILE_DEFAULT_COLORS[1]!, layout: {},           hidden: {} },
-      { id: newId(), name: 'Chill',  color: PROFILE_DEFAULT_COLORS[2]!, layout: {},           hidden: {} },
+      migrateLegacyProfileToOrientations({
+        id: newId(), name: 'Work', color: PROFILE_DEFAULT_COLORS[0]!,
+        layout: legacyLayout, hidden: legacyHidden,
+      }),
+      migrateLegacyProfileToOrientations({
+        id: newId(), name: 'Gaming', color: PROFILE_DEFAULT_COLORS[1]!,
+        layout: {}, hidden: {},
+      }),
+      migrateLegacyProfileToOrientations({
+        id: newId(), name: 'Chill', color: PROFILE_DEFAULT_COLORS[2]!,
+        layout: {}, hidden: {},
+      }),
     ];
     next.profiles = seeded;
     next.activeProfileId = seeded[0]!.id;
@@ -134,6 +149,20 @@ function migrateTweaks(loaded: Record<string, unknown>): Record<string, unknown>
     result = next;
   }
 
+  // Orientation migration: profiles loaded from disk in legacy shape (no `landscape`/
+  // `portrait`) get fraction-converted to the orientation-aware shape. Idempotent —
+  // already-migrated profiles pass through unchanged. Runs BEFORE mixer migration
+  // so the latter can read `p.landscape.layout`.
+  if (!result.orientation_migration_v1) {
+    const profiles = result.profiles as Array<Record<string, unknown>> | undefined;
+    if (profiles) {
+      result.profiles = profiles.map((p) =>
+        migrateLegacyProfileToOrientations(p as Parameters<typeof migrateLegacyProfileToOrientations>[0])
+      );
+    }
+    result.orientation_migration_v1 = true;
+  }
+
   // Mixer tile (added 2026-05): hide it on profiles that already have a saved
   // layout — those rail positions were anchored before the new tile existed,
   // so auto-inserting would visually overlap them. Fresh installs and brand-new
@@ -141,11 +170,14 @@ function migrateTweaks(loaded: Record<string, unknown>): Record<string, unknown>
   if (!result.mixer_migration_v1) {
     const profiles = result.profiles as Profile[] | undefined;
     if (profiles) {
-      result.profiles = profiles.map((p) =>
-        Object.keys(p.layout ?? {}).length > 0
-          ? { ...p, hidden: { ...p.hidden, mixer: true } }
-          : p
-      );
+      result.profiles = profiles.map((p) => {
+        const hasCustomLandscape = Object.keys(p.landscape?.layout ?? {}).length > 0;
+        if (!hasCustomLandscape) return p;
+        return {
+          ...p,
+          landscape: { ...p.landscape, hidden: { ...p.landscape.hidden, mixer: true } },
+        };
+      });
     }
     result.mixer_migration_v1 = true;
   }
@@ -168,9 +200,9 @@ export default function App() {
   useEffect(() => {
     if (t.profiles.length > 0 && t.activeProfileId) return;
     const seeded: Profile[] = [
-      { id: newId(), name: 'Work',   color: PROFILE_DEFAULT_COLORS[0]!, layout: {}, hidden: {} },
-      { id: newId(), name: 'Gaming', color: PROFILE_DEFAULT_COLORS[1]!, layout: {}, hidden: {} },
-      { id: newId(), name: 'Chill',  color: PROFILE_DEFAULT_COLORS[2]!, layout: {}, hidden: {} },
+      migrateLegacyProfileToOrientations({ id: newId(), name: 'Work',   color: PROFILE_DEFAULT_COLORS[0]!, layout: {}, hidden: {} }),
+      migrateLegacyProfileToOrientations({ id: newId(), name: 'Gaming', color: PROFILE_DEFAULT_COLORS[1]!, layout: {}, hidden: {} }),
+      migrateLegacyProfileToOrientations({ id: newId(), name: 'Chill',  color: PROFILE_DEFAULT_COLORS[2]!, layout: {}, hidden: {} }),
     ];
     setTweak('profiles', seeded);
     setTweak('activeProfileId', seeded[0]!.id);
@@ -306,24 +338,18 @@ export default function App() {
     return () => window.removeEventListener('keydown', onKey);
   }, [showSwitcher, editMode, showOnboarding, showGallery, t.vizMode, t.profiles, setTweak]);
 
-  // Scale 2560x1440 design canvas to fit viewport.
-  const [scale, setScale] = useState(1);
-  useEffect(() => {
-    const fit = () => {
-      const s = Math.min(window.innerWidth / 2560, window.innerHeight / 1440);
-      setScale(s);
-    };
-    fit();
-    window.addEventListener('resize', fit);
-    return () => window.removeEventListener('resize', fit);
-  }, []);
+  const orientation = useOrientation();
 
   const overlaysOpen = editMode || showSwitcher || showOnboarding;
-  const activeProfile: Profile = t.profiles.find((p) => p.id === t.activeProfileId) ?? t.profiles[0] ?? {
-    id: '_fallback', name: 'Default', color: '#a78bfa', layout: {}, hidden: {},
+  const fallbackProfile: Profile = {
+    id: '_fallback', name: 'Default', color: '#a78bfa',
+    landscape: { layout: {}, hidden: {} },
+    portrait: { layout: { ...DEFAULT_PORTRAIT_LAYOUT }, hidden: {} },
   };
-  const hidden = activeProfile.hidden;
-  const activeLayout: Layout = activeProfile.layout;
+  const activeProfile: Profile = t.profiles.find((p) => p.id === t.activeProfileId) ?? t.profiles[0] ?? fallbackProfile;
+  const activeOrientation = activeProfile[orientation];
+  const hidden = activeOrientation.hidden;
+  const activeLayout: Layout = activeOrientation.layout;
   const visibleTileCount = ALL_TILES.filter(({ id }) => !hidden[id]).length;
   const fps = useFrameRate();
 
@@ -332,8 +358,13 @@ export default function App() {
       p.id === activeProfile.id ? { ...p, ...patch } : p
     ));
   };
+  const updateActiveOrientation = (patch: Partial<OrientationLayout>) => {
+    updateActiveProfile({
+      [orientation]: { ...activeOrientation, ...patch },
+    } as Partial<Profile>);
+  };
   const setHidden = (id: TileId, hide: boolean) => {
-    updateActiveProfile({ hidden: { ...hidden, [id]: hide || undefined } });
+    updateActiveOrientation({ hidden: { ...hidden, [id]: hide || undefined } });
   };
 
   const renderTile = (id: TileId) => {
@@ -379,11 +410,10 @@ export default function App() {
   };
 
   return (
-    <div style={{ width: '100vw', height: '100vh', background: '#000', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
+    <div style={{ width: '100vw', height: '100vh', background: '#000', overflow: 'hidden' }}>
       <div data-canvas-root style={{
-        width: 2560, height: 1440,
-        transform: `scale(${scale})`, transformOrigin: 'center center',
-        flexShrink: 0, background: '#06070a', position: 'relative', overflow: 'hidden', borderRadius: 8,
+        width: '100%', height: '100%',
+        background: '#06070a', position: 'relative', overflow: 'hidden',
       }}>
         <TopChrome
           accent={accent} editMode={editMode} setEditMode={setEditMode}
@@ -396,7 +426,8 @@ export default function App() {
         />
         {ALL_TILES.map(({ id }) => {
           if (hidden[id]) return null;
-          const rect = activeLayout[id] ?? DEFAULT_LAYOUT[id];
+          const defaults = orientation === 'portrait' ? DEFAULT_PORTRAIT_LAYOUT : DEFAULT_LANDSCAPE_LAYOUT;
+          const rect = activeLayout[id] ?? defaults[id];
           return (
             <TileFrame
               key={id}
@@ -406,7 +437,7 @@ export default function App() {
               snap={snapEnabled}
               selected={selectedTileId === id}
               onSelect={() => setSelectedTileId(id)}
-              onChange={(r) => updateActiveProfile({ layout: { ...activeLayout, [id]: r } })}
+              onChange={(r) => updateActiveOrientation({ layout: { ...activeLayout, [id]: r } })}
               accent={accent}
             >
               {renderTile(id)}
@@ -428,7 +459,7 @@ export default function App() {
             onExit={() => setEditMode(false)}
             onRemove={(id) => setHidden(id, true)}
             layout={activeLayout}
-            setLayout={(next) => updateActiveProfile({ layout: next })}
+            setLayout={(next) => updateActiveOrientation({ layout: next })}
             selectedId={selectedTileId}
             setSelectedId={setSelectedTileId}
             hiddenIds={(Object.keys(hidden) as TileId[]).filter((k) => hidden[k])}
@@ -459,7 +490,13 @@ export default function App() {
               if (result?.hiddenForActive) {
                 const targetId = result.profileId ?? t.activeProfileId;
                 setTweak('profiles', t.profiles.map((p) =>
-                  p.id === targetId ? { ...p, hidden: result.hiddenForActive! } : p
+                  p.id === targetId
+                    ? {
+                        ...p,
+                        landscape: { ...p.landscape, hidden: result.hiddenForActive! },
+                        portrait:  { ...p.portrait,  hidden: result.hiddenForActive! },
+                      }
+                    : p
                 ));
               }
               setTweak('onboardingDone', true);
@@ -606,7 +643,7 @@ export default function App() {
           label="Tile density" value={t.density}
           options={['compact', 'regular', 'spacious']}
           onChange={(v) => setTweak('density', v)} />
-        <TweakButton label="Reset layout" onClick={() => updateActiveProfile({ layout: {} })} />
+        <TweakButton label="Reset layout" onClick={() => updateActiveOrientation({ layout: {} })} />
         <TweakSection label="Weather" />
         <WeatherSearch
           current={t.weatherLocation}
@@ -684,6 +721,7 @@ function TopChrome({ accent, editMode, setEditMode, accentLinked, track, profile
   onSwitcher: () => void;
   onOnboarding: () => void;
 }) {
+  const canvas = useCanvas();
   const visibleProfiles = profiles.slice(0, 4);
   const overflow = Math.max(0, profiles.length - visibleProfiles.length);
   return (
@@ -735,7 +773,7 @@ function TopChrome({ accent, editMode, setEditMode, accentLinked, track, profile
         border: editMode ? 'none' : '1px solid rgba(255,255,255,0.1)',
         cursor: 'pointer', fontWeight: 600,
       }}>✎ Edit</button>
-      <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)', fontFamily: '"JetBrains Mono", ui-monospace, monospace' }}>2560×1440</span>
+      <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)', fontFamily: '"JetBrains Mono", ui-monospace, monospace' }}>{Math.round(canvas.w)}×{Math.round(canvas.h)}</span>
     </div>
   );
 }
