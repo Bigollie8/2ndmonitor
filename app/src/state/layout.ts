@@ -80,6 +80,64 @@ function stripRects(): Record<string, Rect> {
   return out;
 }
 
+// Fractional equivalents of the pixel constants above. Used by the new
+// percent-based layout. The pixel constants stay during transition; they get
+// removed when the legacy DEFAULT_LAYOUT is dropped in Task 8.
+const TOP_F = TOP / 1440;
+const BOTTOM_F = BOTTOM / 1440;
+const SIDE_F_X = SIDE / 2560;
+const GAP_F_X = GAP / 2560;
+const GAP_F_Y = GAP / 1440;
+
+const RAIL_X_F = SIDE_F_X;
+const RAIL_W_F = RAIL_W / 2560;
+const RAIL_Y_F = TOP_F + 8 / 1440;
+const RAIL_H_F = 1 - TOP_F - BOTTOM_F - 16 / 1440;
+
+const RIGHT_X_F = RAIL_X_F + RAIL_W_F + GAP_F_X;
+const RIGHT_W_F = 1 - RIGHT_X_F - SIDE_F_X;
+const STRIP_H_F = STRIP_H / 1440;
+
+function railRectsFrac(): Record<string, Rect> {
+  const sum = RAIL_ROWS.reduce((a, r) => a + r.weight, 0);
+  const unit = (RAIL_H_F - GAP_F_Y * (RAIL_ROWS.length - 1)) / sum;
+  let y = RAIL_Y_F;
+  const out: Record<string, Rect> = {};
+  for (const r of RAIL_ROWS) {
+    const h = r.weight * unit;
+    out[r.id] = { x: RAIL_X_F, y, w: RAIL_W_F, h };
+    y += h + GAP_F_Y;
+  }
+  return out;
+}
+
+const VIZ_RECT_F: Rect = {
+  x: RIGHT_X_F,
+  y: RAIL_Y_F,
+  w: RIGHT_W_F,
+  h: RAIL_H_F - STRIP_H_F - GAP_F_Y,
+};
+const STRIP_Y_F = VIZ_RECT_F.y + VIZ_RECT_F.h + GAP_F_Y;
+
+function stripRectsFrac(): Record<string, Rect> {
+  const sum = STRIP_COLS.reduce((a, c) => a + c.weight, 0);
+  const unit = (RIGHT_W_F - GAP_F_X * (STRIP_COLS.length - 1)) / sum;
+  let x = RIGHT_X_F;
+  const out: Record<string, Rect> = {};
+  for (const c of STRIP_COLS) {
+    const w = c.weight * unit;
+    out[c.id] = { x, y: STRIP_Y_F, w, h: STRIP_H_F };
+    x += w + GAP_F_X;
+  }
+  return out;
+}
+
+export const DEFAULT_LANDSCAPE_LAYOUT: Record<TileId, Rect> = {
+  ...(railRectsFrac() as Record<TileId, Rect>),
+  ...(stripRectsFrac() as Record<TileId, Rect>),
+  viz: VIZ_RECT_F,
+};
+
 export const DEFAULT_LAYOUT: Record<TileId, Rect> = {
   ...(railRects() as Record<TileId, Rect>),
   ...(stripRects() as Record<TileId, Rect>),
