@@ -532,56 +532,62 @@ pub async fn spotify_set_volume<R: Runtime>(app: AppHandle<R>, percent: u8) -> R
         url.push_str(&urlencode(id));
     }
 
+    // Classify a single ureq response. Used for both the first attempt and
+    // the post-refresh retry. The retry's 401 must NOT trigger another
+    // refresh — that's caller's responsibility — so this closure treats 401
+    // as terminal "auth expired".
+    let classify = |resp: Result<ureq::Response, ureq::Error>, app: &AppHandle<R>| -> Result<(), String> {
+        match resp {
+            Ok(_) => Ok(()),
+            Err(ureq::Error::Status(401, _)) => Err("Spotify auth expired".into()),
+            Err(ureq::Error::Status(403, r)) => {
+                // 403 covers two cases:
+                //   - PREMIUM_REQUIRED: free account
+                //   - insufficient_scope: token predates the new scope
+                // Spotify returns a JSON error body distinguishing them.
+                let body = r.into_string().unwrap_or_default();
+                if body.contains("insufficient_scope") {
+                    let mut s = STATE.lock();
+                    s.needs_reauth = true;
+                    drop(s);
+                    emit_state(app);
+                    Err("Reconnect Spotify for playback control".into())
+                } else if body.contains("PREMIUM_REQUIRED") {
+                    let mut s = STATE.lock();
+                    s.premium_required = true;
+                    drop(s);
+                    emit_state(app);
+                    Err("Spotify Premium required".into())
+                } else {
+                    Err(format!("Spotify 403: {body}"))
+                }
+            }
+            Err(ureq::Error::Status(404, _)) => Err("No active Spotify device".into()),
+            Err(e) => Err(e.to_string()),
+        }
+    };
+
     let resp = ureq::put(&url)
         .set("Authorization", &format!("Bearer {token}"))
         .set("Content-Length", "0")
         .timeout(Duration::from_secs(8))
         .call();
 
-    match resp {
-        Ok(_) => Ok(()),
-        Err(ureq::Error::Status(401, _)) => {
-            // One refresh attempt then give up; poll worker will surface the
-            // disconnect.
-            if try_refresh(&app) {
-                let token = CREDS.lock().access_token.clone().ok_or("Auth refresh failed")?;
-                let r2 = ureq::put(&url)
-                    .set("Authorization", &format!("Bearer {token}"))
-                    .set("Content-Length", "0")
-                    .timeout(Duration::from_secs(8))
-                    .call()
-                    .map_err(|e| e.to_string())?;
-                let _ = r2;
-                Ok(())
-            } else {
-                Err("Spotify auth expired".into())
-            }
+    // First attempt: if it's 401, refresh once and retry. Anything else is
+    // classified directly.
+    if let Err(ureq::Error::Status(401, _)) = &resp {
+        if !try_refresh(&app) {
+            return Err("Spotify auth expired".into());
         }
-        Err(ureq::Error::Status(403, r)) => {
-            // 403 covers two cases:
-            //   - PREMIUM_REQUIRED: free account
-            //   - insufficient_scope: token predates the new scope
-            // Spotify returns a JSON error body distinguishing them.
-            let body = r.into_string().unwrap_or_default();
-            if body.contains("insufficient_scope") {
-                let mut s = STATE.lock();
-                s.needs_reauth = true;
-                drop(s);
-                emit_state(&app);
-                Err("Reconnect Spotify for playback control".into())
-            } else if body.contains("PREMIUM_REQUIRED") {
-                let mut s = STATE.lock();
-                s.premium_required = true;
-                drop(s);
-                emit_state(&app);
-                Err("Spotify Premium required".into())
-            } else {
-                Err(format!("Spotify 403: {body}"))
-            }
-        }
-        Err(ureq::Error::Status(404, _)) => Err("No active Spotify device".into()),
-        Err(e) => Err(e.to_string()),
+        let token = CREDS.lock().access_token.clone().ok_or("Auth refresh failed")?;
+        let r2 = ureq::put(&url)
+            .set("Authorization", &format!("Bearer {token}"))
+            .set("Content-Length", "0")
+            .timeout(Duration::from_secs(8))
+            .call();
+        return classify(r2, &app);
     }
+    classify(resp, &app)
 }
 
 fn finish_exchange<R: Runtime>(app: &AppHandle<R>, client_id: &str, code: &str, verifier: &str) {
