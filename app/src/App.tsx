@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
-import type { TileId, Layout } from './state/layout';
+import type { TileId, Layout, OrientationLayout } from './state/layout';
 import {
-  DEFAULT_LAYOUT,
   DEFAULT_LANDSCAPE_LAYOUT,
+  DEFAULT_PORTRAIT_LAYOUT,
   migrateLegacyProfileToOrientations,
   useOrientation,
 } from './state/layout';
@@ -336,27 +336,18 @@ export default function App() {
     return () => window.removeEventListener('keydown', onKey);
   }, [showSwitcher, editMode, showOnboarding, showGallery, t.vizMode, t.profiles, setTweak]);
 
-  // Scale 2560x1440 design canvas to fit viewport.
-  const [scale, setScale] = useState(1);
-  useEffect(() => {
-    const fit = () => {
-      const s = Math.min(window.innerWidth / 2560, window.innerHeight / 1440);
-      setScale(s);
-    };
-    fit();
-    window.addEventListener('resize', fit);
-    return () => window.removeEventListener('resize', fit);
-  }, []);
+  const orientation = useOrientation();
 
   const overlaysOpen = editMode || showSwitcher || showOnboarding;
   const fallbackProfile: Profile = {
     id: '_fallback', name: 'Default', color: '#a78bfa',
     landscape: { layout: {}, hidden: {} },
-    portrait: { layout: {}, hidden: {} },
+    portrait: { layout: { ...DEFAULT_PORTRAIT_LAYOUT }, hidden: {} },
   };
   const activeProfile: Profile = t.profiles.find((p) => p.id === t.activeProfileId) ?? t.profiles[0] ?? fallbackProfile;
-  const hidden = activeProfile.landscape.hidden;
-  const activeLayout: Layout = activeProfile.landscape.layout;
+  const activeOrientation = activeProfile[orientation];
+  const hidden = activeOrientation.hidden;
+  const activeLayout: Layout = activeOrientation.layout;
   const visibleTileCount = ALL_TILES.filter(({ id }) => !hidden[id]).length;
   const fps = useFrameRate();
 
@@ -365,8 +356,13 @@ export default function App() {
       p.id === activeProfile.id ? { ...p, ...patch } : p
     ));
   };
+  const updateActiveOrientation = (patch: Partial<OrientationLayout>) => {
+    updateActiveProfile({
+      [orientation]: { ...activeOrientation, ...patch },
+    } as Partial<Profile>);
+  };
   const setHidden = (id: TileId, hide: boolean) => {
-    updateActiveProfile({ landscape: { ...activeProfile.landscape, hidden: { ...hidden, [id]: hide || undefined } } });
+    updateActiveOrientation({ hidden: { ...hidden, [id]: hide || undefined } });
   };
 
   const renderTile = (id: TileId) => {
@@ -412,11 +408,10 @@ export default function App() {
   };
 
   return (
-    <div style={{ width: '100vw', height: '100vh', background: '#000', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
+    <div style={{ width: '100vw', height: '100vh', background: '#000', overflow: 'hidden' }}>
       <div data-canvas-root style={{
-        width: 2560, height: 1440,
-        transform: `scale(${scale})`, transformOrigin: 'center center',
-        flexShrink: 0, background: '#06070a', position: 'relative', overflow: 'hidden', borderRadius: 8,
+        width: '100%', height: '100%',
+        background: '#06070a', position: 'relative', overflow: 'hidden',
       }}>
         <TopChrome
           accent={accent} editMode={editMode} setEditMode={setEditMode}
@@ -429,7 +424,8 @@ export default function App() {
         />
         {ALL_TILES.map(({ id }) => {
           if (hidden[id]) return null;
-          const rect = activeLayout[id] ?? DEFAULT_LAYOUT[id];
+          const defaults = orientation === 'portrait' ? DEFAULT_PORTRAIT_LAYOUT : DEFAULT_LANDSCAPE_LAYOUT;
+          const rect = activeLayout[id] ?? defaults[id];
           return (
             <TileFrame
               key={id}
@@ -438,7 +434,7 @@ export default function App() {
               editing={editMode}
               selected={selectedTileId === id}
               onSelect={() => setSelectedTileId(id)}
-              onChange={(r) => updateActiveProfile({ landscape: { ...activeProfile.landscape, layout: { ...activeLayout, [id]: r } } })}
+              onChange={(r) => updateActiveOrientation({ layout: { ...activeLayout, [id]: r } })}
               accent={accent}
             >
               {renderTile(id)}
@@ -460,7 +456,7 @@ export default function App() {
             onExit={() => setEditMode(false)}
             onRemove={(id) => setHidden(id, true)}
             layout={activeLayout}
-            setLayout={(next) => updateActiveProfile({ landscape: { ...activeProfile.landscape, layout: next } })}
+            setLayout={(next) => updateActiveOrientation({ layout: next })}
             selectedId={selectedTileId}
             setSelectedId={setSelectedTileId}
             hiddenIds={(Object.keys(hidden) as TileId[]).filter((k) => hidden[k])}
@@ -638,7 +634,7 @@ export default function App() {
           label="Tile density" value={t.density}
           options={['compact', 'regular', 'spacious']}
           onChange={(v) => setTweak('density', v)} />
-        <TweakButton label="Reset layout" onClick={() => updateActiveProfile({ landscape: { ...activeProfile.landscape, layout: {} } })} />
+        <TweakButton label="Reset layout" onClick={() => updateActiveOrientation({ layout: {} })} />
         <TweakSection label="Weather" />
         <WeatherSearch
           current={t.weatherLocation}
