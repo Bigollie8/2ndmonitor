@@ -587,11 +587,18 @@ export interface SpotifyState {
   error: string | null;
   queue: SpotifyTrack[];
   premium_required: boolean;
+  volume_percent: number | null;     // 0..100
+  device_id: string | null;
+  device_name: string | null;
+  volume_supported: boolean;
+  needs_reauth: boolean;
 }
 
 const EMPTY_SPOTIFY: SpotifyState = {
   connected: false, connecting: false, error: null,
   queue: [], premium_required: false,
+  volume_percent: null, device_id: null, device_name: null,
+  volume_supported: false, needs_reauth: false,
 };
 
 export function useSpotify(): {
@@ -599,6 +606,7 @@ export function useSpotify(): {
   connect: (clientId: string) => Promise<void>;
   disconnect: () => Promise<void>;
   getStoredClientId: () => Promise<string | null>;
+  setVolume: (percent: number) => Promise<void>;
 } {
   const [state, setState] = useState<SpotifyState>(EMPTY_SPOTIFY);
 
@@ -639,8 +647,14 @@ export function useSpotify(): {
     try { return await invoke<string | null>('spotify_get_client_id'); }
     catch { return null; }
   };
+  const setVolume = async (percent: number) => {
+    if (!isTauri) return;
+    const { invoke } = await import('@tauri-apps/api/core');
+    const clamped = Math.max(0, Math.min(100, Math.round(percent)));
+    await invoke('spotify_set_volume', { percent: clamped });
+  };
 
-  return { state, connect, disconnect, getStoredClientId };
+  return { state, connect, disconnect, getStoredClientId, setVolume };
 }
 
 export function useClaudeSessions(): ClaudeSession[] {
