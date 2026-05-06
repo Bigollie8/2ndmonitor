@@ -22,8 +22,8 @@ use serde::Serialize;
 use serde_json::{json, Value};
 use std::{
     collections::HashMap,
-    fs::{File, OpenOptions},
-    io::{Read, Write},
+    ffi::OsStr,
+    os::windows::ffi::OsStrExt,
     sync::{
         atomic::{AtomicU64, Ordering},
         mpsc::{channel, Sender},
@@ -33,6 +33,14 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tauri::{AppHandle, Emitter, Runtime};
+use windows::core::PCWSTR;
+use windows::Win32::Foundation::{CloseHandle, ERROR_IO_PENDING, HANDLE};
+use windows::Win32::Storage::FileSystem::{
+    CreateFileW, ReadFile, WriteFile, FILE_FLAG_OVERLAPPED, FILE_GENERIC_READ, FILE_GENERIC_WRITE,
+    FILE_SHARE_NONE, OPEN_EXISTING,
+};
+use windows::Win32::System::Threading::CreateEventW;
+use windows::Win32::System::IO::{GetOverlappedResult, OVERLAPPED};
 
 const PIPE_BASE: &str = r"\\.\pipe\discord-ipc-";
 const RECONNECT_DELAY_SECS: u64 = 5;
@@ -84,11 +92,12 @@ pub struct RpcState {
 static STATE: Lazy<Mutex<RpcState>> = Lazy::new(|| Mutex::new(RpcState::default()));
 static NONCE: AtomicU64 = AtomicU64::new(1);
 
-/// Write-side handle to the active IPC pipe. Tauri commands grab this to
-/// send SET_VOICE_SETTINGS / SELECT_VOICE_CHANNEL etc. while the worker
-/// thread continues reading on its own (try_clone'd) handle. None when no
+/// Write-side handle to the active IPC pipe. Tauri commands clone this so
+/// they can send SET_VOICE_SETTINGS / SELECT_VOICE_CHANNEL etc. while the
+/// worker thread reads concurrently — `PipeIo` uses Win32 overlapped I/O so
+/// reads and writes don't serialize at the FILE_OBJECT level. None when no
 /// session is live.
-static WRITE_PIPE: Lazy<Mutex<Option<Arc<Mutex<File>>>>> = Lazy::new(|| Mutex::new(None));
+static WRITE_PIPE: Lazy<Mutex<Option<PipeIo>>> = Lazy::new(|| Mutex::new(None));
 
 /// Pending command nonces awaiting a Discord IPC response. Each entry's Sender
 /// resolves the matching `discord_rpc_*` Tauri command with the parsed response
@@ -155,15 +164,14 @@ fn run_session<R: Runtime>(app: &AppHandle<R>, client_id: &str, token: &str) -> 
 
     eprintln!("discord_rpc: opening pipe…");
     let pipe = open_pipe()?;
-    let writer = pipe.try_clone().map_err(|e| format!("clone pipe: {e}"))?;
-    let writer = Arc::new(Mutex::new(writer));
-    *WRITE_PIPE.lock() = Some(writer.clone());
-    let mut read_pipe = pipe;
+    let writer = pipe.clone();
+    *WRITE_PIPE.lock() = Some(pipe.clone());
+    let read_pipe = pipe;
     eprintln!("discord_rpc: pipe open, sending handshake");
 
     // ── HANDSHAKE ───────────────────────────────────────────────────────────
     write_frame(&writer, 0, &json!({"v": 1, "client_id": client_id}).to_string())?;
-    let (_op, ready_body) = recv_frame(&mut read_pipe)?;
+    let (_op, ready_body) = recv_frame(&read_pipe)?;
     let _ready: Value = serde_json::from_slice(&ready_body).map_err(|e| e.to_string())?;
     eprintln!("discord_rpc: ready, authenticating");
 
@@ -179,7 +187,7 @@ fn run_session<R: Runtime>(app: &AppHandle<R>, client_id: &str, token: &str) -> 
         })
         .to_string(),
     )?;
-    let (_op, auth_body) = recv_frame(&mut read_pipe)?;
+    let (_op, auth_body) = recv_frame(&read_pipe)?;
     let auth_resp: Value =
         serde_json::from_slice(&auth_body).map_err(|e| format!("auth parse: {e}"))?;
     if auth_resp.get("evt").and_then(|v| v.as_str()) == Some("ERROR") {
@@ -255,7 +263,7 @@ fn run_session<R: Runtime>(app: &AppHandle<R>, client_id: &str, token: &str) -> 
     // ── Read loop ───────────────────────────────────────────────────────────
     let mut current_voice_channel: Option<String> = None;
     let result: Result<(), String> = (|| loop {
-        let (opcode, body) = recv_frame(&mut read_pipe)?;
+        let (opcode, body) = recv_frame(&read_pipe)?;
         if opcode == 2 {
             return Err("Discord closed the IPC connection".into());
         }
@@ -288,7 +296,7 @@ fn run_session<R: Runtime>(app: &AppHandle<R>, client_id: &str, token: &str) -> 
 
 fn handle_message<R: Runtime>(
     app: &AppHandle<R>,
-    writer: &Arc<Mutex<File>>,
+    writer: &PipeIo,
     msg: &Value,
     current_voice_channel: &mut Option<String>,
 ) -> Result<(), String> {
@@ -571,13 +579,13 @@ fn fetch_granted_scopes(token: &str) -> Result<Vec<String>, String> {
         .unwrap_or_default())
 }
 
-fn open_pipe() -> Result<File, String> {
+fn open_pipe() -> Result<PipeIo, String> {
     // Discord may use 0..9 if multiple instances are running. Try in order.
     let mut last_err = String::new();
     for i in 0..10 {
         let path = format!("{PIPE_BASE}{i}");
-        match OpenOptions::new().read(true).write(true).open(&path) {
-            Ok(f) => return Ok(f),
+        match PipeIo::open(&path) {
+            Ok(p) => return Ok(p),
             Err(e) => last_err = format!("{path}: {e}"),
         }
     }
@@ -595,21 +603,19 @@ fn frame_bytes(opcode: u32, payload: &[u8]) -> Vec<u8> {
     buf
 }
 
-fn write_frame(writer: &Arc<Mutex<File>>, opcode: u32, json_payload: &str) -> Result<(), String> {
+fn write_frame(writer: &PipeIo, opcode: u32, json_payload: &str) -> Result<(), String> {
     write_frame_raw(writer, opcode, json_payload.as_bytes())
 }
 
-fn write_frame_raw(writer: &Arc<Mutex<File>>, opcode: u32, payload: &[u8]) -> Result<(), String> {
+fn write_frame_raw(writer: &PipeIo, opcode: u32, payload: &[u8]) -> Result<(), String> {
     let bytes = frame_bytes(opcode, payload);
-    let mut f = writer.lock();
-    f.write_all(&bytes).map_err(|e| format!("write frame: {e}"))?;
-    f.flush().map_err(|e| format!("flush: {e}"))?;
+    writer.write_all(&bytes)?;
     Ok(())
 }
 
-fn recv_frame(pipe: &mut File) -> Result<(u32, Vec<u8>), String> {
+fn recv_frame(pipe: &PipeIo) -> Result<(u32, Vec<u8>), String> {
     let mut header = [0u8; 8];
-    pipe.read_exact(&mut header).map_err(|e| format!("read header: {e}"))?;
+    pipe.read_exact(&mut header)?;
     let opcode = u32::from_le_bytes([header[0], header[1], header[2], header[3]]);
     let len = u32::from_le_bytes([header[4], header[5], header[6], header[7]]) as usize;
     if len > 1_000_000 {
@@ -617,9 +623,163 @@ fn recv_frame(pipe: &mut File) -> Result<(u32, Vec<u8>), String> {
     }
     let mut body = vec![0u8; len];
     if len > 0 {
-        pipe.read_exact(&mut body).map_err(|e| format!("read body: {e}"))?;
+        pipe.read_exact(&mut body)?;
     }
     Ok((opcode, body))
+}
+
+// ── Win32 overlapped-I/O pipe wrapper ────────────────────────────────────────
+//
+// Discord's IPC pipe is a duplex named pipe. Naively opening it with synchronous
+// I/O serializes reads and writes at the FILE_OBJECT level — even with
+// duplicated handles — so a write from a Tauri command (e.g. SET_VOICE_SETTINGS)
+// blocks for tens of seconds until the worker's pending ReadFile completes
+// (which only happens when Discord pushes an event). That's why mute/deafen
+// "didn't work until a Discord message arrived." Opening with FILE_FLAG_OVERLAPPED
+// lets read and write proceed independently.
+
+struct PipeHandle(HANDLE);
+unsafe impl Send for PipeHandle {}
+unsafe impl Sync for PipeHandle {}
+impl Drop for PipeHandle {
+    fn drop(&mut self) {
+        if !self.0.is_invalid() {
+            unsafe { let _ = CloseHandle(self.0); }
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct PipeIo {
+    handle: Arc<PipeHandle>,
+    /// Serializes concurrent WriteFile calls so frames don't interleave.
+    write_lock: Arc<Mutex<()>>,
+}
+
+impl PipeIo {
+    fn open(path: &str) -> Result<Self, String> {
+        let wide: Vec<u16> = OsStr::new(path).encode_wide().chain(std::iter::once(0)).collect();
+        let handle = unsafe {
+            CreateFileW(
+                PCWSTR(wide.as_ptr()),
+                FILE_GENERIC_READ.0 | FILE_GENERIC_WRITE.0,
+                FILE_SHARE_NONE,
+                None,
+                OPEN_EXISTING,
+                FILE_FLAG_OVERLAPPED,
+                None,
+            )
+        }
+        .map_err(|e| format!("CreateFileW: {e}"))?;
+        Ok(Self {
+            handle: Arc::new(PipeHandle(handle)),
+            write_lock: Arc::new(Mutex::new(())),
+        })
+    }
+
+    fn raw(&self) -> HANDLE {
+        self.handle.0
+    }
+
+    /// Read exactly `buf.len()` bytes, blocking the calling thread until they
+    /// arrive. Uses overlapped I/O so a parallel WriteFile on the same handle
+    /// is not blocked by us.
+    fn read_exact(&self, buf: &mut [u8]) -> Result<(), String> {
+        let event = unsafe { CreateEventW(None, true, false, PCWSTR::null()) }
+            .map_err(|e| format!("CreateEventW (read): {e}"))?;
+        let _guard = EventGuard(event);
+        let mut total = 0usize;
+        while total < buf.len() {
+            let mut overlapped = OVERLAPPED::default();
+            overlapped.hEvent = event;
+            let chunk = &mut buf[total..];
+            let mut got: u32 = 0;
+            let result = unsafe {
+                ReadFile(
+                    self.raw(),
+                    Some(chunk),
+                    Some(&mut got as *mut u32),
+                    Some(&mut overlapped as *mut OVERLAPPED),
+                )
+            };
+            if let Err(e) = result {
+                if e.code() != ERROR_IO_PENDING.to_hresult() {
+                    return Err(format!("ReadFile: {e}"));
+                }
+                let mut transferred: u32 = 0;
+                unsafe {
+                    GetOverlappedResult(
+                        self.raw(),
+                        &overlapped as *const OVERLAPPED,
+                        &mut transferred as *mut u32,
+                        true,
+                    )
+                }
+                .map_err(|e| format!("GetOverlappedResult (read): {e}"))?;
+                got = transferred;
+            }
+            if got == 0 {
+                return Err("pipe closed (EOF on read)".into());
+            }
+            total += got as usize;
+        }
+        Ok(())
+    }
+
+    /// Write all bytes, blocking the calling thread until WriteFile has
+    /// completed. Serialized via `write_lock` so concurrent writers can't
+    /// interleave their frames.
+    fn write_all(&self, data: &[u8]) -> Result<(), String> {
+        let _g = self.write_lock.lock();
+        let event = unsafe { CreateEventW(None, true, false, PCWSTR::null()) }
+            .map_err(|e| format!("CreateEventW (write): {e}"))?;
+        let _guard = EventGuard(event);
+        let mut total = 0usize;
+        while total < data.len() {
+            let mut overlapped = OVERLAPPED::default();
+            overlapped.hEvent = event;
+            let chunk = &data[total..];
+            let mut written: u32 = 0;
+            let result = unsafe {
+                WriteFile(
+                    self.raw(),
+                    Some(chunk),
+                    Some(&mut written as *mut u32),
+                    Some(&mut overlapped as *mut OVERLAPPED),
+                )
+            };
+            if let Err(e) = result {
+                if e.code() != ERROR_IO_PENDING.to_hresult() {
+                    return Err(format!("WriteFile: {e}"));
+                }
+                let mut transferred: u32 = 0;
+                unsafe {
+                    GetOverlappedResult(
+                        self.raw(),
+                        &overlapped as *const OVERLAPPED,
+                        &mut transferred as *mut u32,
+                        true,
+                    )
+                }
+                .map_err(|e| format!("GetOverlappedResult (write): {e}"))?;
+                written = transferred;
+            }
+            if written == 0 {
+                return Err("WriteFile returned 0 bytes".into());
+            }
+            total += written as usize;
+        }
+        Ok(())
+    }
+}
+
+struct EventGuard(HANDLE);
+impl Drop for EventGuard {
+    fn drop(&mut self) {
+        if !self.0.is_invalid() {
+            unsafe { let _ = CloseHandle(self.0); }
+        }
+    }
 }
 
 #[tauri::command]
@@ -642,7 +802,7 @@ fn parse_command_response(resp: &Value) -> Result<(), String> {
     Ok(())
 }
 
-fn writer_or_err() -> Result<Arc<Mutex<File>>, String> {
+fn writer_or_err() -> Result<PipeIo, String> {
     WRITE_PIPE
         .lock()
         .clone()
