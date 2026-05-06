@@ -7,9 +7,10 @@ import {
   useCanvas,
   useOrientation,
 } from '../state/layout';
+import { TilePickerGallery } from './TilePickerGallery';
 
 export function EditModeOverlay({
-  accent, accent2, onExit, onRemove,
+  accent, accent2, onExit, onRemove, onAdd,
   layout, setLayout,
   selectedId, setSelectedId,
   hiddenIds = [],
@@ -20,6 +21,7 @@ export function EditModeOverlay({
   accent2: string;
   onExit: () => void;
   onRemove?: (id: TileId) => void;
+  onAdd: (id: TileId, rect: Rect) => void;
   layout: Layout;
   setLayout: (next: Layout) => void;
   selectedId: TileId;
@@ -29,9 +31,10 @@ export function EditModeOverlay({
   setSnap: (enabled: boolean) => void;
   profileName: string;
 }) {
-  const [tool, setTool] = useState<'select' | 'move' | 'resize' | 'add' | 'comment'>('select');
+  const [tool, setTool] = useState<'select' | 'move' | 'resize' | 'comment'>('select');
   const [showGuides, setShowGuides] = useState(true);
   const [showGrid, setShowGrid] = useState(true);
+  const [pickerOpen, setPickerOpen] = useState(false);
 
   const ALL_LABELS: Record<TileId, string> = {
     discord: 'Discord', spotify: 'Now playing', claude: 'Claude Code',
@@ -71,7 +74,8 @@ export function EditModeOverlay({
           showGrid={showGrid} setShowGrid={setShowGrid}
           snap={snap} setSnap={setSnap}
           profileName={profileName}
-          onExit={onExit} />
+          onExit={onExit}
+          onPickerOpen={() => setPickerOpen(true)} />
         <EditLeftRail accent={accent} tool={tool} setTool={setTool} />
       </div>
       {showGrid && <GridOverlay />}
@@ -94,16 +98,31 @@ export function EditModeOverlay({
         )}
         <LayersPanel accent={accent} selected={selectedId} setSelected={(id) => setSelectedId(id as TileId)} tiles={tiles} canvas={canvas} />
       </div>
+      {pickerOpen && (
+        <div style={{ pointerEvents: 'auto' }}>
+          <TilePickerGallery
+            orientation={orientation}
+            canvas={canvas}
+            layout={layout}
+            hidden={Object.fromEntries((hiddenIds as TileId[]).map((id) => [id, true])) as Partial<Record<TileId, boolean>>}
+            profileName={profileName}
+            accent={accent}
+            onAdd={(id, rect) => onAdd(id, rect)}
+            onRemove={(id) => onRemove && onRemove(id)}
+            onClose={() => setPickerOpen(false)}
+          />
+        </div>
+      )}
     </div>
   );
 }
 
 function EditToolbar({
-  accent, tool, setTool, showGuides, setShowGuides, showGrid, setShowGrid, snap, setSnap, onExit, profileName,
+  accent, tool, setTool, showGuides, setShowGuides, showGrid, setShowGrid, snap, setSnap, onExit, profileName, onPickerOpen,
 }: {
   accent: string;
-  tool: 'select' | 'move' | 'resize' | 'add' | 'comment';
-  setTool: (t: 'select' | 'move' | 'resize' | 'add' | 'comment') => void;
+  tool: 'select' | 'move' | 'resize' | 'comment';
+  setTool: (t: 'select' | 'move' | 'resize' | 'comment') => void;
   showGuides: boolean;
   setShowGuides: (b: boolean) => void;
   showGrid: boolean;
@@ -112,6 +131,7 @@ function EditToolbar({
   setSnap: (b: boolean) => void;
   onExit: () => void;
   profileName: string;
+  onPickerOpen: () => void;
 }) {
   return (
     <div style={{
@@ -125,7 +145,7 @@ function EditToolbar({
       <ToolBtn icon="↖" label="Select" active={tool === 'select'} onClick={() => setTool('select')} accent={accent} />
       <ToolBtn icon="✥" label="Move" active={tool === 'move'} onClick={() => setTool('move')} accent={accent} />
       <ToolBtn icon="◰" label="Resize" active={tool === 'resize'} onClick={() => setTool('resize')} accent={accent} />
-      <ToolBtn icon="+" label="Add tile" active={tool === 'add'} onClick={() => setTool('add')} accent={accent} />
+      <ToolBtn icon="+" label="Add tile" active={false} onClick={onPickerOpen} accent={accent} />
       <Divider />
       <ToolToggle label="Snap" active={snap} onClick={() => setSnap(!snap)} accent={accent} />
       <ToolToggle label="Grid" active={showGrid} onClick={() => setShowGrid(!showGrid)} accent={accent} />
@@ -177,7 +197,6 @@ function EditLeftRail({ accent, tool, setTool }: { accent: string; tool: string;
     { id: 'select', icon: '↖', label: 'V' },
     { id: 'move', icon: '✥', label: 'M' },
     { id: 'resize', icon: '◰', label: 'R' },
-    { id: 'add', icon: '+', label: 'A' },
     { id: 'comment', icon: '◐', label: 'C' },
   ];
   return (
