@@ -308,6 +308,14 @@ export function migrateLegacyProfileToOrientations<T extends {
       landscape: p.landscape, portrait: p.portrait,
     };
   }
+  if (p.landscape && !p.portrait) {
+    // Already has landscape — synthesise portrait without clobbering landscape data.
+    return {
+      id: p.id, name: p.name, color: p.color,
+      landscape: p.landscape,
+      portrait: { layout: { ...DEFAULT_PORTRAIT_LAYOUT }, hidden: { ...p.landscape.hidden } },
+    };
+  }
   const legacyLayout = p.layout ?? {};
   const legacyHidden = p.hidden ?? {};
   const convertedLayout: Layout = {};

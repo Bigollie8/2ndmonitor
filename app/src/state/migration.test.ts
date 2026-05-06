@@ -43,3 +43,19 @@ test('migrate: idempotent on already-migrated profile', () => {
   assert.equal(out.landscape.layout.viz?.y, 0.1);
   assert.deepEqual(out.portrait.layout, DEFAULT_PORTRAIT_LAYOUT);
 });
+
+test('migrate: partially-migrated profile (landscape only) preserves landscape and synthesises portrait', () => {
+  const partial = {
+    id: 'p4', name: 'Partial', color: '#ff0000',
+    landscape: { layout: { viz: { x: 0.2, y: 0.2, w: 0.6, h: 0.6 } }, hidden: { mixer: true } },
+    // portrait deliberately missing
+  };
+  const out = migrateLegacyProfileToOrientations(partial);
+  // Landscape preserved exactly
+  assert.equal(out.landscape.layout.viz?.x, 0.2);
+  assert.equal(out.landscape.layout.viz?.y, 0.2);
+  assert.equal(out.landscape.hidden.mixer, true);
+  // Portrait synthesised from default + landscape's hidden map
+  assert.deepEqual(out.portrait.layout, DEFAULT_PORTRAIT_LAYOUT);
+  assert.equal(out.portrait.hidden.mixer, true);
+});
