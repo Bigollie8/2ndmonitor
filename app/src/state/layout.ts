@@ -286,3 +286,38 @@ export function useOrientation(): Orientation {
   }, [canvas.w, canvas.h]);
   return orientation;
 }
+
+/** Convert a legacy profile shape (top-level `layout`/`hidden` in 2560x1440 px)
+ *  to the new orientation-aware shape, preserving custom layouts on landscape
+ *  and seeding portrait from the default. Idempotent — if `landscape`/`portrait`
+ *  are already present, returns the input unchanged. */
+export function migrateLegacyProfileToOrientations<T extends {
+  id: string; name: string; color: string;
+  layout?: Layout;
+  hidden?: Partial<Record<TileId, boolean>>;
+  landscape?: OrientationLayout;
+  portrait?: OrientationLayout;
+}>(p: T): {
+  id: string; name: string; color: string;
+  landscape: OrientationLayout;
+  portrait: OrientationLayout;
+} {
+  if (p.landscape && p.portrait) {
+    return {
+      id: p.id, name: p.name, color: p.color,
+      landscape: p.landscape, portrait: p.portrait,
+    };
+  }
+  const legacyLayout = p.layout ?? {};
+  const legacyHidden = p.hidden ?? {};
+  const convertedLayout: Layout = {};
+  for (const k of Object.keys(legacyLayout) as TileId[]) {
+    const r = legacyLayout[k];
+    if (r) convertedLayout[k] = legacyRectToFraction(r);
+  }
+  return {
+    id: p.id, name: p.name, color: p.color,
+    landscape: { layout: convertedLayout, hidden: legacyHidden },
+    portrait: { layout: { ...DEFAULT_PORTRAIT_LAYOUT }, hidden: { ...legacyHidden } },
+  };
+}

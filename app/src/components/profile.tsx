@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import type { Profile } from '../types';
 import type { TileId, Rect } from './../state/layout';
-import { DEFAULT_LAYOUT, CANVAS } from './../state/layout';
+import { DEFAULT_LAYOUT, DEFAULT_LANDSCAPE_LAYOUT, CANVAS, migrateLegacyProfileToOrientations } from './../state/layout';
 
 const CARD_PALETTE = [
   '#a78bfa', '#f59e0b', '#22d3ee', '#22c55e',
@@ -45,13 +45,13 @@ export function ProfileSwitcher({
     const usedColors = new Set(profiles.map((p) => p.color));
     const color = CARD_PALETTE.find((c) => !usedColors.has(c)) ?? CARD_PALETTE[profiles.length % CARD_PALETTE.length]!;
     const baseName = `Profile ${profiles.length + 1}`;
-    const created: Profile = {
+    const created: Profile = migrateLegacyProfileToOrientations({
       id: newId(),
       name: baseName,
       color,
-      layout: source ? { ...source.layout } : {},
-      hidden: source ? { ...source.hidden } : {},
-    };
+      layout: source ? { ...source.landscape.layout } : {},
+      hidden: source ? { ...source.landscape.hidden } : {},
+    });
     setProfiles([...profiles, created]);
     setActiveProfileId(created.id);
   };
@@ -141,7 +141,7 @@ function ProfileCard({
   // Match the preview: count visible tiles (i.e. not hidden), regardless of
   // whether their rect is custom or falls back to DEFAULT_LAYOUT.
   const ALL_TILES: TileId[] = ['discord', 'spotify', 'claude', 'notes', 'sysmon', 'clock', 'viz'];
-  const tileCount = ALL_TILES.filter((id) => !profile.hidden[id]).length;
+  const tileCount = ALL_TILES.filter((id) => !profile.landscape.hidden[id]).length;
 
   return (
     <div style={{
@@ -221,7 +221,7 @@ function ProfileCard({
           >🗑</button>
         </div>
         <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.35)', fontFamily: '"JetBrains Mono", ui-monospace, monospace' }}>
-          {tileCount} tile{tileCount === 1 ? '' : 's'} · {Object.keys(profile.hidden).filter((k) => profile.hidden[k as TileId]).length} hidden
+          {tileCount} tile{tileCount === 1 ? '' : 's'} · {Object.keys(profile.landscape.hidden).filter((k) => profile.landscape.hidden[k as TileId]).length} hidden
         </div>
       </div>
     </div>
@@ -235,9 +235,13 @@ function LayoutPreview({ profile }: { profile: Profile }) {
   const sy = H / CANVAS.h;
 
   const tileIds: TileId[] = ['discord', 'spotify', 'claude', 'notes', 'sysmon', 'clock', 'viz'];
-  const visible = tileIds.filter((id) => !profile.hidden[id]);
+  const visible = tileIds.filter((id) => !profile.landscape.hidden[id]);
 
-  const rectFor = (id: TileId): Rect => profile.layout[id] ?? DEFAULT_LAYOUT[id];
+  const rectFor = (id: TileId): Rect => {
+    const r = profile.landscape.layout[id] ?? DEFAULT_LANDSCAPE_LAYOUT[id];
+    // Fractional coords — scale to SVG canvas pixels
+    return { x: r.x * CANVAS.w, y: r.y * CANVAS.h, w: r.w * CANVAS.w, h: r.h * CANVAS.h };
+  };
 
   return (
     <svg viewBox={`0 0 ${W} ${H}`} style={{ width: '100%', display: 'block', background: '#06070a' }}>
