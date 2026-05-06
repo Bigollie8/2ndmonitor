@@ -2,6 +2,24 @@ export type TileId = 'discord' | 'spotify' | 'claude' | 'notes' | 'mixer' | 'sys
 export interface Rect { x: number; y: number; w: number; h: number }
 export type Layout = Partial<Record<TileId, Rect>>;
 
+/** Top chrome bar height in CSS pixels. Same value at any viewport. */
+export const CHROME_TOP_PX = 56;
+/** Bottom status bar height in CSS pixels. */
+export const CHROME_BOTTOM_PX = 32;
+
+/** Smallest usable tile in CSS pixels. Drives clamp on resize. */
+export const MIN_SIZE_PX = { w: 200, h: 140 } as const;
+
+/** Snap step expressed as fraction of canvas. 40/2560 ≈ 0.015625, preserving
+ *  today's snap feel on a landscape monitor. */
+export const SNAP_FRAC = 40 / 2560;
+
+/** One orientation's full layout state — tile rects (fractional) and visibility. */
+export interface OrientationLayout {
+  layout: Layout;
+  hidden: Partial<Record<TileId, boolean>>;
+}
+
 const TOP = 56;
 const BOTTOM = 32;
 const SIDE = 20;
@@ -80,4 +98,36 @@ export function clampRect(r: Rect): Rect {
 
 export function snap(v: number): number {
   return Math.round(v / SNAP_PX) * SNAP_PX;
+}
+
+/** Clamp a fractional rect against a live canvas size in CSS pixels. Enforces
+ *  pixel-based minimums (so tiles don't shrink below content readability) and
+ *  pixel-based chrome reserved areas (top/bottom bars). Returned rect is also
+ *  fractional. */
+export function clampRectFrac(r: Rect, canvasPx: { w: number; h: number }): Rect {
+  const minW = MIN_SIZE_PX.w / canvasPx.w;
+  const minH = MIN_SIZE_PX.h / canvasPx.h;
+  const topF = CHROME_TOP_PX / canvasPx.h;
+  const botF = CHROME_BOTTOM_PX / canvasPx.h;
+
+  const x = Math.max(0, Math.min(1 - minW, r.x));
+  const y = Math.max(topF, Math.min(1 - botF - minH, r.y));
+  const w = Math.max(minW, Math.min(1 - x, r.w));
+  const h = Math.max(minH, Math.min(1 - botF - y, r.h));
+  return { x, y, w, h };
+}
+
+/** Snap a fractional value to `SNAP_FRAC` increments. */
+export function snapFrac(v: number): number {
+  return Math.round(v / SNAP_FRAC) * SNAP_FRAC;
+}
+
+/** One-shot conversion: legacy 2560x1440 px rect -> fractional rect. */
+export function legacyRectToFraction(r: Rect): Rect {
+  return {
+    x: r.x / 2560,
+    y: r.y / 1440,
+    w: r.w / 2560,
+    h: r.h / 1440,
+  };
 }
