@@ -270,3 +270,44 @@ export function migrateLegacyProfileToOrientations<T extends {
     portrait: { layout: { ...DEFAULT_PORTRAIT_LAYOUT }, hidden: { ...legacyHidden } },
   };
 }
+
+/** Find a snap-aligned, non-overlapping rect close to `preferred`. If `preferred`
+ *  is already empty, returns it unchanged. Otherwise scans snap-aligned positions
+ *  for an empty slot of the same size, scoring by Euclidean distance from
+ *  `preferred` and returning the best. If no empty slot exists, returns
+ *  `preferred` (overlap allowed as fallback; user can drag). */
+export function findEmptyRect(
+  visibleRects: Rect[],
+  preferred: Rect,
+  canvasPx: { w: number; h: number },
+): Rect {
+  const overlaps = (a: Rect, b: Rect) =>
+    a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+  const overlapsAny = (r: Rect) => visibleRects.some((v) => overlaps(r, v));
+
+  if (!overlapsAny(preferred)) return preferred;
+
+  const topF = CHROME_TOP_PX / canvasPx.h;
+  const botF = CHROME_BOTTOM_PX / canvasPx.h;
+  const xMax = 1 - preferred.w;
+  const yMax = 1 - botF - preferred.h;
+
+  let best: Rect | null = null;
+  let bestScore = Infinity;
+
+  for (let x = 0; x <= xMax + 1e-9; x += SNAP_FRAC) {
+    for (let y = topF; y <= yMax + 1e-9; y += SNAP_FRAC) {
+      const candidate: Rect = { x, y, w: preferred.w, h: preferred.h };
+      if (overlapsAny(candidate)) continue;
+      const dx = x - preferred.x;
+      const dy = y - preferred.y;
+      const score = dx * dx + dy * dy;
+      if (score < bestScore) {
+        bestScore = score;
+        best = candidate;
+      }
+    }
+  }
+
+  return best ?? preferred;
+}
