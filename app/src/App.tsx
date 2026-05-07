@@ -16,6 +16,12 @@ import {
 } from './state/layout';
 import type { Track, Profile, AccentTheme, VizMode, Density, Todo, WeatherLocation, AppMetrics } from './types';
 import type { GeocodeResult } from './state/weatherLocation';
+import {
+  DEFAULT_POMODORO_STATE,
+  DEFAULT_POMODORO_SETTINGS,
+  type PomodoroState,
+  type PomodoroSettings,
+} from './state/pomodoro';
 import { TRACKS, ACCENT_PALETTES } from './data';
 import { useTweaks } from './state/useTweaks';
 import { useSysmon, useNowPlaying, useSpectrumRef } from './state/tauri';
@@ -41,6 +47,7 @@ import {
 } from './components/tweaks';
 import { StreamDeckTile } from './components/StreamDeckTile';
 import { RadarTile } from './components/RadarTile';
+import { PomodoroTile } from './components/PomodoroTile';
 import { parseStreamDeckConfig } from './state/actions';
 interface VizColorOverride {
   enabled: boolean;
@@ -74,6 +81,7 @@ interface TweakState extends Record<string, unknown> {
   audioDebug: boolean;
   todos: Todo[];
   weatherLocation: WeatherLocation;
+  pomodoro: { state: PomodoroState; settings: PomodoroSettings };
   // Profile system: layout + tile visibility live INSIDE the active profile.
   profiles: Profile[];
   activeProfileId: string;
@@ -96,6 +104,10 @@ const TWEAK_DEFAULTS: TweakState = {
   audioDebug: false,
   todos: [],
   weatherLocation: { label: 'Knoxville, TN', lat: 35.9606, lon: -83.9207 },
+  pomodoro: {
+    state: { ...DEFAULT_POMODORO_STATE },
+    settings: { ...DEFAULT_POMODORO_SETTINGS },
+  },
   profiles: [],
   activeProfileId: '',
   onboardingDone: false,
@@ -485,6 +497,18 @@ export default function App() {
             density={t.density}
             accent={accent}
             location={t.weatherLocation}
+          />
+        );
+      case 'pomodoro':
+        return (
+          <PomodoroTile
+            density={t.density}
+            accent={accent}
+            editing={editMode}
+            state={t.pomodoro.state}
+            setState={(next) => setTweak('pomodoro', { ...t.pomodoro, state: next })}
+            settings={t.pomodoro.settings}
+            setSettings={(next) => setTweak('pomodoro', { ...t.pomodoro, settings: next })}
           />
         );
     }
