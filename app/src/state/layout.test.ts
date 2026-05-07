@@ -5,6 +5,7 @@ import {
   clampRectFrac,
   snapFrac,
   legacyRectToFraction,
+  findEmptyRect,
   CHROME_TOP_PX,
   CHROME_BOTTOM_PX,
   MIN_SIZE_PX,
@@ -106,6 +107,44 @@ test('decideOrientation: does not switch on aspect 1.04 from portrait', () => {
 test('decideOrientation: does not switch on aspect 0.96 from landscape', () => {
   const r = decideOrientation({ w: 960, h: 1000 }, 'landscape');
   assert.equal(r, 'landscape');
+});
+
+const CANVAS = { w: 2560, h: 1440 };
+
+test('findEmptyRect: empty visibleRects returns preferred unchanged', () => {
+  const preferred = { x: 0.1, y: 0.2, w: 0.3, h: 0.3 };
+  const out = findEmptyRect([], preferred, CANVAS);
+  assert.deepEqual(out, preferred);
+});
+
+test('findEmptyRect: preferred non-overlapping returns preferred unchanged', () => {
+  const preferred = { x: 0.6, y: 0.1, w: 0.2, h: 0.2 };
+  const visible = [{ x: 0.0, y: 0.0, w: 0.3, h: 0.3 }];
+  const out = findEmptyRect(visible, preferred, CANVAS);
+  assert.deepEqual(out, preferred);
+});
+
+test('findEmptyRect: preferred overlaps → returns non-overlapping rect of same size', () => {
+  const preferred = { x: 0.05, y: 0.1, w: 0.2, h: 0.2 };
+  // A tile sits exactly where preferred wants to be:
+  const visible = [{ x: 0.05, y: 0.1, w: 0.2, h: 0.2 }];
+  const out = findEmptyRect(visible, preferred, CANVAS);
+  // Same size:
+  assert.equal(out.w, preferred.w);
+  assert.equal(out.h, preferred.h);
+  // Does not overlap the visible rect:
+  const v = visible[0]!;
+  const overlaps = out.x < v.x + v.w && out.x + out.w > v.x && out.y < v.y + v.h && out.y + out.h > v.y;
+  assert.equal(overlaps, false, 'result should not overlap visible rect');
+});
+
+test('findEmptyRect: canvas full → returns preferred (overlap allowed as fallback)', () => {
+  const preferred = { x: 0.1, y: 0.1, w: 0.2, h: 0.2 };
+  // One huge rect covering the entire content area:
+  const visible = [{ x: 0, y: 0.04, w: 1, h: 0.93 }];
+  const out = findEmptyRect(visible, preferred, CANVAS);
+  // No empty space exists; helper returns preferred unchanged.
+  assert.deepEqual(out, preferred);
 });
 
 test('DEFAULT_PORTRAIT_LAYOUT contains all 8 tiles', () => {

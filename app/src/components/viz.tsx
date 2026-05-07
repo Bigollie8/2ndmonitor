@@ -965,7 +965,14 @@ export function VizHero({
       )}
       {!showVideo && <LyricsOverlay accent={accent} playback={playback} enabled={lyricsOverlayEnabled} />}
       {!showVideo && audioDebug && <AudioDebugHud spectrumRef={spectrumRef} paused={paused} />}
-      {!immersive && (
+      {/* VizOverlay (mode buttons + track info + immersive/📺 toggles) hides
+       *  entirely when video mode is active. Otherwise its top button row
+       *  draws over the BrowserPlayer's chrome bar at the same y-band, and
+       *  its bottom track-info row gets covered by the native webview anyway —
+       *  rendering it just produces visual overlap. The BrowserPlayer's chrome
+       *  bar (🏠 Home + ✕ Exit) provides the controls the user needs while
+       *  watching. */}
+      {!immersive && !showVideo && (
         <div style={{ position: 'absolute', inset: 0, zIndex: 3, pointerEvents: 'none' }}>
           <VizOverlay
             track={track} mode={mode} setMode={setMode}

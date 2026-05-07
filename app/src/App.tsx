@@ -458,6 +458,10 @@ export default function App() {
             accent2={accent2}
             onExit={() => setEditMode(false)}
             onRemove={(id) => setHidden(id, true)}
+            onAdd={(id, rect) => updateActiveOrientation({
+              layout: { ...activeLayout, [id]: rect },
+              hidden: { ...hidden, [id]: undefined },
+            })}
             layout={activeLayout}
             setLayout={(next) => updateActiveOrientation({ layout: next })}
             selectedId={selectedTileId}
@@ -465,6 +469,7 @@ export default function App() {
             hiddenIds={(Object.keys(hidden) as TileId[]).filter((k) => hidden[k])}
             snap={snapEnabled}
             setSnap={setSnapEnabled}
+            profileName={activeProfile.name}
           />
         )}
         {showSwitcher && (
