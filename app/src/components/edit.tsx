@@ -46,6 +46,7 @@ export function EditModeOverlay({
     weatherRadar: 'Weather radar',
     pomodoro: 'Pomodoro',
     sun: 'Sun & golden hour',
+    aurora: 'Aurora & moon',
   };
 
   const orientation = useOrientation();
@@ -423,6 +424,7 @@ function LayersPanel({ accent, selectedInstanceId, setSelectedInstanceId, tiles,
     weatherRadar: '☂',
     pomodoro: '◷',
     sun: '☀',
+    aurora: '🌌',
   }[type] ?? '?');
   return (
     <div style={{

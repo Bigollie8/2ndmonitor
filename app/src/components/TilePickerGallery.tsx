@@ -20,9 +20,10 @@ const TILE_META: Record<TileType, { icon: string; label: string; description: st
   weatherRadar: { icon: '☂', label: 'Weather radar',  description: 'Animated precipitation map centered on your saved location', multiInstance: false },
   pomodoro: { icon: '◷', label: 'Pomodoro', description: 'Focus / break interval timer with daily counter', multiInstance: false },
   sun: { icon: '☀', label: 'Sun & golden hour', description: 'Sunrise, sunset, golden hour times for your saved location', multiInstance: false },
+  aurora: { icon: '🌌', label: 'Aurora & moon', description: 'KP index, aurora visibility, moon phase', multiInstance: false },
 };
 
-const ORDER: TileType[] = ['viz', 'spotify', 'discord', 'claude', 'mixer', 'notes', 'sysmon', 'clock', 'streamDeck', 'weatherRadar', 'pomodoro', 'sun'];
+const ORDER: TileType[] = ['viz', 'spotify', 'discord', 'claude', 'mixer', 'notes', 'sysmon', 'clock', 'streamDeck', 'weatherRadar', 'pomodoro', 'sun', 'aurora'];
 
 export function TilePickerGallery({
   orientation, canvas, tiles, profileName, accent,

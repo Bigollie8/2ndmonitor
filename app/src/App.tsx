@@ -520,6 +520,9 @@ export default function App() {
             location={t.weatherLocation}
           />
         );
+      case 'aurora':
+        // Placeholder — actual component lands in Task 3.
+        return null;
     }
   };
 
