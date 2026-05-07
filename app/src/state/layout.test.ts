@@ -177,3 +177,87 @@ test('DEFAULT_PORTRAIT_LAYOUT: bottom edges do not overlap bottom chrome on a 19
     );
   }
 });
+
+import {
+  findInstance, getInstance, addInstance, removeInstance, updateInstance,
+  type TileInstance,
+} from './layout';
+
+const MK = (instanceId: string, type: 'viz' | 'spotify' | 'discord'): TileInstance => ({
+  instanceId, type, rect: { x: 0, y: 0, w: 0.1, h: 0.1 },
+});
+
+test('findInstance: returns first match by type', () => {
+  const tiles = [MK('a', 'viz'), MK('b', 'spotify')];
+  const found = findInstance(tiles, 'spotify');
+  assert.equal(found?.instanceId, 'b');
+});
+
+test('findInstance: returns undefined when no match', () => {
+  const tiles = [MK('a', 'viz')];
+  assert.equal(findInstance(tiles, 'spotify'), undefined);
+});
+
+test('getInstance: matches by instanceId', () => {
+  const tiles = [MK('a', 'viz'), MK('b', 'spotify')];
+  assert.equal(getInstance(tiles, 'b')?.type, 'spotify');
+  assert.equal(getInstance(tiles, 'nope'), undefined);
+});
+
+test('addInstance: appends without mutating', () => {
+  const before = [MK('a', 'viz')];
+  const after = addInstance(before, MK('b', 'spotify'));
+  assert.equal(after.length, 2);
+  assert.equal(before.length, 1);
+  assert.equal(after[1]?.instanceId, 'b');
+});
+
+test('removeInstance: filters out matching id, preserves others', () => {
+  const before = [MK('a', 'viz'), MK('b', 'spotify'), MK('c', 'discord')];
+  const after = removeInstance(before, 'b');
+  assert.equal(after.length, 2);
+  assert.equal(after[0]?.instanceId, 'a');
+  assert.equal(after[1]?.instanceId, 'c');
+  assert.equal(before.length, 3);
+});
+
+test('updateInstance: patches matching instance, leaves others unchanged', () => {
+  const before = [MK('a', 'viz'), MK('b', 'spotify')];
+  const after = updateInstance(before, 'a', { rect: { x: 0.5, y: 0.5, w: 0.2, h: 0.2 } });
+  assert.equal(after[0]?.rect.x, 0.5);
+  assert.equal(after[1]?.rect.x, 0);
+  assert.equal(before[0]?.rect.x, 0);
+});
+
+import { migrateLayoutHiddenToTiles, ALL_TILE_TYPES } from './layout';
+
+test('migrateLayoutHiddenToTiles: empty layout+hidden produces full default tile list', () => {
+  const tiles = migrateLayoutHiddenToTiles({}, {}, DEFAULT_LANDSCAPE_LAYOUT);
+  assert.equal(tiles.length, ALL_TILE_TYPES.length);
+  // Each instance has a unique instanceId
+  const ids = tiles.map((t) => t.instanceId);
+  assert.equal(new Set(ids).size, ids.length);
+});
+
+test('migrateLayoutHiddenToTiles: hidden type is excluded from result', () => {
+  const tiles = migrateLayoutHiddenToTiles({}, { discord: true }, DEFAULT_LANDSCAPE_LAYOUT);
+  assert.equal(tiles.length, ALL_TILE_TYPES.length - 1);
+  assert.equal(tiles.find((t) => t.type === 'discord'), undefined);
+});
+
+test('migrateLayoutHiddenToTiles: custom layout rect is preserved, others use defaults', () => {
+  const customRect = { x: 0.5, y: 0.5, w: 0.3, h: 0.3 };
+  const layout: Layout = { viz: customRect };
+  const tiles = migrateLayoutHiddenToTiles(layout, {}, DEFAULT_LANDSCAPE_LAYOUT);
+  const vizInst = tiles.find((t) => t.type === 'viz');
+  assert.deepEqual(vizInst?.rect, customRect);
+  // Spotify uses default
+  const spotifyInst = tiles.find((t) => t.type === 'spotify');
+  assert.deepEqual(spotifyInst?.rect, DEFAULT_LANDSCAPE_LAYOUT.spotify);
+});
+
+test('migrateLayoutHiddenToTiles: result preserves ALL_TILE_TYPES order', () => {
+  const tiles = migrateLayoutHiddenToTiles({}, {}, DEFAULT_LANDSCAPE_LAYOUT);
+  const types = tiles.map((t) => t.type);
+  assert.deepEqual(types, ALL_TILE_TYPES);
+});

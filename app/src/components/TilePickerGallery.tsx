@@ -1,36 +1,36 @@
 import React, { useEffect } from 'react';
-import type { TileId, Rect, Layout, Orientation } from '../state/layout';
+import type { TileType, TileInstance, Rect, Orientation } from '../state/layout';
 import {
   DEFAULT_LANDSCAPE_LAYOUT,
   DEFAULT_PORTRAIT_LAYOUT,
   findEmptyRect,
+  findInstance,
 } from '../state/layout';
 
-const TILE_META: Record<TileId, { icon: string; label: string; description: string }> = {
-  viz:     { icon: '◢', label: 'Audio visualizer',  description: '27 styles reactive to system audio' },
-  spotify: { icon: '♪', label: 'Now playing',       description: 'Track, lyrics, queue, volume' },
-  discord: { icon: '◇', label: 'Discord voice',     description: 'Voice channel members + speaking' },
-  claude:  { icon: '⌘', label: 'Claude Code',       description: 'Active session log' },
-  mixer:   { icon: '♬', label: 'Audio mixer',       description: 'Master volume + per-app sessions' },
-  notes:   { icon: '✎', label: 'Todos',             description: 'Quick task list' },
-  sysmon:  { icon: '▤', label: 'System monitor',    description: 'CPU / RAM / GPU / network' },
-  clock:   { icon: '◐', label: 'Now & forecast',    description: 'Time + weather' },
+const TILE_META: Record<TileType, { icon: string; label: string; description: string; multiInstance: boolean }> = {
+  viz:     { icon: '◢', label: 'Audio visualizer',  description: '27 styles reactive to system audio',  multiInstance: false },
+  spotify: { icon: '♪', label: 'Now playing',       description: 'Track, lyrics, queue, volume',         multiInstance: false },
+  discord: { icon: '◇', label: 'Discord voice',     description: 'Voice channel members + speaking',     multiInstance: false },
+  claude:  { icon: '⌘', label: 'Claude Code',       description: 'Active session log',                   multiInstance: false },
+  mixer:   { icon: '♬', label: 'Audio mixer',       description: 'Master volume + per-app sessions',     multiInstance: false },
+  notes:   { icon: '✎', label: 'Todos',             description: 'Quick task list',                      multiInstance: false },
+  sysmon:  { icon: '▤', label: 'System monitor',    description: 'CPU / RAM / GPU / network',            multiInstance: false },
+  clock:   { icon: '◐', label: 'Now & forecast',    description: 'Time + weather',                       multiInstance: false },
 };
 
-const ORDER: TileId[] = ['viz', 'spotify', 'discord', 'claude', 'mixer', 'notes', 'sysmon', 'clock'];
+const ORDER: TileType[] = ['viz', 'spotify', 'discord', 'claude', 'mixer', 'notes', 'sysmon', 'clock'];
 
 export function TilePickerGallery({
-  orientation, canvas, layout, hidden, profileName, accent,
+  orientation, canvas, tiles, profileName, accent,
   onAdd, onRemove, onClose,
 }: {
   orientation: Orientation;
   canvas: { w: number; h: number };
-  layout: Layout;
-  hidden: Partial<Record<TileId, boolean>>;
+  tiles: TileInstance[];
   profileName: string;
   accent: string;
-  onAdd: (id: TileId, rect: Rect) => void;
-  onRemove: (id: TileId) => void;
+  onAdd: (type: TileType, rect: Rect) => void;
+  onRemove: (instanceId: string) => void;
   onClose: () => void;
 }) {
   // Esc closes the modal.
@@ -47,26 +47,21 @@ export function TilePickerGallery({
 
   const defaults = orientation === 'portrait' ? DEFAULT_PORTRAIT_LAYOUT : DEFAULT_LANDSCAPE_LAYOUT;
 
-  const visibleRects = (Object.keys(layout) as TileId[])
-    .filter((id) => !hidden[id] && layout[id])
-    .map((id) => layout[id]!)
-    // Also include tiles that are visible but use the default rect (no entry in layout):
-    .concat(
-      ORDER.filter((id) => !hidden[id] && !layout[id]).map((id) => defaults[id]),
-    );
+  const visibleRects = tiles.map((t) => t.rect);
 
-  const handleClick = (id: TileId) => {
-    if (hidden[id]) {
-      const preferred = layout[id] ?? defaults[id];
+  const handleClick = (type: TileType) => {
+    const existingInstance = findInstance(tiles, type);
+    if (!existingInstance) {
+      const preferred = defaults[type];
       const rect = findEmptyRect(visibleRects, preferred, canvas);
-      onAdd(id, rect);
+      onAdd(type, rect);
       onClose();
-    } else if (id === 'viz') {
+    } else if (type === 'viz') {
       // Viz cannot be removed. Defensive guard; the card is also rendered
       // disabled below.
       return;
     } else {
-      onRemove(id);
+      onRemove(existingInstance.instanceId);
       onClose();
     }
   };
@@ -114,7 +109,7 @@ export function TilePickerGallery({
         }}>
           {ORDER.map((id) => {
             const meta = TILE_META[id];
-            const isHidden = !!hidden[id];
+            const isHidden = !findInstance(tiles, id);
             const isViz = id === 'viz';
             const disabled = isViz && !isHidden;
             const cursor = disabled ? 'not-allowed' : 'pointer';

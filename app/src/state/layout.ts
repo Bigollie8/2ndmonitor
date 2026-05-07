@@ -1,8 +1,24 @@
 import { useEffect, useState } from 'react';
 
-export type TileId = 'discord' | 'spotify' | 'claude' | 'notes' | 'mixer' | 'sysmon' | 'clock' | 'viz';
+/** Stable id generator. Uses crypto.randomUUID when available, else falls back
+ *  to a Math.random-based string (sufficient for instance ids that don't need
+ *  cryptographic uniqueness). */
+export function newId(): string {
+  return (typeof crypto !== 'undefined' && crypto.randomUUID)
+    ? crypto.randomUUID()
+    : `id_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+}
+
+export type TileType = 'discord' | 'spotify' | 'claude' | 'notes' | 'mixer' | 'sysmon' | 'clock' | 'viz';
+
+/** Canonical render order for tile types. Used by tile-picker, layers panel,
+ *  and the legacy → tiles-array migration. */
+export const ALL_TILE_TYPES: TileType[] = [
+  'viz', 'spotify', 'discord', 'claude', 'mixer', 'notes', 'sysmon', 'clock',
+];
+
 export interface Rect { x: number; y: number; w: number; h: number }
-export type Layout = Partial<Record<TileId, Rect>>;
+export type Layout = Partial<Record<TileType, Rect>>;
 
 /** Top chrome bar height in CSS pixels. Same value at any viewport. */
 export const CHROME_TOP_PX = 56;
@@ -16,10 +32,28 @@ export const MIN_SIZE_PX = { w: 200, h: 140 } as const;
  *  today's snap feel on a landscape monitor. */
 export const SNAP_FRAC = 40 / 2560;
 
-/** One orientation's full layout state — tile rects (fractional) and visibility. */
+/** One orientation's full layout state — an ordered list of placed tile instances. */
 export interface OrientationLayout {
-  layout: Layout;
-  hidden: Partial<Record<TileId, boolean>>;
+  tiles: TileInstance[];
+}
+
+/** A single placed tile in a profile's layout. Multiple instances of the same
+ *  type are allowed for tile types where `multiInstance: true` (currently none —
+ *  Stream Deck in Phase 2b will be the first). Singleton types render at most
+ *  one instance per profile/orientation. */
+export interface TileInstance {
+  /** Stable UUID. Survives across drag/resize/profile-switch/reload. */
+  instanceId: string;
+  /** Which kind of tile renders. */
+  type: TileType;
+  /** Position + size, fractional [0,1] coordinates. */
+  rect: Rect;
+  /** Tile-type-specific settings. Empty for singleton tiles today;
+   *  Stream Deck will populate it with button definitions. */
+  config?: Record<string, unknown>;
+  /** Optional user-set name. Useful for disambiguating multiple instances
+   *  of the same type. No UI sets/reads this in 2a. */
+  name?: string;
 }
 
 const TOP = 56;
@@ -29,7 +63,7 @@ const GAP = 14;
 
 const RAIL_W = 560;
 
-const RAIL_ROWS: { id: TileId; weight: number }[] = [
+const RAIL_ROWS: { id: TileType; weight: number }[] = [
   { id: 'discord', weight: 1.1 },
   { id: 'spotify', weight: 1.0 },
   { id: 'claude',  weight: 1.4 },
@@ -39,7 +73,7 @@ const RAIL_ROWS: { id: TileId; weight: number }[] = [
 
 const STRIP_H = 360;
 
-const STRIP_COLS: { id: TileId; weight: number }[] = [
+const STRIP_COLS: { id: TileType; weight: number }[] = [
   { id: 'sysmon', weight: 1.4 },
   { id: 'clock',  weight: 2.0 },
 ];
@@ -95,9 +129,9 @@ function stripRectsFrac(): Record<string, Rect> {
   return out;
 }
 
-export const DEFAULT_LANDSCAPE_LAYOUT: Record<TileId, Rect> = {
-  ...(railRectsFrac() as Record<TileId, Rect>),
-  ...(stripRectsFrac() as Record<TileId, Rect>),
+export const DEFAULT_LANDSCAPE_LAYOUT: Record<TileType, Rect> = {
+  ...(railRectsFrac() as Record<TileType, Rect>),
+  ...(stripRectsFrac() as Record<TileType, Rect>),
   viz: VIZ_RECT_F,
 };
 
@@ -141,7 +175,7 @@ py += P_2UP2_H + P_GAP;
 
 const P_NOTES: Rect = { x: P_LEFT, y: py, w: P_FULL_W, h: P_NOTES_H };
 
-export const DEFAULT_PORTRAIT_LAYOUT: Record<TileId, Rect> = {
+export const DEFAULT_PORTRAIT_LAYOUT: Record<TileType, Rect> = {
   viz: P_VIZ,
   spotify: P_SPOTIFY,
   discord: P_DISCORD,
@@ -229,45 +263,52 @@ export function useOrientation(): Orientation {
 }
 
 /** Convert a legacy profile shape (top-level `layout`/`hidden` in 2560x1440 px)
- *  to the new orientation-aware shape, preserving custom layouts on landscape
- *  and seeding portrait from the default. Idempotent — if `landscape`/`portrait`
- *  are already present, returns the input unchanged. */
+ *  to the new orientation-aware shape using TileInstance arrays. Idempotent —
+ *  if both orientations already have `tiles`, returns them unchanged. */
 export function migrateLegacyProfileToOrientations<T extends {
   id: string; name: string; color: string;
   layout?: Layout;
-  hidden?: Partial<Record<TileId, boolean>>;
-  landscape?: OrientationLayout;
-  portrait?: OrientationLayout;
+  hidden?: Partial<Record<TileType, boolean>>;
+  landscape?: { layout?: Layout; hidden?: Partial<Record<TileType, boolean>>; tiles?: TileInstance[] };
+  portrait?: { layout?: Layout; hidden?: Partial<Record<TileType, boolean>>; tiles?: TileInstance[] };
 }>(p: T): {
   id: string; name: string; color: string;
   landscape: OrientationLayout;
   portrait: OrientationLayout;
 } {
-  if (p.landscape && p.portrait) {
+  const slotToTiles = (
+    slot: { layout?: Layout; hidden?: Partial<Record<TileType, boolean>>; tiles?: TileInstance[] } | undefined,
+    defaults: Record<TileType, Rect>,
+  ): TileInstance[] => {
+    if (slot?.tiles) return slot.tiles;
+    const layout = slot?.layout ?? {};
+    const hidden = slot?.hidden ?? {};
+    return migrateLayoutHiddenToTiles(layout, hidden, defaults);
+  };
+
+  if (p.landscape?.tiles && p.portrait?.tiles) {
     return {
       id: p.id, name: p.name, color: p.color,
-      landscape: p.landscape, portrait: p.portrait,
+      landscape: { tiles: p.landscape.tiles },
+      portrait: { tiles: p.portrait.tiles },
     };
   }
-  if (p.landscape && !p.portrait) {
-    // Already has landscape — synthesise portrait without clobbering landscape data.
-    return {
-      id: p.id, name: p.name, color: p.color,
-      landscape: p.landscape,
-      portrait: { layout: { ...DEFAULT_PORTRAIT_LAYOUT }, hidden: { ...p.landscape.hidden } },
-    };
-  }
+
   const legacyLayout = p.layout ?? {};
   const legacyHidden = p.hidden ?? {};
-  const convertedLayout: Layout = {};
-  for (const k of Object.keys(legacyLayout) as TileId[]) {
+  const convertedTopLayout: Layout = {};
+  for (const k of Object.keys(legacyLayout) as TileType[]) {
     const r = legacyLayout[k];
-    if (r) convertedLayout[k] = legacyRectToFraction(r);
+    if (r) convertedTopLayout[k] = legacyRectToFraction(r);
   }
+
+  const landscapeSrc = p.landscape ?? { layout: convertedTopLayout, hidden: legacyHidden };
+  const portraitSrc = p.portrait ?? { layout: {}, hidden: legacyHidden };
+
   return {
     id: p.id, name: p.name, color: p.color,
-    landscape: { layout: convertedLayout, hidden: legacyHidden },
-    portrait: { layout: { ...DEFAULT_PORTRAIT_LAYOUT }, hidden: { ...legacyHidden } },
+    landscape: { tiles: slotToTiles(landscapeSrc, DEFAULT_LANDSCAPE_LAYOUT) },
+    portrait:  { tiles: slotToTiles(portraitSrc, DEFAULT_PORTRAIT_LAYOUT) },
   };
 }
 
@@ -310,4 +351,54 @@ export function findEmptyRect(
   }
 
   return best ?? preferred;
+}
+
+/** Find the first instance of a given type. For singleton types this is "the" instance. */
+export function findInstance(tiles: TileInstance[], type: TileType): TileInstance | undefined {
+  return tiles.find((t) => t.type === type);
+}
+
+/** Get an instance by id. */
+export function getInstance(tiles: TileInstance[], instanceId: string): TileInstance | undefined {
+  return tiles.find((t) => t.instanceId === instanceId);
+}
+
+/** Append an instance immutably. */
+export function addInstance(tiles: TileInstance[], instance: TileInstance): TileInstance[] {
+  return [...tiles, instance];
+}
+
+/** Remove an instance by id immutably. */
+export function removeInstance(tiles: TileInstance[], instanceId: string): TileInstance[] {
+  return tiles.filter((t) => t.instanceId !== instanceId);
+}
+
+/** Patch an instance immutably. Non-matching instances are returned by reference. */
+export function updateInstance(
+  tiles: TileInstance[],
+  instanceId: string,
+  patch: Partial<TileInstance>,
+): TileInstance[] {
+  return tiles.map((t) => (t.instanceId === instanceId ? { ...t, ...patch } : t));
+}
+
+/** Convert legacy {layout, hidden} shape to the new tiles array.
+ *  Walks ALL_TILE_TYPES order. For each type:
+ *    - if hidden[type] → skip
+ *    - else create instance { instanceId: newId(), type, rect: layout[type] ?? defaults[type] }
+ *
+ *  Pure function; deterministic given the same inputs (other than the fresh
+ *  instanceIds). Idempotency at the call-site level is the caller's concern. */
+export function migrateLayoutHiddenToTiles(
+  layout: Layout,
+  hidden: Partial<Record<TileType, boolean>>,
+  defaults: Record<TileType, Rect>,
+): TileInstance[] {
+  const out: TileInstance[] = [];
+  for (const type of ALL_TILE_TYPES) {
+    if (hidden[type]) continue;
+    const rect = layout[type] ?? defaults[type];
+    out.push({ instanceId: newId(), type, rect });
+  }
+  return out;
 }
