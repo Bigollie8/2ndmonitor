@@ -47,6 +47,7 @@ import {
 } from './components/tweaks';
 import { StreamDeckTile } from './components/StreamDeckTile';
 import { RadarTile } from './components/RadarTile';
+import { PomodoroTile } from './components/PomodoroTile';
 import { parseStreamDeckConfig } from './state/actions';
 interface VizColorOverride {
   enabled: boolean;
@@ -499,8 +500,17 @@ export default function App() {
           />
         );
       case 'pomodoro':
-        // Placeholder — actual component lands in Task 3.
-        return null;
+        return (
+          <PomodoroTile
+            density={t.density}
+            accent={accent}
+            editing={editMode}
+            state={t.pomodoro.state}
+            setState={(next) => setTweak('pomodoro', { ...t.pomodoro, state: next })}
+            settings={t.pomodoro.settings}
+            setSettings={(next) => setTweak('pomodoro', { ...t.pomodoro, settings: next })}
+          />
+        );
     }
   };
 
