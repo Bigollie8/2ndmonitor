@@ -9,12 +9,12 @@ export function newId(): string {
     : `id_${Date.now()}_${Math.random().toString(36).slice(2)}`;
 }
 
-export type TileType = 'discord' | 'spotify' | 'claude' | 'notes' | 'mixer' | 'sysmon' | 'clock' | 'viz' | 'streamDeck';
+export type TileType = 'discord' | 'spotify' | 'claude' | 'notes' | 'mixer' | 'sysmon' | 'clock' | 'viz' | 'streamDeck' | 'weatherRadar';
 
 /** Canonical render order for tile types. Used by tile-picker, layers panel,
  *  and the legacy → tiles-array migration. */
 export const ALL_TILE_TYPES: TileType[] = [
-  'viz', 'spotify', 'discord', 'claude', 'mixer', 'notes', 'sysmon', 'clock', 'streamDeck',
+  'viz', 'spotify', 'discord', 'claude', 'mixer', 'notes', 'sysmon', 'clock', 'streamDeck', 'weatherRadar',
 ];
 
 export interface Rect { x: number; y: number; w: number; h: number }
@@ -134,6 +134,7 @@ export const DEFAULT_LANDSCAPE_LAYOUT: Record<TileType, Rect> = {
   ...(stripRectsFrac() as Record<TileType, Rect>),
   viz: VIZ_RECT_F,
   streamDeck: { x: 0.40, y: 0.55, w: 0.30, h: 0.18 },
+  weatherRadar: { x: 0.42, y: 0.05, w: 0.30, h: 0.30 },
 };
 
 // Portrait template. Single column from top to bottom: viz dominates, then
@@ -186,6 +187,7 @@ export const DEFAULT_PORTRAIT_LAYOUT: Record<TileType, Rect> = {
   clock: P_CLOCK,
   notes: P_NOTES,
   streamDeck: { x: 0.05, y: 0.78, w: 0.90, h: 0.12 },
+  weatherRadar: { x: 0.05, y: 0.30, w: 0.90, h: 0.20 },
 };
 
 /** Clamp a fractional rect against a live canvas size in CSS pixels. Enforces

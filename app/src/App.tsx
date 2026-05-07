@@ -40,6 +40,7 @@ import {
   TweaksPanel, TweakSection, TweakRadio, TweakSelect, TweakButton,
 } from './components/tweaks';
 import { StreamDeckTile } from './components/StreamDeckTile';
+import { RadarTile } from './components/RadarTile';
 import { parseStreamDeckConfig } from './state/actions';
 interface VizColorOverride {
   enabled: boolean;
@@ -476,6 +477,14 @@ export default function App() {
             setVizMode={(m) => setTweak('vizMode', m)}
             profiles={t.profiles}
             setActiveProfileId={(id) => setTweak('activeProfileId', id)}
+          />
+        );
+      case 'weatherRadar':
+        return (
+          <RadarTile
+            density={t.density}
+            accent={accent}
+            location={t.weatherLocation}
           />
         );
     }
