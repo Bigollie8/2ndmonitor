@@ -44,6 +44,7 @@ export function EditModeOverlay({
     notes: 'Todos', sysmon: 'System monitor', clock: 'Now & forecast', viz: 'Audio visualizer',
     streamDeck: 'Stream Deck',
     weatherRadar: 'Weather radar',
+    pomodoro: 'Pomodoro',
   };
 
   const orientation = useOrientation();
@@ -419,6 +420,7 @@ function LayersPanel({ accent, selectedInstanceId, setSelectedInstanceId, tiles,
     viz: '◢', spotify: '♪', discord: '◇', claude: '⌘', mixer: '♬', notes: '✎',
     sysmon: '▤', clock: '◐', streamDeck: '▦',
     weatherRadar: '☂',
+    pomodoro: '◷',
   }[type] ?? '?');
   return (
     <div style={{
