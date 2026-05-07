@@ -40,6 +40,7 @@ import {
   TweaksPanel, TweakSection, TweakRadio, TweakSelect, TweakButton,
 } from './components/tweaks';
 import { StreamDeckTile } from './components/StreamDeckTile';
+import { RadarTile } from './components/RadarTile';
 import { parseStreamDeckConfig } from './state/actions';
 interface VizColorOverride {
   enabled: boolean;
@@ -479,9 +480,13 @@ export default function App() {
           />
         );
       case 'weatherRadar':
-        // Placeholder — actual component lands in Task 3. Render nothing
-        // so the tile slot is reserved without crashing.
-        return null;
+        return (
+          <RadarTile
+            density={t.density}
+            accent={accent}
+            location={t.weatherLocation}
+          />
+        );
     }
   };
 
