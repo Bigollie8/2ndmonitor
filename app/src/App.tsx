@@ -478,6 +478,10 @@ export default function App() {
             setActiveProfileId={(id) => setTweak('activeProfileId', id)}
           />
         );
+      case 'weatherRadar':
+        // Placeholder — actual component lands in Task 3. Render nothing
+        // so the tile slot is reserved without crashing.
+        return null;
     }
   };
 
