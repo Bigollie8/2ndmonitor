@@ -48,6 +48,7 @@ import {
 import { StreamDeckTile } from './components/StreamDeckTile';
 import { RadarTile } from './components/RadarTile';
 import { PomodoroTile } from './components/PomodoroTile';
+import { SunTile } from './components/SunTile';
 import { parseStreamDeckConfig } from './state/actions';
 interface VizColorOverride {
   enabled: boolean;
@@ -512,8 +513,13 @@ export default function App() {
           />
         );
       case 'sun':
-        // Placeholder — actual component lands in Task 3.
-        return null;
+        return (
+          <SunTile
+            density={t.density}
+            accent={accent}
+            location={t.weatherLocation}
+          />
+        );
     }
   };
 
