@@ -45,6 +45,7 @@ export function EditModeOverlay({
     streamDeck: 'Stream Deck',
     weatherRadar: 'Weather radar',
     pomodoro: 'Pomodoro',
+    sun: 'Sun & golden hour',
   };
 
   const orientation = useOrientation();
@@ -421,6 +422,7 @@ function LayersPanel({ accent, selectedInstanceId, setSelectedInstanceId, tiles,
     sysmon: '▤', clock: '◐', streamDeck: '▦',
     weatherRadar: '☂',
     pomodoro: '◷',
+    sun: '☀',
   }[type] ?? '?');
   return (
     <div style={{

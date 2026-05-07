@@ -19,9 +19,10 @@ const TILE_META: Record<TileType, { icon: string; label: string; description: st
   streamDeck: { icon: '▦', label: 'Stream Deck',     description: 'Programmable button grid — actions, profile switching, playback', multiInstance: true },
   weatherRadar: { icon: '☂', label: 'Weather radar',  description: 'Animated precipitation map centered on your saved location', multiInstance: false },
   pomodoro: { icon: '◷', label: 'Pomodoro', description: 'Focus / break interval timer with daily counter', multiInstance: false },
+  sun: { icon: '☀', label: 'Sun & golden hour', description: 'Sunrise, sunset, golden hour times for your saved location', multiInstance: false },
 };
 
-const ORDER: TileType[] = ['viz', 'spotify', 'discord', 'claude', 'mixer', 'notes', 'sysmon', 'clock', 'streamDeck', 'weatherRadar', 'pomodoro'];
+const ORDER: TileType[] = ['viz', 'spotify', 'discord', 'claude', 'mixer', 'notes', 'sysmon', 'clock', 'streamDeck', 'weatherRadar', 'pomodoro', 'sun'];
 
 export function TilePickerGallery({
   orientation, canvas, tiles, profileName, accent,

@@ -48,6 +48,7 @@ import {
 import { StreamDeckTile } from './components/StreamDeckTile';
 import { RadarTile } from './components/RadarTile';
 import { PomodoroTile } from './components/PomodoroTile';
+import { SunTile } from './components/SunTile';
 import { parseStreamDeckConfig } from './state/actions';
 interface VizColorOverride {
   enabled: boolean;
@@ -509,6 +510,14 @@ export default function App() {
             setState={(next) => setTweak('pomodoro', { ...t.pomodoro, state: next })}
             settings={t.pomodoro.settings}
             setSettings={(next) => setTweak('pomodoro', { ...t.pomodoro, settings: next })}
+          />
+        );
+      case 'sun':
+        return (
+          <SunTile
+            density={t.density}
+            accent={accent}
+            location={t.weatherLocation}
           />
         );
     }
