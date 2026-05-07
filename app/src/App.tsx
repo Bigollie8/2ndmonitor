@@ -39,6 +39,8 @@ import { TileFrame } from './components/TileFrame';
 import {
   TweaksPanel, TweakSection, TweakRadio, TweakSelect, TweakButton,
 } from './components/tweaks';
+import { StreamDeckTile } from './components/StreamDeckTile';
+import { parseStreamDeckConfig } from './state/actions';
 interface VizColorOverride {
   enabled: boolean;
   accent: string;
@@ -421,8 +423,8 @@ export default function App() {
     else removeTileByType(type);
   };
 
-  const renderTile = (id: TileType) => {
-    switch (id) {
+  const renderTile = (instance: TileInstance) => {
+    switch (instance.type) {
       case 'discord':
         return <DiscordTile density={t.density} accent={accent} />;
       case 'spotify':
@@ -460,6 +462,22 @@ export default function App() {
             audioDebug={t.audioDebug}
           />
         );
+      case 'streamDeck':
+        return (
+          <StreamDeckTile
+            config={parseStreamDeckConfig(instance.config)}
+            setConfig={(next) => updateActiveOrientation({
+              tiles: updateInstance(activeOrientation.tiles, instance.instanceId, { config: next as unknown as Record<string, unknown> }),
+            })}
+            editing={editMode}
+            density={t.density}
+            accent={accent}
+            vizMode={t.vizMode}
+            setVizMode={(m) => setTweak('vizMode', m)}
+            profiles={t.profiles}
+            setActiveProfileId={(id) => setTweak('activeProfileId', id)}
+          />
+        );
     }
   };
 
@@ -493,7 +511,7 @@ export default function App() {
               })}
               accent={accent}
             >
-              {renderTile(instance.type)}
+              {renderTile(instance)}
             </TileFrame>
           );
         })}

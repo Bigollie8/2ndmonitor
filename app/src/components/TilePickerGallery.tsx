@@ -16,9 +16,10 @@ const TILE_META: Record<TileType, { icon: string; label: string; description: st
   notes:   { icon: '✎', label: 'Todos',             description: 'Quick task list',                      multiInstance: false },
   sysmon:  { icon: '▤', label: 'System monitor',    description: 'CPU / RAM / GPU / network',            multiInstance: false },
   clock:   { icon: '◐', label: 'Now & forecast',    description: 'Time + weather',                       multiInstance: false },
+  streamDeck: { icon: '▦', label: 'Stream Deck',     description: 'Programmable button grid — actions, profile switching, playback', multiInstance: true },
 };
 
-const ORDER: TileType[] = ['viz', 'spotify', 'discord', 'claude', 'mixer', 'notes', 'sysmon', 'clock'];
+const ORDER: TileType[] = ['viz', 'spotify', 'discord', 'claude', 'mixer', 'notes', 'sysmon', 'clock', 'streamDeck'];
 
 export function TilePickerGallery({
   orientation, canvas, tiles, profileName, accent,
@@ -50,6 +51,18 @@ export function TilePickerGallery({
   const visibleRects = tiles.map((t) => t.rect);
 
   const handleClick = (type: TileType) => {
+    const meta = TILE_META[type];
+
+    if (meta.multiInstance) {
+      // Always add a new instance — multi-instance types never toggle from the gallery.
+      const preferred = defaults[type];
+      const rect = findEmptyRect(visibleRects, preferred, canvas);
+      onAdd(type, rect);
+      onClose();
+      return;
+    }
+
+    // Singleton path
     const existingInstance = findInstance(tiles, type);
     if (!existingInstance) {
       const preferred = defaults[type];
@@ -109,9 +122,10 @@ export function TilePickerGallery({
         }}>
           {ORDER.map((id) => {
             const meta = TILE_META[id];
-            const isHidden = !findInstance(tiles, id);
+            const instanceCount = tiles.filter((t) => t.type === id).length;
+            const isHidden = instanceCount === 0;
             const isViz = id === 'viz';
-            const disabled = isViz && !isHidden;
+            const disabled = isViz && instanceCount > 0;
             const cursor = disabled ? 'not-allowed' : 'pointer';
             const title = disabled ? 'The visualizer cannot be hidden' : meta.description;
             return (
@@ -134,12 +148,12 @@ export function TilePickerGallery({
                 }}
               >
                 {/* "Added" badge in top-right corner when visible */}
-                {!isHidden && (
+                {instanceCount > 0 && (
                   <span style={{
                     position: 'absolute', top: 6, right: 8,
                     fontSize: 10, fontWeight: 700,
                     color: accent, fontFamily: '"JetBrains Mono", ui-monospace, monospace',
-                  }}>+</span>
+                  }}>{meta.multiInstance ? `×${instanceCount}` : '+'}</span>
                 )}
                 <span style={{ fontSize: 28, lineHeight: 1 }}>{meta.icon}</span>
                 <span style={{ fontSize: 12, fontWeight: 600 }}>{meta.label}</span>

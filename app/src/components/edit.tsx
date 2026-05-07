@@ -42,6 +42,7 @@ export function EditModeOverlay({
     discord: 'Discord', spotify: 'Now playing', claude: 'Claude Code',
     mixer: 'Audio mixer',
     notes: 'Todos', sysmon: 'System monitor', clock: 'Now & forecast', viz: 'Audio visualizer',
+    streamDeck: 'Stream Deck',
   };
 
   const orientation = useOrientation();
@@ -415,8 +416,8 @@ function LayersPanel({ accent, selectedInstanceId, setSelectedInstanceId, tiles,
 }) {
   const kindIcon = (type: TileType): string => ({
     viz: '◢', spotify: '♪', discord: '◇', claude: '⌘', mixer: '♬', notes: '✎',
-    sysmon: '▤', clock: '◐',
-  }[type]);
+    sysmon: '▤', clock: '◐', streamDeck: '▦',
+  }[type] ?? '?');
   return (
     <div style={{
       position: 'absolute', bottom: 16, left: 16, width: 240,
