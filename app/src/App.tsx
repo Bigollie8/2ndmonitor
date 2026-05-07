@@ -511,6 +511,9 @@ export default function App() {
             setSettings={(next) => setTweak('pomodoro', { ...t.pomodoro, settings: next })}
           />
         );
+      case 'sun':
+        // Placeholder — actual component lands in Task 3.
+        return null;
     }
   };
 
