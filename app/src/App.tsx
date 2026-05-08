@@ -57,6 +57,22 @@ import { GithubPrsTile } from './components/GithubPrsTile';
 import { StreamChatTile } from './components/StreamChatTile';
 import { PhoneNotifsTile } from './components/PhoneNotifsTile';
 import { HomeAssistantTile } from './components/HomeAssistantTile';
+import { ScratchpadTile } from './components/ScratchpadTile';
+import { QuoteTile } from './components/QuoteTile';
+import { OnThisDayTile } from './components/OnThisDayTile';
+import { RandomWikiTile } from './components/RandomWikiTile';
+import { WordOfDayTile } from './components/WordOfDayTile';
+import { IssTile } from './components/IssTile';
+import { LaunchesTile } from './components/LaunchesTile';
+import { DailyChallengeTile } from './components/DailyChallengeTile';
+import { PollenTile } from './components/PollenTile';
+import { BirdsTile } from './components/BirdsTile';
+import { SolarFlareTile } from './components/SolarFlareTile';
+import { LightningTile } from './components/LightningTile';
+import { AircraftTile } from './components/AircraftTile';
+import { ActiveWindowTile } from './components/ActiveWindowTile';
+import { DockerTile } from './components/DockerTile';
+import { EnergyTile } from './components/EnergyTile';
 import { parseStreamDeckConfig } from './state/actions';
 interface VizColorOverride {
   enabled: boolean;
@@ -612,6 +628,62 @@ export default function App() {
             density={t.density}
             accent={accent}
             editing={editMode}
+          />
+        );
+      case 'scratchpad':
+        return (
+          <ScratchpadTile
+            instanceId={instance.instanceId}
+            density={t.density}
+            accent={accent}
+          />
+        );
+      case 'quote':
+        return <QuoteTile density={t.density} accent={accent} />;
+      case 'onThisDay':
+        return <OnThisDayTile density={t.density} accent={accent} />;
+      case 'randomWiki':
+        return <RandomWikiTile density={t.density} accent={accent} />;
+      case 'wordOfDay':
+        return <WordOfDayTile density={t.density} accent={accent} />;
+      case 'iss':
+        return <IssTile density={t.density} accent={accent} location={t.weatherLocation} />;
+      case 'launches':
+        return <LaunchesTile density={t.density} accent={accent} />;
+      case 'dailyChallenge':
+        return <DailyChallengeTile density={t.density} accent={accent} />;
+      case 'pollen':
+        return <PollenTile density={t.density} accent={accent} location={t.weatherLocation} />;
+      case 'birds':
+        return (
+          <BirdsTile
+            density={t.density}
+            accent={accent}
+            editing={editMode}
+            location={t.weatherLocation}
+          />
+        );
+      case 'solarFlare':
+        return <SolarFlareTile density={t.density} accent={accent} />;
+      case 'lightning':
+        return <LightningTile density={t.density} accent={accent} location={t.weatherLocation} />;
+      case 'aircraft':
+        return <AircraftTile density={t.density} accent={accent} location={t.weatherLocation} />;
+      case 'activeWindow':
+        return <ActiveWindowTile density={t.density} accent={accent} />;
+      case 'docker':
+        return <DockerTile density={t.density} accent={accent} />;
+      case 'energy':
+        return (
+          <EnergyTile
+            density={t.density}
+            accent={accent}
+            accent2={accent2}
+            editing={editMode}
+            config={instance.config as Record<string, unknown> | undefined}
+            setConfig={(next) => updateActiveOrientation({
+              tiles: updateInstance(activeOrientation.tiles, instance.instanceId, { config: next }),
+            })}
           />
         );
     }

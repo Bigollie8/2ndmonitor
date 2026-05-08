@@ -28,6 +28,22 @@ const TILE_META: Record<TileType, { icon: string; label: string; description: st
   streamChat: { icon: '💬', label: 'Stream chat', description: 'Live Twitch chat scroll for any channel', multiInstance: true },
   phoneNotifs: { icon: '📱', label: 'Phone notifs', description: 'Mirror phone notifications via ntfy.sh topic', multiInstance: false },
   homeAssistant: { icon: '🏠', label: 'Smart home', description: 'Home Assistant entities — toggle, status', multiInstance: false },
+  scratchpad: { icon: '✎', label: 'Scratchpad', description: 'Free-form notes that persist per tile', multiInstance: true },
+  quote: { icon: '❝', label: 'Quote of the day', description: 'Daily inspirational quote', multiInstance: false },
+  onThisDay: { icon: '📜', label: 'On this day', description: 'Wikipedia events / births / deaths from history', multiInstance: false },
+  randomWiki: { icon: '🎲', label: 'Random Wikipedia', description: 'Refreshes hourly — ambient learning engine', multiInstance: false },
+  wordOfDay: { icon: '📖', label: 'Word of the day', description: 'Definition + etymology of an interesting word', multiInstance: false },
+  iss: { icon: '🛰', label: 'ISS · live', description: 'International Space Station position + map dot', multiInstance: false },
+  launches: { icon: '🚀', label: 'Space launches', description: 'Upcoming rocket launches with countdown', multiInstance: false },
+  dailyChallenge: { icon: '⚡', label: 'Daily challenge', description: 'LeetCode daily problem with difficulty + topics', multiInstance: false },
+  pollen: { icon: '🌾', label: 'Pollen & smoke', description: 'Pollen counts (grass, ragweed, …) + wildfire PM2.5', multiInstance: false },
+  birds: { icon: '🐦', label: 'Recent birds', description: 'eBird observations near you (needs free key)', multiInstance: false },
+  solarFlare: { icon: '☀', label: 'Sun · X-ray', description: 'NOAA flare class + live SDO sun image', multiInstance: false },
+  lightning: { icon: '⚡', label: 'Lightning · live', description: 'Real-time strikes within 800 km via Blitzortung', multiInstance: false },
+  aircraft: { icon: '✈', label: 'Aircraft overhead', description: 'Live planes within 80 km via OpenSky Network', multiInstance: false },
+  activeWindow: { icon: '🪟', label: 'Active windows', description: 'Time spent per app today', multiInstance: false },
+  docker: { icon: '🐳', label: 'Docker', description: 'Local container list + running state', multiInstance: false },
+  energy: { icon: '⚡', label: 'Energy', description: 'Solar production + grid consumption from HA', multiInstance: false },
 };
 
 const ORDER: TileType[] = [
@@ -35,6 +51,9 @@ const ORDER: TileType[] = [
   'streamDeck', 'weatherRadar', 'pomodoro', 'sun', 'aurora',
   'airQuality', 'stocks', 'tides', 'githubPrs', 'streamChat',
   'phoneNotifs', 'homeAssistant',
+  'scratchpad', 'quote', 'onThisDay', 'randomWiki', 'wordOfDay',
+  'iss', 'launches', 'dailyChallenge', 'pollen', 'birds',
+  'solarFlare', 'lightning', 'aircraft', 'activeWindow', 'docker', 'energy',
 ];
 
 export function TilePickerGallery({

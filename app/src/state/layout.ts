@@ -13,7 +13,10 @@ export type TileType =
   | 'discord' | 'spotify' | 'claude' | 'notes' | 'mixer' | 'sysmon' | 'clock' | 'viz'
   | 'streamDeck' | 'weatherRadar' | 'pomodoro' | 'sun' | 'aurora'
   | 'airQuality' | 'stocks' | 'tides' | 'githubPrs' | 'streamChat'
-  | 'phoneNotifs' | 'homeAssistant';
+  | 'phoneNotifs' | 'homeAssistant'
+  | 'scratchpad' | 'quote' | 'onThisDay' | 'randomWiki' | 'wordOfDay'
+  | 'iss' | 'launches' | 'dailyChallenge' | 'pollen' | 'birds'
+  | 'solarFlare' | 'lightning' | 'aircraft' | 'activeWindow' | 'docker' | 'energy';
 
 /** Canonical render order for tile types. Used by tile-picker, layers panel,
  *  and the legacy → tiles-array migration. */
@@ -22,6 +25,9 @@ export const ALL_TILE_TYPES: TileType[] = [
   'streamDeck', 'weatherRadar', 'pomodoro', 'sun', 'aurora',
   'airQuality', 'stocks', 'tides', 'githubPrs', 'streamChat',
   'phoneNotifs', 'homeAssistant',
+  'scratchpad', 'quote', 'onThisDay', 'randomWiki', 'wordOfDay',
+  'iss', 'launches', 'dailyChallenge', 'pollen', 'birds',
+  'solarFlare', 'lightning', 'aircraft', 'activeWindow', 'docker', 'energy',
 ];
 
 export interface Rect { x: number; y: number; w: number; h: number }
@@ -152,6 +158,22 @@ export const DEFAULT_LANDSCAPE_LAYOUT: Record<TileType, Rect> = {
   streamChat: { x: 0.72, y: 0.55, w: 0.20, h: 0.30 },
   phoneNotifs: { x: 0.72, y: 0.36, w: 0.20, h: 0.18 },
   homeAssistant: { x: 0.72, y: 0.05, w: 0.20, h: 0.30 },
+  scratchpad: { x: 0.05, y: 0.55, w: 0.20, h: 0.18 },
+  quote: { x: 0.27, y: 0.05, w: 0.13, h: 0.10 },
+  onThisDay: { x: 0.40, y: 0.05, w: 0.30, h: 0.18 },
+  randomWiki: { x: 0.27, y: 0.16, w: 0.13, h: 0.18 },
+  wordOfDay: { x: 0.40, y: 0.24, w: 0.30, h: 0.10 },
+  iss: { x: 0.05, y: 0.05, w: 0.20, h: 0.18 },
+  launches: { x: 0.40, y: 0.36, w: 0.30, h: 0.18 },
+  dailyChallenge: { x: 0.05, y: 0.20, w: 0.20, h: 0.14 },
+  pollen: { x: 0.27, y: 0.55, w: 0.13, h: 0.18 },
+  birds: { x: 0.40, y: 0.55, w: 0.30, h: 0.18 },
+  solarFlare: { x: 0.72, y: 0.55, w: 0.20, h: 0.30 },
+  lightning: { x: 0.72, y: 0.05, w: 0.20, h: 0.30 },
+  aircraft: { x: 0.05, y: 0.05, w: 0.20, h: 0.30 },
+  activeWindow: { x: 0.27, y: 0.55, w: 0.13, h: 0.20 },
+  docker: { x: 0.40, y: 0.55, w: 0.30, h: 0.18 },
+  energy: { x: 0.72, y: 0.36, w: 0.20, h: 0.18 },
 };
 
 // Portrait template. Single column from top to bottom: viz dominates, then
@@ -215,6 +237,22 @@ export const DEFAULT_PORTRAIT_LAYOUT: Record<TileType, Rect> = {
   streamChat: { x: 0.05, y: 0.42, w: 0.90, h: 0.18 },
   phoneNotifs: { x: 0.05, y: 0.42, w: 0.90, h: 0.10 },
   homeAssistant: { x: 0.05, y: 0.42, w: 0.90, h: 0.18 },
+  scratchpad: { x: 0.05, y: 0.30, w: 0.90, h: 0.18 },
+  quote: { x: 0.05, y: 0.30, w: 0.90, h: 0.10 },
+  onThisDay: { x: 0.05, y: 0.30, w: 0.90, h: 0.18 },
+  randomWiki: { x: 0.05, y: 0.30, w: 0.90, h: 0.14 },
+  wordOfDay: { x: 0.05, y: 0.30, w: 0.90, h: 0.10 },
+  iss: { x: 0.05, y: 0.30, w: 0.90, h: 0.18 },
+  launches: { x: 0.05, y: 0.30, w: 0.90, h: 0.20 },
+  dailyChallenge: { x: 0.05, y: 0.30, w: 0.90, h: 0.12 },
+  pollen: { x: 0.05, y: 0.30, w: 0.90, h: 0.14 },
+  birds: { x: 0.05, y: 0.30, w: 0.90, h: 0.18 },
+  solarFlare: { x: 0.05, y: 0.30, w: 0.90, h: 0.30 },
+  lightning: { x: 0.05, y: 0.30, w: 0.90, h: 0.30 },
+  aircraft: { x: 0.05, y: 0.30, w: 0.90, h: 0.30 },
+  activeWindow: { x: 0.05, y: 0.30, w: 0.90, h: 0.18 },
+  docker: { x: 0.05, y: 0.30, w: 0.90, h: 0.18 },
+  energy: { x: 0.05, y: 0.30, w: 0.90, h: 0.14 },
 };
 
 /** Clamp a fractional rect against a live canvas size in CSS pixels. Enforces

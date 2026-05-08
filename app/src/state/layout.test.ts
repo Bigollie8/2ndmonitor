@@ -149,11 +149,15 @@ test('findEmptyRect: canvas full → returns preferred (overlap allowed as fallb
 
 test('DEFAULT_PORTRAIT_LAYOUT contains all tile types', () => {
   const ids = Object.keys(DEFAULT_PORTRAIT_LAYOUT).sort();
+  // Note: JS default sort is codepoint-based, so capital Q < lowercase i
+  // (airQuality precedes aircraft, etc.).
   assert.deepEqual(ids, [
-    'airQuality', 'aurora', 'claude', 'clock', 'discord', 'githubPrs',
-    'homeAssistant', 'mixer', 'notes', 'phoneNotifs', 'pomodoro', 'spotify',
-    'stocks', 'streamChat', 'streamDeck', 'sun', 'sysmon', 'tides', 'viz',
-    'weatherRadar',
+    'activeWindow', 'airQuality', 'aircraft', 'aurora', 'birds', 'claude',
+    'clock', 'dailyChallenge', 'discord', 'docker', 'energy', 'githubPrs',
+    'homeAssistant', 'iss', 'launches', 'lightning', 'mixer', 'notes',
+    'onThisDay', 'phoneNotifs', 'pollen', 'pomodoro', 'quote', 'randomWiki',
+    'scratchpad', 'solarFlare', 'spotify', 'stocks', 'streamChat',
+    'streamDeck', 'sun', 'sysmon', 'tides', 'viz', 'weatherRadar', 'wordOfDay',
   ]);
 });
 

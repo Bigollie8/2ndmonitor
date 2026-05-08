@@ -3,6 +3,8 @@ mod audio;
 mod claude;
 mod discord;
 mod discord_rpc;
+mod docker_tile;
+mod foreground;
 mod lyrics;
 mod market;
 mod mixer;
@@ -36,6 +38,8 @@ pub fn run() {
             market::fetch_stock_quotes,
             market::fetch_tide_predictions,
             market::fetch_github_prs,
+            foreground::foreground_get,
+            docker_tile::docker_list_containers,
             spotify::spotify_status,
             spotify::spotify_connect,
             spotify::spotify_disconnect,
