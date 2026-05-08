@@ -147,9 +147,14 @@ test('findEmptyRect: canvas full → returns preferred (overlap allowed as fallb
   assert.deepEqual(out, preferred);
 });
 
-test('DEFAULT_PORTRAIT_LAYOUT contains all 13 tiles', () => {
+test('DEFAULT_PORTRAIT_LAYOUT contains all tile types', () => {
   const ids = Object.keys(DEFAULT_PORTRAIT_LAYOUT).sort();
-  assert.deepEqual(ids, ['aurora', 'claude', 'clock', 'discord', 'mixer', 'notes', 'pomodoro', 'spotify', 'streamDeck', 'sun', 'sysmon', 'viz', 'weatherRadar']);
+  assert.deepEqual(ids, [
+    'airQuality', 'aurora', 'claude', 'clock', 'discord', 'githubPrs',
+    'homeAssistant', 'mixer', 'notes', 'phoneNotifs', 'pomodoro', 'spotify',
+    'stocks', 'streamChat', 'streamDeck', 'sun', 'sysmon', 'tides', 'viz',
+    'weatherRadar',
+  ]);
 });
 
 test('DEFAULT_PORTRAIT_LAYOUT: every rect lies within [0,1] and has positive size', () => {
