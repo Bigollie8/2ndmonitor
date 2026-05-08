@@ -29,7 +29,7 @@ import { VizHero, setVizDprCap, setVizMaxFps, getVizMaxFps } from './components/
 import * as perfDebug from './perf/debug';
 import { PerfDebugHUD } from './perf/PerfDebugHUD';
 import { VizGallery, VIZ_STYLES } from './components/viz-gallery';
-import { parseYouTubeId } from './components/video-player';
+import { defaultBookmarks, type Bookmark } from './components/browser-player';
 import {
   SpotifyTile, NotesTile,
   SysMonTile,
@@ -73,13 +73,16 @@ interface TweakState extends Record<string, unknown> {
   vizSmoothing: number;
   vizColorOverride: VizColorOverride;
   lyricsOverlayEnabled: boolean;
-  /** When true AND `videoUrl` parses to a valid YouTube ID, the viz tile renders
-   *  a YouTube embed instead of the audio visualizer. The viz surface and
-   *  album-art backdrop are skipped (and `paused` flips on) to save GPU. */
+  /** When true AND there's at least one bookmark, the viz tile renders the
+   *  streaming-browser launchpad / child webview instead of the audio
+   *  visualizer. The viz surface and album-art backdrop are skipped (and
+   *  `paused` flips on) to save GPU when a child webview is active. */
   videoEnabled: boolean;
-  /** Raw URL the user pasted in Tweaks. Validated at render time; an empty or
-   *  unparseable URL leaves `videoEnabled` effectively off. */
-  videoUrl: string;
+  /** User-editable launchpad cards. Persisted via Tweaks. */
+  videoBookmarks: Bookmark[];
+  /** URL currently loaded in the Tauri child webview, or null when the
+   *  launchpad grid is showing. */
+  videoCurrentUrl: string | null;
   perfMode: 'uncapped' | 'high' | 'balanced' | 'battery';
   /** When true, mounts the perf-debug HUD and starts long-task / GPU spike
    *  instrumentation. Off by default; flip from the Tweaks panel when
@@ -107,7 +110,8 @@ const TWEAK_DEFAULTS: TweakState = {
   vizColorOverride: { enabled: false, accent: '#a78bfa', accent2: '#ec4899' },
   lyricsOverlayEnabled: true,
   videoEnabled: false,
-  videoUrl: '',
+  videoBookmarks: defaultBookmarks(),
+  videoCurrentUrl: null,
   perfMode: 'balanced',
   perfDebug: false,
   audioDebug: false,
@@ -476,10 +480,14 @@ export default function App() {
             smoothing={t.vizSmoothing}
             lyricsOverlayEnabled={t.lyricsOverlayEnabled}
             videoEnabled={t.videoEnabled}
-            videoUrl={t.videoUrl}
-            videoAvailable={parseYouTubeId(t.videoUrl) !== null}
+            videoBookmarks={t.videoBookmarks}
+            videoCurrentUrl={t.videoCurrentUrl}
+            videoAvailable={t.videoBookmarks.length > 0}
             onToggleVideo={() => setTweak('videoEnabled', !t.videoEnabled)}
-            paused={(t.videoEnabled && parseYouTubeId(t.videoUrl) !== null) || showGallery || (t.perfMode !== 'uncapped' && livePlayback?.playing !== true)}
+            onNavigate={(url) => setTweak('videoCurrentUrl', url)}
+            onExit={() => setTweak('videoEnabled', false)}
+            overlaysOpen={showGallery || editMode}
+            paused={(t.videoEnabled && t.videoBookmarks.length > 0) || showGallery || (t.perfMode !== 'uncapped' && livePlayback?.playing !== true)}
             onConfigure={() => setShowGallery(true)}
             audioDebug={t.audioDebug}
           />
@@ -830,12 +838,12 @@ export default function App() {
           />
           <span style={{ fontSize: 11.5, fontWeight: 500 }}>Show lyrics over visualizer</span>
         </label>
-        <TweakSection label="Video" />
-        <VideoTweak
+        <TweakSection label="Streaming bookmarks" />
+        <BookmarksTweak
           enabled={t.videoEnabled}
-          url={t.videoUrl}
+          bookmarks={t.videoBookmarks}
           setEnabled={(v) => setTweak('videoEnabled', v)}
-          setUrl={(v) => setTweak('videoUrl', v)}
+          setBookmarks={(next) => setTweak('videoBookmarks', next)}
         />
         <TweakSection label="Accent color" />
         <TweakSelect<AccentTheme>
@@ -1076,72 +1084,145 @@ function WeatherSearch({
   );
 }
 
-/** Tweaks-panel UI for the video-embed feature: enable checkbox + URL input
- *  with live "valid YouTube ID" feedback. The checkbox is disabled when the
- *  URL doesn't parse, so the user can't toggle on a broken link by accident. */
-function VideoTweak({
-  enabled, url, setEnabled, setUrl,
+/** Tweaks-panel UI for the streaming-browser feature. Enable checkbox swaps
+ *  the audio visualizer for the launchpad/child-webview. Below it: a list of
+ *  the user's bookmarks with add/remove. The 📺 toggle in the viz overlay is
+ *  disabled until at least one bookmark exists. */
+function BookmarksTweak({
+  enabled, bookmarks, setEnabled, setBookmarks,
 }: {
   enabled: boolean;
-  url: string;
+  bookmarks: Bookmark[];
   setEnabled: (v: boolean) => void;
-  setUrl: (v: string) => void;
+  setBookmarks: (next: Bookmark[]) => void;
 }) {
-  const id = parseYouTubeId(url);
-  const trimmed = url.trim();
-  const status: { color: string; text: string } | null =
-    trimmed === '' ? null
-    : id ? { color: '#16a34a', text: `✓ Valid · id ${id}` }
-    : { color: '#b91c1c', text: '✗ Couldn\'t parse a YouTube ID' };
+  const [draftName, setDraftName] = useState('');
+  const [draftUrl, setDraftUrl] = useState('');
+  const [draftLetters, setDraftLetters] = useState('');
 
-  // If the user clears or breaks the URL while video is enabled, auto-disable
-  // so the tile doesn't get stuck on the placeholder card.
+  // If bookmarks list goes empty while enabled, auto-disable so the launchpad
+  // doesn't show its empty-state placeholder by surprise.
   useEffect(() => {
-    if (enabled && !id) setEnabled(false);
-  }, [enabled, id, setEnabled]);
+    if (enabled && bookmarks.length === 0) setEnabled(false);
+  }, [enabled, bookmarks.length, setEnabled]);
+
+  const PALETTE = ['#fb7185', '#60a5fa', '#a78bfa', '#facc15', '#7cf5d4', '#fb923c', '#22c55e', '#ec4899'];
+
+  const add = () => {
+    const name = draftName.trim();
+    const url = draftUrl.trim();
+    if (!name || !url) return;
+    if (!/^https?:\/\//i.test(url)) return;
+    const letters = (draftLetters.trim() || name.slice(0, 2)).toUpperCase().slice(0, 3);
+    const id = (typeof crypto !== 'undefined' && crypto.randomUUID)
+      ? crypto.randomUUID() : `bm_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+    const color = PALETTE[bookmarks.length % PALETTE.length]!;
+    setBookmarks([...bookmarks, { id, name, url, letters, color }]);
+    setDraftName(''); setDraftUrl(''); setDraftLetters('');
+  };
+  const remove = (id: string) => setBookmarks(bookmarks.filter((b) => b.id !== id));
+  const restore = () => setBookmarks(defaultBookmarks());
+
+  const canEnable = bookmarks.length > 0;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: '4px 0' }}>
       <label style={{
         display: 'flex', alignItems: 'center', gap: 8, padding: '3px 0',
-        cursor: id ? 'pointer' : 'not-allowed', userSelect: 'none',
-        color: id ? 'rgba(41,38,27,0.85)' : 'rgba(41,38,27,0.45)',
-      }} title={id ? '' : 'Paste a valid YouTube URL first'}>
+        cursor: canEnable ? 'pointer' : 'not-allowed', userSelect: 'none',
+        color: canEnable ? 'rgba(41,38,27,0.85)' : 'rgba(41,38,27,0.45)',
+      }} title={canEnable ? '' : 'Add at least one bookmark'}>
         <input
           type="checkbox"
-          checked={enabled && !!id}
-          disabled={!id}
+          checked={enabled && canEnable}
+          disabled={!canEnable}
           onChange={(e) => setEnabled(e.target.checked)}
           style={{ accentColor: '#29261b', width: 13, height: 13 }}
         />
-        <span style={{ fontSize: 11.5, fontWeight: 500 }}>Play video instead of visualizer</span>
+        <span style={{ fontSize: 11.5, fontWeight: 500 }}>Show streaming launchpad</span>
       </label>
-      <input
-        type="text"
-        value={url}
-        onChange={(e) => setUrl(e.target.value)}
-        placeholder="https://www.youtube.com/watch?v=…"
-        spellCheck={false}
-        style={{
-          fontSize: 11, padding: '5px 8px',
-          background: 'rgba(41,38,27,0.05)', border: '1px solid rgba(41,38,27,0.15)',
-          borderRadius: 4, color: 'rgba(41,38,27,0.9)',
-          fontFamily: '"JetBrains Mono", ui-monospace, monospace',
-        }}
-      />
-      {status && (
-        <div style={{
-          fontSize: 10, color: status.color,
-          fontFamily: '"JetBrains Mono", ui-monospace, monospace',
-        }}>{status.text}</div>
-      )}
-      <div style={{ fontSize: 10, color: 'rgba(41,38,27,0.55)', lineHeight: 1.45 }}>
-        Audio plays through your speakers. When you toggle viz back on, the
-        bars will react to whatever the video is playing (system audio loopback).
+
+      {/* Bookmark list */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+        {bookmarks.map((b) => (
+          <div key={b.id} style={{
+            display: 'flex', alignItems: 'center', gap: 8,
+            padding: '4px 6px', fontSize: 11,
+            background: 'rgba(41,38,27,0.04)',
+            border: '1px solid rgba(41,38,27,0.08)',
+            borderRadius: 4,
+          }}>
+            <span style={{
+              width: 22, height: 22, borderRadius: 4,
+              background: b.color, color: '#fff', fontWeight: 700, fontSize: 10,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              flexShrink: 0,
+            }}>{b.letters}</span>
+            <span style={{ flex: 1, color: 'rgba(41,38,27,0.85)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {b.name}
+            </span>
+            <button
+              onClick={() => remove(b.id)}
+              title={`Remove ${b.name}`}
+              style={{
+                background: 'transparent', border: 'none', cursor: 'pointer',
+                color: 'rgba(41,38,27,0.5)', fontSize: 13, padding: '0 4px', lineHeight: 1,
+              }}
+            >×</button>
+          </div>
+        ))}
       </div>
+
+      {/* Add form */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 4, paddingTop: 4 }}>
+        <input
+          type="text" value={draftName} placeholder="Name (e.g. YouTube)"
+          onChange={(e) => setDraftName(e.target.value)}
+          maxLength={32}
+          style={addInputStyle}
+        />
+        <input
+          type="text" value={draftUrl} placeholder="https://..."
+          onChange={(e) => setDraftUrl(e.target.value)}
+          spellCheck={false} maxLength={512}
+          style={addInputStyle}
+        />
+        <div style={{ display: 'flex', gap: 4 }}>
+          <input
+            type="text" value={draftLetters} placeholder="Letters"
+            onChange={(e) => setDraftLetters(e.target.value)}
+            maxLength={3}
+            style={{ ...addInputStyle, width: 60, flex: 'none' }}
+          />
+          <button
+            onClick={add}
+            disabled={!draftName.trim() || !draftUrl.trim() || !/^https?:\/\//i.test(draftUrl.trim())}
+            style={{
+              flex: 1, fontSize: 11, fontWeight: 600, padding: '5px 10px',
+              borderRadius: 4, border: 'none', cursor: 'pointer',
+              background: '#29261b', color: '#fef3c7',
+              opacity: (!draftName.trim() || !draftUrl.trim() || !/^https?:\/\//i.test(draftUrl.trim())) ? 0.4 : 1,
+            }}
+          >Add bookmark</button>
+        </div>
+      </div>
+      <button
+        onClick={restore}
+        style={{
+          fontSize: 10, color: 'rgba(41,38,27,0.55)', background: 'transparent',
+          border: 'none', padding: '4px 0', textAlign: 'left', cursor: 'pointer',
+        }}
+      >Restore default bookmarks</button>
     </div>
   );
 }
+
+const addInputStyle: React.CSSProperties = {
+  fontSize: 11, padding: '5px 8px',
+  background: 'rgba(41,38,27,0.05)', border: '1px solid rgba(41,38,27,0.15)',
+  borderRadius: 4, color: 'rgba(41,38,27,0.9)',
+  fontFamily: '"JetBrains Mono", ui-monospace, monospace',
+};
 
 /** Measures actual rAF frame interval as a rolling average and returns FPS.
  *  Updates state once per second so we don't trash React with 60Hz re-renders.

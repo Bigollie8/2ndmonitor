@@ -13,7 +13,7 @@ import {
   VizStrings, VizHUD, VizLiquid, VizCassette, VizConstellation,
 } from './viz-extra2';
 import { VIZ_STYLES } from './viz-gallery';
-import { VideoPlayer } from './video-player';
+import { BrowserPlayer, type Bookmark } from './browser-player';
 
 /** Per-frame DPR cap for viz canvases. On a 4K monitor at DPR=2, dropping to 1
  *  cuts canvas pixel work 4x with no perceptible loss for music visualizers. */
@@ -884,7 +884,8 @@ function AudioDebugHud({ spectrumRef, paused }: {
 export function VizHero({
   mode, setMode, accent, accent2, track, spectrumRef, playback,
   showArtBg = false, sensitivity = 1, smoothing = 0, lyricsOverlayEnabled = true,
-  videoEnabled = false, videoUrl = '', videoAvailable = false, onToggleVideo,
+  videoEnabled = false, videoCurrentUrl = null, videoBookmarks = [],
+  videoAvailable = false, onToggleVideo, onNavigate, onExit, overlaysOpen = false,
   paused = false, onConfigure, audioDebug = false,
 }: {
   mode: VizMode;
@@ -899,15 +900,23 @@ export function VizHero({
   sensitivity?: number;
   smoothing?: number;
   lyricsOverlayEnabled?: boolean;
-  /** When true AND `videoAvailable`, replace the viz with a YouTube embed. */
+  /** When true AND `videoAvailable`, replace the viz with the streaming browser. */
   videoEnabled?: boolean;
-  /** Raw URL pasted in Tweaks. Forwarded to `<VideoPlayer>` only when active. */
-  videoUrl?: string;
-  /** True when `videoUrl` parses to a valid YouTube ID. Drives the 📺 toggle's
-   *  enabled/disabled state in the overlay. */
+  /** URL currently loaded in the child webview, or null for the launchpad. */
+  videoCurrentUrl?: string | null;
+  /** Editable bookmark list shown on the launchpad. */
+  videoBookmarks?: Bookmark[];
+  /** True when there's at least one bookmark — the 📺 toggle is enabled. */
   videoAvailable?: boolean;
   /** Click handler for the overlay 📺 button. */
   onToggleVideo?: () => void;
+  /** Sets `videoCurrentUrl` (called from launchpad cards or Home button). */
+  onNavigate?: (url: string | null) => void;
+  /** Sets `videoEnabled = false` (called from chrome ✕ and error states). */
+  onExit?: () => void;
+  /** True when any modal overlay is open (gallery / edit / switcher / onboarding) —
+   *  forwarded to BrowserPlayer.suppress to hide the native webview. */
+  overlaysOpen?: boolean;
   paused?: boolean;
   /** Called when the user clicks "⚙ Configure" or "+ More" — opens the viz gallery. */
   onConfigure?: () => void;
@@ -952,7 +961,14 @@ export function VizHero({
       )}
       <div style={{ position: 'absolute', inset: 0, zIndex: 1 }}>
         {showVideo ? (
-          <VideoPlayer url={videoUrl} />
+          <BrowserPlayer
+            enabled={videoEnabled}
+            currentUrl={videoCurrentUrl}
+            bookmarks={videoBookmarks}
+            onNavigate={onNavigate ?? (() => {})}
+            onExit={onExit ?? (() => {})}
+            suppress={overlaysOpen}
+          />
         ) : (
           <HiFiVizSurface mode={mode} accent={accent} accent2={accent2} spectrumRef={spectrumRef} sensitivity={sensitivity} smoothing={smoothing} paused={paused} track={track} playback={playback} />
         )}
