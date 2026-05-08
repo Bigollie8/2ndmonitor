@@ -5,14 +5,32 @@ import {
   type RainViewerManifest,
   basemapTileUrl,
   fetchRainViewerManifest,
-  lonLatToTileXY,
   radarTileUrl,
 } from '../state/rainviewer';
 import type { Density, WeatherLocation } from '../types';
 
-const RADAR_Z = 6;
+const RADAR_Z = 7;
 const FRAME_INTERVAL_MS = 500;
 const MANIFEST_REFRESH_MS = 5 * 60 * 1000;
+
+/** 2×2 tile grid centered on a lat/lon. Returns the four tile coordinates
+ *  (top-left, top-right, bottom-left, bottom-right). User's exact position
+ *  ends up close to the geometric center of the rendered grid. */
+function centeredTileGrid(lat: number, lon: number, z: number): Array<{ x: number; y: number }> {
+  const n = 1 << z;
+  const xFrac = (lon + 180) / 360 * n;
+  const latRad = lat * Math.PI / 180;
+  const yFrac = (1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2 * n;
+  // Top-left tile: pick so user is closest to grid center. floor(x - 0.5) does this.
+  const tx0 = Math.floor(xFrac - 0.5);
+  const ty0 = Math.floor(yFrac - 0.5);
+  return [
+    { x: tx0,     y: ty0     },
+    { x: tx0 + 1, y: ty0     },
+    { x: tx0,     y: ty0 + 1 },
+    { x: tx0 + 1, y: ty0 + 1 },
+  ];
+}
 
 export interface RadarTileProps {
   density: Density;
@@ -31,16 +49,12 @@ export function RadarTile({ density, accent, location }: RadarTileProps) {
     [manifest],
   );
 
-  const tileXY = useMemo(
-    () => lonLatToTileXY(location.lon, location.lat, RADAR_Z),
-    [location.lon, location.lat],
+  const tileGrid = useMemo(
+    () => centeredTileGrid(location.lat, location.lon, RADAR_Z),
+    [location.lat, location.lon],
   );
 
   const currentFrame = frames[frameIndex];
-  const radarUrl = manifest && currentFrame
-    ? radarTileUrl(manifest.host, currentFrame.path, RADAR_Z, tileXY.x, tileXY.y)
-    : null;
-  const basemapUrl = basemapTileUrl(RADAR_Z, tileXY.x, tileXY.y);
 
   // Manifest fetch: on mount + every 5 minutes
   useEffect(() => {
@@ -101,55 +115,77 @@ export function RadarTile({ density, accent, location }: RadarTileProps) {
         display: 'flex', flexDirection: 'column',
         width: '100%', height: '100%', minHeight: 0,
       }}>
-        {/* Map area */}
+        {/* Map area: square 2×2 tile grid centered on user, letterboxed to fit
+         *  whatever non-square space the tile rect provides. The square sizes
+         *  itself to min(parentWidth, parentHeight) via container query units
+         *  — `aspect-ratio` alone won't shrink the box when only height is
+         *  constrained, which leaves the grid distorted. */}
         <div style={{
-          position: 'relative', flex: 1, minHeight: 0,
-          overflow: 'hidden', borderRadius: 6,
+          flex: 1, minHeight: 0, position: 'relative',
+          containerType: 'size',
+          display: 'grid', placeItems: 'center',
+          overflow: 'hidden',
         }}>
-          <img
-            src={basemapUrl}
-            alt=""
-            style={{
-              position: 'absolute', inset: 0,
-              width: '100%', height: '100%',
-              objectFit: 'cover',
-              pointerEvents: 'none',
-              opacity: 0.85,
-            }}
-          />
-          {radarUrl && (
-            <img
-              src={radarUrl}
-              alt=""
-              style={{
+          <div style={{
+            width: 'min(100cqw, 100cqh)',
+            height: 'min(100cqw, 100cqh)',
+            display: 'grid',
+            gridTemplateColumns: '1fr 1fr',
+            gridTemplateRows: '1fr 1fr',
+            gap: 0,
+            borderRadius: 6, overflow: 'hidden',
+            position: 'relative',
+          }}>
+            {tileGrid.map((tile) => (
+              <div key={`${tile.x},${tile.y}`} style={{ position: 'relative', overflow: 'hidden' }}>
+                <img
+                  src={basemapTileUrl(RADAR_Z, tile.x, tile.y)}
+                  alt=""
+                  style={{
+                    position: 'absolute', inset: 0,
+                    width: '100%', height: '100%',
+                    objectFit: 'fill',
+                    pointerEvents: 'none',
+                  }}
+                />
+                {manifest && currentFrame && (
+                  <img
+                    src={radarTileUrl(manifest.host, currentFrame.path, RADAR_Z, tile.x, tile.y)}
+                    alt=""
+                    style={{
+                      position: 'absolute', inset: 0,
+                      width: '100%', height: '100%',
+                      objectFit: 'fill',
+                      pointerEvents: 'none',
+                      imageRendering: 'pixelated',
+                    }}
+                  />
+                )}
+              </div>
+            ))}
+            {!manifest && (
+              <div style={{
                 position: 'absolute', inset: 0,
-                width: '100%', height: '100%',
-                objectFit: 'cover',
-                pointerEvents: 'none',
-                imageRendering: 'pixelated',
-              }}
-            />
-          )}
-          {!manifest && (
-            <div style={{
-              position: 'absolute', inset: 0,
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              background: 'rgba(8,9,12,0.6)',
-              fontSize: 11, color: 'rgba(255,255,255,0.55)',
-            }}>
-              Loading radar…
-            </div>
-          )}
-          {manifest && !hasFrames && (
-            <div style={{
-              position: 'absolute', inset: 0,
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              background: 'rgba(8,9,12,0.6)',
-              fontSize: 11, color: 'rgba(255,255,255,0.55)',
-            }}>
-              No radar data available
-            </div>
-          )}
+                gridColumn: '1 / -1', gridRow: '1 / -1',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                background: 'rgba(8,9,12,0.6)',
+                fontSize: 11, color: 'rgba(255,255,255,0.55)',
+              }}>
+                Loading radar…
+              </div>
+            )}
+            {manifest && !hasFrames && (
+              <div style={{
+                position: 'absolute', inset: 0,
+                gridColumn: '1 / -1', gridRow: '1 / -1',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                background: 'rgba(8,9,12,0.6)',
+                fontSize: 11, color: 'rgba(255,255,255,0.55)',
+              }}>
+                No radar data available
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Footer: timestamp + slider */}

@@ -109,6 +109,27 @@ export function TileFrame({
     force((n) => n + 1);
     e.preventDefault();
   };
+
+  /** Pointerdown on the tile body in edit mode. We skip drag-start when the
+   *  click landed on an interactive element so users can configure tiles
+   *  in-place (e.g., type a Twitch channel, pick a stock ticker, click a
+   *  Stream Deck cell). Clicks on plain body chrome still grab the tile.
+   *  The selector covers native form controls plus common ARIA roles used
+   *  by custom components (e.g., the volume Slider's role="slider"). */
+  const INTERACTIVE_SELECTOR =
+    'button, input, textarea, select, a, label, [contenteditable], ' +
+    '[role="button"], [role="slider"], [role="tab"], [role="link"], ' +
+    '[role="checkbox"], [role="switch"], [role="menuitem"], ' +
+    '[data-no-drag]';
+  const startMoveOnFrame = (e: React.PointerEvent) => {
+    if (!editing) return;
+    const target = e.target as HTMLElement | null;
+    if (target?.closest(INTERACTIVE_SELECTOR)) {
+      onSelect();
+      return;
+    }
+    startMove(e);
+  };
   const startResize = (edge: ResizeEdge) => (e: React.PointerEvent) => {
     onSelect();
     const p = pointerToFraction(e);
@@ -121,6 +142,7 @@ export function TileFrame({
   return (
     <div
       data-tile-id={id}
+      onPointerDown={startMoveOnFrame}
       style={{
         position: 'absolute',
         left: `${rect.x * 100}%`,
@@ -133,17 +155,12 @@ export function TileFrame({
         boxShadow: editing && selected ? `0 0 0 1px ${accent}55, 0 0 40px -8px ${accent}aa` : 'none',
         transition: 'outline-color .12s, box-shadow .12s',
         userSelect: editing ? 'none' : 'auto',
+        cursor: editing ? 'grab' : 'auto',
       }}
     >
       {children}
       {editing && (
         <>
-          <div
-            onPointerDown={startMove}
-            style={{
-              position: 'absolute', inset: 0, cursor: 'grab', background: 'transparent', zIndex: 5,
-            }}
-          />
           {selected && (
             <>
               <Handle accent={accent} edge="nw" onDown={startResize('nw')} />
