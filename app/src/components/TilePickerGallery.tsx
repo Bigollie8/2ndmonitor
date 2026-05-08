@@ -21,9 +21,21 @@ const TILE_META: Record<TileType, { icon: string; label: string; description: st
   pomodoro: { icon: '◷', label: 'Pomodoro', description: 'Focus / break interval timer with daily counter', multiInstance: false },
   sun: { icon: '☀', label: 'Sun & golden hour', description: 'Sunrise, sunset, golden hour times for your saved location', multiInstance: false },
   aurora: { icon: '🌌', label: 'Aurora & moon', description: 'KP index, aurora visibility, moon phase', multiInstance: false },
+  airQuality: { icon: '🌫', label: 'Air quality', description: 'AQI, UV index, PM2.5/PM10 for your saved location', multiInstance: false },
+  stocks: { icon: '📈', label: 'Stock ticker', description: 'Live quotes for your watchlist (configurable)', multiInstance: true },
+  tides: { icon: '🌊', label: 'Tide chart', description: 'Next high/low tides from NOAA station', multiInstance: false },
+  githubPrs: { icon: '⊕', label: 'GitHub PRs', description: 'Open pull requests assigned, requested, authored', multiInstance: false },
+  streamChat: { icon: '💬', label: 'Stream chat', description: 'Live Twitch chat scroll for any channel', multiInstance: true },
+  phoneNotifs: { icon: '📱', label: 'Phone notifs', description: 'Mirror phone notifications via ntfy.sh topic', multiInstance: false },
+  homeAssistant: { icon: '🏠', label: 'Smart home', description: 'Home Assistant entities — toggle, status', multiInstance: false },
 };
 
-const ORDER: TileType[] = ['viz', 'spotify', 'discord', 'claude', 'mixer', 'notes', 'sysmon', 'clock', 'streamDeck', 'weatherRadar', 'pomodoro', 'sun', 'aurora'];
+const ORDER: TileType[] = [
+  'viz', 'spotify', 'discord', 'claude', 'mixer', 'notes', 'sysmon', 'clock',
+  'streamDeck', 'weatherRadar', 'pomodoro', 'sun', 'aurora',
+  'airQuality', 'stocks', 'tides', 'githubPrs', 'streamChat',
+  'phoneNotifs', 'homeAssistant',
+];
 
 export function TilePickerGallery({
   orientation, canvas, tiles, profileName, accent,

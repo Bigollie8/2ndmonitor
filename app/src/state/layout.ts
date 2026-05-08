@@ -9,12 +9,19 @@ export function newId(): string {
     : `id_${Date.now()}_${Math.random().toString(36).slice(2)}`;
 }
 
-export type TileType = 'discord' | 'spotify' | 'claude' | 'notes' | 'mixer' | 'sysmon' | 'clock' | 'viz' | 'streamDeck' | 'weatherRadar' | 'pomodoro' | 'sun' | 'aurora';
+export type TileType =
+  | 'discord' | 'spotify' | 'claude' | 'notes' | 'mixer' | 'sysmon' | 'clock' | 'viz'
+  | 'streamDeck' | 'weatherRadar' | 'pomodoro' | 'sun' | 'aurora'
+  | 'airQuality' | 'stocks' | 'tides' | 'githubPrs' | 'streamChat'
+  | 'phoneNotifs' | 'homeAssistant';
 
 /** Canonical render order for tile types. Used by tile-picker, layers panel,
  *  and the legacy → tiles-array migration. */
 export const ALL_TILE_TYPES: TileType[] = [
-  'viz', 'spotify', 'discord', 'claude', 'mixer', 'notes', 'sysmon', 'clock', 'streamDeck', 'weatherRadar', 'pomodoro', 'sun', 'aurora',
+  'viz', 'spotify', 'discord', 'claude', 'mixer', 'notes', 'sysmon', 'clock',
+  'streamDeck', 'weatherRadar', 'pomodoro', 'sun', 'aurora',
+  'airQuality', 'stocks', 'tides', 'githubPrs', 'streamChat',
+  'phoneNotifs', 'homeAssistant',
 ];
 
 export interface Rect { x: number; y: number; w: number; h: number }
@@ -138,6 +145,13 @@ export const DEFAULT_LANDSCAPE_LAYOUT: Record<TileType, Rect> = {
   pomodoro: { x: 0.05, y: 0.55, w: 0.20, h: 0.18 },
   sun: { x: 0.27, y: 0.55, w: 0.13, h: 0.18 },
   aurora: { x: 0.27, y: 0.74, w: 0.13, h: 0.18 },
+  airQuality: { x: 0.05, y: 0.74, w: 0.20, h: 0.18 },
+  stocks: { x: 0.40, y: 0.74, w: 0.30, h: 0.18 },
+  tides: { x: 0.05, y: 0.36, w: 0.20, h: 0.18 },
+  githubPrs: { x: 0.27, y: 0.36, w: 0.13, h: 0.18 },
+  streamChat: { x: 0.72, y: 0.55, w: 0.20, h: 0.30 },
+  phoneNotifs: { x: 0.72, y: 0.36, w: 0.20, h: 0.18 },
+  homeAssistant: { x: 0.72, y: 0.05, w: 0.20, h: 0.30 },
 };
 
 // Portrait template. Single column from top to bottom: viz dominates, then
@@ -194,6 +208,13 @@ export const DEFAULT_PORTRAIT_LAYOUT: Record<TileType, Rect> = {
   pomodoro: { x: 0.05, y: 0.62, w: 0.43, h: 0.10 },
   sun: { x: 0.50, y: 0.62, w: 0.45, h: 0.10 },
   aurora: { x: 0.05, y: 0.85, w: 0.90, h: 0.05 },
+  airQuality: { x: 0.05, y: 0.52, w: 0.43, h: 0.08 },
+  stocks: { x: 0.50, y: 0.52, w: 0.45, h: 0.08 },
+  tides: { x: 0.05, y: 0.30, w: 0.90, h: 0.10 },
+  githubPrs: { x: 0.05, y: 0.42, w: 0.90, h: 0.10 },
+  streamChat: { x: 0.05, y: 0.42, w: 0.90, h: 0.18 },
+  phoneNotifs: { x: 0.05, y: 0.42, w: 0.90, h: 0.10 },
+  homeAssistant: { x: 0.05, y: 0.42, w: 0.90, h: 0.18 },
 };
 
 /** Clamp a fractional rect against a live canvas size in CSS pixels. Enforces

@@ -848,6 +848,46 @@ pub async fn discord_rpc_set_voice_settings(mute: Option<bool>, deaf: Option<boo
     }
 }
 
+/// Read current self-mute/self-deaf state from Discord. Backs the Stream Deck
+/// "toggle mute"/"toggle deafen" actions — the front-end reads this, then
+/// calls `discord_rpc_set_voice_settings` with the inverted bit.
+#[derive(serde::Serialize)]
+pub struct VoiceSettings {
+    pub mute: bool,
+    pub deaf: bool,
+}
+
+#[tauri::command]
+pub async fn discord_rpc_get_voice_settings() -> Result<VoiceSettings, String> {
+    let writer = writer_or_err()?;
+    let nonce = next_nonce();
+    let (tx, rx) = channel();
+    PENDING.lock().insert(nonce.clone(), tx);
+
+    let payload = json!({
+        "nonce": nonce,
+        "cmd": "GET_VOICE_SETTINGS",
+        "args": {},
+    });
+    if let Err(e) = write_frame(&writer, 1, &payload.to_string()) {
+        PENDING.lock().remove(&nonce);
+        return Err(e);
+    }
+
+    let resp = rx
+        .recv_timeout(Duration::from_millis(2000))
+        .map_err(|_| {
+            PENDING.lock().remove(&nonce);
+            "Discord did not respond within 2s".to_string()
+        })?;
+    parse_command_response(&resp)?;
+
+    let data = resp.get("data").ok_or_else(|| "missing data field".to_string())?;
+    let mute = data.get("mute").and_then(|v| v.as_bool()).unwrap_or(false);
+    let deaf = data.get("deaf").and_then(|v| v.as_bool()).unwrap_or(false);
+    Ok(VoiceSettings { mute, deaf })
+}
+
 /// Disconnect from the current voice channel (Discord's "leave call" action).
 #[tauri::command]
 pub async fn discord_rpc_leave_voice() -> Result<(), String> {

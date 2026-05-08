@@ -1,7 +1,9 @@
 import React, { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { newId } from '../state/layout';
 import {
   type ActionConfig,
+  type HotkeyConfig,
   type StreamDeckButton,
   DEFAULT_ICONS,
 } from '../state/actions';
@@ -11,21 +13,38 @@ const KIND_LABELS: Record<ActionConfig['kind'], string> = {
   spotifyPlayPause: '🎵 Spotify play/pause',
   spotifyNext: '⏭ Spotify next',
   spotifyPrev: '⏮ Spotify previous',
-  discordMute: '🎤 Discord mute (sets mute on)',
-  discordDeafen: '🔇 Discord deafen (sets deaf on)',
+  discordToggleMute: '🎤 Discord toggle mute',
+  discordToggleDeafen: '🔇 Discord toggle deafen',
   cycleViz: '◢ Cycle visualizer',
   switchProfile: '▦ Switch profile',
+  launchUrl: '🔗 Launch URL',
+  copyText: '📋 Copy text to clipboard',
+  sendHotkey: '⌨ Send hotkey',
 };
 
 const KIND_ORDER: ActionConfig['kind'][] = [
   'spotifyPlayPause', 'spotifyNext', 'spotifyPrev',
-  'discordMute', 'discordDeafen',
+  'discordToggleMute', 'discordToggleDeafen',
   'cycleViz', 'switchProfile',
+  'launchUrl', 'copyText', 'sendHotkey',
+];
+
+const URL_RE = /^(https?:\/\/|mailto:)/i;
+// Mirrors the backend list — keep these in sync with `actions.rs::parse_key`.
+const HOTKEY_KEY_OPTIONS: string[] = [
+  ...'ABCDEFGHIJKLMNOPQRSTUVWXYZ',
+  ...'0123456789',
+  'F1', 'F2', 'F3', 'F4', 'F5', 'F6', 'F7', 'F8', 'F9', 'F10', 'F11', 'F12',
+  'Enter', 'Escape', 'Tab', 'Space', 'Backspace', 'Delete',
+  'Insert', 'Home', 'End', 'PageUp', 'PageDown',
+  'Up', 'Down', 'Left', 'Right',
 ];
 
 const HEX_RE = /^#[0-9a-fA-F]{6}$/;
 const ICON_MAX = 4;
 const LABEL_MAX = 24;
+const URL_MAX = 2048;
+const COPY_TEXT_MAX = 4096;
 
 export interface StreamDeckActionPickerProps {
   initial?: StreamDeckButton;       // undefined = creating new; defined = editing
@@ -49,6 +68,18 @@ export function StreamDeckActionPicker({
   const [label, setLabel] = useState<string>(initial?.label ?? '');
   const [color, setColor] = useState<string>(initial?.color ?? '');
   const [iconAutoFilled, setIconAutoFilled] = useState<boolean>(true);
+
+  // Action-specific state.
+  const [url, setUrl] = useState<string>(
+    initial?.action.kind === 'launchUrl' ? initial.action.url : '',
+  );
+  const [copyTextValue, setCopyTextValue] = useState<string>(
+    initial?.action.kind === 'copyText' ? initial.action.text : '',
+  );
+  const initialHotkey: HotkeyConfig = (initial?.action.kind === 'sendHotkey'
+    ? initial.action.hotkey
+    : { key: 'A', ctrl: true });
+  const [hotkey, setHotkey] = useState<HotkeyConfig>(initialHotkey);
 
   // Confirm-delete two-step state
   const [confirmDelete, setConfirmDelete] = useState<boolean>(false);
@@ -82,13 +113,22 @@ export function StreamDeckActionPicker({
   const labelValid = label.length <= LABEL_MAX;
   const colorValid = !color || HEX_RE.test(color);
   const profileValid = kind !== 'switchProfile' || (profileId && profiles.some((p) => p.id === profileId));
-  const canSave = iconValid && labelValid && colorValid && profileValid;
+  const urlValid = kind !== 'launchUrl' || (url.trim().length > 0 && url.length <= URL_MAX && URL_RE.test(url.trim()));
+  const copyTextValid = kind !== 'copyText' || copyTextValue.length <= COPY_TEXT_MAX;
+  const hotkeyValid = kind !== 'sendHotkey' || (!!hotkey.key && HOTKEY_KEY_OPTIONS.some((k) => k.toUpperCase() === hotkey.key.toUpperCase()));
+  const canSave = iconValid && labelValid && colorValid && profileValid && urlValid && copyTextValid && hotkeyValid;
 
   const handleSave = () => {
     if (!canSave) return;
     let action: ActionConfig;
     if (kind === 'switchProfile') {
       action = { kind: 'switchProfile', profileId };
+    } else if (kind === 'launchUrl') {
+      action = { kind: 'launchUrl', url: url.trim() };
+    } else if (kind === 'copyText') {
+      action = { kind: 'copyText', text: copyTextValue };
+    } else if (kind === 'sendHotkey') {
+      action = { kind: 'sendHotkey', hotkey };
     } else {
       action = { kind } as ActionConfig;
     }
@@ -113,11 +153,15 @@ export function StreamDeckActionPicker({
     onClose();
   };
 
-  return (
+  // Render at document.body via portal: HFTile uses `backdrop-filter` which
+  // creates a containing block for fixed-positioned descendants — without the
+  // portal the modal would size itself to the small Stream Deck tile rect
+  // rather than the full viewport.
+  return createPortal(
     <div
       onClick={onClose}
       style={{
-        position: 'absolute', inset: 0, zIndex: 75,
+        position: 'fixed', inset: 0, zIndex: 200,
         background: 'rgba(8,9,12,0.55)', backdropFilter: 'blur(2px)',
         display: 'flex', alignItems: 'center', justifyContent: 'center',
       }}
@@ -153,7 +197,7 @@ export function StreamDeckActionPicker({
               style={inputStyle}
             >
               {KIND_ORDER.map((k) => (
-                <option key={k} value={k}>{KIND_LABELS[k]}</option>
+                <option key={k} value={k} style={optionStyle}>{KIND_LABELS[k]}</option>
               ))}
             </select>
           </Field>
@@ -163,21 +207,77 @@ export function StreamDeckActionPicker({
             <Field label="Profile">
               <select value={profileId} onChange={(e) => setProfileId(e.target.value)} style={inputStyle}>
                 {profiles.map((p) => (
-                  <option key={p.id} value={p.id}>● {p.name}</option>
+                  <option key={p.id} value={p.id} style={optionStyle}>● {p.name}</option>
                 ))}
               </select>
             </Field>
           )}
 
-          {/* Discord caveat */}
-          {(kind === 'discordMute' || kind === 'discordDeafen') && (
-            <div style={{
-              fontSize: 11, color: 'rgba(255,255,255,0.55)',
-              padding: '8px 10px', borderRadius: 5,
-              background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.06)',
-            }}>
-              ℹ Sets the value to ON. Toggle (on/off) requires backend changes; coming in a future release.
-            </div>
+          {/* URL field for launchUrl */}
+          {kind === 'launchUrl' && (
+            <Field label="URL">
+              <input
+                type="url"
+                value={url}
+                maxLength={URL_MAX}
+                placeholder="https://example.com"
+                onChange={(e) => setUrl(e.target.value)}
+                style={inputStyle}
+              />
+              {!urlValid && <FieldError>URL must start with http://, https://, or mailto:</FieldError>}
+            </Field>
+          )}
+
+          {/* Text field for copyText */}
+          {kind === 'copyText' && (
+            <Field label="Text">
+              <textarea
+                value={copyTextValue}
+                maxLength={COPY_TEXT_MAX}
+                placeholder="Text to copy when pressed"
+                rows={3}
+                onChange={(e) => setCopyTextValue(e.target.value)}
+                style={{ ...inputStyle, resize: 'vertical', minHeight: 60 }}
+              />
+              {!copyTextValid && <FieldError>Text must be ≤ {COPY_TEXT_MAX} characters.</FieldError>}
+            </Field>
+          )}
+
+          {/* Hotkey picker */}
+          {kind === 'sendHotkey' && (
+            <Field label="Hotkey">
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+                <ModToggle
+                  label="Ctrl" active={!!hotkey.ctrl}
+                  onClick={() => setHotkey({ ...hotkey, ctrl: !hotkey.ctrl })}
+                />
+                <ModToggle
+                  label="Shift" active={!!hotkey.shift}
+                  onClick={() => setHotkey({ ...hotkey, shift: !hotkey.shift })}
+                />
+                <ModToggle
+                  label="Alt" active={!!hotkey.alt}
+                  onClick={() => setHotkey({ ...hotkey, alt: !hotkey.alt })}
+                />
+                <ModToggle
+                  label="Win" active={!!hotkey.meta}
+                  onClick={() => setHotkey({ ...hotkey, meta: !hotkey.meta })}
+                />
+                <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)' }}>+</span>
+                <select
+                  value={hotkey.key}
+                  onChange={(e) => setHotkey({ ...hotkey, key: e.target.value })}
+                  style={{ ...inputStyle, flex: 1, minWidth: 80 }}
+                >
+                  {HOTKEY_KEY_OPTIONS.map((k) => (
+                    <option key={k} value={k} style={optionStyle}>{k}</option>
+                  ))}
+                </select>
+              </div>
+              <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)', marginTop: 4 }}>
+                Sent globally — works in any focused application.
+              </span>
+            </Field>
           )}
 
           {/* Icon */}
@@ -260,7 +360,8 @@ export function StreamDeckActionPicker({
           >Save</button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 
@@ -269,6 +370,14 @@ const inputStyle: React.CSSProperties = {
   background: 'rgba(255,255,255,0.04)', color: '#fff',
   border: '1px solid rgba(255,255,255,0.1)',
   fontFamily: '"JetBrains Mono", ui-monospace, monospace',
+};
+
+// Option rows in a native <select> render in the OS popup, which inherits
+// `color` but paints its own (light) background — causing white-on-white. We
+// re-establish a dark background + readable foreground at the option level.
+const optionStyle: React.CSSProperties = {
+  background: '#1a1c22',
+  color: '#fff',
 };
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
@@ -283,5 +392,22 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 function FieldError({ children }: { children: React.ReactNode }) {
   return (
     <span style={{ fontSize: 10, color: '#fca5a5', marginTop: 2 }}>{children}</span>
+  );
+}
+
+function ModToggle({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      style={{
+        padding: '5px 10px', fontSize: 11, fontWeight: 600, borderRadius: 5,
+        background: active ? 'rgba(125, 211, 252, 0.18)' : 'rgba(255,255,255,0.04)',
+        color: active ? '#7dd3fc' : 'rgba(255,255,255,0.7)',
+        border: active ? '1px solid #7dd3fc66' : '1px solid rgba(255,255,255,0.1)',
+        cursor: 'pointer',
+        fontFamily: '"JetBrains Mono", ui-monospace, monospace',
+      }}
+    >{label}</button>
   );
 }

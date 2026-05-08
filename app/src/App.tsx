@@ -50,6 +50,13 @@ import { RadarTile } from './components/RadarTile';
 import { PomodoroTile } from './components/PomodoroTile';
 import { SunTile } from './components/SunTile';
 import { AuroraTile } from './components/AuroraTile';
+import { AirQualityTile } from './components/AirQualityTile';
+import { StocksTile } from './components/StocksTile';
+import { TidesTile } from './components/TidesTile';
+import { GithubPrsTile } from './components/GithubPrsTile';
+import { StreamChatTile } from './components/StreamChatTile';
+import { PhoneNotifsTile } from './components/PhoneNotifsTile';
+import { HomeAssistantTile } from './components/HomeAssistantTile';
 import { parseStreamDeckConfig } from './state/actions';
 interface VizColorOverride {
   enabled: boolean;
@@ -527,6 +534,76 @@ export default function App() {
             density={t.density}
             accent={accent}
             location={t.weatherLocation}
+          />
+        );
+      case 'airQuality':
+        return (
+          <AirQualityTile
+            density={t.density}
+            accent={accent}
+            location={t.weatherLocation}
+          />
+        );
+      case 'stocks':
+        return (
+          <StocksTile
+            instanceId={instance.instanceId}
+            density={t.density}
+            accent={accent}
+            editing={editMode}
+            config={instance.config as Record<string, unknown> | undefined}
+            setConfig={(next) => updateActiveOrientation({
+              tiles: updateInstance(activeOrientation.tiles, instance.instanceId, { config: next }),
+            })}
+          />
+        );
+      case 'tides':
+        return (
+          <TidesTile
+            density={t.density}
+            accent={accent}
+            editing={editMode}
+            config={instance.config as Record<string, unknown> | undefined}
+            setConfig={(next) => updateActiveOrientation({
+              tiles: updateInstance(activeOrientation.tiles, instance.instanceId, { config: next }),
+            })}
+          />
+        );
+      case 'githubPrs':
+        return (
+          <GithubPrsTile
+            density={t.density}
+            accent={accent}
+            editing={editMode}
+          />
+        );
+      case 'streamChat':
+        return (
+          <StreamChatTile
+            instanceId={instance.instanceId}
+            density={t.density}
+            accent={accent}
+            editing={editMode}
+            config={instance.config as Record<string, unknown> | undefined}
+            setConfig={(next) => updateActiveOrientation({
+              tiles: updateInstance(activeOrientation.tiles, instance.instanceId, { config: next }),
+            })}
+          />
+        );
+      case 'phoneNotifs':
+        return (
+          <PhoneNotifsTile
+            density={t.density}
+            accent={accent}
+            editing={editMode}
+          />
+        );
+      case 'homeAssistant':
+        return (
+          <HomeAssistantTile
+            density={t.density}
+            accent={accent}
+            editing={editMode}
           />
         );
     }

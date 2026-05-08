@@ -1,8 +1,10 @@
+mod actions;
 mod audio;
 mod claude;
 mod discord;
 mod discord_rpc;
 mod lyrics;
+mod market;
 mod mixer;
 mod nowplaying;
 mod spotify;
@@ -26,7 +28,14 @@ pub fn run() {
             discord::discord_get_client_id,
             discord_rpc::discord_rpc_status,
             discord_rpc::discord_rpc_set_voice_settings,
+            discord_rpc::discord_rpc_get_voice_settings,
             discord_rpc::discord_rpc_leave_voice,
+            actions::app_open_url,
+            actions::app_copy_text,
+            actions::app_send_hotkey,
+            market::fetch_stock_quotes,
+            market::fetch_tide_predictions,
+            market::fetch_github_prs,
             spotify::spotify_status,
             spotify::spotify_connect,
             spotify::spotify_disconnect,

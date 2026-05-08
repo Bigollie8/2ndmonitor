@@ -1,18 +1,31 @@
-import { mediaControls, discordVoice } from './tauri';
+import { mediaControls, discordVoice, appActions } from './tauri';
 import { VIZ_STYLES } from '../components/viz-gallery';
 import type { VizMode } from '../types';
 
-/** A single action a Stream Deck button can trigger. v1 ships 7 kinds, all
- *  wired through existing app callbacks or existing Tauri commands — no
- *  new backend commands are introduced. */
+/** A single action a Stream Deck button can trigger. v2 adds three system-side
+ *  actions (URL, clipboard, hotkey) plus proper Discord toggles. The legacy
+ *  `discordMute`/`discordDeafen` kinds set the value to `true` only — the v2
+ *  toggle variants read current state and invert. Old configs migrate in
+ *  `parseAction`. */
+export type HotkeyConfig = {
+  ctrl?: boolean;
+  shift?: boolean;
+  alt?: boolean;
+  meta?: boolean;
+  key: string;
+};
+
 export type ActionConfig =
   | { kind: 'cycleViz' }
   | { kind: 'switchProfile'; profileId: string }
   | { kind: 'spotifyPlayPause' }
   | { kind: 'spotifyNext' }
   | { kind: 'spotifyPrev' }
-  | { kind: 'discordMute' }      // v1: SETS mute=true (not a toggle)
-  | { kind: 'discordDeafen' };   // v1: SETS deaf=true
+  | { kind: 'discordToggleMute' }
+  | { kind: 'discordToggleDeafen' }
+  | { kind: 'launchUrl'; url: string }
+  | { kind: 'copyText'; text: string }
+  | { kind: 'sendHotkey'; hotkey: HotkeyConfig };
 
 /** Default icon per action kind. The action picker pre-fills the icon field
  *  with these when the user changes action kind. User can override. */
@@ -22,8 +35,11 @@ export const DEFAULT_ICONS: Record<ActionConfig['kind'], string> = {
   spotifyPlayPause: '⏯',
   spotifyNext: '⏭',
   spotifyPrev: '⏮',
-  discordMute: '🎤',
-  discordDeafen: '🔇',
+  discordToggleMute: '🎤',
+  discordToggleDeafen: '🔇',
+  launchUrl: '🔗',
+  copyText: '📋',
+  sendHotkey: '⌨',
 };
 
 /** Context passed to the executor — provides the React-state callbacks for
@@ -58,11 +74,20 @@ export async function executeAction(action: ActionConfig, ctx: ActionContext): P
       case 'spotifyPrev':
         await mediaControls.previous();
         return;
-      case 'discordMute':
-        await discordVoice.setMute(true);
+      case 'discordToggleMute':
+        await discordVoice.toggleMute();
         return;
-      case 'discordDeafen':
-        await discordVoice.setDeaf(true);
+      case 'discordToggleDeafen':
+        await discordVoice.toggleDeaf();
+        return;
+      case 'launchUrl':
+        await appActions.openUrl(action.url);
+        return;
+      case 'copyText':
+        await appActions.copyText(action.text);
+        return;
+      case 'sendHotkey':
+        await appActions.sendHotkey(action.hotkey);
         return;
     }
   } catch (err) {
@@ -97,21 +122,56 @@ export const DEFAULT_STREAMDECK_CONFIG: StreamDeckConfig = {
   rows: 2,
 };
 
-const VALID_KINDS: Set<ActionConfig['kind']> = new Set([
-  'cycleViz', 'switchProfile',
+const SIMPLE_KINDS: Set<ActionConfig['kind']> = new Set([
+  'cycleViz',
   'spotifyPlayPause', 'spotifyNext', 'spotifyPrev',
-  'discordMute', 'discordDeafen',
+  'discordToggleMute', 'discordToggleDeafen',
 ]);
+
+function parseHotkey(raw: unknown): HotkeyConfig | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const h = raw as Record<string, unknown>;
+  if (typeof h.key !== 'string' || !h.key.trim()) return null;
+  return {
+    key: h.key,
+    ctrl: !!h.ctrl,
+    shift: !!h.shift,
+    alt: !!h.alt,
+    meta: !!h.meta,
+  };
+}
 
 function parseAction(raw: unknown): ActionConfig | null {
   if (!raw || typeof raw !== 'object') return null;
   const a = raw as Record<string, unknown>;
-  if (typeof a.kind !== 'string' || !VALID_KINDS.has(a.kind as ActionConfig['kind'])) return null;
-  if (a.kind === 'switchProfile') {
+  if (typeof a.kind !== 'string') return null;
+
+  // v1 → v2 migration: legacy set-on Discord kinds become true toggles.
+  let kind = a.kind;
+  if (kind === 'discordMute') kind = 'discordToggleMute';
+  else if (kind === 'discordDeafen') kind = 'discordToggleDeafen';
+
+  if (SIMPLE_KINDS.has(kind as ActionConfig['kind'])) {
+    return { kind: kind as Exclude<ActionConfig['kind'], 'switchProfile' | 'launchUrl' | 'copyText' | 'sendHotkey'> };
+  }
+  if (kind === 'switchProfile') {
     if (typeof a.profileId !== 'string' || !a.profileId) return null;
     return { kind: 'switchProfile', profileId: a.profileId };
   }
-  return { kind: a.kind as Exclude<ActionConfig['kind'], 'switchProfile'> };
+  if (kind === 'launchUrl') {
+    if (typeof a.url !== 'string' || !a.url.trim()) return null;
+    return { kind: 'launchUrl', url: a.url };
+  }
+  if (kind === 'copyText') {
+    if (typeof a.text !== 'string') return null;
+    return { kind: 'copyText', text: a.text };
+  }
+  if (kind === 'sendHotkey') {
+    const hotkey = parseHotkey(a.hotkey);
+    if (!hotkey) return null;
+    return { kind: 'sendHotkey', hotkey };
+  }
+  return null;
 }
 
 function parseButton(raw: unknown): StreamDeckButton | null {

@@ -47,6 +47,13 @@ export function EditModeOverlay({
     pomodoro: 'Pomodoro',
     sun: 'Sun & golden hour',
     aurora: 'Aurora & moon',
+    airQuality: 'Air quality',
+    stocks: 'Stocks',
+    tides: 'Tides',
+    githubPrs: 'GitHub PRs',
+    streamChat: 'Stream chat',
+    phoneNotifs: 'Phone notifs',
+    homeAssistant: 'Smart home',
   };
 
   const orientation = useOrientation();
@@ -425,6 +432,13 @@ function LayersPanel({ accent, selectedInstanceId, setSelectedInstanceId, tiles,
     pomodoro: '◷',
     sun: '☀',
     aurora: '🌌',
+    airQuality: '🌫',
+    stocks: '📈',
+    tides: '🌊',
+    githubPrs: '⊕',
+    streamChat: '💬',
+    phoneNotifs: '📱',
+    homeAssistant: '🏠',
   }[type] ?? '?');
   return (
     <div style={{

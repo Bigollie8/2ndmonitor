@@ -488,10 +488,35 @@ async function invokeRpc<T = void>(cmd: string, args?: Record<string, unknown>):
   }
 }
 
+export interface DiscordVoiceSettings {
+  mute: boolean;
+  deaf: boolean;
+}
+
 export const discordVoice = {
   setMute: (mute: boolean) => invokeRpc('discord_rpc_set_voice_settings', { mute }),
   setDeaf: (deaf: boolean) => invokeRpc('discord_rpc_set_voice_settings', { deaf }),
+  getVoiceSettings: () =>
+    invokeRpc<DiscordVoiceSettings>('discord_rpc_get_voice_settings'),
+  toggleMute: async () => {
+    const s = await invokeRpc<DiscordVoiceSettings>('discord_rpc_get_voice_settings');
+    if (!s) return;
+    await invokeRpc('discord_rpc_set_voice_settings', { mute: !s.mute });
+  },
+  toggleDeaf: async () => {
+    const s = await invokeRpc<DiscordVoiceSettings>('discord_rpc_get_voice_settings');
+    if (!s) return;
+    await invokeRpc('discord_rpc_set_voice_settings', { deaf: !s.deaf });
+  },
   leave: () => invokeRpc('discord_rpc_leave_voice'),
+};
+
+export const appActions = {
+  openUrl: (url: string) => invokeRpc('app_open_url', { url }),
+  copyText: (text: string) => invokeRpc('app_copy_text', { text }),
+  sendHotkey: (args: {
+    ctrl?: boolean; shift?: boolean; alt?: boolean; meta?: boolean; key: string;
+  }) => invokeRpc('app_send_hotkey', { args }),
 };
 
 export function useDiscordRpc(): DiscordRpcState {
