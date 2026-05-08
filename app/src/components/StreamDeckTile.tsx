@@ -91,6 +91,7 @@ export function StreamDeckTile({
       headRight={headRight}
       accent={accent}
       density={density}
+      style={{ height: '100%' }}
     >
       <div style={{
         display: 'grid',

@@ -96,7 +96,7 @@ export function RadarTile({ density, accent, location }: RadarTileProps) {
   const hasFrames = frames.length > 0;
 
   return (
-    <HFTile title="Weather radar" headRight={headRight} accent={accent} density={density}>
+    <HFTile title="Weather radar" headRight={headRight} accent={accent} density={density} style={{ height: '100%' }}>
       <div style={{
         display: 'flex', flexDirection: 'column',
         width: '100%', height: '100%', minHeight: 0,

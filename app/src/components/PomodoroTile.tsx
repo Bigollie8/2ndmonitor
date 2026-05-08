@@ -154,7 +154,7 @@ export function PomodoroTile({
   );
 
   return (
-    <HFTile title="Pomodoro" headRight={headRight} accent={accent} density={density}>
+    <HFTile title="Pomodoro" headRight={headRight} accent={accent} density={density} style={{ height: '100%' }}>
       <div style={{
         display: 'flex', flexDirection: 'column',
         alignItems: 'center', justifyContent: 'center',

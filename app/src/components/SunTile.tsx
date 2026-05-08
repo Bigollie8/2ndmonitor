@@ -53,7 +53,7 @@ export function SunTile({ density, accent, location }: SunTileProps) {
   );
 
   return (
-    <HFTile title="Sun & golden hour" headRight={headRight} accent={accent} density={density}>
+    <HFTile title="Sun & golden hour" headRight={headRight} accent={accent} density={density} style={{ height: '100%' }}>
       <div style={{
         display: 'flex', flexDirection: 'column',
         gap: 4, padding: '4px 2px',

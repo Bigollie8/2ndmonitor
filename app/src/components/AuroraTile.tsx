@@ -79,7 +79,7 @@ export function AuroraTile({ density, accent, location }: AuroraTileProps) {
   );
 
   return (
-    <HFTile title="Aurora & moon" headRight={headRight} accent={accent} density={density}>
+    <HFTile title="Aurora & moon" headRight={headRight} accent={accent} density={density} style={{ height: '100%' }}>
       <div style={{
         display: 'flex', flexDirection: 'column',
         width: '100%', height: '100%', gap: 6,
