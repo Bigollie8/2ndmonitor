@@ -28,6 +28,11 @@ pub struct NowPlaying {
     /// Data-URL of the thumbnail. Only included when the (title, artist, album)
     /// changes — frontend keeps the previous one across position-only updates.
     pub art_data_url: Option<String>,
+    /// Application User Model ID of the GSMTC source — e.g. "Spotify.exe",
+    /// "AppleInc.AppleMusicWin_nzyj5cx40ttqa!App", "msedge". The frontend uses
+    /// this to label the platform pill and gate platform-specific UI (queue,
+    /// volume control). Empty string when no session.
+    pub source_app_id: String,
 }
 
 #[cfg(windows)]
@@ -65,6 +70,10 @@ mod windows_impl {
         let Some(session) = current_session() else {
             return Ok(NowPlaying::default());
         };
+        let source_app_id = session
+            .SourceAppUserModelId()
+            .map(|s| s.to_string())
+            .unwrap_or_default();
         let props = session.TryGetMediaPropertiesAsync()?.get()?;
         let timeline = session.GetTimelineProperties().ok();
         let playback = session.GetPlaybackInfo().ok();
@@ -108,6 +117,7 @@ mod windows_impl {
             position,
             duration,
             art_data_url: art,
+            source_app_id,
         })
     }
 

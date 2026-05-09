@@ -308,7 +308,7 @@ export default function App() {
   const [selectedInstanceId, setSelectedInstanceId] = useState<string>('');
   const sysmon = useSysmon();
   const spectrumRef = useSpectrumRef();
-  const { track: livePlaying, playback: livePlayback } = useNowPlaying();
+  const { track: livePlaying, playback: livePlayback, sourceAppId: liveSourceAppId } = useNowPlaying();
   // Real GSMTC track wins when it's available; otherwise the user's manual
   // selection from the "Up next" list (or the initial demo) drives the theme.
   const track: Track = livePlaying ?? manualTrack;
@@ -470,7 +470,7 @@ export default function App() {
       case 'discord':
         return <DiscordTile density={t.density} accent={accent} />;
       case 'spotify':
-        return <SpotifyTile density={t.density} accent={accent} accent2={accent2} track={track} onPick={setTrack} playback={livePlayback} spectrumRef={spectrumRef} />;
+        return <SpotifyTile density={t.density} accent={accent} accent2={accent2} track={track} onPick={setTrack} playback={livePlayback} sourceAppId={liveSourceAppId} spectrumRef={spectrumRef} />;
       case 'claude':
         return <ClaudeCodeTile density={t.density} accent={accent} />;
       case 'mixer':

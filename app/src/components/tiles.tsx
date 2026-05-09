@@ -4,6 +4,7 @@ import type { Density, Track, SysmonHistory } from '../types';
 import type { Todo } from '../types';
 import { type Playback, type SpectrumState, mediaControls, useSpotify, type SpotifyTrack } from '../state/tauri';
 import { useLyrics, currentLineIndex } from '../state/lyrics';
+import { mediaSourceFor, type MediaSourceInfo, type MediaSourceKind } from '../state/mediaSource';
 import { Slider } from './Slider';
 
 export function HFTile({
@@ -175,21 +176,25 @@ function useLivePosition(playback: Playback | null): number {
 
 type SpotifyTab = 'now' | 'lyrics' | 'upnext';
 
-export function SpotifyTile({ density, accent, accent2, track, onPick: _onPick, playback, spectrumRef }: {
+export function SpotifyTile({ density, accent, accent2, track, onPick: _onPick, playback, sourceAppId, spectrumRef }: {
   density: Density;
   accent: string;
   accent2: string;
   track: Track;
   onPick: (t: Track) => void;
   playback?: Playback | null;
+  /** GSMTC SourceAppUserModelId — drives the platform pill and gates the
+   *  Spotify-only Up Next + volume controls. */
+  sourceAppId?: string;
   spectrumRef?: MutableRefObject<SpectrumState>;
 }) {
   const [tab, setTab] = useState<SpotifyTab>('now');
+  const source = mediaSourceFor(sourceAppId);
   return (
     <HFTile
       title="Now playing"
       density={density}
-      badge={<SpotifyBadge playback={playback} accent={accent} />}
+      badge={<SourceBadge source={source} playback={playback} />}
       style={{ height: '100%' }}
     >
       <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
@@ -198,24 +203,64 @@ export function SpotifyTile({ density, accent, accent2, track, onPick: _onPick, 
           {tab === 'now' && (
             <SpotifyNowView
               accent={accent} accent2={accent2} track={track}
-              playback={playback} spectrumRef={spectrumRef}
+              playback={playback} sourceKind={source.kind} spectrumRef={spectrumRef}
             />
           )}
           {tab === 'lyrics' && <SpotifyLyricsView accent={accent} playback={playback} />}
-          {tab === 'upnext' && <SpotifyUpNextView accent={accent} />}
+          {tab === 'upnext' && <UpNextRouter accent={accent} source={source} />}
         </div>
       </div>
     </HFTile>
   );
 }
 
-function SpotifyBadge({ playback, accent }: { playback?: Playback | null; accent: string }) {
-  const liveBadgeColor = playback?.playing ? '#22c55e' : accent;
-  const liveBadgeText = playback ? (playback.playing ? '● LIVE' : '⏸ PAUSED') : '● LIVE';
+function SourceBadge({ source, playback }: { source: MediaSourceInfo; playback?: Playback | null }) {
+  const playing = !!playback?.playing;
+  const tone = playing ? source.color : 'rgba(255,255,255,0.55)';
   return (
-    <span style={{ fontSize: 9, color: liveBadgeColor, padding: '2px 6px', borderRadius: 4, background: liveBadgeColor + '15', border: `1px solid ${liveBadgeColor}33`, letterSpacing: '.05em' }}>
-      {liveBadgeText}
+    <span style={{
+      fontSize: 9, fontWeight: 700, color: tone,
+      padding: '2px 7px', borderRadius: 4,
+      background: tone + '18',
+      border: `1px solid ${tone}55`,
+      letterSpacing: '.05em',
+      display: 'inline-flex', alignItems: 'center', gap: 5,
+    }} title={playing ? 'Playing' : (playback ? 'Paused' : 'No session')}>
+      <span aria-hidden style={{ fontSize: 11, lineHeight: 1 }}>{source.glyph}</span>
+      <span>{source.label.toUpperCase()}</span>
+      {!playing && playback && (
+        <span style={{ opacity: 0.65 }}>· paused</span>
+      )}
     </span>
+  );
+}
+
+/** "Up next" tab content routes by source: Spotify gets the Web API queue
+ *  view; everything else gets a small explainer so the tab doesn't visually
+ *  shimmer when the user switches platforms. */
+function UpNextRouter({ accent, source }: { accent: string; source: MediaSourceInfo }) {
+  if (source.hasQueueIntegration) {
+    return <SpotifyUpNextView accent={accent} />;
+  }
+  if (source.kind === 'none') {
+    return (
+      <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 18, textAlign: 'center', color: 'rgba(255,255,255,0.45)', fontSize: 11, lineHeight: 1.55 }}>
+        Start playing something to see Up Next.
+      </div>
+    );
+  }
+  return (
+    <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 18, textAlign: 'center', color: 'rgba(255,255,255,0.55)', fontSize: 11, lineHeight: 1.55 }}>
+      <div>
+        <div style={{ fontSize: 13, fontWeight: 600, color: '#fff', marginBottom: 6 }}>
+          Up Next isn't available for {source.label}
+        </div>
+        <div>
+          Only Spotify exposes a public queue API. Switch to Spotify to see
+          your queue here — Now and Lyrics work for any platform.
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -250,9 +295,10 @@ function SpotifyTabBar({ tab, setTab, accent }: { tab: SpotifyTab; setTab: (t: S
   );
 }
 
-function SpotifyNowView({ accent, accent2, track, playback, spectrumRef }: {
+function SpotifyNowView({ accent, accent2, track, playback, sourceKind, spectrumRef }: {
   accent: string; accent2: string; track: Track;
   playback?: Playback | null;
+  sourceKind: MediaSourceKind;
   spectrumRef?: MutableRefObject<SpectrumState>;
 }) {
   const position = useLivePosition(playback ?? null);
@@ -320,8 +366,10 @@ function SpotifyNowView({ accent, accent2, track, playback, spectrumRef }: {
         >{playback?.playing ? '⏸' : '⏵'}</button>
         <button title="Next" onClick={() => mediaControls.next()} style={{ ...iconBtn(), width: 32, height: 32 }}>⏭</button>
       </div>
-      {/* Spotify Web API volume */}
-      <SpotifyVolumeRow accent={accent} accent2={accent2} />
+      {/* Spotify Web API volume — only meaningful when Spotify is the source.
+       *  For Apple Music / browser playback / etc. the user adjusts volume
+       *  through the system mixer (or the audio mixer tile). */}
+      {sourceKind === 'spotify' && <SpotifyVolumeRow accent={accent} accent2={accent2} />}
       {/* Mini reactive visualizer */}
       {spectrumRef && <SpotifyMiniViz accent={accent} accent2={accent2} spectrumRef={spectrumRef} />}
     </>

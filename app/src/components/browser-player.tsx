@@ -20,14 +20,17 @@ export function defaultBookmarks(): Bookmark[] {
     id: newId(), name, url, letters, color,
   });
   return [
-    mk('YouTube',     'https://www.youtube.com',      'YT', '#ff0000'),
-    mk('Netflix',     'https://www.netflix.com',      'NF', '#e50914'),
-    mk('Disney+',     'https://www.disneyplus.com',   'D+', '#113ccf'),
-    mk('Hulu',        'https://www.hulu.com',         'HU', '#1ce783'),
-    mk('HBO Max',     'https://www.max.com',          'MX', '#002be7'),
-    mk('Prime Video', 'https://www.primevideo.com',   'PV', '#00a8e1'),
-    mk('Twitch',      'https://www.twitch.tv',        'TW', '#9146ff'),
-    mk('Plex',        'https://app.plex.tv',          'PX', '#e5a00d'),
+    mk('YouTube',       'https://www.youtube.com',      'YT', '#ff0000'),
+    mk('Spotify',       'https://open.spotify.com',     'SP', '#22c55e'),
+    mk('Apple Music',   'https://music.apple.com',      'AM', '#fa233b'),
+    mk('YouTube Music', 'https://music.youtube.com',    'YM', '#ff0000'),
+    mk('Netflix',       'https://www.netflix.com',      'NF', '#e50914'),
+    mk('Disney+',       'https://www.disneyplus.com',   'D+', '#113ccf'),
+    mk('Hulu',          'https://www.hulu.com',         'HU', '#1ce783'),
+    mk('HBO Max',       'https://www.max.com',          'MX', '#002be7'),
+    mk('Prime Video',   'https://www.primevideo.com',   'PV', '#00a8e1'),
+    mk('Twitch',        'https://www.twitch.tv',        'TW', '#9146ff'),
+    mk('Plex',          'https://app.plex.tv',          'PX', '#e5a00d'),
   ];
 }
 

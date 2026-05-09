@@ -105,6 +105,8 @@ interface NowPlayingPayload {
   position: number;
   duration: number;
   art_data_url: string | null;
+  /** GSMTC SourceAppUserModelId — empty string when no session. */
+  source_app_id: string;
 }
 
 export interface Playback {
@@ -214,6 +216,10 @@ export function useSpectrumRef(): MutableRefObject<SpectrumState> {
 export interface NowPlayingState {
   track: Track | null;
   playback: Playback | null;
+  /** GSMTC source AUMID. Empty string when no active session. The frontend
+   *  passes this through `mediaSourceFor` to render the platform pill and
+   *  decide whether to surface Spotify-only controls. */
+  sourceAppId: string;
 }
 
 /**
@@ -221,7 +227,7 @@ export interface NowPlayingState {
  * Both fields are null when nothing is playing / not in Tauri.
  */
 export function useNowPlaying(): NowPlayingState {
-  const [state, setState] = useState<NowPlayingState>({ track: null, playback: null });
+  const [state, setState] = useState<NowPlayingState>({ track: null, playback: null, sourceAppId: '' });
 
   useEffect(() => {
     if (!isTauri) return;
@@ -287,7 +293,7 @@ export function useNowPlaying(): NowPlayingState {
               }
             }
           }
-          return { track, playback: nextPlayback };
+          return { track, playback: nextPlayback, sourceAppId: p.source_app_id ?? '' };
         });
       }))
       .then((unlisten) => {
