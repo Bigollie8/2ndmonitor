@@ -332,7 +332,7 @@ export default function App() {
   // null when hidden. Set by the effect below when accent is track-linked and
   // the title changes; auto-cleared after 2s.
   const [themeToast, setThemeToast] = useState<string | null>(null);
-  const vizStyles = useVizStyles();
+  const { styles: vizStyles } = useVizStyles();
   const spectrumRef = useSpectrumRef();
   const { track: livePlaying, playback: livePlayback, sourceAppId: liveSourceAppId } = useNowPlaying();
   // Real GSMTC track wins when it's available; otherwise the user's manual

@@ -5,7 +5,7 @@ import { useLyrics, currentLineIndex } from '../state/lyrics';
 import { recordDraw, useRegisterSurface } from '../perf/debug';
 import { paceFrame } from '../state/framePace';
 import { BrowserPlayer, type Bookmark } from './browser-player';
-import { bundleIdOf } from '../state/contentRegistry';
+import { bundleIdOf, isBundleMode } from '../state/contentRegistry';
 import { useVizStyles } from './useVizStyles';
 
 // The "extra" visualizer styles (viz-extra) are lazy-loaded: most sessions
@@ -624,7 +624,7 @@ export function HiFiVizSurface({ mode, accent, accent2, spectrumRef, sensitivity
   // other consumer of the merged catalog (App.tsx, settings, gallery,
   // Stream Deck) already uses: call useVizStyles() locally rather than
   // threading the list down through props.
-  const vizStyles = useVizStyles();
+  const { styles: vizStyles, loaded: vizStylesLoaded } = useVizStyles();
   const props = { accent, accent2, spectrumRef, sensitivity, smoothing, paused, track, playback };
   // The core styles (bars/waveform/radial/particles/ambient) are eager and
   // never suspend. The "extra" styles are lazy-loaded chunks (see the `lazy()`
@@ -660,11 +660,24 @@ export function HiFiVizSurface({ mode, accent, accent2, spectrumRef, sensitivity
       // that was just retired from the binary, before the user installs its
       // shop replacement). Handing an uninstalled id to SandboxVizSurface
       // would just surface its "visualizers_read" error banner instead.
+      //
+      // This has to be a three-state check, not a boolean. `vizStylesLoaded`
+      // distinguishes "the visualizers_list invoke hasn't resolved yet" from
+      // "it resolved and this id isn't in it" — an empty/builtins-only
+      // catalog looks identical to "genuinely not installed" otherwise, and
+      // t.vizMode can already be a `bundle:` mode on the very first render
+      // (useTweaks's synchronous localStorage load runs before this effect
+      // fires). Guessing either way during that window produces a visible
+      // wrong-style flash: guess "absent" and an installed bundle style
+      // flashes Bars before snapping to the sandbox; guess "present" and a
+      // genuinely-uninstalled id flashes the sandbox's error banner. Do not
+      // collapse this back to `bundleId && vizStyles.some(...)`.
       const bundleId = bundleIdOf(mode);
-      if (bundleId !== null && vizStyles.some((s) => s.id === mode)) {
-        return <SandboxVizSurface {...props} bundleId={bundleId} />;
-      }
-      return <HiFiVizBars {...props} />;
+      if (bundleId === null) return <HiFiVizBars {...props} />;
+      if (!vizStylesLoaded) return null; // not yet known — render nothing, not a guess
+      return vizStyles.some((s) => s.id === mode)
+        ? <SandboxVizSurface {...props} bundleId={bundleId} />
+        : <HiFiVizBars {...props} />;
     }
     }
   })();
@@ -738,8 +751,17 @@ export function VizOverlay({
   const isOriginalMode = modes.some((m) => m.k === mode);
   // The merged catalog (not just BUILTIN_VIZ_STYLES) so an installed
   // `bundle:` style's label still shows in the "● Label" badge.
-  const vizStyles = useVizStyles();
-  const styleEntry = vizStyles.find((s) => s.id === mode);
+  const { styles: vizStyles, loaded: vizStylesLoaded } = useVizStyles();
+  // Same tri-state reasoning as HiFiVizSurface's dispatch gate above:
+  // `vizStyles` holds builtins only until the installed-bundle list
+  // resolves, so an active `bundle:` style's badge would otherwise flash
+  // absent for a tick before popping in. Gate the lookup on
+  // `vizStylesLoaded` for bundle modes so that's a deliberate "not known
+  // yet" rather than an accidental side effect of the merge — builtin
+  // styles never depend on the async list, so their badge is unaffected.
+  const styleEntry = (!isBundleMode(mode) || vizStylesLoaded)
+    ? vizStyles.find((s) => s.id === mode)
+    : undefined;
   return (
     <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
       <div style={{ padding: 18, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', pointerEvents: 'auto' }}>

@@ -17,7 +17,7 @@ export function VizGallery({
   sensitivity?: number;
   smoothing?: number;
 }) {
-  const vizStyles = useVizStyles();
+  const { styles: vizStyles } = useVizStyles();
   const [size, setSize] = useState<'compact' | 'regular' | 'large'>('regular');
   const cols = size === 'compact' ? 4 : size === 'regular' ? 3 : 2;
   const [focused, setFocused] = useState<VizMode | null>(null);

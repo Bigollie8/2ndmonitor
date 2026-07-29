@@ -112,7 +112,7 @@ export function SettingsWindow({
 }) {
   const [activePane, setActivePane] = useState('visualizer');
   const [query, setQuery] = useState('');
-  const vizStyles = useVizStyles();
+  const { styles: vizStyles } = useVizStyles();
 
   const panes: PaneDef[] = [
     {

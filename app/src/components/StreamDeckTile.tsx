@@ -32,7 +32,7 @@ export function StreamDeckTile({
   vizMode, setVizMode, profiles, setActiveProfileId,
 }: StreamDeckTileProps) {
   const [pickerState, setPickerState] = useState<PickerState>({ open: false });
-  const vizStyles = useVizStyles();
+  const { styles: vizStyles } = useVizStyles();
 
   const ctx: ActionContext = {
     vizMode, setVizMode, setActiveProfileId,
