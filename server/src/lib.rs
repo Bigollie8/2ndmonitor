@@ -2,9 +2,12 @@
 //! The binary (main.rs) is a thin wrapper; integration tests build the same
 //! router against an in-memory database.
 
+pub mod ai_review;
 pub mod auth;
 pub mod db;
+pub mod manifest;
 pub mod state;
+pub mod submit;
 
 use axum::routing::post;
 use axum::{routing::get, Json, Router};
@@ -23,6 +26,8 @@ pub fn router(state: AppState) -> Router {
         .route("/auth/request-reset", post(auth::request_reset))
         .route("/auth/reset", post(auth::reset))
         .route("/auth/whoami", get(auth::whoami))
+        .route("/submissions", post(submit::submit))
+        .route("/submissions/mine", get(submit::mine))
         .with_state(state)
 }
 
