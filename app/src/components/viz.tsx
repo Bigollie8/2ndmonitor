@@ -3,6 +3,7 @@ import type { VizMode, Track } from '../types';
 import { type SpectrumState, type Playback, mediaControls } from '../state/tauri';
 import { useLyrics, currentLineIndex } from '../state/lyrics';
 import { recordDraw, useRegisterSurface } from '../perf/debug';
+import { paceFrame } from '../state/framePace';
 import {
   VizNeonBars, VizSplitMirror, VizCircularPulse, VizWaveformTunnel,
   VizPixelLED, VizRibbon, VizOscilloscope, VizSpectrogram, VizVinyl,
@@ -175,7 +176,7 @@ export function fmtTime(seconds: number): string {
  *  recorded for per-viz draw-rate attribution and long-task heuristic tagging. */
 export function useAnimateGate(paused?: boolean, name?: string): { shouldDraw(): boolean } {
   const visibleRef = useRef(true);
-  const lastDrawRef = useRef(0);
+  const paceRef = useRef({ nextDue: 0 });
   useEffect(() => {
     const update = () => {
       visibleRef.current = !paused && (typeof document === 'undefined' || document.visibilityState !== 'hidden');
@@ -191,11 +192,8 @@ export function useAnimateGate(paused?: boolean, name?: string): { shouldDraw():
   return {
     shouldDraw(): boolean {
       if (!visibleRef.current) return false;
-      if (vizMaxFps > 0) {
-        const now = performance.now();
-        const minDelta = 1000 / vizMaxFps;
-        if (now - lastDrawRef.current < minDelta) return false;
-        lastDrawRef.current = now;
+      if (vizMaxFps > 0 && !paceFrame(performance.now(), paceRef.current, 1000 / vizMaxFps)) {
+        return false;
       }
       if (name) recordDraw(name);
       return true;
