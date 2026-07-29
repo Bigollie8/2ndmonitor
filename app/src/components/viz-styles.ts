@@ -7,7 +7,7 @@ import type { VizMode } from '../types';
  *  and is otherwise lazy-loaded only when the gallery overlay opens). */
 export interface VizStyle { id: VizMode; label: string; desc: string }
 
-export const VIZ_STYLES: VizStyle[] = [
+export const BUILTIN_VIZ_STYLES: VizStyle[] = [
   { id: 'bars',         label: 'Bars',         desc: 'Classic spectrum analyzer' },
   { id: 'waveform',     label: 'Waveform',     desc: 'Smooth oscilloscope' },
   { id: 'radial',       label: 'Radial',       desc: 'Circular spectrum' },
@@ -38,3 +38,7 @@ export const VIZ_STYLES: VizStyle[] = [
   { id: 'milkdrop',     label: 'MilkDrop',     desc: 'Butterchurn · MilkDrop 2 presets' },
   { id: 'scripted',     label: 'Scripted',     desc: 'Your JS visualizers · sandboxed' },
 ];
+
+/** @deprecated Use `useVizStyles()` for anything user-facing — it includes
+ *  installed bundles. This alias covers call sites that only need builtins. */
+export const VIZ_STYLES = BUILTIN_VIZ_STYLES;

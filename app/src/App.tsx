@@ -27,7 +27,7 @@ import { useSysmon, useNowPlaying, useSpectrumRef } from './state/tauri';
 import { VizHero, setVizDprCap, setVizMaxFps, getVizMaxFps } from './components/viz';
 import * as perfDebug from './perf/debug';
 import { PerfDebugHUD } from './perf/PerfDebugHUD';
-import { VIZ_STYLES } from './components/viz-styles';
+import { useVizStyles } from './components/useVizStyles';
 import { defaultBookmarks, type Bookmark } from './components/browser-player';
 import {
   SpotifyTile, NotesTile,
@@ -324,6 +324,7 @@ export default function App() {
   // null when hidden. Set by the effect below when accent is track-linked and
   // the title changes; auto-cleared after 2s.
   const [themeToast, setThemeToast] = useState<string | null>(null);
+  const vizStyles = useVizStyles();
   const spectrumRef = useSpectrumRef();
   const { track: livePlaying, playback: livePlayback, sourceAppId: liveSourceAppId } = useNowPlaying();
   // Real GSMTC track wins when it's available; otherwise the user's manual
@@ -460,14 +461,14 @@ export default function App() {
         }
       }
       else if (!editing && !cmd && (e.key === 'v' || e.key === 'V')) {
-        const ids = VIZ_STYLES.map((s) => s.id);
+        const ids = vizStyles.map((s) => s.id);
         const i = ids.indexOf(t.vizMode);
         setTweak('vizMode', ids[(i + 1) % ids.length] ?? 'bars');
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [showSwitcher, editMode, showOnboarding, showGallery, showSettings, showTileLibrary, showShortcuts, t.vizMode, t.profiles, setTweak]);
+  }, [showSwitcher, editMode, showOnboarding, showGallery, showSettings, showTileLibrary, showShortcuts, t.vizMode, t.profiles, setTweak, vizStyles]);
 
   const orientation = useOrientation();
   const canvas = useCanvas();

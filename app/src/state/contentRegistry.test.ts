@@ -5,6 +5,7 @@ import {
   type InstalledVizFolder,
 } from './contentRegistry';
 import type { VizStyle } from '../components/viz-styles';
+import { BUILTIN_VIZ_STYLES } from '../components/viz-styles';
 
 const builtin: VizStyle[] = [
   { id: 'bars', label: 'Bars', desc: 'Classic spectrum analyzer' },
@@ -74,4 +75,23 @@ test('mergeVizStyles: a bundle id colliding with a builtin does not shadow it', 
 test('mergeVizStyles: a nameless folder falls back to its id as the label', () => {
   const out = mergeVizStyles(builtin, [folder({ name: '' })]);
   assert.equal(out.find((s) => s.source === 'bundle')?.label, 'starfield');
+});
+
+test('BUILTIN_VIZ_STYLES: every entry has a unique id and non-empty label', () => {
+  const ids = BUILTIN_VIZ_STYLES.map((s) => s.id);
+  assert.equal(new Set(ids).size, ids.length);
+  assert.equal(BUILTIN_VIZ_STYLES.every((s) => s.label.trim().length > 0), true);
+});
+
+test('BUILTIN_VIZ_STYLES: no builtin id uses the bundle namespace', () => {
+  assert.equal(BUILTIN_VIZ_STYLES.some((s) => isBundleMode(s.id)), false);
+});
+
+test('mergeVizStyles: real builtin table plus a bundle keeps every builtin', () => {
+  // NOTE: folder()'s default id ('starfield') collides with a real builtin
+  // id in BUILTIN_VIZ_STYLES, which mergeVizStyles correctly drops (see the
+  // "does not shadow it" test above) — that would sink this count assertion
+  // for a reason unrelated to what it's checking. Use an id no builtin has.
+  const out = mergeVizStyles(BUILTIN_VIZ_STYLES, [folder({ id: 'sample-bundle', name: 'Sample Bundle' })]);
+  assert.equal(out.length, BUILTIN_VIZ_STYLES.length + 1);
 });

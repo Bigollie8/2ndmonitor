@@ -8,6 +8,7 @@ const makeCtx = (overrides: Partial<ActionContext> = {}): ActionContext => ({
   vizMode: 'bars',
   setVizMode: () => {},
   setActiveProfileId: () => {},
+  vizIds: ['bars', 'waveform'],
   ...overrides,
 });
 

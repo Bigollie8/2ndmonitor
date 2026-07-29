@@ -1,5 +1,4 @@
 import { mediaControls, discordVoice, appActions } from './tauri';
-import { VIZ_STYLES } from '../components/viz-styles';
 import type { VizMode } from '../types';
 
 /** A single action a Stream Deck button can trigger. v2 adds three system-side
@@ -49,6 +48,11 @@ export interface ActionContext {
   vizMode: VizMode;
   setVizMode: (mode: VizMode) => void;
   setActiveProfileId: (profileId: string) => void;
+  /** Ids of the merged style catalog (builtins + installed bundles), in
+   *  cycle order. Passed in by the caller rather than imported here — this
+   *  module stays pure/node-testable and doesn't reach for the React-adjacent
+   *  registry hook. */
+  vizIds: string[];
 }
 
 /** Execute a Stream Deck action. Errors from Tauri invokes are swallowed and
@@ -57,9 +61,12 @@ export async function executeAction(action: ActionConfig, ctx: ActionContext): P
   try {
     switch (action.kind) {
       case 'cycleViz': {
-        const ids = VIZ_STYLES.map((s) => s.id);
+        const ids = ctx.vizIds;
         const i = ids.indexOf(ctx.vizMode);
-        ctx.setVizMode(ids[(i + 1) % ids.length] ?? 'bars');
+        // vizIds is string[] (it may hold bundle:<id> entries not known to
+        // the VizMode union at this module's compile time) — the caller owns
+        // building it from the merged catalog, so the values are trusted.
+        ctx.setVizMode((ids[(i + 1) % ids.length] ?? 'bars') as VizMode);
         return;
       }
       case 'switchProfile':

@@ -3,7 +3,7 @@ import type { ReactNode } from 'react';
 import type { VizMode, AccentTheme, Density, WeatherLocation } from '../types';
 import type { GeocodeResult } from '../state/weatherLocation';
 import { ACCENT_PALETTES } from '../data';
-import { VIZ_STYLES } from './viz-styles';
+import { useVizStyles } from './useVizStyles';
 import { defaultBookmarks, type Bookmark } from './browser-player';
 import { isTauri } from '../state/tauri';
 
@@ -112,6 +112,7 @@ export function SettingsWindow({
 }) {
   const [activePane, setActivePane] = useState('visualizer');
   const [query, setQuery] = useState('');
+  const vizStyles = useVizStyles();
 
   const panes: PaneDef[] = [
     {
@@ -123,7 +124,11 @@ export function SettingsWindow({
           control: (
             <SettingsSelect<VizMode>
               value={v.vizMode}
-              options={VIZ_STYLES.map((s) => ({ value: s.id, label: s.label }))}
+              options={vizStyles.map((s) => ({
+                value: s.id,
+                label: s.label,
+                group: s.source === 'bundle' ? 'Installed' : undefined,
+              }))}
               onChange={(m) => set('vizMode', m)}
             />
           ),
@@ -534,9 +539,21 @@ function Toggle({ checked, onChange, accent, disabled }: {
 
 function SettingsSelect<T extends string>({ value, options, onChange }: {
   value: T;
-  options: { value: T; label: string }[];
+  /** `group` is optional — used by the viz style dropdown to set installed
+   *  bundles apart from built-ins under an "Installed" optgroup. Options
+   *  without a group render flat, at top, in array order. */
+  options: { value: T; label: string; group?: string }[];
   onChange: (v: T) => void;
 }) {
+  const ungrouped = options.filter((o) => !o.group);
+  const groups = new Map<string, { value: T; label: string }[]>();
+  for (const o of options) {
+    if (!o.group) continue;
+    const list = groups.get(o.group) ?? [];
+    list.push(o);
+    groups.set(o.group, list);
+  }
+  const optionStyle = { background: '#14161c', color: '#fff' };
   return (
     <select
       value={value}
@@ -551,10 +568,19 @@ function SettingsSelect<T extends string>({ value, options, onChange }: {
         color: '#fff', outline: 'none', cursor: 'pointer', maxWidth: 220,
       }}
     >
-      {options.map((o) => (
-        <option key={o.value} value={o.value} style={{ background: '#14161c', color: '#fff' }}>
+      {ungrouped.map((o) => (
+        <option key={o.value} value={o.value} style={optionStyle}>
           {o.label}
         </option>
+      ))}
+      {[...groups.entries()].map(([label, opts]) => (
+        <optgroup key={label} label={label} style={optionStyle}>
+          {opts.map((o) => (
+            <option key={o.value} value={o.value} style={optionStyle}>
+              {o.label}
+            </option>
+          ))}
+        </optgroup>
       ))}
     </select>
   );

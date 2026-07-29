@@ -7,6 +7,7 @@ import {
   type ActionContext,
 } from '../state/actions';
 import { StreamDeckActionPicker } from './StreamDeckActionPicker';
+import { useVizStyles } from './useVizStyles';
 import type { Profile, VizMode, Density } from '../types';
 
 export interface StreamDeckTileProps {
@@ -31,8 +32,12 @@ export function StreamDeckTile({
   vizMode, setVizMode, profiles, setActiveProfileId,
 }: StreamDeckTileProps) {
   const [pickerState, setPickerState] = useState<PickerState>({ open: false });
+  const vizStyles = useVizStyles();
 
-  const ctx: ActionContext = { vizMode, setVizMode, setActiveProfileId };
+  const ctx: ActionContext = {
+    vizMode, setVizMode, setActiveProfileId,
+    vizIds: vizStyles.map((s) => s.id),
+  };
 
   const handleButtonClick = (button: StreamDeckButton, index: number) => {
     if (editing) {
