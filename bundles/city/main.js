@@ -8,11 +8,13 @@ function hex2(n) {
   return Math.max(0, Math.min(255, Math.round(n))).toString(16).padStart(2, '0');
 }
 
-// Buildings depend on canvas width, which isn't known until the first
-// frame. Seed once per width (mirrors the original's ResizeObserver, which
-// only regenerated on an actual resize).
+// Buildings depend on both canvas dimensions (bh derives from h), which
+// aren't known until the first frame. Regenerate whenever either changes
+// — mirrors the original's ResizeObserver, which fires on width OR height
+// changes, not just width.
 let buildings = [];
 let lastGenW = -1;
+let lastGenH = -1;
 
 function genBuildings(w, h) {
   const list = [];
@@ -41,9 +43,10 @@ viz.on('frame', (f) => {
   const accent2 = f.theme.accent2;
   const bins = viz.bins(24);
 
-  if (w !== lastGenW) {
+  if (w !== lastGenW || h !== lastGenH) {
     buildings = genBuildings(w, h);
     lastGenW = w;
+    lastGenH = h;
   }
 
   t += 0.04;
