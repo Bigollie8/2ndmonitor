@@ -6,7 +6,8 @@ Built with Tauri 2 (Rust + WebView2) and React. ~10 MB installer, native Windows
 
 ## What it does
 
-- **28 audio visualizers** driven by WASAPI loopback capture — they react to whatever is playing through your default output, including Spotify, YouTube, games, anything. Cycle styles with **V**. Includes **MilkDrop** (classic MilkDrop 2 presets via Butterchurn, WebGL) with 100 bundled presets, auto-cycling, and a preset picker.
+- **29 audio visualizers** driven by WASAPI loopback capture — they react to whatever is playing through your default output, including Spotify, YouTube, games, anything. Cycle styles with **V**. Includes **MilkDrop** (classic MilkDrop 2 presets via Butterchurn, WebGL) with 100 bundled presets, auto-cycling, and a preset picker.
+- **Code your own visualizer** — the **Scripted** style runs your JavaScript (sandboxed: audio data in, pixels out, no network/app access) with folder hot-reload and a built-in editor. See [docs/scripted-visualizers.md](docs/scripted-visualizers.md).
 - **Now-playing + lyrics** via Windows GSMTC (no service required) and LRCLIB for line-synced lyrics. Optional Spotify connection unlocks "Up next" queue.
 - **Discord voice tile** — see who's in your call, who's speaking, mute/deafen status. Uses Discord's local RPC over WebSocket; you provide your own application ID, no token leaves your machine.
 - **System monitor** — CPU/RAM/GPU live, with NVML for per-process GPU% on NVIDIA cards.
@@ -88,6 +89,7 @@ The frontend never talks to the network directly except through the WebView; eve
 - Discord credentials: `%APPDATA%/com.secondmonitor.hub/discord.json`
 - Spotify credentials: `%APPDATA%/com.secondmonitor.hub/spotify.json`
 - MilkDrop presets: `%APPDATA%/com.secondmonitor.hub/presets/` — drop Butterchurn preset `.json` files here (convert `.milk` at butterchurn.app; MilkDrop 3 `.milk2` is not supported)
+- Scripted visualizers: `%APPDATA%/com.secondmonitor.hub/visualizers/<id>/` (manifest.json + main.js)
 
 Credentials are stored locally; the app makes no calls to any backend service of its own.
 
