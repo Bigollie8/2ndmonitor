@@ -2,8 +2,29 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 // Importing useTweaks.ts pulls in React, which is fine under tsx as long as
-// no hook/component is invoked — we only use the pure mergeTweaks helper.
-import { mergeTweaks } from './useTweaks';
+// no hook/component is invoked — we only use the pure mergeTweaks/isPlainObject helpers.
+import { mergeTweaks, isPlainObject } from './useTweaks';
+
+test('isPlainObject: rejects arrays', () => {
+  assert.equal(isPlainObject([1, 2, 3]), false);
+  assert.equal(isPlainObject([]), false);
+});
+
+test('isPlainObject: rejects strings and other primitives', () => {
+  assert.equal(isPlainObject('oops'), false);
+  assert.equal(isPlainObject(42), false);
+  assert.equal(isPlainObject(true), false);
+  assert.equal(isPlainObject(undefined), false);
+});
+
+test('isPlainObject: rejects null', () => {
+  assert.equal(isPlainObject(null), false);
+});
+
+test('isPlainObject: accepts plain objects', () => {
+  assert.equal(isPlainObject({}), true);
+  assert.equal(isPlainObject({ a: 1 }), true);
+});
 
 test('mergeTweaks: flat loaded values override defaults', () => {
   const defaults = { theme: 'dark', fontSize: 14, showClock: true };

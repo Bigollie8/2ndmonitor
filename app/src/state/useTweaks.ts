@@ -3,6 +3,15 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 const STORAGE_KEY = 'hub:tweaks:v1'; // legacy localStorage key, used only for one-time migration
 const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 
+// Guards untrusted JSON (Tauri file hydrate, imported file) before it reaches
+// mergeTweaks. Arrays and primitives must be rejected here: mergeTweaks's
+// `{...loaded}` spread would otherwise turn `[1,2,3]` into `{0:1,1:2,2:3}` and
+// silently merge those numeric-string keys onto live app state.
+// Exported for unit tests.
+export function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
 // One-level deep-merge: for each key, if both sides are plain objects, merge fields;
 // otherwise replace. Prevents partial saved JSON from dropping nested fields like
 // weatherLocation.{lat,lon} or vizColorOverride.{accent,accent2}.
@@ -55,8 +64,8 @@ export function useTweaks<T extends Record<string, unknown>>(
       try {
         const fromFile = await tauriLoad();
         if (cancelled) return;
-        if (fromFile && typeof fromFile === 'object' && !Array.isArray(fromFile)) {
-          let raw = fromFile as Record<string, unknown>;
+        if (isPlainObject(fromFile)) {
+          let raw = fromFile;
           if (opts?.migrate) raw = opts.migrate(raw);
           setValues(mergeTweaks(defaults, raw));
         } else if (isTauri) {
@@ -99,8 +108,15 @@ export function useTweaks<T extends Record<string, unknown>>(
 
   // Wholesale replace (import). Closes over `defaults`/`opts` the same way the
   // hydrate effect above does — they aren't expected to change across renders.
+  // Mirrors the hydrate effect's isPlainObject guard: callers type-assert an
+  // untrusted JSON.parse result to Record<string, unknown>, so this is the last
+  // line of defense against an array or primitive silently polluting state.
   const replaceAll = useCallback((raw: Record<string, unknown>) => {
-    let next = raw;
+    if (!isPlainObject(raw)) {
+      console.warn('useTweaks: replaceAll ignored a non-object import payload', raw);
+      return;
+    }
+    let next: Record<string, unknown> = raw;
     if (opts?.migrate) next = opts.migrate(next);
     setValues(mergeTweaks(defaults, next));
     // eslint-disable-next-line react-hooks/exhaustive-deps
