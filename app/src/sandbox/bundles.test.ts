@@ -122,7 +122,10 @@ for (const id of ids) {
     for (let i = 0; i < 3; i++) {
       for (const cb of cbs) cb({ ...frame(), ctx });
     }
-    assert.ok(calls.length > 0, 'bundle drew nothing');
+    assert.ok(
+      calls.some((c) => !c.startsWith('set:')),
+      'bundle only assigned context properties and never called a draw method',
+    );
   });
 
   test(`bundle ${id}: survives a degenerate 0x0 surface`, () => {
