@@ -12,6 +12,7 @@ mod nowplaying;
 mod secrets;
 mod spotify;
 mod sysmon;
+mod tray;
 mod tweaks;
 mod weather;
 mod webtiles;
@@ -79,6 +80,7 @@ pub fn run() {
             secrets::secret_get,
             secrets::secret_set,
             secrets::secret_delete,
+            tray::set_close_to_tray,
         ])
         .setup(|app| {
             sysmon::spawn(app.handle().clone());
@@ -91,7 +93,16 @@ pub fn run() {
             discord::spawn(app.handle().clone());
             discord_rpc::spawn(app.handle().clone());
             spotify::spawn(app.handle().clone());
+            tray::init(app.handle())?;
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                if window.label() == "main" && tray::close_to_tray_enabled() {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+            }
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

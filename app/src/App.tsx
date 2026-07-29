@@ -117,6 +117,9 @@ interface TweakState extends Record<string, unknown> {
   /** When true, the small live/fps/levels readout overlays the viz. Off by
    *  default — only useful for diagnosing why a viz isn't reacting. */
   audioDebug: boolean;
+  /** When true, the window close button hides to the system tray instead of
+   *  quitting the app. Quit is then only available from the tray menu. */
+  closeToTray: boolean;
   todos: Todo[];
   weatherLocation: WeatherLocation;
   pomodoro: { state: PomodoroState; settings: PomodoroSettings };
@@ -141,6 +144,7 @@ const TWEAK_DEFAULTS: TweakState = {
   perfMode: 'balanced',
   perfDebug: false,
   audioDebug: false,
+  closeToTray: true,
   todos: [],
   weatherLocation: { label: 'Knoxville, TN', lat: 35.9606, lon: -83.9207 },
   pomodoro: {
@@ -352,6 +356,17 @@ export default function App() {
     if (t.perfDebug) perfDebug.enable();
     else perfDebug.disable();
   }, [t.perfDebug]);
+
+  // Mirror the close-to-tray tweak into the Rust runtime flag that the
+  // window's CloseRequested handler reads. Browser dev has no Tauri backend.
+  useEffect(() => {
+    (async () => {
+      try {
+        const { invoke } = await import('@tauri-apps/api/core');
+        await invoke('set_close_to_tray', { enabled: t.closeToTray });
+      } catch { /* browser dev — no tauri */ }
+    })();
+  }, [t.closeToTray]);
 
   // Feed perf-mode + viz-mode into the debug context so spike snapshots include
   // them; cheap unconditional call, the module ignores when not enabled.

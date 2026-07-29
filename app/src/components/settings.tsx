@@ -35,6 +35,7 @@ export interface SettingsValues {
   audioDebug: boolean;
   videoEnabled: boolean;
   videoBookmarks: Bookmark[];
+  closeToTray: boolean;
 }
 
 export type SettingsSetter = <K extends keyof SettingsValues>(key: K, value: SettingsValues[K]) => void;
@@ -272,6 +273,11 @@ export function SettingsWindow({
           id: 'system-autostart', label: 'Launch at startup',
           hint: 'Start the hub automatically when you sign in to Windows',
           control: <AutostartSwitch accent={accent} />,
+        },
+        {
+          id: 'system-tray', label: 'Close to tray',
+          hint: 'The window close button hides to the system tray instead of quitting — quit from the tray menu',
+          control: <Toggle checked={v.closeToTray} onChange={(c) => set('closeToTray', c)} accent={accent} />,
         },
         {
           id: 'system-bookmarks', label: 'Streaming bookmarks', stacked: true,
