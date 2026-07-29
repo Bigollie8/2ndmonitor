@@ -2,6 +2,7 @@
 //! The binary (main.rs) is a thin wrapper; integration tests build the same
 //! router against an in-memory database.
 
+pub mod admin;
 pub mod ai_review;
 pub mod auth;
 pub mod db;
@@ -28,6 +29,9 @@ pub fn router(state: AppState) -> Router {
         .route("/auth/whoami", get(auth::whoami))
         .route("/submissions", post(submit::submit))
         .route("/submissions/mine", get(submit::mine))
+        .route("/admin", get(admin::page))
+        .route("/admin/queue", get(admin::queue))
+        .route("/admin/decide", post(admin::decide))
         .with_state(state)
 }
 
