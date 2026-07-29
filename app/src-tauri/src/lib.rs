@@ -11,6 +11,7 @@ mod mixer;
 mod nowplaying;
 mod presets;
 mod secrets;
+mod visualizers;
 mod spotify;
 mod sysmon;
 mod tray;
@@ -75,6 +76,9 @@ pub fn run() {
             audio::set_waveform_enabled,
             presets::presets_list,
             presets::presets_read,
+            visualizers::visualizers_list,
+            visualizers::visualizers_read,
+            visualizers::visualizers_write,
             mixer::mixer_set_master_volume,
             mixer::mixer_set_master_mute,
             mixer::mixer_set_session_volume,
@@ -92,6 +96,7 @@ pub fn run() {
             nowplaying::spawn(app.handle().clone());
             lyrics::spawn(app.handle().clone());
             audio::spawn(app.handle().clone());
+            visualizers::spawn_watcher(app.handle().clone());
             mixer::spawn(app.handle().clone());
             claude::spawn(app.handle().clone());
             weather::spawn(app.handle().clone());
