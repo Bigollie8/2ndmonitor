@@ -6,6 +6,8 @@ pub mod admin;
 pub mod ai_review;
 pub mod auth;
 pub mod db;
+pub mod index;
+pub mod keys;
 pub mod manifest;
 pub mod state;
 pub mod submit;
@@ -32,6 +34,8 @@ pub fn router(state: AppState) -> Router {
         .route("/admin", get(admin::page))
         .route("/admin/queue", get(admin::queue))
         .route("/admin/decide", post(admin::decide))
+        .route("/index.json", get(index::index_json))
+        .route("/bundle/:id/:version", get(index::download))
         .with_state(state)
 }
 

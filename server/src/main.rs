@@ -8,7 +8,8 @@ async fn main() {
     let cfg = Config::from_env();
     std::fs::create_dir_all(&cfg.data_dir).expect("create data dir");
     let conn = rusqlite::Connection::open(cfg.data_dir.join("marketplace.db")).expect("open db");
-    let seed = [0u8; 32]; // replaced by keys::load_or_generate in Task 5
+    let seed = hub_marketplace::keys::load_or_generate(&cfg.data_dir);
+    println!("index signing pubkey: {}", hub_marketplace::keys::pubkey_hex(&seed));
     let state = build_state(cfg.clone(), conn, seed);
 
     let addr = std::net::SocketAddr::from(([0, 0, 0, 0], cfg.port));
