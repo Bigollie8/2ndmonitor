@@ -35,4 +35,5 @@ export const VIZ_STYLES: VizStyle[] = [
   { id: 'liquid',       label: 'Liquid',       desc: 'Metaball lava · bass merges' },
   { id: 'cassette',     label: 'Cassette',     desc: 'Tape deck · reels · VU meters' },
   { id: 'constellation', label: 'Constellation', desc: 'Particles connect when near' },
+  { id: 'milkdrop',     label: 'MilkDrop',     desc: 'Butterchurn · MilkDrop 2 presets' },
 ];

@@ -1,20 +1,40 @@
-import React, { useEffect, useRef, useState, type MutableRefObject } from 'react';
+import React, { lazy, Suspense, useEffect, useRef, useState, type MutableRefObject } from 'react';
 import type { VizMode, Track } from '../types';
 import { type SpectrumState, type Playback, mediaControls } from '../state/tauri';
 import { useLyrics, currentLineIndex } from '../state/lyrics';
 import { recordDraw, useRegisterSurface } from '../perf/debug';
 import { paceFrame } from '../state/framePace';
-import {
-  VizNeonBars, VizSplitMirror, VizCircularPulse, VizWaveformTunnel,
-  VizPixelLED, VizRibbon, VizOscilloscope, VizSpectrogram, VizVinyl,
-  VizKaleidoscope, VizFreqGrid, VizMinimalDots,
-} from './viz-extra';
-import {
-  VizStarfield, VizPerlinFlow, VizOrbital, VizAurora, VizCityEqualizer,
-  VizStrings, VizHUD, VizLiquid, VizCassette, VizConstellation,
-} from './viz-extra2';
 import { VIZ_STYLES } from './viz-styles';
 import { BrowserPlayer, type Bookmark } from './browser-player';
+
+// The 22 "extra" visualizer styles (viz-extra/viz-extra2) are lazy-loaded:
+// most sessions run a single style, and eagerly importing all of them bloats
+// the boot bundle for code that may never render. Each becomes its own chunk,
+// fetched on first switch to that mode. The core set below (bars/waveform/
+// radial/particles/ambient) stays eager — it's the default/onboarding path.
+const VizNeonBars = lazy(() => import('./viz-extra').then((m) => ({ default: m.VizNeonBars })));
+const VizSplitMirror = lazy(() => import('./viz-extra').then((m) => ({ default: m.VizSplitMirror })));
+const VizCircularPulse = lazy(() => import('./viz-extra').then((m) => ({ default: m.VizCircularPulse })));
+const VizWaveformTunnel = lazy(() => import('./viz-extra').then((m) => ({ default: m.VizWaveformTunnel })));
+const VizPixelLED = lazy(() => import('./viz-extra').then((m) => ({ default: m.VizPixelLED })));
+const VizRibbon = lazy(() => import('./viz-extra').then((m) => ({ default: m.VizRibbon })));
+const VizOscilloscope = lazy(() => import('./viz-extra').then((m) => ({ default: m.VizOscilloscope })));
+const VizSpectrogram = lazy(() => import('./viz-extra').then((m) => ({ default: m.VizSpectrogram })));
+const VizVinyl = lazy(() => import('./viz-extra').then((m) => ({ default: m.VizVinyl })));
+const VizKaleidoscope = lazy(() => import('./viz-extra').then((m) => ({ default: m.VizKaleidoscope })));
+const VizFreqGrid = lazy(() => import('./viz-extra').then((m) => ({ default: m.VizFreqGrid })));
+const VizMinimalDots = lazy(() => import('./viz-extra').then((m) => ({ default: m.VizMinimalDots })));
+const VizStarfield = lazy(() => import('./viz-extra2').then((m) => ({ default: m.VizStarfield })));
+const VizPerlinFlow = lazy(() => import('./viz-extra2').then((m) => ({ default: m.VizPerlinFlow })));
+const VizOrbital = lazy(() => import('./viz-extra2').then((m) => ({ default: m.VizOrbital })));
+const VizAurora = lazy(() => import('./viz-extra2').then((m) => ({ default: m.VizAurora })));
+const VizCityEqualizer = lazy(() => import('./viz-extra2').then((m) => ({ default: m.VizCityEqualizer })));
+const VizStrings = lazy(() => import('./viz-extra2').then((m) => ({ default: m.VizStrings })));
+const VizHUD = lazy(() => import('./viz-extra2').then((m) => ({ default: m.VizHUD })));
+const VizLiquid = lazy(() => import('./viz-extra2').then((m) => ({ default: m.VizLiquid })));
+const VizCassette = lazy(() => import('./viz-extra2').then((m) => ({ default: m.VizCassette })));
+const VizConstellation = lazy(() => import('./viz-extra2').then((m) => ({ default: m.VizConstellation })));
+const VizMilkdrop = lazy(() => import('./viz-milkdrop').then((m) => ({ default: m.VizMilkdrop })));
 
 /** Per-frame DPR cap for viz canvases. On a 4K monitor at DPR=2, dropping to 1
  *  cuts canvas pixel work 4x with no perceptible loss for music visualizers. */
@@ -157,6 +177,11 @@ export interface VizProps {
   /** Live playback state. Used by playback-aware viz (vinyl stops spinning
    *  when not playing; cassette shows the track length on the label). */
   playback?: Playback | null;
+  /** True when rendered as a gallery-grid thumbnail. Styles that allocate
+   *  scarce resources (MilkDrop's WebGL context) render a cheap placeholder
+   *  instead — Chromium caps live WebGL contexts around 16 and the gallery
+   *  mounts every style at once. */
+  preview?: boolean;
 }
 
 /** Format seconds as M:SS. Exported so playback-aware visualizers (cassette)
@@ -603,36 +628,47 @@ export function HiFiVizSurface({ mode, accent, accent2, spectrumRef, sensitivity
   // and spike snapshots include it under `vizMode`.
   useRegisterSurface(`viz:${mode}${paused ? ':paused' : ''}`);
   const props = { accent, accent2, spectrumRef, sensitivity, smoothing, paused, track, playback };
-  switch (mode) {
-    case 'bars':         return <HiFiVizBars {...props} />;
-    case 'waveform':     return <HiFiVizWaveform {...props} />;
-    case 'radial':       return <HiFiVizRadial {...props} />;
-    case 'particles':    return <HiFiVizParticles {...props} />;
-    case 'ambient':      return <HiFiVizAmbient {...props} />;
-    case 'neonbars':     return <VizNeonBars {...props} />;
-    case 'splitmirror':  return <VizSplitMirror {...props} />;
-    case 'circular':     return <VizCircularPulse {...props} />;
-    case 'tunnel':       return <VizWaveformTunnel {...props} />;
-    case 'pixelled':     return <VizPixelLED {...props} />;
-    case 'ribbon':       return <VizRibbon {...props} />;
-    case 'scope':        return <VizOscilloscope {...props} />;
-    case 'spectrogram':  return <VizSpectrogram {...props} />;
-    case 'vinyl':        return <VizVinyl {...props} />;
-    case 'kaleidoscope': return <VizKaleidoscope {...props} />;
-    case 'freqgrid':     return <VizFreqGrid {...props} />;
-    case 'minimal':      return <VizMinimalDots {...props} />;
-    case 'starfield':     return <VizStarfield {...props} />;
-    case 'perlin':        return <VizPerlinFlow {...props} />;
-    case 'orbital':       return <VizOrbital {...props} />;
-    case 'aurora':        return <VizAurora {...props} />;
-    case 'city':          return <VizCityEqualizer {...props} />;
-    case 'strings':       return <VizStrings {...props} />;
-    case 'hud':           return <VizHUD {...props} />;
-    case 'liquid':        return <VizLiquid {...props} />;
-    case 'cassette':      return <VizCassette {...props} />;
-    case 'constellation': return <VizConstellation {...props} />;
-    default:             return null;
-  }
+  // The core styles (bars/waveform/radial/particles/ambient) are eager and
+  // never suspend. The "extra" styles are lazy-loaded chunks (see the `lazy()`
+  // declarations above) — Suspense covers the brief gap while a chunk fetches
+  // on first switch to that style. `fallback={null}` renders a blank frame in
+  // that window rather than unmounting anything outside this component (the
+  // VizOverlay chrome in VizHero is a sibling, not a Suspense descendant, so
+  // it stays mounted throughout).
+  const surface = (() => {
+    switch (mode) {
+      case 'bars':         return <HiFiVizBars {...props} />;
+      case 'waveform':     return <HiFiVizWaveform {...props} />;
+      case 'radial':       return <HiFiVizRadial {...props} />;
+      case 'particles':    return <HiFiVizParticles {...props} />;
+      case 'ambient':      return <HiFiVizAmbient {...props} />;
+      case 'neonbars':     return <VizNeonBars {...props} />;
+      case 'splitmirror':  return <VizSplitMirror {...props} />;
+      case 'circular':     return <VizCircularPulse {...props} />;
+      case 'tunnel':       return <VizWaveformTunnel {...props} />;
+      case 'pixelled':     return <VizPixelLED {...props} />;
+      case 'ribbon':       return <VizRibbon {...props} />;
+      case 'scope':        return <VizOscilloscope {...props} />;
+      case 'spectrogram':  return <VizSpectrogram {...props} />;
+      case 'vinyl':        return <VizVinyl {...props} />;
+      case 'kaleidoscope': return <VizKaleidoscope {...props} />;
+      case 'freqgrid':     return <VizFreqGrid {...props} />;
+      case 'minimal':      return <VizMinimalDots {...props} />;
+      case 'starfield':     return <VizStarfield {...props} />;
+      case 'perlin':        return <VizPerlinFlow {...props} />;
+      case 'orbital':       return <VizOrbital {...props} />;
+      case 'aurora':        return <VizAurora {...props} />;
+      case 'city':          return <VizCityEqualizer {...props} />;
+      case 'strings':       return <VizStrings {...props} />;
+      case 'hud':           return <VizHUD {...props} />;
+      case 'liquid':        return <VizLiquid {...props} />;
+      case 'cassette':      return <VizCassette {...props} />;
+      case 'constellation': return <VizConstellation {...props} />;
+    case 'milkdrop':      return <VizMilkdrop {...props} />;
+      default:             return null;
+    }
+  })();
+  return <Suspense fallback={null}>{surface}</Suspense>;
 }
 
 const overlayBtn: React.CSSProperties = {

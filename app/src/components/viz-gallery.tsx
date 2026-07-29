@@ -195,7 +195,7 @@ function GalleryCard({
         {surfaceMounted && (
           <HiFiVizSurface mode={style.id} accent={accent} accent2={accent2}
             spectrumRef={spectrumRef} sensitivity={sensitivity} smoothing={smoothing}
-            paused={paused} />
+            paused={paused} preview />
         )}
         <div style={{
           position: 'absolute', top: 12, left: 12,

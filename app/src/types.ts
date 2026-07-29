@@ -5,7 +5,8 @@ export type VizMode =
   | 'ribbon' | 'scope' | 'spectrogram' | 'vinyl' | 'kaleidoscope'
   | 'freqgrid' | 'minimal'
   | 'starfield' | 'perlin' | 'orbital' | 'aurora' | 'city'
-  | 'strings' | 'hud' | 'liquid' | 'cassette' | 'constellation';
+  | 'strings' | 'hud' | 'liquid' | 'cassette' | 'constellation'
+  | 'milkdrop';
 export interface Profile {
   /** Stable id (UUID). Used for activeProfileId references. */
   id: string;
