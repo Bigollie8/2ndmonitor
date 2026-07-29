@@ -3,10 +3,8 @@ export type Density = 'compact' | 'regular' | 'spacious';
 export type BuiltinVizMode =
   | 'bars' | 'waveform' | 'radial' | 'particles' | 'ambient'
   | 'neonbars' | 'splitmirror' | 'circular' | 'tunnel' | 'pixelled'
-  | 'ribbon' | 'scope' | 'spectrogram' | 'vinyl' | 'kaleidoscope'
+  | 'ribbon' | 'vinyl' | 'kaleidoscope'
   | 'freqgrid' | 'minimal'
-  | 'starfield' | 'perlin' | 'orbital' | 'aurora' | 'city'
-  | 'strings' | 'hud' | 'liquid' | 'cassette' | 'constellation'
   | 'milkdrop' | 'scripted';
 
 /** A selected style: a built-in, or an installed marketplace bundle. Bundle

@@ -19,26 +19,10 @@ export const BUILTIN_VIZ_STYLES: VizStyle[] = [
   { id: 'tunnel',       label: 'Wave tunnel',  desc: 'Layered depth waveforms' },
   { id: 'pixelled',     label: 'Pixel LED',    desc: 'Retro LED matrix · heatmap' },
   { id: 'ribbon',       label: 'Ribbon',       desc: 'Filled symmetric flow' },
-  { id: 'scope',        label: 'Oscilloscope', desc: 'CRT phosphor trace' },
-  { id: 'spectrogram',  label: 'Spectrogram',  desc: 'Scrolling waterfall' },
   { id: 'vinyl',        label: 'Vinyl',        desc: 'Spinning record' },
   { id: 'kaleidoscope', label: 'Kaleidoscope', desc: 'Symmetric petals' },
   { id: 'freqgrid',     label: 'Freq grid',    desc: 'Time × frequency cells' },
   { id: 'minimal',      label: 'Minimal dots', desc: 'Bass / Mid / Treble pulse' },
-  { id: 'starfield',    label: 'Starfield',    desc: 'Hyperspace · kick-flash bursts' },
-  { id: 'perlin',       label: 'Perlin flow',  desc: 'Noise-field particles · drifting' },
-  { id: 'orbital',      label: 'Orbital',      desc: 'Sun + 4 reactive frequency rings' },
-  { id: 'aurora',       label: 'Aurora',       desc: 'Veils over moonlit horizon' },
-  { id: 'city',         label: 'Neon city',    desc: 'Skyline w/ frequency-lit windows' },
-  { id: 'strings',      label: 'Strings',      desc: 'Plucked physical strings' },
-  { id: 'hud',          label: 'Aircraft HUD', desc: 'Reticle · pitch ladder · tapes' },
-  { id: 'liquid',       label: 'Liquid',       desc: 'Metaball lava · bass merges' },
-  { id: 'cassette',     label: 'Cassette',     desc: 'Tape deck · reels · VU meters' },
-  { id: 'constellation', label: 'Constellation', desc: 'Particles connect when near' },
   { id: 'milkdrop',     label: 'MilkDrop',     desc: 'Butterchurn · MilkDrop 2 presets' },
   { id: 'scripted',     label: 'Scripted',     desc: 'Your JS visualizers · sandboxed' },
 ];
-
-/** @deprecated Use `useVizStyles()` for anything user-facing — it includes
- *  installed bundles. This alias covers call sites that only need builtins. */
-export const VIZ_STYLES = BUILTIN_VIZ_STYLES;

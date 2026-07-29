@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   mergeVizStyles, bundleModeId, isBundleMode, bundleIdOf,
+  remapRetiredVizMode, RETIRED_BUILTIN_VIZ_MODES,
   type InstalledVizFolder,
 } from './contentRegistry';
 import type { VizStyle } from '../components/viz-styles';
@@ -94,4 +95,26 @@ test('mergeVizStyles: real builtin table plus a bundle keeps every builtin', () 
   // for a reason unrelated to what it's checking. Use an id no builtin has.
   const out = mergeVizStyles(BUILTIN_VIZ_STYLES, [folder({ id: 'sample-bundle', name: 'Sample Bundle' })]);
   assert.equal(out.length, BUILTIN_VIZ_STYLES.length + 1);
+});
+
+test('remapRetiredVizMode: a retired builtin id maps to its bundle id', () => {
+  assert.equal(remapRetiredVizMode('starfield'), 'bundle:starfield');
+  assert.equal(remapRetiredVizMode('spectrogram'), 'bundle:spectrogram');
+});
+
+test('remapRetiredVizMode: surviving builtins are untouched', () => {
+  assert.equal(remapRetiredVizMode('bars'), 'bars');
+  assert.equal(remapRetiredVizMode('milkdrop'), 'milkdrop');
+});
+
+test('remapRetiredVizMode: an already-namespaced mode is untouched', () => {
+  assert.equal(remapRetiredVizMode('bundle:whatever'), 'bundle:whatever');
+});
+
+test('remapRetiredVizMode: an unknown mode falls back to bars', () => {
+  assert.equal(remapRetiredVizMode('nonsense'), 'bars');
+});
+
+test('RETIRED_BUILTIN_VIZ_MODES: covers exactly the 12 migrated styles', () => {
+  assert.equal(RETIRED_BUILTIN_VIZ_MODES.length, 12);
 });

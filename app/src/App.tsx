@@ -28,6 +28,7 @@ import { VizHero, setVizDprCap, setVizMaxFps, getVizMaxFps } from './components/
 import * as perfDebug from './perf/debug';
 import { PerfDebugHUD } from './perf/PerfDebugHUD';
 import { useVizStyles } from './components/useVizStyles';
+import { remapRetiredVizMode } from './state/contentRegistry';
 import { defaultBookmarks, type Bookmark } from './components/browser-player';
 import {
   SpotifyTile, NotesTile,
@@ -172,6 +173,13 @@ function migrateTweaks(loaded: Record<string, unknown>): Record<string, unknown>
   // Old `quality` perfMode was renamed to `uncapped`. Same behavior; just clearer label.
   if (loaded.perfMode === 'quality') {
     loaded.perfMode = 'uncapped';
+  }
+  // 12 built-in viz styles were retired from the binary and now live in the
+  // shop as `bundle:` ids. A saved selection naming one of them is rewritten
+  // here so it keeps working the moment the user installs its replacement —
+  // and falls back to Bars via HiFiVizSurface's dispatch until they do.
+  if (typeof loaded.vizMode === 'string') {
+    loaded.vizMode = remapRetiredVizMode(loaded.vizMode);
   }
   const profilesField = loaded.profiles;
   // True first launch: nothing was loaded from disk at all (no profiles, no

@@ -12,6 +12,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import type { VizMode } from '../types';
 import type { VizStyle } from '../components/viz-styles';
+import { BUILTIN_VIZ_STYLES } from '../components/viz-styles';
 
 /** A visualizer folder as reported by the `visualizers_list` Tauri command. */
 export interface InstalledVizFolder {
@@ -80,4 +81,24 @@ export function mergeVizStyles(
   const scriptedAt = merged.findIndex((s) => s.id === 'scripted');
   if (scriptedAt >= 0) merged.push(...merged.splice(scriptedAt, 1));
   return merged;
+}
+
+/** Styles that shipped as built-ins and now live in the shop. A saved
+ *  `vizMode` naming one is rewritten to its bundle id on load, so an existing
+ *  user's selection keeps working the moment they install it — and falls back
+ *  to Bars via the dispatch default until they do. */
+export const RETIRED_BUILTIN_VIZ_MODES = [
+  'starfield', 'perlin', 'orbital', 'aurora', 'city', 'strings',
+  'hud', 'liquid', 'cassette', 'constellation', 'scope', 'spectrogram',
+] as const;
+
+const RETIRED = new Set<string>(RETIRED_BUILTIN_VIZ_MODES);
+
+/** Derived from the built-in table so it can never drift from it. */
+const BUILTIN_VIZ_MODE_SET = new Set<string>(BUILTIN_VIZ_STYLES.map((s) => s.id));
+
+export function remapRetiredVizMode(mode: string): VizMode {
+  if (isBundleMode(mode)) return mode as VizMode;
+  if (RETIRED.has(mode)) return bundleModeId(mode);
+  return (BUILTIN_VIZ_MODE_SET.has(mode) ? mode : 'bars') as VizMode;
 }

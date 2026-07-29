@@ -4,37 +4,25 @@ import { type SpectrumState, type Playback, mediaControls } from '../state/tauri
 import { useLyrics, currentLineIndex } from '../state/lyrics';
 import { recordDraw, useRegisterSurface } from '../perf/debug';
 import { paceFrame } from '../state/framePace';
-import { VIZ_STYLES } from './viz-styles';
 import { BrowserPlayer, type Bookmark } from './browser-player';
 import { bundleIdOf } from '../state/contentRegistry';
+import { useVizStyles } from './useVizStyles';
 
-// The 22 "extra" visualizer styles (viz-extra/viz-extra2) are lazy-loaded:
-// most sessions run a single style, and eagerly importing all of them bloats
-// the boot bundle for code that may never render. Each becomes its own chunk,
-// fetched on first switch to that mode. The core set below (bars/waveform/
-// radial/particles/ambient) stays eager — it's the default/onboarding path.
+// The "extra" visualizer styles (viz-extra) are lazy-loaded: most sessions
+// run a single style, and eagerly importing all of them bloats the boot
+// bundle for code that may never render. Each becomes its own chunk, fetched
+// on first switch to that mode. The core set below (bars/waveform/radial/
+// particles/ambient) stays eager — it's the default/onboarding path.
 const VizNeonBars = lazy(() => import('./viz-extra').then((m) => ({ default: m.VizNeonBars })));
 const VizSplitMirror = lazy(() => import('./viz-extra').then((m) => ({ default: m.VizSplitMirror })));
 const VizCircularPulse = lazy(() => import('./viz-extra').then((m) => ({ default: m.VizCircularPulse })));
 const VizWaveformTunnel = lazy(() => import('./viz-extra').then((m) => ({ default: m.VizWaveformTunnel })));
 const VizPixelLED = lazy(() => import('./viz-extra').then((m) => ({ default: m.VizPixelLED })));
 const VizRibbon = lazy(() => import('./viz-extra').then((m) => ({ default: m.VizRibbon })));
-const VizOscilloscope = lazy(() => import('./viz-extra').then((m) => ({ default: m.VizOscilloscope })));
-const VizSpectrogram = lazy(() => import('./viz-extra').then((m) => ({ default: m.VizSpectrogram })));
 const VizVinyl = lazy(() => import('./viz-extra').then((m) => ({ default: m.VizVinyl })));
 const VizKaleidoscope = lazy(() => import('./viz-extra').then((m) => ({ default: m.VizKaleidoscope })));
 const VizFreqGrid = lazy(() => import('./viz-extra').then((m) => ({ default: m.VizFreqGrid })));
 const VizMinimalDots = lazy(() => import('./viz-extra').then((m) => ({ default: m.VizMinimalDots })));
-const VizStarfield = lazy(() => import('./viz-extra2').then((m) => ({ default: m.VizStarfield })));
-const VizPerlinFlow = lazy(() => import('./viz-extra2').then((m) => ({ default: m.VizPerlinFlow })));
-const VizOrbital = lazy(() => import('./viz-extra2').then((m) => ({ default: m.VizOrbital })));
-const VizAurora = lazy(() => import('./viz-extra2').then((m) => ({ default: m.VizAurora })));
-const VizCityEqualizer = lazy(() => import('./viz-extra2').then((m) => ({ default: m.VizCityEqualizer })));
-const VizStrings = lazy(() => import('./viz-extra2').then((m) => ({ default: m.VizStrings })));
-const VizHUD = lazy(() => import('./viz-extra2').then((m) => ({ default: m.VizHUD })));
-const VizLiquid = lazy(() => import('./viz-extra2').then((m) => ({ default: m.VizLiquid })));
-const VizCassette = lazy(() => import('./viz-extra2').then((m) => ({ default: m.VizCassette })));
-const VizConstellation = lazy(() => import('./viz-extra2').then((m) => ({ default: m.VizConstellation })));
 const VizMilkdrop = lazy(() => import('./viz-milkdrop').then((m) => ({ default: m.VizMilkdrop })));
 const VizScripted = lazy(() => import('./viz-scripted').then((m) => ({ default: m.VizScripted })));
 const SandboxVizSurface = lazy(() => import('./viz-sandbox-surface').then((m) => ({ default: m.SandboxVizSurface })));
@@ -630,6 +618,13 @@ export function HiFiVizSurface({ mode, accent, accent2, spectrumRef, sensitivity
   // Register the active viz mode as the mounted surface; the HUD displays it
   // and spike snapshots include it under `vizMode`.
   useRegisterSurface(`viz:${mode}${paused ? ':paused' : ''}`);
+  // Needed only for the `bundle:` fallback below (is this id actually
+  // installed?), but this component already hosts a hook (useRegisterSurface
+  // above), so it's the natural place for the check — same pattern every
+  // other consumer of the merged catalog (App.tsx, settings, gallery,
+  // Stream Deck) already uses: call useVizStyles() locally rather than
+  // threading the list down through props.
+  const vizStyles = useVizStyles();
   const props = { accent, accent2, spectrumRef, sensitivity, smoothing, paused, track, playback };
   // The core styles (bars/waveform/radial/particles/ambient) are eager and
   // never suspend. The "extra" styles are lazy-loaded chunks (see the `lazy()`
@@ -651,32 +646,25 @@ export function HiFiVizSurface({ mode, accent, accent2, spectrumRef, sensitivity
       case 'tunnel':       return <VizWaveformTunnel {...props} />;
       case 'pixelled':     return <VizPixelLED {...props} />;
       case 'ribbon':       return <VizRibbon {...props} />;
-      case 'scope':        return <VizOscilloscope {...props} />;
-      case 'spectrogram':  return <VizSpectrogram {...props} />;
       case 'vinyl':        return <VizVinyl {...props} />;
       case 'kaleidoscope': return <VizKaleidoscope {...props} />;
       case 'freqgrid':     return <VizFreqGrid {...props} />;
       case 'minimal':      return <VizMinimalDots {...props} />;
-      case 'starfield':     return <VizStarfield {...props} />;
-      case 'perlin':        return <VizPerlinFlow {...props} />;
-      case 'orbital':       return <VizOrbital {...props} />;
-      case 'aurora':        return <VizAurora {...props} />;
-      case 'city':          return <VizCityEqualizer {...props} />;
-      case 'strings':       return <VizStrings {...props} />;
-      case 'hud':           return <VizHUD {...props} />;
-      case 'liquid':        return <VizLiquid {...props} />;
-      case 'cassette':      return <VizCassette {...props} />;
-      case 'constellation': return <VizConstellation {...props} />;
     case 'milkdrop':      return <VizMilkdrop {...props} />;
     case 'scripted':      return <VizScripted {...props} />;
     default: {
       // Installed marketplace visualizer: same sandbox runtime, no authoring
       // chrome. An unknown non-bundle mode falls back to Bars rather than
-      // rendering a blank tile.
+      // rendering a blank tile — and so does a `bundle:` mode that names a
+      // style not currently installed (e.g. a saved selection for a style
+      // that was just retired from the binary, before the user installs its
+      // shop replacement). Handing an uninstalled id to SandboxVizSurface
+      // would just surface its "visualizers_read" error banner instead.
       const bundleId = bundleIdOf(mode);
-      return bundleId
-        ? <SandboxVizSurface {...props} bundleId={bundleId} />
-        : <HiFiVizBars {...props} />;
+      if (bundleId !== null && vizStyles.some((s) => s.id === mode)) {
+        return <SandboxVizSurface {...props} bundleId={bundleId} />;
+      }
+      return <HiFiVizBars {...props} />;
     }
     }
   })();
@@ -748,7 +736,10 @@ export function VizOverlay({
     { k: 'ambient', label: 'Ambient' },
   ];
   const isOriginalMode = modes.some((m) => m.k === mode);
-  const styleEntry = VIZ_STYLES.find((s) => s.id === mode);
+  // The merged catalog (not just BUILTIN_VIZ_STYLES) so an installed
+  // `bundle:` style's label still shows in the "● Label" badge.
+  const vizStyles = useVizStyles();
+  const styleEntry = vizStyles.find((s) => s.id === mode);
   return (
     <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
       <div style={{ padding: 18, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', pointerEvents: 'auto' }}>
