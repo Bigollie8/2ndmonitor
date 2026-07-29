@@ -12,14 +12,43 @@ export interface VizManifest {
   version: string;
   /** Frame-payload contract version. Only 1 exists; evolution is additive. */
   api: 1;
-  /** Reserved for the phase-3 permission broker. Must be [] in api 1. */
-  permissions: [];
+  /** Broker permissions ("net:<host>" / "tauri:<command>"). Locally-authored
+   *  visualizers must declare none; marketplace-installed bundles may (they
+   *  were reviewed with these permissions and the user approved at install). */
+  permissions: string[];
 }
 
+export type Permission =
+  | { kind: 'net'; host: string }
+  | { kind: 'tauri'; command: string };
+
 const ID_RE = /^[a-z0-9-]{1,64}$/;
+const CMD_RE = /^[a-z0-9_]{1,64}$/;
+const HOST_LABEL_RE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/i;
+
+/** Grammar mirrors the server's `Perm::parse` — keep the two in sync. */
+export function parsePermission(s: string): { ok: true; perm: Permission } | { ok: false; error: string } {
+  if (s.startsWith('net:')) {
+    const host = s.slice(4);
+    const ok = host.length > 0 && host.length <= 253
+      && !/[/:?#@ ]/.test(host)
+      && host.split('.').every((l) => HOST_LABEL_RE.test(l));
+    return ok
+      ? { ok: true, perm: { kind: 'net', host } }
+      : { ok: false, error: `invalid net host: ${JSON.stringify(host)} (bare hostname only)` };
+  }
+  if (s.startsWith('tauri:')) {
+    const command = s.slice(6);
+    return CMD_RE.test(command)
+      ? { ok: true, perm: { kind: 'tauri', command } }
+      : { ok: false, error: `invalid tauri command: ${JSON.stringify(command)}` };
+  }
+  return { ok: false, error: `unknown permission ${JSON.stringify(s)} (expected net:<host> or tauri:<command>)` };
+}
 
 export function validateManifest(
   raw: unknown,
+  opts?: { allowPermissions?: boolean },
 ): { ok: true; manifest: VizManifest } | { ok: false; error: string } {
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
     return { ok: false, error: 'manifest must be a JSON object' };
@@ -40,8 +69,21 @@ export function validateManifest(
   if (m.api !== 1) {
     return { ok: false, error: 'api must be 1 (the only published API version)' };
   }
-  if (!Array.isArray(m.permissions) || m.permissions.length !== 0) {
-    return { ok: false, error: 'permissions must be [] (capabilities arrive with the marketplace broker)' };
+  if (!Array.isArray(m.permissions)) {
+    return { ok: false, error: 'permissions must be an array' };
+  }
+  if (!opts?.allowPermissions && m.permissions.length !== 0) {
+    return { ok: false, error: 'locally-authored visualizers must not declare permissions (marketplace bundles only)' };
+  }
+  if (m.permissions.length > 16) {
+    return { ok: false, error: 'too many permissions (max 16)' };
+  }
+  const permissions: string[] = [];
+  for (const p of m.permissions) {
+    if (typeof p !== 'string') return { ok: false, error: 'permissions entries must be strings' };
+    const parsed = parsePermission(p);
+    if (!parsed.ok) return parsed;
+    permissions.push(p);
   }
   return {
     ok: true,
@@ -51,7 +93,7 @@ export function validateManifest(
       author: m.author as string | undefined,
       version: m.version,
       api: 1,
-      permissions: [],
+      permissions,
     },
   };
 }
