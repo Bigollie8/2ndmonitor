@@ -26,6 +26,22 @@ var canvas = document.getElementById('c');
 var ctx2d = null;
 var userGotContext = false;
 
+// Broker RPC: requests go up as {type:'rpc', rpcId, rpc, ...}; the host
+// consults the installed manifest's permissions and answers with
+// {type:'rpc:result', rpcId, ok, value|error}. Undeclared capabilities are
+// denied host-side — nothing here grants anything.
+var rpcSeq = 0;
+var rpcPending = {};
+function rpc(payload) {
+  return new Promise(function (resolve, reject) {
+    var rpcId = ++rpcSeq;
+    rpcPending[rpcId] = { resolve: resolve, reject: reject };
+    payload.type = 'rpc';
+    payload.rpcId = rpcId;
+    parent.postMessage(payload, '*');
+  });
+}
+
 // The API surface user code sees. Frozen so scripts can't confuse each other
 // across hot reloads by monkey-patching.
 var viz = Object.freeze({
@@ -38,6 +54,14 @@ var viz = Object.freeze({
     set: function (key, value) {
       settingsCache[key] = value;
       parent.postMessage({ type: 'settings:set', key: key, value: value }, '*');
+    },
+  }),
+  net: Object.freeze({
+    fetch: function (url) { return rpc({ rpc: 'net.fetch', url: String(url) }); },
+  }),
+  tauri: Object.freeze({
+    invoke: function (command, args) {
+      return rpc({ rpc: 'tauri.invoke', command: String(command), args: args });
     },
   }),
 });
@@ -66,7 +90,14 @@ function applySize(size) {
 
 window.addEventListener('message', function (ev) {
   var msg = ev.data || {};
-  if (msg.type === 'init') {
+  if (msg.type === 'rpc:result') {
+    var pending = rpcPending[msg.rpcId];
+    if (pending) {
+      delete rpcPending[msg.rpcId];
+      if (msg.ok) pending.resolve(msg.value);
+      else pending.reject(new Error(msg.error || 'rpc denied'));
+    }
+  } else if (msg.type === 'init') {
     frameCbs = [];
     settingsCache = msg.settings || {};
     applySize(msg.size);
