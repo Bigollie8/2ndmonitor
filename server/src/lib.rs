@@ -59,3 +59,10 @@ pub fn test_state() -> AppState {
     let conn = rusqlite::Connection::open_in_memory().expect("memory db");
     build_state(Config::test(), conn, [7u8; 32])
 }
+
+/// Test harness with an injected AI reviewer (runs synchronously in kick()).
+pub fn test_state_with_reviewer(review_fn: state::ReviewFn) -> AppState {
+    let mut s = test_state();
+    s.review_fn = Some(review_fn);
+    s
+}
