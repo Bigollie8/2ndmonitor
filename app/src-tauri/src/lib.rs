@@ -71,6 +71,7 @@ pub fn run() {
             tweaks::tweaks_import,
             weather::set_weather_location,
             audio::set_audio_emit_hz,
+            audio::set_waveform_enabled,
             mixer::mixer_set_master_volume,
             mixer::mixer_set_master_mute,
             mixer::mixer_set_session_volume,
