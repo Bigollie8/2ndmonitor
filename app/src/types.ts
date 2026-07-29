@@ -6,7 +6,7 @@ export type VizMode =
   | 'freqgrid' | 'minimal'
   | 'starfield' | 'perlin' | 'orbital' | 'aurora' | 'city'
   | 'strings' | 'hud' | 'liquid' | 'cassette' | 'constellation'
-  | 'milkdrop';
+  | 'milkdrop' | 'scripted';
 export interface Profile {
   /** Stable id (UUID). Used for activeProfileId references. */
   id: string;

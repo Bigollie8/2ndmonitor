@@ -35,6 +35,7 @@ const VizLiquid = lazy(() => import('./viz-extra2').then((m) => ({ default: m.Vi
 const VizCassette = lazy(() => import('./viz-extra2').then((m) => ({ default: m.VizCassette })));
 const VizConstellation = lazy(() => import('./viz-extra2').then((m) => ({ default: m.VizConstellation })));
 const VizMilkdrop = lazy(() => import('./viz-milkdrop').then((m) => ({ default: m.VizMilkdrop })));
+const VizScripted = lazy(() => import('./viz-scripted').then((m) => ({ default: m.VizScripted })));
 
 /** Per-frame DPR cap for viz canvases. On a 4K monitor at DPR=2, dropping to 1
  *  cuts canvas pixel work 4x with no perceptible loss for music visualizers. */
@@ -665,6 +666,7 @@ export function HiFiVizSurface({ mode, accent, accent2, spectrumRef, sensitivity
       case 'cassette':      return <VizCassette {...props} />;
       case 'constellation': return <VizConstellation {...props} />;
     case 'milkdrop':      return <VizMilkdrop {...props} />;
+    case 'scripted':      return <VizScripted {...props} />;
       default:             return null;
     }
   })();

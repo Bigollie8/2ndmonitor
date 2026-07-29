@@ -36,4 +36,5 @@ export const VIZ_STYLES: VizStyle[] = [
   { id: 'cassette',     label: 'Cassette',     desc: 'Tape deck · reels · VU meters' },
   { id: 'constellation', label: 'Constellation', desc: 'Particles connect when near' },
   { id: 'milkdrop',     label: 'MilkDrop',     desc: 'Butterchurn · MilkDrop 2 presets' },
+  { id: 'scripted',     label: 'Scripted',     desc: 'Your JS visualizers · sandboxed' },
 ];
