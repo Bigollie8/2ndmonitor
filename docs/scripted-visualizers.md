@@ -64,3 +64,12 @@ Runtime errors surface as an overlay on the tile (and in the editor) with a line
 - iframe `sandbox="allow-scripts"` (opaque origin — no storage, no cookies, no app bridge)
 - CSP `default-src 'none'` — `fetch`, XHR, images, external scripts and styles are all blocked
 - the only channel in or out is the frame/settings message protocol above
+
+## Permissions (marketplace bundles only)
+
+Locally-authored visualizers must declare `"permissions": []` — they get audio data in and pixels out, nothing more. Bundles **installed from the marketplace** may declare permissions, which the app enforces through a broker:
+
+- `net:<host>` → `await viz.net.fetch("https://<host>/...")` performs a brokered fetch to exactly that host (https only, size-capped). Any other host is denied.
+- `tauri:<command>` → `await viz.tauri.invoke("<command>", args)` runs an app command — but only if the app's build also exposes it on an explicit allowlist (empty by default). Declaring a command in the manifest is necessary but not sufficient.
+
+The broker consults the installed manifest on every call and fails closed. You approve the exact permission list in a dialog before install. See [`server/README.md`](../server/README.md) for the trust model.
