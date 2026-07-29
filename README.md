@@ -91,7 +91,7 @@ The frontend never talks to the network directly except through the WebView; eve
 - Spotify credentials: `%APPDATA%/com.secondmonitor.hub/spotify.json`
 - MilkDrop presets: `%APPDATA%/com.secondmonitor.hub/presets/` — drop Butterchurn preset `.json` files here (convert `.milk` at butterchurn.app; MilkDrop 3 `.milk2` is not supported)
 - Scripted visualizers: `%APPDATA%/com.secondmonitor.hub/visualizers/<id>/` (manifest.json + main.js)
-- Marketplace server URL + pinned signing key: browser localStorage (`marketplace.url`, `marketplace.pubkey`)
+- Marketplace server: defaults to `https://market.basedsecurity.net` with its signing key pinned in the app. A custom server (set via "Change server" in the Marketplace tab) overrides it in browser localStorage (`marketplace.url`, `marketplace.pubkey`).
 
 Credentials are stored locally. The app makes no backend calls of its own except to the marketplace server — and only when you open the Marketplace tab or install from it.
 

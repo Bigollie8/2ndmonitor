@@ -5,6 +5,19 @@ const MONO = '"JetBrains Mono", ui-monospace, monospace';
 const LS_URL = 'marketplace.url';
 const LS_PUBKEY = 'marketplace.pubkey';
 
+// Official hub marketplace, pre-configured so the tab works with no setup.
+// The pinned key is the server's ed25519 index-signing public key; if it ever
+// rotates, bundles fail signature verification until this (or the user's
+// override in localStorage) is updated.
+const DEFAULT_URL = 'https://market.basedsecurity.net';
+const DEFAULT_PUBKEY = '35a3b117c5e6ed793b5b78640db3075c48feb0d943541d86f3b462c9bed8d816';
+
+/** Effective server config: user override if they pointed at their own server,
+ *  otherwise the built-in default. */
+const cfgUrl = () => localStorage.getItem(LS_URL) || DEFAULT_URL;
+const cfgPubkey = () => localStorage.getItem(LS_PUBKEY) || DEFAULT_PUBKEY;
+const isDefaultServer = () => cfgUrl() === DEFAULT_URL && cfgPubkey() === DEFAULT_PUBKEY;
+
 interface IndexBundle {
   id: string;
   version: string;
@@ -25,14 +38,15 @@ function describePermission(p: string): string {
   return `Run the app command "${parsed.perm.command}"`;
 }
 
-/** Marketplace browser. Self-contained: server URL + pinned pubkey live in
- *  localStorage, all traffic goes through the Rust client (signature + hash
- *  verified there). Installed visualizers/tiles land in the same folder the
- *  Scripted style reads, so the fs-watcher hot-reloads them. */
+/** Marketplace browser. Points at the official server by default; a user
+ *  override (own server URL + pinned pubkey) lives in localStorage. All traffic
+ *  goes through the Rust client (signature + hash verified there). Installed
+ *  visualizers/tiles land in the same folder the Scripted style reads, so the
+ *  fs-watcher hot-reloads them. */
 export function MarketplaceTab({ accent, onClose }: { accent: string; onClose: () => void }) {
-  const [url, setUrl] = useState(() => localStorage.getItem(LS_URL) ?? '');
-  const [pubkey, setPubkey] = useState(() => localStorage.getItem(LS_PUBKEY) ?? '');
-  const configured = Boolean(localStorage.getItem(LS_URL) && localStorage.getItem(LS_PUBKEY));
+  const [url, setUrl] = useState(cfgUrl);
+  const [pubkey, setPubkey] = useState(cfgPubkey);
+  const [editing, setEditing] = useState(false);
 
   const [bundles, setBundles] = useState<IndexBundle[] | null>(null);
   const [error, setError] = useState('');
@@ -54,8 +68,8 @@ export function MarketplaceTab({ accent, onClose }: { accent: string; onClose: (
     try {
       const { invoke } = await import('@tauri-apps/api/core');
       const idx = await invoke<{ bundles: IndexBundle[] }>('marketplace_fetch_index', {
-        url: localStorage.getItem(LS_URL),
-        pubkey: localStorage.getItem(LS_PUBKEY),
+        url: cfgUrl(),
+        pubkey: cfgPubkey(),
       });
       setBundles(idx.bundles ?? []);
       await refreshInstalled();
@@ -67,17 +81,33 @@ export function MarketplaceTab({ accent, onClose }: { accent: string; onClose: (
   }, [refreshInstalled]);
 
   useEffect(() => {
-    if (configured) void loadIndex();
+    void loadIndex();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const saveConfig = () => {
-    if (!url.startsWith('https://') && !url.startsWith('http://')) {
-      setError('Server URL should start with https://');
+    // The Rust client refuses anything but https, so reject it here too.
+    if (!url.trim().startsWith('https://')) {
+      setError('Server URL must start with https://');
+      return;
+    }
+    if (!/^[0-9a-f]{64}$/i.test(pubkey.trim())) {
+      setError('Signing public key must be 64 hex characters');
       return;
     }
     localStorage.setItem(LS_URL, url.trim());
     localStorage.setItem(LS_PUBKEY, pubkey.trim());
+    setEditing(false);
+    void loadIndex();
+  };
+
+  const resetConfig = () => {
+    localStorage.removeItem(LS_URL);
+    localStorage.removeItem(LS_PUBKEY);
+    setUrl(DEFAULT_URL);
+    setPubkey(DEFAULT_PUBKEY);
+    setError('');
+    setEditing(false);
     void loadIndex();
   };
 
@@ -86,7 +116,7 @@ export function MarketplaceTab({ accent, onClose }: { accent: string; onClose: (
     try {
       const { invoke } = await import('@tauri-apps/api/core');
       await invoke('marketplace_install', {
-        url: localStorage.getItem(LS_URL),
+        url: cfgUrl(),
         id: b.id, version: b.version, sha256: b.sha256, kind: b.kind,
       });
       setToast(`Installed ${b.name}`);
@@ -135,12 +165,13 @@ export function MarketplaceTab({ accent, onClose }: { accent: string; onClose: (
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
-      {!configured && !bundles ? (
+      {editing ? (
         <div style={{ padding: 24, maxWidth: 520, margin: '0 auto' }}>
-          <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 6 }}>Connect a marketplace</div>
+          <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 6 }}>Marketplace server</div>
           <div style={{ fontSize: 11.5, color: 'rgba(255,255,255,0.55)', lineHeight: 1.6, marginBottom: 14 }}>
-            Enter your marketplace server URL and its signing public key (printed when the server
-            starts). The app verifies the index signature and every bundle's checksum before installing.
+            The app ships pointed at the official marketplace. To use your own server, enter its URL
+            and the signing public key it prints on startup. The app verifies the index signature and
+            every bundle's checksum before installing.
           </div>
           <label style={{ fontSize: 10.5, color: 'rgba(255,255,255,0.45)' }}>Server URL</label>
           <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://market.example.com"
@@ -149,7 +180,12 @@ export function MarketplaceTab({ accent, onClose }: { accent: string; onClose: (
           <input value={pubkey} onChange={(e) => setPubkey(e.target.value)} placeholder="64 hex chars"
             style={{ ...inputStyle, fontFamily: MONO }} spellCheck={false} />
           {error && <div style={{ color: '#ff9b9b', fontSize: 11, marginTop: 8 }}>{error}</div>}
-          <button onClick={saveConfig} style={{ ...btnStyle(accent), marginTop: 14 }}>Connect</button>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 14 }}>
+            <button onClick={saveConfig} style={btnStyle(accent)}>Connect</button>
+            <button onClick={() => { setUrl(cfgUrl()); setPubkey(cfgPubkey()); setError(''); setEditing(false); }} style={miniBtn}>Cancel</button>
+            <div style={{ flex: 1 }} />
+            {!isDefaultServer() && <button onClick={resetConfig} style={miniBtn}>Use official server</button>}
+          </div>
         </div>
       ) : (
         <>
@@ -158,10 +194,10 @@ export function MarketplaceTab({ accent, onClose }: { accent: string; onClose: (
             borderBottom: '1px solid rgba(255,255,255,0.05)',
           }}>
             <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)', fontFamily: MONO }}>
-              {localStorage.getItem(LS_URL)}
+              {cfgUrl()}
             </span>
             <button onClick={loadIndex} disabled={busy} style={miniBtn}>↻ Refresh</button>
-            <button onClick={() => { localStorage.removeItem(LS_URL); localStorage.removeItem(LS_PUBKEY); setBundles(null); }} style={miniBtn}>Change server</button>
+            <button onClick={() => { setUrl(cfgUrl()); setPubkey(cfgPubkey()); setError(''); setEditing(true); }} style={miniBtn}>Change server</button>
             <div style={{ flex: 1 }} />
             {toast && <span style={{ fontSize: 11, color: accent }}>{toast}</span>}
           </div>
