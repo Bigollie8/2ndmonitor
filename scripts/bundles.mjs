@@ -90,12 +90,22 @@ const [cmd, ...only] = process.argv.slice(2);
 const ids = only.length ? only : bundleIds();
 if (!ids.length) { console.error('no bundles found'); process.exit(1); }
 
-const built = ids.map((id) => {
-  const m = validate(id);
-  const path = cmd === 'build' || cmd === 'publish' ? zip(id, m.version) : null;
-  console.log(`✓ ${id}@${m.version}${path ? ` → ${path}` : ''}`);
-  return { id, version: m.version, kind: 'visualizer', path };
-});
+// One malformed folder must not abort the whole run — with a dozen bundles
+// landing, a single throw here would hide every other bundle's result.
+// Collect per-bundle failures and report all of them, then fail the run.
+const built = [];
+const failed = [];
+for (const id of ids) {
+  try {
+    const m = validate(id);
+    const path = cmd === 'build' || cmd === 'publish' ? zip(id, m.version) : null;
+    console.log(`✓ ${id}@${m.version}${path ? ` → ${path}` : ''}`);
+    built.push({ id, version: m.version, kind: 'visualizer', path });
+  } catch (e) {
+    console.error(`✗ ${id}: ${e.message}`);
+    failed.push(id);
+  }
+}
 
 if (cmd === 'publish') {
   // A user *session* token, not the server's ADMIN_TOKEN — obtain one via
@@ -129,5 +139,10 @@ if (cmd === 'publish') {
 
 if (cmd !== 'build' && cmd !== 'publish') {
   console.error('usage: node scripts/bundles.mjs build|publish [id...]');
+  process.exit(1);
+}
+
+if (failed.length) {
+  console.error(`\n${failed.length} of ${ids.length} bundle(s) failed validation: ${failed.join(', ')}`);
   process.exit(1);
 }
