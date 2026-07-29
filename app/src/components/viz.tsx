@@ -675,7 +675,7 @@ export function HiFiVizSurface({ mode, accent, accent2, spectrumRef, sensitivity
       // rendering a blank tile.
       const bundleId = bundleIdOf(mode);
       return bundleId
-        ? <SandboxVizSurface {...props} bundleId={bundleId} chrome={false} />
+        ? <SandboxVizSurface {...props} bundleId={bundleId} />
         : <HiFiVizBars {...props} />;
     }
     }

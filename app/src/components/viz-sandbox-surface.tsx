@@ -14,8 +14,8 @@ export type ScriptError = { message: string; line: number | null } | null;
 /** The no-capability iframe runtime shared by every sandboxed visualizer:
  *  the "Scripted" authoring surface (which wraps this with a picker/editor/
  *  reload chrome — see viz-scripted.tsx) and installed marketplace `bundle:`
- *  styles (which mount this directly with `chrome={false}`, so an installed
- *  visualizer looks like any other built-in style, not like an editor).
+ *  styles (which mount this directly, so an installed visualizer looks like
+ *  any other built-in style, not like an editor).
  *
  *  Each visualizer runs inside sandbox="allow-scripts" + CSP default-src
  *  'none'; the only channel is postMessage. See src/sandbox/ for the
@@ -26,16 +26,16 @@ export type ScriptError = { message: string; line: number | null } | null;
  *  the picker, the editor or `scripted.active` — those are the authoring
  *  surface's concern. */
 export function SandboxVizSurface({
-  bundleId, chrome, accent, accent2, spectrumRef, sensitivity = 1, smoothing = 0,
+  bundleId, accent, accent2, spectrumRef, sensitivity = 1, smoothing = 0,
   paused, track, playback, reloadKey, suppressErrorBanner, onError,
 }: VizProps & {
   bundleId: string | null;
-  /** Unused by this component's own render (it never renders authoring UI —
-   *  the caller decides whether to layer picker/editor chrome around it) but
-   *  kept in the signature so the two call sites — the chromed authoring
-   *  surface and the chromeless `bundle:` dispatch — read as intentional,
-   *  distinct instantiations rather than accidental prop omission. */
-  chrome: boolean;
+  // Deliberately no `chrome` flag: this component renders only the iframe
+  // and its error banner, full stop — there is no authoring UI here to gate.
+  // Picker/editor/reload markup lives in the caller (ScriptedSurface) and is
+  // simply never rendered around the chromeless `bundle:` dispatch case. A
+  // boolean here would invite someone to believe passing `chrome={true}`
+  // turns something on inside this component; it wouldn't, so don't add one.
   /** Bump to force a fresh code load + re-init for the current `bundleId`
    *  without remounting the iframe. Drives both the authoring surface's
    *  manual "reload" button and the `visualizers:changed` hot-reload signal. */

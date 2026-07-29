@@ -100,7 +100,6 @@ function ScriptedSurface(props: VizProps) {
       <SandboxVizSurface
         {...props}
         bundleId={activeId}
-        chrome
         reloadKey={loadNonce}
         suppressErrorBanner={editorOpen}
         onError={setScriptError}
