@@ -106,11 +106,16 @@ export function useTweaks<T extends Record<string, unknown>>(
     setValues((prev) => ({ ...prev, [key]: value }));
   }, []);
 
-  // Wholesale replace (import). Closes over `defaults`/`opts` the same way the
-  // hydrate effect above does — they aren't expected to change across renders.
-  // Mirrors the hydrate effect's isPlainObject guard: callers type-assert an
-  // untrusted JSON.parse result to Record<string, unknown>, so this is the last
-  // line of defense against an array or primitive silently polluting state.
+  // Import merge. Despite the name, this does NOT reset to defaults first —
+  // it merges the imported payload over the *current* values, matching the
+  // Settings UI's "merges over current settings" hint. Merging over `defaults`
+  // instead would silently reset every setting the hand-trimmed import file
+  // omitted, which is surprising for a partial/curated import. Closes over
+  // `defaults`/`opts` the same way the hydrate effect above does — they
+  // aren't expected to change across renders. Mirrors the hydrate effect's
+  // isPlainObject guard: callers type-assert an untrusted JSON.parse result
+  // to Record<string, unknown>, so this is the last line of defense against
+  // an array or primitive silently polluting state.
   const replaceAll = useCallback((raw: Record<string, unknown>) => {
     if (!isPlainObject(raw)) {
       console.warn('useTweaks: replaceAll ignored a non-object import payload', raw);
@@ -118,7 +123,7 @@ export function useTweaks<T extends Record<string, unknown>>(
     }
     let next: Record<string, unknown> = raw;
     if (opts?.migrate) next = opts.migrate(next);
-    setValues(mergeTweaks(defaults, next));
+    setValues((prev) => mergeTweaks(prev, next));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

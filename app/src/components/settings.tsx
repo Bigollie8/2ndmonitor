@@ -499,8 +499,8 @@ function SettingRow({ row, isLast }: { row: RowDef; isLast: boolean }) {
 }
 
 // ---------------------------------------------------------------------------
-// Dark-themed controls (the tweaks.tsx primitives are styled for the light
-// dev panel; these follow the modal's glass aesthetic instead).
+// Dark-themed controls (the old dev-panel primitives were styled for a light
+// background; these follow the modal's glass aesthetic instead).
 // ---------------------------------------------------------------------------
 
 function Toggle({ checked, onChange, accent, disabled }: {
