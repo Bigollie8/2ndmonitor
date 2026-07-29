@@ -2,9 +2,11 @@
 //! The binary (main.rs) is a thin wrapper; integration tests build the same
 //! router against an in-memory database.
 
+pub mod auth;
 pub mod db;
 pub mod state;
 
+use axum::routing::post;
 use axum::{routing::get, Json, Router};
 use parking_lot::Mutex;
 use serde_json::json;
@@ -15,6 +17,12 @@ use std::sync::Arc;
 pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/health", get(health))
+        .route("/auth/register", post(auth::register))
+        .route("/auth/verify", get(auth::verify))
+        .route("/auth/login", post(auth::login))
+        .route("/auth/request-reset", post(auth::request_reset))
+        .route("/auth/reset", post(auth::reset))
+        .route("/auth/whoami", get(auth::whoami))
         .with_state(state)
 }
 
