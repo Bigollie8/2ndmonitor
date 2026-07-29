@@ -741,7 +741,7 @@ export function VizOverlay({
             title={
               videoAvailable
                 ? (videoEnabled ? 'Switch back to visualizer' : 'Play video instead of visualizer')
-                : 'Paste a YouTube URL in Tweaks → Video first'
+                : 'Add a bookmark in Settings → System → Streaming bookmarks first'
             }
             style={{
               ...overlayBtn,

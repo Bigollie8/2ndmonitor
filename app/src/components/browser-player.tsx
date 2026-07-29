@@ -12,9 +12,9 @@ export interface Bookmark {
   color: string;
 }
 
-/** Stable seed list used by both `migrateTweaks` (first launch / reset) and a
- *  future "Restore defaults" affordance in the Tweaks panel. Returns a fresh
- *  array each call so callers can mutate without aliasing the seed. */
+/** Stable seed list used by both `migrateTweaks` (first launch / reset) and
+ *  the "Restore defaults" affordance in Settings. Returns a fresh array each
+ *  call so callers can mutate without aliasing the seed. */
 export function defaultBookmarks(): Bookmark[] {
   const mk = (name: string, url: string, letters: string, color: string): Bookmark => ({
     id: newId(), name, url, letters, color,

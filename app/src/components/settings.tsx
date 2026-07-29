@@ -2,7 +2,6 @@ import React, { useCallback, useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { VizMode, AccentTheme, Density, WeatherLocation } from '../types';
 import type { GeocodeResult } from '../state/weatherLocation';
-import type { TileType } from '../state/layout';
 import { ACCENT_PALETTES } from '../data';
 import { VIZ_STYLES } from './viz-gallery';
 import { defaultBookmarks, type Bookmark } from './browser-player';
@@ -39,12 +38,6 @@ export interface SettingsValues {
 }
 
 export type SettingsSetter = <K extends keyof SettingsValues>(key: K, value: SettingsValues[K]) => void;
-
-export interface TileVisibilityItem {
-  id: TileType;
-  label: string;
-  visible: boolean;
-}
 
 /** Launch-at-startup state backed by the tauri-plugin-autostart registry
  *  entry. The plugin is the source of truth — no Tweaks persistence — so the
@@ -624,39 +617,7 @@ function AutostartSwitch({ accent }: { accent: string }) {
 }
 
 // ---------------------------------------------------------------------------
-// Legacy show/hide checkbox list. The Settings "Tiles" pane now points at the
-// Tile Library instead; this stays exported for the dev-only TweaksPanel.
-// ---------------------------------------------------------------------------
-
-export function TileVisibilityList({ items, setVisible, accent }: {
-  items: TileVisibilityItem[];
-  setVisible: (id: TileType, visible: boolean) => void;
-  accent: string;
-}) {
-  return (
-    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '2px 20px' }}>
-      {items.map((item) => (
-        <label key={item.id} style={{
-          display: 'flex', alignItems: 'center', gap: 8, padding: '3px 0',
-          cursor: 'pointer', userSelect: 'none',
-          color: item.visible ? 'rgba(255,255,255,0.85)' : 'rgba(255,255,255,0.4)',
-        }}>
-          <input
-            type="checkbox"
-            checked={item.visible}
-            onChange={(e) => setVisible(item.id, e.target.checked)}
-            style={{ accentColor: accent, width: 13, height: 13, flexShrink: 0 }}
-          />
-          <span style={{ fontSize: 11.5, fontWeight: 500 }}>{item.label}</span>
-        </label>
-      ))}
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Weather location search (dark-themed twin of the dev panel's WeatherSearch;
-// same geocode debounce + pick behavior).
+// Weather location search.
 // ---------------------------------------------------------------------------
 
 function SettingsWeatherSearch({ current, onPick, accent }: {
@@ -738,9 +699,8 @@ function SettingsWeatherSearch({ current, onPick, accent }: {
 }
 
 // ---------------------------------------------------------------------------
-// Streaming-bookmarks editor (dark-themed twin of the dev panel's
-// BookmarksTweak; identical behavior: launchpad enable toggle, add/remove,
-// restore defaults, auto-disable when the list empties).
+// Streaming-bookmarks editor: launchpad enable toggle, add/remove,
+// restore defaults, auto-disable when the list empties.
 // ---------------------------------------------------------------------------
 
 const BOOKMARK_PALETTE = ['#fb7185', '#60a5fa', '#a78bfa', '#facc15', '#7cf5d4', '#fb923c', '#22c55e', '#ec4899'];

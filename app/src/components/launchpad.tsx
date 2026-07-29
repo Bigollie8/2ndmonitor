@@ -20,7 +20,7 @@ export function Launchpad({ bookmarks, onPick }: LaunchpadProps) {
           <div style={{ color: 'rgba(255,255,255,0.85)', fontWeight: 600, marginBottom: 4 }}>
             No bookmarks yet
           </div>
-          <div>Add one in Tweaks → Video → Bookmarks.</div>
+          <div>Add one in Settings → System → Streaming bookmarks.</div>
         </div>
       </div>
     );

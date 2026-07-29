@@ -15,14 +15,12 @@ import {
   updateInstance,
 } from './state/layout';
 import type { Track, Profile, AccentTheme, VizMode, Density, Todo, WeatherLocation } from './types';
-import type { GeocodeResult } from './state/weatherLocation';
 import {
   DEFAULT_POMODORO_STATE,
   DEFAULT_POMODORO_SETTINGS,
   type PomodoroState,
   type PomodoroSettings,
 } from './state/pomodoro';
-import { TILE_META } from './state/tileMeta';
 import { TRACKS, ACCENT_PALETTES } from './data';
 import { useTweaks } from './state/useTweaks';
 import { useSysmon, useNowPlaying, useSpectrumRef } from './state/tauri';
@@ -44,10 +42,7 @@ import { TileLibrary } from './components/TileLibrary';
 import { ProfileSwitcher } from './components/profile';
 import { Onboarding } from './components/onboarding';
 import { TileFrame } from './components/TileFrame';
-import {
-  TweaksPanel, TweakSection, TweakRadio, TweakSelect, TweakButton,
-} from './components/tweaks';
-import { SettingsWindow, useAutostart } from './components/settings';
+import { SettingsWindow } from './components/settings';
 import { StreamDeckTile } from './components/StreamDeckTile';
 import { RadarTile } from './components/RadarTile';
 import { PomodoroTile } from './components/PomodoroTile';
@@ -80,7 +75,9 @@ import { parseStreamDeckConfig } from './state/actions';
 
 // Vite injects `import.meta.env` at build time; the project has no
 // vite-env.d.ts / "vite/client" types reference, so declare the one flag we
-// use (DEV gates the dev-only Tweaks panel below).
+// use. The dev-only Tweaks panel that used to read DEV here is gone
+// (superseded by the Settings window); kept in case future dev-only gating
+// needs it again.
 declare global {
   interface ImportMeta {
     readonly env: { readonly DEV: boolean };
@@ -114,8 +111,8 @@ interface TweakState extends Record<string, unknown> {
   videoCurrentUrl: string | null;
   perfMode: 'uncapped' | 'high' | 'balanced' | 'battery';
   /** When true, mounts the perf-debug HUD and starts long-task / GPU spike
-   *  instrumentation. Off by default; flip from the Tweaks panel when
-   *  investigating GPU spikes. */
+   *  instrumentation. Off by default; flip from Settings when investigating
+   *  GPU spikes. */
   perfDebug: boolean;
   /** When true, the small live/fps/levels readout overlays the viz. Off by
    *  default — only useful for diagnosing why a viz isn't reacting. */
@@ -278,15 +275,6 @@ function migrateTweaks(loaded: Record<string, unknown>): Record<string, unknown>
   return result;
 }
 
-/** Dev-only Tweaks-panel visibility checklist. Singleton tiles only —
- *  multi-instance tiles (stream deck, stocks, chat, scratchpad) are
- *  added/removed per instance from the Tile Library. Derived from the registry, so
- *  new tiles show up here automatically (this list used to be a stale
- *  hand-copy of the original 8 tiles). */
-const ALL_TILES: { id: TileType; label: string }[] = ALL_TILE_TYPES
-  .filter((id) => !TILE_META[id].multiInstance)
-  .map((id) => ({ id, label: TILE_META[id].label }));
-
 export default function App() {
   const [t, setTweak] = useTweaks<TweakState>(TWEAK_DEFAULTS, { migrate: migrateTweaks });
   useEffect(() => {
@@ -306,8 +294,8 @@ export default function App() {
       setShowOnboarding(true);
     }
     // We DO want this to fire whenever onboardingDone toggles to false (e.g., user
-    // clicks "First-launch onboarding" in Tweaks to replay it). But auto-trigger
-    // only on initial state where it's already false.
+    // clicks "Replay onboarding" in Settings). But auto-trigger only on
+    // initial state where it's already false.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const [manualTrack, setManualTrack] = useState<Track>(TRACKS[0]!);
@@ -497,10 +485,6 @@ export default function App() {
         instanceId: newId(), type, rect: defaults[type],
       }),
     });
-  };
-  const setTileVisibility = (type: TileType, visible: boolean) => {
-    if (visible) addTileByType(type);
-    else removeTileByType(type);
   };
   const resetLayout = () => {
     const defaults = orientation === 'portrait' ? DEFAULT_PORTRAIT_LAYOUT : DEFAULT_LANDSCAPE_LAYOUT;
@@ -897,196 +881,6 @@ export default function App() {
         <ShortcutsOverlay accent={accent} onClose={() => setShowShortcuts(false)} />
       )}
 
-      {import.meta.env.DEV && (
-      <TweaksPanel title="Tweaks" defaultOpen={true}>
-        <TweakSection label="Visualizer" />
-        <TweakRadio<VizMode>
-          label="Mode" value={t.vizMode}
-          options={['bars', 'waveform', 'radial', 'particles', 'ambient']}
-          onChange={(v) => setTweak('vizMode', v)} />
-        <TweakButton label="Browse all 27 styles" onClick={() => setShowGallery(true)} />
-        <label style={{
-          display: 'flex', alignItems: 'center', gap: 8, padding: '3px 0',
-          cursor: 'pointer', userSelect: 'none', color: 'rgba(41,38,27,0.85)',
-        }}>
-          <input
-            type="checkbox"
-            checked={t.vizArtBg}
-            onChange={(e) => setTweak('vizArtBg', e.target.checked)}
-            style={{ accentColor: '#29261b', width: 13, height: 13 }}
-          />
-          <span style={{ fontSize: 11.5, fontWeight: 500 }}>Album-art backdrop</span>
-        </label>
-        <label style={{
-          display: 'flex', alignItems: 'center', gap: 8, padding: '3px 0',
-          cursor: 'pointer', userSelect: 'none', color: 'rgba(41,38,27,0.85)',
-        }}>
-          <input
-            type="checkbox"
-            checked={t.audioDebug}
-            onChange={(e) => setTweak('audioDebug', e.target.checked)}
-            style={{ accentColor: '#29261b', width: 13, height: 13 }}
-          />
-          <span style={{ fontSize: 11.5, fontWeight: 500 }}>Audio debug HUD</span>
-        </label>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, padding: '4px 0' }}>
-          <label style={{ fontSize: 11, fontWeight: 500, color: 'rgba(41,38,27,0.85)', display: 'flex', justifyContent: 'space-between' }}>
-            <span>Sensitivity</span>
-            <span style={{ fontFamily: '"JetBrains Mono", ui-monospace, monospace', color: 'rgba(41,38,27,0.55)' }}>
-              {t.vizSensitivity.toFixed(2)}×
-            </span>
-          </label>
-          <input
-            type="range" min={0.3} max={2.5} step={0.05}
-            value={t.vizSensitivity}
-            onChange={(e) => setTweak('vizSensitivity', parseFloat(e.target.value))}
-            style={{ accentColor: '#29261b', width: '100%' }}
-          />
-        </div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, padding: '4px 0' }}>
-          <label style={{ fontSize: 11, fontWeight: 500, color: 'rgba(41,38,27,0.85)', display: 'flex', justifyContent: 'space-between' }}>
-            <span>Smoothing</span>
-            <span style={{ fontFamily: '"JetBrains Mono", ui-monospace, monospace', color: 'rgba(41,38,27,0.55)' }}>
-              {t.vizSmoothing.toFixed(2)}
-            </span>
-          </label>
-          <input
-            type="range" min={0} max={0.95} step={0.05}
-            value={t.vizSmoothing}
-            onChange={(e) => setTweak('vizSmoothing', parseFloat(e.target.value))}
-            style={{ accentColor: '#29261b', width: '100%' }}
-          />
-        </div>
-        <label style={{
-          display: 'flex', alignItems: 'center', gap: 8, padding: '3px 0',
-          cursor: 'pointer', userSelect: 'none', color: 'rgba(41,38,27,0.85)',
-        }}>
-          <input
-            type="checkbox"
-            checked={t.vizColorOverride.enabled}
-            onChange={(e) => setTweak('vizColorOverride', { ...t.vizColorOverride, enabled: e.target.checked })}
-            style={{ accentColor: '#29261b', width: 13, height: 13 }}
-          />
-          <span style={{ fontSize: 11.5, fontWeight: 500 }}>Color override (viz only)</span>
-        </label>
-        {t.vizColorOverride.enabled && (
-          <div style={{ display: 'flex', gap: 8, padding: '4px 0', alignItems: 'center' }}>
-            <input
-              type="color" value={t.vizColorOverride.accent}
-              onChange={(e) => setTweak('vizColorOverride', { ...t.vizColorOverride, accent: e.target.value })}
-              style={{ width: 28, height: 22, padding: 0, border: '1px solid rgba(0,0,0,0.1)', borderRadius: 4, cursor: 'pointer' }}
-            />
-            <input
-              type="color" value={t.vizColorOverride.accent2}
-              onChange={(e) => setTweak('vizColorOverride', { ...t.vizColorOverride, accent2: e.target.value })}
-              style={{ width: 28, height: 22, padding: 0, border: '1px solid rgba(0,0,0,0.1)', borderRadius: 4, cursor: 'pointer' }}
-            />
-            <span style={{ fontSize: 10, color: 'rgba(41,38,27,0.55)', fontFamily: '"JetBrains Mono", ui-monospace, monospace' }}>
-              accent / accent2
-            </span>
-          </div>
-        )}
-        <TweakSection label="Lyrics" />
-        <label style={{
-          display: 'flex', alignItems: 'center', gap: 8, padding: '3px 0',
-          cursor: 'pointer', userSelect: 'none', color: 'rgba(41,38,27,0.85)',
-        }}>
-          <input
-            type="checkbox"
-            checked={t.lyricsOverlayEnabled}
-            onChange={(e) => setTweak('lyricsOverlayEnabled', e.target.checked)}
-            style={{ accentColor: '#29261b', width: 13, height: 13 }}
-          />
-          <span style={{ fontSize: 11.5, fontWeight: 500 }}>Show lyrics over visualizer</span>
-        </label>
-        <TweakSection label="Streaming bookmarks" />
-        <BookmarksTweak
-          enabled={t.videoEnabled}
-          bookmarks={t.videoBookmarks}
-          setEnabled={(v) => setTweak('videoEnabled', v)}
-          setBookmarks={(next) => setTweak('videoBookmarks', next)}
-        />
-        <TweakSection label="Accent color" />
-        <TweakSelect<AccentTheme>
-          label="Source" value={t.accentTheme}
-          options={(Object.keys(ACCENT_PALETTES) as AccentTheme[]).map((k) => ({ value: k, label: ACCENT_PALETTES[k].label }))}
-          onChange={(v) => setTweak('accentTheme', v)} />
-        <div style={{ display: 'flex', gap: 6, padding: '4px 0', alignItems: 'center' }}>
-          <div style={{ width: 22, height: 22, borderRadius: 5, background: accent, border: '1px solid rgba(0,0,0,0.1)' }} />
-          <div style={{ width: 22, height: 22, borderRadius: 5, background: accent2, border: '1px solid rgba(0,0,0,0.1)' }} />
-          <span style={{ fontSize: 10, color: 'rgba(41,38,27,0.55)', fontFamily: '"JetBrains Mono", ui-monospace, monospace', marginLeft: 4 }}>
-            {accentLinked ? `from "${track.title}"` : 'manual'}
-          </span>
-        </div>
-        <TweakSection label="Layout" />
-        <TweakRadio<Density>
-          label="Tile density" value={t.density}
-          options={['compact', 'regular', 'spacious']}
-          onChange={(v) => setTweak('density', v)} />
-        <TweakButton label="Reset layout" onClick={resetLayout} />
-        <TweakSection label="Weather" />
-        <WeatherSearch
-          current={t.weatherLocation}
-          onPick={(loc) => setTweak('weatherLocation', loc)}
-        />
-        <TweakSection label="Performance" />
-        <TweakRadio<'uncapped' | 'high' | 'balanced' | 'battery'>
-          label="Mode"
-          value={t.perfMode}
-          options={['uncapped', 'high', 'balanced', 'battery']}
-          onChange={(v) => setTweak('perfMode', v)}
-        />
-        <div style={{ fontSize: 10, color: 'rgba(41,38,27,0.55)', padding: '2px 0 6px', lineHeight: 1.45 }}>
-          {t.perfMode === 'uncapped' && 'Native DPR · uncapped fps · 60 Hz audio · always animating'}
-          {t.perfMode === 'high'     && 'DPR cap 1.5× · 120 fps · 60 Hz audio · pauses when nothing plays'}
-          {t.perfMode === 'balanced' && 'DPR cap 1× · 60 fps · 30 Hz audio · pauses when nothing plays'}
-          {t.perfMode === 'battery'  && 'DPR cap 1× · 30 fps · 15 Hz audio · pauses when nothing plays'}
-        </div>
-        <TweakSection label="System" />
-        <AutostartToggle />
-        <TweakSection label="Tiles · show / hide" />
-        {ALL_TILES.filter(({ id }) => id !== 'viz').map((def) => {
-          const visible = findInstance(activeOrientation.tiles, def.id) !== undefined;
-          return (
-            <label key={def.id} style={{
-              display: 'flex', alignItems: 'center', gap: 8, padding: '3px 0',
-              cursor: 'pointer', userSelect: 'none',
-              color: visible ? 'rgba(41,38,27,0.85)' : 'rgba(41,38,27,0.45)',
-            }}>
-              <input
-                type="checkbox"
-                checked={findInstance(activeOrientation.tiles, def.id) !== undefined}
-                onChange={(e) => setTileVisibility(def.id, e.target.checked)}
-                style={{ accentColor: '#29261b', width: 13, height: 13 }}
-              />
-              <span style={{ fontSize: 11.5, fontWeight: 500 }}>{def.label}</span>
-            </label>
-          );
-        })}
-        <TweakSection label="Demo screens" />
-        <TweakButton label="Edit mode" onClick={() => setEditMode(true)} />
-        <TweakButton label="Profile switcher" onClick={() => setShowSwitcher(true)} />
-        <TweakButton label="First-launch onboarding" onClick={() => setShowOnboarding(true)} />
-        <TweakSection label="Diagnostics" />
-        <label style={{
-          display: 'flex', alignItems: 'center', gap: 8, padding: '3px 0',
-          cursor: 'pointer', userSelect: 'none', color: 'rgba(41,38,27,0.85)',
-        }}>
-          <input
-            type="checkbox"
-            checked={t.perfDebug}
-            onChange={(e) => setTweak('perfDebug', e.target.checked)}
-            style={{ accentColor: '#29261b', width: 13, height: 13 }}
-          />
-          <span style={{ fontSize: 11.5, fontWeight: 500 }}>Perf debug HUD</span>
-        </label>
-        <div style={{ fontSize: 10, color: 'rgba(41,38,27,0.55)', padding: '2px 0 6px', lineHeight: 1.45 }}>
-          Long-task observer + GPU spike ring buffer + per-viz draw-rate +
-          ResizeObserver counter. HUD overlay shows live data and snapshots
-          what was on screen at the moment of each spike.
-        </div>
-      </TweaksPanel>
-      )}
       {t.perfDebug && <PerfDebugHUD />}
     </div>
   );
@@ -1321,248 +1115,6 @@ function ShortcutsOverlay({ accent, onClose }: { accent: string; onClose: () => 
         ))}
       </div>
     </div>
-  );
-}
-
-function WeatherSearch({
-  current, onPick,
-}: {
-  current: WeatherLocation;
-  onPick: (loc: WeatherLocation) => void;
-}) {
-  const [query, setQuery] = useState('');
-  const [results, setResults] = useState<GeocodeResult[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-
-  useEffect(() => {
-    const q = query.trim();
-    if (q.length < 2) { setResults([]); setErr(null); return; }
-    setLoading(true); setErr(null);
-    const id = setTimeout(async () => {
-      try {
-        const { geocode } = await import('./state/weatherLocation');
-        const data = await geocode(q);
-        setResults(data);
-      } catch (e: any) {
-        setErr(String(e?.message ?? e));
-      } finally {
-        setLoading(false);
-      }
-    }, 350);
-    return () => clearTimeout(id);
-  }, [query]);
-
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 4, padding: '4px 0' }}>
-      <div style={{ fontSize: 11, fontWeight: 500, color: 'rgba(41,38,27,0.85)', display: 'flex', justifyContent: 'space-between' }}>
-        <span>Location</span>
-        <span style={{ fontFamily: '"JetBrains Mono", ui-monospace, monospace', color: 'rgba(41,38,27,0.55)', fontSize: 10 }}>
-          {current.label}
-        </span>
-      </div>
-      <input
-        type="text" value={query}
-        onChange={(e) => setQuery(e.target.value)}
-        placeholder="Search a city…"
-        style={{
-          fontSize: 11, padding: '5px 8px',
-          background: 'rgba(41,38,27,0.05)', border: '1px solid rgba(41,38,27,0.15)',
-          borderRadius: 4, color: 'rgba(41,38,27,0.9)',
-        }}
-      />
-      {loading && <div style={{ fontSize: 10, color: 'rgba(41,38,27,0.5)' }}>Searching…</div>}
-      {err && <div style={{ fontSize: 10, color: '#b91c1c' }}>{err}</div>}
-      {results.length > 0 && (
-        <div style={{
-          display: 'flex', flexDirection: 'column', gap: 2,
-          background: 'rgba(41,38,27,0.04)', borderRadius: 4, padding: 4,
-        }}>
-          {results.map((r, i) => (
-            <button
-              key={i}
-              onClick={() => {
-                onPick({ label: r.label, lat: r.lat, lon: r.lon });
-                setQuery('');
-                setResults([]);
-              }}
-              style={{
-                textAlign: 'left', padding: '4px 6px', borderRadius: 3,
-                background: 'transparent', border: 'none', cursor: 'pointer',
-                fontSize: 11, color: 'rgba(41,38,27,0.85)',
-              }}
-            >
-              <div style={{ fontWeight: 500 }}>{r.label}</div>
-              <div style={{ fontSize: 9, color: 'rgba(41,38,27,0.5)', fontFamily: '"JetBrains Mono", ui-monospace, monospace' }}>
-                {r.lat.toFixed(3)}, {r.lon.toFixed(3)}
-              </div>
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-/** Tweaks-panel UI for the streaming-browser feature. Enable checkbox swaps
- *  the audio visualizer for the launchpad/child-webview. Below it: a list of
- *  the user's bookmarks with add/remove. The 📺 toggle in the viz overlay is
- *  disabled until at least one bookmark exists. */
-function BookmarksTweak({
-  enabled, bookmarks, setEnabled, setBookmarks,
-}: {
-  enabled: boolean;
-  bookmarks: Bookmark[];
-  setEnabled: (v: boolean) => void;
-  setBookmarks: (next: Bookmark[]) => void;
-}) {
-  const [draftName, setDraftName] = useState('');
-  const [draftUrl, setDraftUrl] = useState('');
-  const [draftLetters, setDraftLetters] = useState('');
-
-  // If bookmarks list goes empty while enabled, auto-disable so the launchpad
-  // doesn't show its empty-state placeholder by surprise.
-  useEffect(() => {
-    if (enabled && bookmarks.length === 0) setEnabled(false);
-  }, [enabled, bookmarks.length, setEnabled]);
-
-  const PALETTE = ['#fb7185', '#60a5fa', '#a78bfa', '#facc15', '#7cf5d4', '#fb923c', '#22c55e', '#ec4899'];
-
-  const add = () => {
-    const name = draftName.trim();
-    const url = draftUrl.trim();
-    if (!name || !url) return;
-    if (!/^https?:\/\//i.test(url)) return;
-    const letters = (draftLetters.trim() || name.slice(0, 2)).toUpperCase().slice(0, 3);
-    const id = (typeof crypto !== 'undefined' && crypto.randomUUID)
-      ? crypto.randomUUID() : `bm_${Date.now()}_${Math.random().toString(36).slice(2)}`;
-    const color = PALETTE[bookmarks.length % PALETTE.length]!;
-    setBookmarks([...bookmarks, { id, name, url, letters, color }]);
-    setDraftName(''); setDraftUrl(''); setDraftLetters('');
-  };
-  const remove = (id: string) => setBookmarks(bookmarks.filter((b) => b.id !== id));
-  const restore = () => setBookmarks(defaultBookmarks());
-
-  const canEnable = bookmarks.length > 0;
-
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: '4px 0' }}>
-      <label style={{
-        display: 'flex', alignItems: 'center', gap: 8, padding: '3px 0',
-        cursor: canEnable ? 'pointer' : 'not-allowed', userSelect: 'none',
-        color: canEnable ? 'rgba(41,38,27,0.85)' : 'rgba(41,38,27,0.45)',
-      }} title={canEnable ? '' : 'Add at least one bookmark'}>
-        <input
-          type="checkbox"
-          checked={enabled && canEnable}
-          disabled={!canEnable}
-          onChange={(e) => setEnabled(e.target.checked)}
-          style={{ accentColor: '#29261b', width: 13, height: 13 }}
-        />
-        <span style={{ fontSize: 11.5, fontWeight: 500 }}>Show streaming launchpad</span>
-      </label>
-
-      {/* Bookmark list */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-        {bookmarks.map((b) => (
-          <div key={b.id} style={{
-            display: 'flex', alignItems: 'center', gap: 8,
-            padding: '4px 6px', fontSize: 11,
-            background: 'rgba(41,38,27,0.04)',
-            border: '1px solid rgba(41,38,27,0.08)',
-            borderRadius: 4,
-          }}>
-            <span style={{
-              width: 22, height: 22, borderRadius: 4,
-              background: b.color, color: '#fff', fontWeight: 700, fontSize: 10,
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              flexShrink: 0,
-            }}>{b.letters}</span>
-            <span style={{ flex: 1, color: 'rgba(41,38,27,0.85)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              {b.name}
-            </span>
-            <button
-              onClick={() => remove(b.id)}
-              title={`Remove ${b.name}`}
-              style={{
-                background: 'transparent', border: 'none', cursor: 'pointer',
-                color: 'rgba(41,38,27,0.5)', fontSize: 13, padding: '0 4px', lineHeight: 1,
-              }}
-            >×</button>
-          </div>
-        ))}
-      </div>
-
-      {/* Add form */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 4, paddingTop: 4 }}>
-        <input
-          type="text" value={draftName} placeholder="Name (e.g. YouTube)"
-          onChange={(e) => setDraftName(e.target.value)}
-          maxLength={32}
-          style={addInputStyle}
-        />
-        <input
-          type="text" value={draftUrl} placeholder="https://..."
-          onChange={(e) => setDraftUrl(e.target.value)}
-          spellCheck={false} maxLength={512}
-          style={addInputStyle}
-        />
-        <div style={{ display: 'flex', gap: 4 }}>
-          <input
-            type="text" value={draftLetters} placeholder="Letters"
-            onChange={(e) => setDraftLetters(e.target.value)}
-            maxLength={3}
-            style={{ ...addInputStyle, width: 60, flex: 'none' }}
-          />
-          <button
-            onClick={add}
-            disabled={!draftName.trim() || !draftUrl.trim() || !/^https?:\/\//i.test(draftUrl.trim())}
-            style={{
-              flex: 1, fontSize: 11, fontWeight: 600, padding: '5px 10px',
-              borderRadius: 4, border: 'none', cursor: 'pointer',
-              background: '#29261b', color: '#fef3c7',
-              opacity: (!draftName.trim() || !draftUrl.trim() || !/^https?:\/\//i.test(draftUrl.trim())) ? 0.4 : 1,
-            }}
-          >Add bookmark</button>
-        </div>
-      </div>
-      <button
-        onClick={restore}
-        style={{
-          fontSize: 10, color: 'rgba(41,38,27,0.55)', background: 'transparent',
-          border: 'none', padding: '4px 0', textAlign: 'left', cursor: 'pointer',
-        }}
-      >Restore default bookmarks</button>
-    </div>
-  );
-}
-
-const addInputStyle: React.CSSProperties = {
-  fontSize: 11, padding: '5px 8px',
-  background: 'rgba(41,38,27,0.05)', border: '1px solid rgba(41,38,27,0.15)',
-  borderRadius: 4, color: 'rgba(41,38,27,0.9)',
-  fontFamily: '"JetBrains Mono", ui-monospace, monospace',
-};
-
-/** Launch-at-startup checkbox for the dev Tweaks panel. Registry state and
- *  toggle logic live in the shared useAutostart hook (components/settings.tsx),
- *  which the Settings window's System pane also uses. */
-function AutostartToggle() {
-  const [enabled, toggle] = useAutostart();
-  return (
-    <label style={{
-      display: 'flex', alignItems: 'center', gap: 8, padding: '3px 0',
-      cursor: 'pointer', userSelect: 'none', color: 'rgba(41,38,27,0.85)',
-    }}>
-      <input
-        type="checkbox"
-        checked={enabled === true}
-        disabled={enabled === null}
-        onChange={(e) => toggle(e.target.checked)}
-        style={{ accentColor: '#29261b', width: 13, height: 13 }}
-      />
-      <span style={{ fontSize: 11.5, fontWeight: 500 }}>Launch at startup</span>
-    </label>
   );
 }
 
