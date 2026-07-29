@@ -10,7 +10,9 @@
     "test": "tsx --test src/**/*.test.ts",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
-    "tauri:build": "tauri build"
+    "tauri:build": "tauri build",
+    "bundles:build": "node ../scripts/bundles.mjs build",
+    "bundles:publish": "node ../scripts/bundles.mjs publish"
   },
   "dependencies": {
     "@codemirror/lang-javascript": "^6.2.5",
