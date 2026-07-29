@@ -4,6 +4,7 @@ import { useWaveformRef } from '../state/waveform';
 import { buildSandboxHtml, SANDBOX_ATTR } from '../sandbox/sandbox-html';
 import { validateManifest } from '../sandbox/manifest';
 import type { FrameMessage, InitMessage, SandboxToHost } from '../sandbox/manifest';
+import { makeBrokerHandler, permissionsOf, type RpcRequest } from '../sandbox/broker';
 import { newVizManifest, NEW_VIZ_CODE } from '../sandbox/template';
 
 const VizEditor = lazy(() => import('./viz-editor').then((m) => ({ default: m.VizEditor })));
@@ -44,6 +45,7 @@ function ScriptedSurface({ accent, accent2, spectrumRef, sensitivity = 1, smooth
 
   const readyRef = useRef(false);
   const codeRef = useRef<string>('');
+  const brokerRef = useRef<ReturnType<typeof makeBrokerHandler> | null>(null);
   const themeRef = useRef({ accent, accent2 });
   themeRef.current = { accent, accent2 };
   const trackRef = useRef(track ?? null);
@@ -90,8 +92,20 @@ function ScriptedSurface({ accent, accent2, spectrumRef, sensitivity = 1, smooth
         if (cancelled) return;
         let manifestErr: string | null = null;
         try {
-          const v = validateManifest(JSON.parse(src.manifest));
+          // allowPermissions: installed marketplace bundles may carry vetted
+          // permissions; locally-authored ones still declare none.
+          const v = validateManifest(JSON.parse(src.manifest), { allowPermissions: true });
           if (!v.ok) manifestErr = v.error;
+          else brokerRef.current = makeBrokerHandler(permissionsOf(v.manifest.permissions), {
+            fetch: async (url) => {
+              const { invoke } = await import('@tauri-apps/api/core');
+              return invoke('broker_fetch', { url });
+            },
+            invoke: async (command, args) => {
+              const { invoke } = await import('@tauri-apps/api/core');
+              return invoke(command, args as Record<string, unknown> | undefined);
+            },
+          });
         } catch {
           manifestErr = 'manifest.json is not valid JSON';
         }
@@ -133,7 +147,17 @@ function ScriptedSurface({ accent, accent2, spectrumRef, sensitivity = 1, smooth
   useEffect(() => {
     const onMessage = (e: MessageEvent) => {
       if (e.source !== iframeRef.current?.contentWindow) return;
-      const msg = e.data as SandboxToHost;
+      const msg = e.data as SandboxToHost | { type: 'rpc'; rpcId: number; rpc: RpcRequest['rpc']; url?: string; command?: string; args?: unknown };
+      if (msg?.type === 'rpc') {
+        // Broker-mediated capability request from an installed bundle.
+        const win = iframeRef.current?.contentWindow;
+        const handler = brokerRef.current;
+        const reply = (r: { ok: true; value: unknown } | { ok: false; error: string }) =>
+          win?.postMessage({ type: 'rpc:result', rpcId: msg.rpcId, ...r }, '*');
+        if (!handler) { reply({ ok: false, error: 'no permissions granted' }); return; }
+        void handler({ rpc: msg.rpc, url: msg.url, command: msg.command, args: msg.args }).then(reply);
+        return;
+      }
       if (msg?.type === 'ready') {
         readyRef.current = true;
         sendInit();

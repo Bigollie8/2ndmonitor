@@ -7,6 +7,7 @@ import {
   findEmptyRect,
 } from '../state/layout';
 import { TILE_META, TILE_CATEGORY_LABELS, type TileCategory } from '../state/tileMeta';
+import { MarketplaceTab } from './MarketplaceTab';
 
 const MONO = '"JetBrains Mono", ui-monospace, monospace';
 
@@ -31,6 +32,7 @@ export function TileLibrary({
 }) {
   const [query, setQuery] = useState('');
   const [activeCategory, setActiveCategory] = useState<TileCategory | 'all'>('all');
+  const [showMarket, setShowMarket] = useState(false);
 
   // Esc closes the modal (capture + stopPropagation so App's cascade doesn't
   // also fire).
@@ -110,19 +112,27 @@ export function TileLibrary({
             · "{profileName}" · {orientation}
           </span>
           <div style={{ flex: 1 }} />
-          <input
-            type="text" value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search tiles…"
-            autoFocus
-            spellCheck={false}
-            style={{
-              width: 180, fontSize: 11.5, padding: '5px 9px',
-              background: 'rgba(0,0,0,0.3)',
-              border: '1px solid rgba(255,255,255,0.08)',
-              borderRadius: 6, color: '#fff', outline: 'none',
-            }}
-          />
+          <button onClick={() => setShowMarket((v) => !v)} style={{
+            padding: '5px 11px', fontSize: 11.5, cursor: 'pointer', borderRadius: 6,
+            background: showMarket ? `${accent}20` : 'transparent',
+            color: showMarket ? accent : 'rgba(255,255,255,0.6)',
+            border: showMarket ? `1px solid ${accent}55` : '1px solid rgba(255,255,255,0.1)',
+          }}>{showMarket ? '← Tiles' : '⬇ Marketplace'}</button>
+          {!showMarket && (
+            <input
+              type="text" value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search tiles…"
+              autoFocus
+              spellCheck={false}
+              style={{
+                width: 180, fontSize: 11.5, padding: '5px 9px',
+                background: 'rgba(0,0,0,0.3)',
+                border: '1px solid rgba(255,255,255,0.08)',
+                borderRadius: 6, color: '#fff', outline: 'none',
+              }}
+            />
+          )}
           <button onClick={onClose} title="Close (Esc)" style={{
             padding: '4px 10px', fontSize: 12,
             background: 'transparent', color: 'rgba(255,255,255,0.55)',
@@ -130,8 +140,10 @@ export function TileLibrary({
           }}>×</button>
         </div>
 
+        {showMarket && <MarketplaceTab accent={accent} onClose={() => setShowMarket(false)} />}
+
         {/* Category chips */}
-        <div style={{
+        {!showMarket && <div style={{
           padding: '10px 18px', borderBottom: '1px solid rgba(255,255,255,0.05)',
           display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', flexShrink: 0,
         }}>
@@ -151,10 +163,10 @@ export function TileLibrary({
               accent={accent}
             />
           ))}
-        </div>
+        </div>}
 
         {/* Card grid */}
-        <div style={{
+        {!showMarket && <div style={{
           padding: '14px 18px', overflow: 'auto',
           display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10,
           alignContent: 'start',
@@ -177,7 +189,7 @@ export function TileLibrary({
               onRemove={() => handleRemove(id)}
             />
           ))}
-        </div>
+        </div>}
       </div>
     </div>
   );
