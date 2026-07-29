@@ -13,7 +13,7 @@ import {
   VizStarfield, VizPerlinFlow, VizOrbital, VizAurora, VizCityEqualizer,
   VizStrings, VizHUD, VizLiquid, VizCassette, VizConstellation,
 } from './viz-extra2';
-import { VIZ_STYLES } from './viz-gallery';
+import { VIZ_STYLES } from './viz-styles';
 import { BrowserPlayer, type Bookmark } from './browser-player';
 
 /** Per-frame DPR cap for viz canvases. On a 4K monitor at DPR=2, dropping to 1

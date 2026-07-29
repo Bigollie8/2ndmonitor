@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import type { TileType, Layout, TileInstance, OrientationLayout, Rect } from './state/layout';
 import {
   DEFAULT_LANDSCAPE_LAYOUT,
@@ -27,51 +27,59 @@ import { useSysmon, useNowPlaying, useSpectrumRef } from './state/tauri';
 import { VizHero, setVizDprCap, setVizMaxFps, getVizMaxFps } from './components/viz';
 import * as perfDebug from './perf/debug';
 import { PerfDebugHUD } from './perf/PerfDebugHUD';
-import { VizGallery, VIZ_STYLES } from './components/viz-gallery';
+import { VIZ_STYLES } from './components/viz-styles';
 import { defaultBookmarks, type Bookmark } from './components/browser-player';
 import {
   SpotifyTile, NotesTile,
   SysMonTile,
 } from './components/tiles';
-import { ClaudeCodeTile } from './components/claude-tile';
-import { DiscordTile } from './components/discord-tile';
-import { NowAndForecastTile } from './components/forecast-tile';
-import { AudioMixerTile } from './components/audio-mixer-tile';
 import { EditModeOverlay } from './components/edit';
 import { TileLibrary } from './components/TileLibrary';
 import { ProfileSwitcher } from './components/profile';
 import { Onboarding } from './components/onboarding';
 import { TileFrame } from './components/TileFrame';
 import { SettingsWindow } from './components/settings';
-import { StreamDeckTile } from './components/StreamDeckTile';
-import { RadarTile } from './components/RadarTile';
-import { PomodoroTile } from './components/PomodoroTile';
-import { SunTile } from './components/SunTile';
-import { AuroraTile } from './components/AuroraTile';
-import { AirQualityTile } from './components/AirQualityTile';
-import { StocksTile } from './components/StocksTile';
-import { TidesTile } from './components/TidesTile';
-import { GithubPrsTile } from './components/GithubPrsTile';
-import { StreamChatTile } from './components/StreamChatTile';
-import { PhoneNotifsTile } from './components/PhoneNotifsTile';
-import { HomeAssistantTile } from './components/HomeAssistantTile';
-import { ScratchpadTile } from './components/ScratchpadTile';
-import { QuoteTile } from './components/QuoteTile';
-import { OnThisDayTile } from './components/OnThisDayTile';
-import { RandomWikiTile } from './components/RandomWikiTile';
-import { WordOfDayTile } from './components/WordOfDayTile';
-import { IssTile } from './components/IssTile';
-import { LaunchesTile } from './components/LaunchesTile';
-import { DailyChallengeTile } from './components/DailyChallengeTile';
-import { PollenTile } from './components/PollenTile';
-import { BirdsTile } from './components/BirdsTile';
-import { SolarFlareTile } from './components/SolarFlareTile';
-import { LightningTile } from './components/LightningTile';
-import { AircraftTile } from './components/AircraftTile';
-import { ActiveWindowTile } from './components/ActiveWindowTile';
-import { DockerTile } from './components/DockerTile';
-import { EnergyTile } from './components/EnergyTile';
+import { TileSkeleton } from './components/tileStates';
 import { parseStreamDeckConfig } from './state/actions';
+
+// Standalone tiles are lazy-loaded per-tile so the initial bundle only pays
+// for what's actually visible in the active profile/orientation. Kept EAGER:
+// './components/tiles' (Spotify/Notes/Sysmon — entangled with boot), VizHero,
+// TileFrame, EditModeOverlay, TileLibrary, ProfileSwitcher, Onboarding,
+// SettingsWindow (see imports above/below).
+const VizGallery = lazy(() => import('./components/viz-gallery').then((m) => ({ default: m.VizGallery })));
+const ClaudeCodeTile = lazy(() => import('./components/claude-tile').then((m) => ({ default: m.ClaudeCodeTile })));
+const DiscordTile = lazy(() => import('./components/discord-tile').then((m) => ({ default: m.DiscordTile })));
+const NowAndForecastTile = lazy(() => import('./components/forecast-tile').then((m) => ({ default: m.NowAndForecastTile })));
+const AudioMixerTile = lazy(() => import('./components/audio-mixer-tile').then((m) => ({ default: m.AudioMixerTile })));
+const StreamDeckTile = lazy(() => import('./components/StreamDeckTile').then((m) => ({ default: m.StreamDeckTile })));
+const RadarTile = lazy(() => import('./components/RadarTile').then((m) => ({ default: m.RadarTile })));
+const PomodoroTile = lazy(() => import('./components/PomodoroTile').then((m) => ({ default: m.PomodoroTile })));
+const SunTile = lazy(() => import('./components/SunTile').then((m) => ({ default: m.SunTile })));
+const AuroraTile = lazy(() => import('./components/AuroraTile').then((m) => ({ default: m.AuroraTile })));
+const AirQualityTile = lazy(() => import('./components/AirQualityTile').then((m) => ({ default: m.AirQualityTile })));
+const StocksTile = lazy(() => import('./components/StocksTile').then((m) => ({ default: m.StocksTile })));
+const TidesTile = lazy(() => import('./components/TidesTile').then((m) => ({ default: m.TidesTile })));
+const GithubPrsTile = lazy(() => import('./components/GithubPrsTile').then((m) => ({ default: m.GithubPrsTile })));
+const StreamChatTile = lazy(() => import('./components/StreamChatTile').then((m) => ({ default: m.StreamChatTile })));
+const PhoneNotifsTile = lazy(() => import('./components/PhoneNotifsTile').then((m) => ({ default: m.PhoneNotifsTile })));
+const HomeAssistantTile = lazy(() => import('./components/HomeAssistantTile').then((m) => ({ default: m.HomeAssistantTile })));
+const ScratchpadTile = lazy(() => import('./components/ScratchpadTile').then((m) => ({ default: m.ScratchpadTile })));
+const QuoteTile = lazy(() => import('./components/QuoteTile').then((m) => ({ default: m.QuoteTile })));
+const OnThisDayTile = lazy(() => import('./components/OnThisDayTile').then((m) => ({ default: m.OnThisDayTile })));
+const RandomWikiTile = lazy(() => import('./components/RandomWikiTile').then((m) => ({ default: m.RandomWikiTile })));
+const WordOfDayTile = lazy(() => import('./components/WordOfDayTile').then((m) => ({ default: m.WordOfDayTile })));
+const IssTile = lazy(() => import('./components/IssTile').then((m) => ({ default: m.IssTile })));
+const LaunchesTile = lazy(() => import('./components/LaunchesTile').then((m) => ({ default: m.LaunchesTile })));
+const DailyChallengeTile = lazy(() => import('./components/DailyChallengeTile').then((m) => ({ default: m.DailyChallengeTile })));
+const PollenTile = lazy(() => import('./components/PollenTile').then((m) => ({ default: m.PollenTile })));
+const BirdsTile = lazy(() => import('./components/BirdsTile').then((m) => ({ default: m.BirdsTile })));
+const SolarFlareTile = lazy(() => import('./components/SolarFlareTile').then((m) => ({ default: m.SolarFlareTile })));
+const LightningTile = lazy(() => import('./components/LightningTile').then((m) => ({ default: m.LightningTile })));
+const AircraftTile = lazy(() => import('./components/AircraftTile').then((m) => ({ default: m.AircraftTile })));
+const ActiveWindowTile = lazy(() => import('./components/ActiveWindowTile').then((m) => ({ default: m.ActiveWindowTile })));
+const DockerTile = lazy(() => import('./components/DockerTile').then((m) => ({ default: m.DockerTile })));
+const EnergyTile = lazy(() => import('./components/EnergyTile').then((m) => ({ default: m.EnergyTile })));
 
 // Vite injects `import.meta.env` at build time; the project has no
 // vite-env.d.ts / "vite/client" types reference, so declare the one flag we
@@ -768,7 +776,9 @@ export default function App() {
               })}
               accent={accent}
             >
-              {renderTile(instance)}
+              <Suspense fallback={<TileSkeleton rows={3} />}>
+                {renderTile(instance)}
+              </Suspense>
             </TileFrame>
           );
         })}
@@ -843,16 +853,18 @@ export default function App() {
           />
         )}
         {showGallery && (
-          <VizGallery
-            accent={vizAccent}
-            accent2={vizAccent2}
-            spectrumRef={spectrumRef}
-            currentMode={t.vizMode}
-            sensitivity={t.vizSensitivity}
-            smoothing={t.vizSmoothing}
-            onPick={(m) => setTweak('vizMode', m)}
-            onClose={() => setShowGallery(false)}
-          />
+          <Suspense fallback={null}>
+            <VizGallery
+              accent={vizAccent}
+              accent2={vizAccent2}
+              spectrumRef={spectrumRef}
+              currentMode={t.vizMode}
+              sensitivity={t.vizSensitivity}
+              smoothing={t.vizSmoothing}
+              onPick={(m) => setTweak('vizMode', m)}
+              onClose={() => setShowGallery(false)}
+            />
+          </Suspense>
         )}
         {showTileLibrary && (
           <TileLibrary

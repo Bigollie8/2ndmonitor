@@ -2,38 +2,7 @@ import { useEffect, useState, type MutableRefObject } from 'react';
 import type { SpectrumState } from '../state/tauri';
 import type { VizMode } from '../types';
 import { HiFiVizSurface } from './viz';
-
-interface VizStyle { id: VizMode; label: string; desc: string }
-
-export const VIZ_STYLES: VizStyle[] = [
-  { id: 'bars',         label: 'Bars',         desc: 'Classic spectrum analyzer' },
-  { id: 'waveform',     label: 'Waveform',     desc: 'Smooth oscilloscope' },
-  { id: 'radial',       label: 'Radial',       desc: 'Circular spectrum' },
-  { id: 'particles',    label: 'Particles',    desc: 'Drifting points' },
-  { id: 'ambient',      label: 'Ambient',      desc: 'Slow morphing blobs' },
-  { id: 'neonbars',     label: 'Neon bars',    desc: 'Glowing solid bars' },
-  { id: 'splitmirror',  label: 'Split mirror', desc: 'Mirrored bars on a horizon' },
-  { id: 'circular',     label: 'Circular pulse', desc: 'Radial w/ bass disc' },
-  { id: 'tunnel',       label: 'Wave tunnel',  desc: 'Layered depth waveforms' },
-  { id: 'pixelled',     label: 'Pixel LED',    desc: 'Retro LED matrix · heatmap' },
-  { id: 'ribbon',       label: 'Ribbon',       desc: 'Filled symmetric flow' },
-  { id: 'scope',        label: 'Oscilloscope', desc: 'CRT phosphor trace' },
-  { id: 'spectrogram',  label: 'Spectrogram',  desc: 'Scrolling waterfall' },
-  { id: 'vinyl',        label: 'Vinyl',        desc: 'Spinning record' },
-  { id: 'kaleidoscope', label: 'Kaleidoscope', desc: 'Symmetric petals' },
-  { id: 'freqgrid',     label: 'Freq grid',    desc: 'Time × frequency cells' },
-  { id: 'minimal',      label: 'Minimal dots', desc: 'Bass / Mid / Treble pulse' },
-  { id: 'starfield',    label: 'Starfield',    desc: 'Hyperspace · kick-flash bursts' },
-  { id: 'perlin',       label: 'Perlin flow',  desc: 'Noise-field particles · drifting' },
-  { id: 'orbital',      label: 'Orbital',      desc: 'Sun + 4 reactive frequency rings' },
-  { id: 'aurora',       label: 'Aurora',       desc: 'Veils over moonlit horizon' },
-  { id: 'city',         label: 'Neon city',    desc: 'Skyline w/ frequency-lit windows' },
-  { id: 'strings',      label: 'Strings',      desc: 'Plucked physical strings' },
-  { id: 'hud',          label: 'Aircraft HUD', desc: 'Reticle · pitch ladder · tapes' },
-  { id: 'liquid',       label: 'Liquid',       desc: 'Metaball lava · bass merges' },
-  { id: 'cassette',     label: 'Cassette',     desc: 'Tape deck · reels · VU meters' },
-  { id: 'constellation', label: 'Constellation', desc: 'Particles connect when near' },
-];
+import { VIZ_STYLES, type VizStyle } from './viz-styles';
 
 export function VizGallery({
   accent, accent2, spectrumRef, currentMode, onPick, onClose,

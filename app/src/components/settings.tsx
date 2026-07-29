@@ -3,7 +3,7 @@ import type { ReactNode } from 'react';
 import type { VizMode, AccentTheme, Density, WeatherLocation } from '../types';
 import type { GeocodeResult } from '../state/weatherLocation';
 import { ACCENT_PALETTES } from '../data';
-import { VIZ_STYLES } from './viz-gallery';
+import { VIZ_STYLES } from './viz-styles';
 import { defaultBookmarks, type Bookmark } from './browser-player';
 import { isTauri } from '../state/tauri';
 

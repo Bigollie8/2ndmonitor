@@ -1,5 +1,5 @@
 import { mediaControls, discordVoice, appActions } from './tauri';
-import { VIZ_STYLES } from '../components/viz-gallery';
+import { VIZ_STYLES } from '../components/viz-styles';
 import type { VizMode } from '../types';
 
 /** A single action a Stream Deck button can trigger. v2 adds three system-side
