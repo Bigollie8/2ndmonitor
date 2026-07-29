@@ -9,6 +9,7 @@ mod lyrics;
 mod market;
 mod mixer;
 mod nowplaying;
+mod marketplace;
 mod presets;
 mod secrets;
 mod visualizers;
@@ -79,6 +80,10 @@ pub fn run() {
             visualizers::visualizers_list,
             visualizers::visualizers_read,
             visualizers::visualizers_write,
+            marketplace::marketplace_fetch_index,
+            marketplace::marketplace_install,
+            marketplace::marketplace_uninstall,
+            marketplace::broker_fetch,
             mixer::mixer_set_master_volume,
             mixer::mixer_set_master_mute,
             mixer::mixer_set_session_volume,
