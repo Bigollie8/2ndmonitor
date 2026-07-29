@@ -1,11 +1,6 @@
-import React, { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
-import { useAnimateGate, makeSpectrumReader, type VizProps } from './viz';
-import { useWaveformRef } from '../state/waveform';
-import { buildSandboxHtml, SANDBOX_ATTR } from '../sandbox/sandbox-html';
-import { validateManifest } from '../sandbox/manifest';
-import type { InitMessage, SandboxToHost } from '../sandbox/manifest';
-import { buildFrameMessage, toVizPlayback } from '../sandbox/frame';
-import { makeBrokerHandler, permissionsOf, type RpcRequest } from '../sandbox/broker';
+import React, { lazy, Suspense, useCallback, useEffect, useState } from 'react';
+import type { VizProps } from './viz';
+import { SandboxVizSurface, type ScriptError } from './viz-sandbox-surface';
 import { newVizManifest, NEW_VIZ_CODE } from '../sandbox/template';
 
 const VizEditor = lazy(() => import('./viz-editor').then((m) => ({ default: m.VizEditor })));
@@ -20,39 +15,27 @@ interface VizFolder {
 }
 
 const LS_ACTIVE = 'scripted.active';
-const settingsKey = (id: string) => `scripted.settings.${id}`;
 
-/** Host for user-coded visualizers. Each runs inside a no-capability iframe
- *  (sandbox="allow-scripts" + CSP default-src 'none'); the only channel is
- *  postMessage. See src/sandbox/ for the runtime and protocol. */
+/** Authoring host for user-coded visualizers: owns `scripted.active`, the
+ *  folder list, the picker, the code editor and the reload button. The
+ *  iframe lifecycle itself (load code, run it sandboxed, pump frames,
+ *  surface errors) lives in `SandboxVizSurface` — the same runtime that
+ *  installed marketplace `bundle:` styles use directly, chromeless. See
+ *  src/sandbox/ for the runtime and protocol. */
 export function VizScripted(props: VizProps) {
   if (props.preview) return <ScriptedPreviewCard accent={props.accent} accent2={props.accent2} />;
   return <ScriptedSurface {...props} />;
 }
 
-function ScriptedSurface({ accent, accent2, spectrumRef, sensitivity = 1, smoothing = 0, paused, track, playback }: VizProps) {
-  const iframeRef = useRef<HTMLIFrameElement | null>(null);
-  const hostRef = useRef<HTMLDivElement | null>(null);
-  const waveRef = useWaveformRef();
-  const gate = useAnimateGate(paused, 'scripted');
-
+function ScriptedSurface(props: VizProps) {
+  const { accent } = props;
   const [folders, setFolders] = useState<VizFolder[]>([]);
   const [activeId, setActiveId] = useState<string | null>(() => localStorage.getItem(LS_ACTIVE));
-  const [scriptError, setScriptError] = useState<{ message: string; line: number | null } | null>(null);
+  const [scriptError, setScriptError] = useState<ScriptError>(null);
   const [hovered, setHovered] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [editorOpen, setEditorOpen] = useState(false);
   const [loadNonce, setLoadNonce] = useState(0);
-
-  const readyRef = useRef(false);
-  const codeRef = useRef<string>('');
-  const brokerRef = useRef<ReturnType<typeof makeBrokerHandler> | null>(null);
-  const themeRef = useRef({ accent, accent2 });
-  themeRef.current = { accent, accent2 };
-  const trackRef = useRef(track ?? null);
-  trackRef.current = track ?? null;
-  const playbackRef = useRef(playback ?? null);
-  playbackRef.current = playback ?? null;
 
   const refreshList = useCallback(async () => {
     try {
@@ -84,134 +67,6 @@ function ScriptedSurface({ accent, accent2, spectrumRef, sensitivity = 1, smooth
     return () => { cancelled = true; unlisten?.(); };
   }, [refreshList]);
 
-  // Load active visualizer source + init the sandbox when ready.
-  useEffect(() => {
-    if (!activeId) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        const { invoke } = await import('@tauri-apps/api/core');
-        const src = await invoke<{ manifest: string; code: string }>('visualizers_read', { id: activeId });
-        if (cancelled) return;
-        let manifestErr: string | null = null;
-        try {
-          // allowPermissions: installed marketplace bundles may carry vetted
-          // permissions; locally-authored ones still declare none.
-          const v = validateManifest(JSON.parse(src.manifest), { allowPermissions: true });
-          if (!v.ok) manifestErr = v.error;
-          else brokerRef.current = makeBrokerHandler(permissionsOf(v.manifest.permissions), {
-            fetch: async (url) => {
-              const { invoke } = await import('@tauri-apps/api/core');
-              return invoke('broker_fetch', { url });
-            },
-            invoke: async (command, args) => {
-              const { invoke } = await import('@tauri-apps/api/core');
-              return invoke(command, args as Record<string, unknown> | undefined);
-            },
-          });
-        } catch {
-          manifestErr = 'manifest.json is not valid JSON';
-        }
-        if (manifestErr) {
-          setScriptError({ message: `manifest: ${manifestErr}`, line: null });
-          return;
-        }
-        setScriptError(null);
-        codeRef.current = src.code;
-        sendInit();
-      } catch (e) {
-        if (!cancelled) setScriptError({ message: String(e), line: null });
-      }
-    })();
-    return () => { cancelled = true; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeId, loadNonce]);
-
-  const sendInit = useCallback(() => {
-    const win = iframeRef.current?.contentWindow;
-    if (!win || !readyRef.current || !codeRef.current || !activeId || !hostRef.current) return;
-    let settings: Record<string, unknown> = {};
-    try {
-      settings = JSON.parse(localStorage.getItem(settingsKey(activeId)) ?? '{}');
-    } catch { /* fresh */ }
-    const rect = hostRef.current.getBoundingClientRect();
-    const msg: InitMessage = {
-      type: 'init',
-      code: codeRef.current,
-      settings,
-      size: { width: Math.round(rect.width), height: Math.round(rect.height) },
-      theme: themeRef.current,
-    };
-    win.postMessage(msg, '*');
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeId]);
-
-  // Sandbox → host messages.
-  useEffect(() => {
-    const onMessage = (e: MessageEvent) => {
-      if (e.source !== iframeRef.current?.contentWindow) return;
-      const msg = e.data as SandboxToHost | { type: 'rpc'; rpcId: number; rpc: RpcRequest['rpc']; url?: string; command?: string; args?: unknown };
-      if (msg?.type === 'rpc') {
-        // Broker-mediated capability request from an installed bundle.
-        const win = iframeRef.current?.contentWindow;
-        const handler = brokerRef.current;
-        const reply = (r: { ok: true; value: unknown } | { ok: false; error: string }) =>
-          win?.postMessage({ type: 'rpc:result', rpcId: msg.rpcId, ...r }, '*');
-        if (!handler) { reply({ ok: false, error: 'no permissions granted' }); return; }
-        void handler({ rpc: msg.rpc, url: msg.url, command: msg.command, args: msg.args }).then(reply);
-        return;
-      }
-      if (msg?.type === 'ready') {
-        readyRef.current = true;
-        sendInit();
-      } else if (msg?.type === 'error') {
-        setScriptError({ message: msg.message, line: msg.line });
-      } else if (msg?.type === 'settings:set' && activeId) {
-        try {
-          const cur = JSON.parse(localStorage.getItem(settingsKey(activeId)) ?? '{}');
-          cur[msg.key] = msg.value;
-          localStorage.setItem(settingsKey(activeId), JSON.stringify(cur));
-        } catch { /* ignore corrupt settings */ }
-      }
-    };
-    window.addEventListener('message', onMessage);
-    return () => window.removeEventListener('message', onMessage);
-  }, [activeId, sendInit]);
-
-  // Frame pump.
-  useEffect(() => {
-    const reader = makeSpectrumReader(64, spectrumRef, sensitivity, smoothing);
-    let raf = 0;
-    let last = performance.now();
-    const tick = () => {
-      raf = requestAnimationFrame(tick);
-      const win = iframeRef.current?.contentWindow;
-      if (!win || !readyRef.current || !hostRef.current) return;
-      if (!gate.shouldDraw()) return;
-      const now = performance.now();
-      const dtMs = now - last;
-      last = now;
-      reader.read();
-      const rect = hostRef.current.getBoundingClientRect();
-      const msg = buildFrameMessage({
-        spectrum: reader.out,
-        waveform: waveRef.current.mono,
-        bands: reader.bands,
-        onset: reader.onset,
-        level: spectrumRef?.current.level ?? 0,
-        dtMs,
-        size: { width: Math.round(rect.width), height: Math.round(rect.height) },
-        theme: themeRef.current,
-        track: trackRef.current ? { title: trackRef.current.title, artist: trackRef.current.artist } : null,
-        playback: toVizPlayback(playbackRef.current, now),
-      });
-      win.postMessage(msg, '*');
-    };
-    raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [spectrumRef, sensitivity, smoothing]);
-
   const createNew = useCallback(async () => {
     const list = await refreshList();
     let id = 'my-first-viz';
@@ -238,24 +93,20 @@ function ScriptedSurface({ accent, accent2, spectrumRef, sensitivity = 1, smooth
 
   return (
     <div
-      ref={hostRef}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
-      style={{ position: 'absolute', inset: 0, background: '#000', overflow: 'hidden' }}
+      style={{ position: 'absolute', inset: 0, overflow: 'hidden' }}
     >
-      {activeId ? (
-        <iframe
-          key={`${activeId}`}
-          ref={(el) => {
-            if (iframeRef.current !== el) readyRef.current = false;
-            iframeRef.current = el;
-          }}
-          sandbox={SANDBOX_ATTR}
-          srcDoc={buildSandboxHtml()}
-          title="scripted visualizer"
-          style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', border: 0, background: '#000' }}
-        />
-      ) : (
+      <SandboxVizSurface
+        {...props}
+        bundleId={activeId}
+        chrome
+        reloadKey={loadNonce}
+        suppressErrorBanner={editorOpen}
+        onError={setScriptError}
+      />
+
+      {!activeId && (
         <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', padding: 20 }}>
           <div style={{ textAlign: 'center', maxWidth: 420 }}>
             <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 8 }}>Code your own visualizer</div>
@@ -321,20 +172,6 @@ function ScriptedSurface({ accent, accent2, spectrumRef, sensitivity = 1, smooth
               style={{ padding: '8px 12px', fontSize: 12, cursor: 'pointer', color: accent, borderTop: '1px solid rgba(255,255,255,0.06)' }}
             >+ New visualizer</div>
           </div>
-        </div>
-      )}
-
-      {scriptError && !editorOpen && (
-        <div style={{
-          position: 'absolute', left: 10, right: 10, top: 10, padding: '8px 12px',
-          background: 'rgba(40,8,10,0.9)', border: '1px solid rgba(255,80,80,0.4)', borderRadius: 8,
-          fontSize: 11, color: 'rgba(255,180,180,0.95)', fontFamily: '"JetBrains Mono", ui-monospace, monospace',
-          display: 'flex', gap: 10, alignItems: 'baseline',
-        }}>
-          <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis' }}>
-            {scriptError.line != null ? `line ${scriptError.line}: ` : ''}{scriptError.message}
-          </span>
-          <span style={{ cursor: 'pointer', opacity: 0.7 }} onClick={() => setScriptError(null)}>✕</span>
         </div>
       )}
 

@@ -6,6 +6,7 @@ import { recordDraw, useRegisterSurface } from '../perf/debug';
 import { paceFrame } from '../state/framePace';
 import { VIZ_STYLES } from './viz-styles';
 import { BrowserPlayer, type Bookmark } from './browser-player';
+import { bundleIdOf } from '../state/contentRegistry';
 
 // The 22 "extra" visualizer styles (viz-extra/viz-extra2) are lazy-loaded:
 // most sessions run a single style, and eagerly importing all of them bloats
@@ -36,6 +37,7 @@ const VizCassette = lazy(() => import('./viz-extra2').then((m) => ({ default: m.
 const VizConstellation = lazy(() => import('./viz-extra2').then((m) => ({ default: m.VizConstellation })));
 const VizMilkdrop = lazy(() => import('./viz-milkdrop').then((m) => ({ default: m.VizMilkdrop })));
 const VizScripted = lazy(() => import('./viz-scripted').then((m) => ({ default: m.VizScripted })));
+const SandboxVizSurface = lazy(() => import('./viz-sandbox-surface').then((m) => ({ default: m.SandboxVizSurface })));
 
 /** Per-frame DPR cap for viz canvases. On a 4K monitor at DPR=2, dropping to 1
  *  cuts canvas pixel work 4x with no perceptible loss for music visualizers. */
@@ -667,7 +669,15 @@ export function HiFiVizSurface({ mode, accent, accent2, spectrumRef, sensitivity
       case 'constellation': return <VizConstellation {...props} />;
     case 'milkdrop':      return <VizMilkdrop {...props} />;
     case 'scripted':      return <VizScripted {...props} />;
-      default:             return null;
+    default: {
+      // Installed marketplace visualizer: same sandbox runtime, no authoring
+      // chrome. An unknown non-bundle mode falls back to Bars rather than
+      // rendering a blank tile.
+      const bundleId = bundleIdOf(mode);
+      return bundleId
+        ? <SandboxVizSurface {...props} bundleId={bundleId} chrome={false} />
+        : <HiFiVizBars {...props} />;
+    }
     }
   })();
   return <Suspense fallback={null}>{surface}</Suspense>;
