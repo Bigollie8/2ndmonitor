@@ -22,6 +22,16 @@ pub fn set_close_to_tray(enabled: bool) {
 
 fn toggle_window<R: Runtime>(app: &AppHandle<R>) {
     if let Some(win) = app.get_webview_window("main") {
+        // Win32 reports a minimized window as "visible" (is_visible() only
+        // reflects WS_VISIBLE, not the minimized/iconic state), so without this
+        // check a left-click on a minimized window would hit the `Ok(true)` arm
+        // below and hide it instead of restoring it.
+        if win.is_minimized().unwrap_or(false) {
+            let _ = win.show();
+            let _ = win.unminimize();
+            let _ = win.set_focus();
+            return;
+        }
         match win.is_visible() {
             Ok(true) => { let _ = win.hide(); }
             _ => { let _ = win.show(); let _ = win.unminimize(); let _ = win.set_focus(); }

@@ -65,6 +65,16 @@ pub async fn tweaks_export<R: Runtime>(app: AppHandle<R>, json: String) -> Resul
     Ok(true)
 }
 
+/// Shows a blocking native error dialog. Used so a bad import file is never a
+/// silent no-op — the user sees exactly why nothing changed.
+fn show_import_error<R: Runtime>(app: &AppHandle<R>, message: String) {
+    app.dialog()
+        .message(message)
+        .title("Import failed")
+        .kind(tauri_plugin_dialog::MessageDialogKind::Error)
+        .blocking_show();
+}
+
 #[tauri::command]
 pub async fn tweaks_import<R: Runtime>(app: AppHandle<R>) -> Result<Option<String>, String> {
     let Some(path) = app
@@ -76,8 +86,30 @@ pub async fn tweaks_import<R: Runtime>(app: AppHandle<R>) -> Result<Option<Strin
     else {
         return Ok(None);
     };
-    let text = fs::read_to_string(&path).map_err(|e| format!("read {}: {e}", path.display()))?;
+    let text = match fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(e) => {
+            show_import_error(&app, format!("Could not read {}:\n{e}", path.display()));
+            return Ok(None);
+        }
+    };
     // Parse to validate early — a clear error beats a silent no-op merge.
-    serde_json::from_str::<Value>(&text).map_err(|e| format!("not valid JSON: {e}"))?;
+    let value: Value = match serde_json::from_str(&text) {
+        Ok(v) => v,
+        Err(e) => {
+            show_import_error(&app, format!("{} is not valid JSON:\n{e}", path.display()));
+            return Ok(None);
+        }
+    };
+    // Arrays/primitives would otherwise reach the frontend's mergeTweaks and
+    // (via object-spread of a non-object) silently corrupt state — reject here
+    // with a visible dialog instead of relying solely on the frontend guard.
+    if !value.is_object() {
+        show_import_error(
+            &app,
+            format!("{} does not contain a settings object.", path.display()),
+        );
+        return Ok(None);
+    }
     Ok(Some(text))
 }
