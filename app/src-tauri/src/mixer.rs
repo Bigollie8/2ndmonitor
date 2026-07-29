@@ -13,6 +13,7 @@
 
 use parking_lot::{const_mutex, Mutex};
 use serde::Serialize;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
 use std::time::Duration;
@@ -63,6 +64,12 @@ enum MixerCmd {
 
 static SENDER: Mutex<Option<Sender<MixerCmd>>> = const_mutex(None);
 
+/// Gate for the 1 Hz snapshot loop. The COM device/session enumeration is the
+/// expensive part of this module, so we only do it while a mixer tile is
+/// actually mounted — the frontend flips this via `set_mixer_active`. Setter
+/// commands (volume/mute/default-output) keep working regardless.
+static MIXER_ACTIVE: AtomicBool = AtomicBool::new(false);
+
 fn send(cmd: MixerCmd) {
     if let Some(tx) = SENDER.lock().as_ref() {
         let _ = tx.send(cmd);
@@ -92,6 +99,10 @@ pub fn mixer_set_default_output(device_id: String) {
 #[tauri::command]
 pub fn mixer_refresh() {
     send(MixerCmd::Refresh);
+}
+#[tauri::command]
+pub fn set_mixer_active(active: bool) {
+    MIXER_ACTIVE.store(active, Ordering::Relaxed);
 }
 
 pub fn spawn<R: Runtime>(app: AppHandle<R>) {
@@ -130,6 +141,13 @@ fn worker<R: Runtime>(app: AppHandle<R>, rx: Receiver<MixerCmd>) -> Result<(), S
             while let Ok(c) = rx.try_recv() {
                 unsafe { winimpl::apply_cmd(&enumerator, c) };
             }
+        }
+        // No mixer tile mounted → skip the enumeration + emit entirely. The
+        // 1 s recv_timeout above doubles as the idle sleep (and still services
+        // setter commands), so when the flag flips back on, the very next
+        // iteration produces a fresh snapshot within ~1 s.
+        if !MIXER_ACTIVE.load(Ordering::Relaxed) {
+            continue;
         }
         let snap = unsafe { winimpl::capture(&enumerator) }.unwrap_or_else(|_| MixerSnapshot {
             master: None,

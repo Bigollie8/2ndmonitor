@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import { HFTile } from './tiles';
 import { appActions } from '../state/tauri';
 import {
@@ -6,6 +6,7 @@ import {
   type OnThisDayPayload,
   fetchOnThisDay,
 } from '../state/onThisDay';
+import { usePoll } from '../state/usePoll';
 import type { Density } from '../types';
 
 type Tab = 'events' | 'births' | 'deaths';
@@ -15,19 +16,15 @@ const TABS: Tab[] = ['events', 'births', 'deaths'];
 const REFRESH_MS = 6 * 60 * 60 * 1000; // 6h — date rolls naturally during the day
 
 export function OnThisDayTile({ density, accent }: { density: Density; accent: string }) {
-  const [data, setData] = useState<OnThisDayPayload | null>(null);
   const [tab, setTab] = useState<Tab>('events');
-
-  useEffect(() => {
-    let cancelled = false;
-    const load = async () => {
+  const { data } = usePoll<OnThisDayPayload>(
+    async () => {
       const d = await fetchOnThisDay();
-      if (!cancelled && d) setData(d);
-    };
-    void load();
-    const id = setInterval(load, REFRESH_MS);
-    return () => { cancelled = true; clearInterval(id); };
-  }, []);
+      if (d == null) throw new Error('fetch failed');
+      return d;
+    },
+    REFRESH_MS,
+  );
 
   const items: OnThisDayItem[] = data ? data[tab] : [];
   const headRight = (

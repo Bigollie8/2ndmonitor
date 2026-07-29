@@ -1,10 +1,12 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { HFTile } from './tiles';
 import {
   type StockQuote,
   fetchStockQuotes,
   parseStocksConfig,
 } from '../state/stocks';
+import { usePoll } from '../state/usePoll';
+import { TileEmpty, TileSkeleton } from './tileStates';
 import type { Density } from '../types';
 
 const REFRESH_MS = 60 * 1000;
@@ -21,22 +23,15 @@ export interface StocksTileProps {
 export function StocksTile({ density, accent, editing, config, setConfig }: StocksTileProps) {
   const parsed = useMemo(() => parseStocksConfig(config), [config]);
   const symbolsKey = parsed.symbols.join(',');
-  const [quotes, setQuotes] = useState<StockQuote[]>([]);
-  const [loading, setLoading] = useState<boolean>(true);
-
-  useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
-    const load = async () => {
-      const next = await fetchStockQuotes(parsed.symbols);
-      if (cancelled) return;
-      setQuotes(next);
-      setLoading(false);
-    };
-    void load();
-    const id = setInterval(load, REFRESH_MS);
-    return () => { cancelled = true; clearInterval(id); };
-  }, [symbolsKey]);
+  // fetchStockQuotes returns [] both for "no symbols" and for a failed invoke,
+  // so there is no reliable failure signal to promote to a throw; per-symbol
+  // errors ride along inside each StockQuote.error and render in the rows.
+  const { data, loading } = usePoll(
+    () => fetchStockQuotes(parsed.symbols),
+    REFRESH_MS,
+    [symbolsKey],
+  );
+  const quotes: StockQuote[] = data ?? [];
 
   const [draft, setDraft] = useState<string>('');
   const [showEdit, setShowEdit] = useState<boolean>(false);
@@ -85,12 +80,13 @@ export function StocksTile({ density, accent, editing, config, setConfig }: Stoc
         overflow: 'hidden',
       }}>
         {parsed.symbols.length === 0 && (
-          <div style={{ color: 'rgba(255,255,255,0.45)', fontSize: 11, padding: 8 }}>
-            No tickers. Add some in edit mode.
-          </div>
+          <TileEmpty icon="▲" line="No tickers. Add some in edit mode." />
+        )}
+        {parsed.symbols.length > 0 && loading && quotes.length === 0 && (
+          <TileSkeleton rows={Math.min(parsed.symbols.length, 6)} />
         )}
         <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 1 }}>
-          {parsed.symbols.map((sym) => {
+          {!(loading && quotes.length === 0) && parsed.symbols.map((sym) => {
             const q = quotes.find((x) => x.symbol === sym);
             return (
               <Row

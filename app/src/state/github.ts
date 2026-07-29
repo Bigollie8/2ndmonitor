@@ -16,16 +16,11 @@ export interface GithubPr {
   bucket: GithubFilter;
 }
 
-const TOKEN_KEY = '2mh.github.pat';
+// The GitHub PAT lives in the encrypted secret store (see state/secrets.ts,
+// key "github_pat"; legacy localStorage key "2mh.github.pat" is migrated on
+// first read). Only the non-secret username stays in plain localStorage.
 const USER_KEY = '2mh.github.user';
 
-export function getStoredToken(): string {
-  return localStorage.getItem(TOKEN_KEY) ?? '';
-}
-export function setStoredToken(t: string): void {
-  if (t.trim()) localStorage.setItem(TOKEN_KEY, t.trim());
-  else localStorage.removeItem(TOKEN_KEY);
-}
 export function getStoredUser(): string {
   return localStorage.getItem(USER_KEY) ?? '';
 }
@@ -38,7 +33,7 @@ interface RawSearchResp {
   total_count?: number;
   items?: RawIssueItem[];
 }
-interface RawIssueItem {
+export interface RawIssueItem {
   id?: number;
   number?: number;
   title?: string;
@@ -60,14 +55,14 @@ async function callGithub(token: string, query: string): Promise<RawSearchResp |
   }
 }
 
-function repoFromUrl(repoUrl: string | undefined): string {
+export function repoFromUrl(repoUrl: string | undefined): string {
   if (!repoUrl) return '';
   // "https://api.github.com/repos/owner/name" → "owner/name"
   const m = repoUrl.match(/repos\/([^/]+\/[^/]+)/);
   return m ? m[1] : '';
 }
 
-function mapItems(items: RawIssueItem[] | undefined, bucket: GithubFilter): GithubPr[] {
+export function mapItems(items: RawIssueItem[] | undefined, bucket: GithubFilter): GithubPr[] {
   if (!items) return [];
   return items
     .filter((it) => typeof it.number === 'number' && typeof it.html_url === 'string')
@@ -95,10 +90,15 @@ export async function fetchAllPrs(token: string, user: string): Promise<GithubPr
     { q: `is:open is:pr author:${user} archived:false`, bucket: 'authored' },
   ];
   const results = await Promise.all(queries.map((q) => callGithub(token, q.q).then((r) => mapItems(r?.items, q.bucket))));
-  // De-duplicate (a PR can be authored AND review-requested — keep first occurrence).
+  return dedupePrs(results);
+}
+
+/** De-duplicate across buckets (a PR can be authored AND review-requested —
+ *  keep the first occurrence, in the order the bucket lists were passed). */
+export function dedupePrs(lists: GithubPr[][]): GithubPr[] {
   const seen = new Set<number>();
   const out: GithubPr[] = [];
-  for (const list of results) {
+  for (const list of lists) {
     for (const pr of list) {
       if (seen.has(pr.id)) continue;
       seen.add(pr.id);

@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { HFTile } from './tiles';
 import { type BlitzortungStatus, type LightningStrike, connectBlitzortung } from '../state/blitzortung';
 import { distanceKm } from '../state/iss';
+import { TileError } from './tileStates';
 import type { Density, WeatherLocation } from '../types';
 
 /** Strikes farther than this from the user are dropped on the floor — at
@@ -23,8 +24,13 @@ interface RecentStrike extends LightningStrike {
 
 export function LightningTile({ density, accent, location }: LightningTileProps) {
   const [strikes, setStrikes] = useState<RecentStrike[]>([]);
-  const [status, setStatus] = useState<BlitzortungStatus>({ kind: 'disconnected' });
+  // Starts 'connecting': the effect below connects on mount, and starting at
+  // 'disconnected' would flash the error state for one frame before it runs.
+  const [status, setStatus] = useState<BlitzortungStatus>({ kind: 'connecting' });
   const [now, setNow] = useState<number>(() => Date.now());
+  /** Bumped by the error-state Retry button to re-run the connect effect
+   *  immediately instead of waiting out the 5s auto-reconnect. */
+  const [retryTick, setRetryTick] = useState(0);
   const lastSeenRef = useRef<Set<number>>(new Set());
 
   useEffect(() => {
@@ -33,17 +39,21 @@ export function LightningTile({ density, accent, location }: LightningTileProps)
         const distance = distanceKm(s.lat, s.lon, location.lat, location.lon);
         if (distance > RADIUS_KM) return;
         if (lastSeenRef.current.has(s.timeNs)) return;
-        lastSeenRef.current.add(s.timeNs);
         setStrikes((prev) => {
           const next: RecentStrike[] = [{ ...s, distance }, ...prev];
           if (next.length > MAX_STRIKES) next.length = MAX_STRIKES;
+          // Rebuild the dedup set from what we kept — the feed only
+          // re-delivers near-real-time duplicates, so deduping against
+          // retained strikes is enough, and the set stays bounded at
+          // MAX_STRIKES instead of growing for the lifetime of the tile.
+          lastSeenRef.current = new Set(next.map((r) => r.timeNs));
           return next;
         });
       },
       onStatus: setStatus,
     });
     return cleanup;
-  }, [location.lat, location.lon]);
+  }, [location.lat, location.lon, retryTick]);
 
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now()), 5000);
@@ -122,6 +132,12 @@ export function LightningTile({ density, accent, location }: LightningTileProps)
               />
             );
           })}
+          {status.kind === 'disconnected' && (
+            <TileError
+              line="Lightning feed disconnected."
+              onRetry={() => setRetryTick((t) => t + 1)}
+            />
+          )}
         </div>
         {/* Closest stat row */}
         <div style={{

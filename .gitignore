@@ -12,6 +12,9 @@ Thumbs.db
 .vscode/
 .idea/
 
+# Claude Code local state (worktrees, task locks)
+.claude/
+
 # Tauri
 app/src-tauri/gen/
 

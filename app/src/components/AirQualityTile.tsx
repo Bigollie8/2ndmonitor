@@ -1,11 +1,11 @@
-import React, { useEffect, useState } from 'react';
+import React from 'react';
 import { HFTile } from './tiles';
 import {
-  type AirQualitySample,
   aqiCategory,
   fetchAirQuality,
   uvCategory,
 } from '../state/airquality';
+import { usePoll } from '../state/usePoll';
 import type { Density, WeatherLocation } from '../types';
 
 const REFRESH_MS = 15 * 60 * 1000;
@@ -17,19 +17,17 @@ export interface AirQualityTileProps {
 }
 
 export function AirQualityTile({ density, accent, location }: AirQualityTileProps) {
-  const [sample, setSample] = useState<AirQualitySample | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    const load = async () => {
+  // fetchAirQuality returns null on failure; throw so usePoll backs off while
+  // keeping the last good sample visible.
+  const { data: sample } = usePoll(
+    async () => {
       const s = await fetchAirQuality(location.lat, location.lon);
-      if (cancelled) return;
-      if (s) setSample(s);
-    };
-    void load();
-    const id = setInterval(load, REFRESH_MS);
-    return () => { cancelled = true; clearInterval(id); };
-  }, [location.lat, location.lon]);
+      if (s == null) throw new Error('fetch failed');
+      return s;
+    },
+    REFRESH_MS,
+    [location.lat, location.lon],
+  );
 
   const aqi = aqiCategory(sample?.usAqi ?? null);
   const uv = uvCategory(sample?.uvIndex ?? null);

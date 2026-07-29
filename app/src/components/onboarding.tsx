@@ -1,16 +1,12 @@
 import React, { useState } from 'react';
 import { ProfilePreview } from './profile';
 
-const STEPS = ['Welcome', 'Audio source', 'Pick a profile', 'Connect tiles', 'Ready'];
-
-/** Dashboard tile ids that the onboarding tile picker can toggle visibility for.
- *  `viz` is intentionally excluded — it can't be hidden. */
-const DASHBOARD_TILE_IDS = ['discord', 'spotify', 'claude', 'notes', 'sysmon', 'clock'] as const;
+const STEPS = ['Welcome', 'Pick a profile', 'Ready'];
 
 export interface OnboardingResult {
-  audio?: string;          // currently unused at the app level, but pass it through
+  audio?: string;          // legacy — no longer collected; kept optional so App.tsx compiles
   profileId?: string;      // id of profile chosen on the "Pick a profile" step
-  hiddenForActive?: Partial<Record<string, boolean>>; // tile-visibility map for the chosen profile
+  hiddenForActive?: Partial<Record<string, boolean>>; // legacy — no longer collected; kept optional so App.tsx compiles
 }
 
 export function Onboarding({ accent, profiles, onFinish }: {
@@ -19,27 +15,11 @@ export function Onboarding({ accent, profiles, onFinish }: {
   onFinish: (result?: OnboardingResult) => void;
 }) {
   const [step, setStep] = useState(0);
-  const [audio, setAudio] = useState('wasapi');
   const [profile, setProfile] = useState<string | null>(null);
-  const [tiles, setTiles] = useState<Record<string, boolean>>({
-    spotify: true, discord: true, claude: true, sysmon: true, notes: true, clock: true,
-  });
 
-  const buildResult = (): OnboardingResult => {
-    // Map onboarding's checkbox map to a hidden-tile map for the dashboard:
-    // checked → visible (false / undefined), unchecked → hidden (true).
-    const hidden: Partial<Record<string, boolean>> = {};
-    for (const id of DASHBOARD_TILE_IDS) {
-      const checked = tiles[id];
-      if (checked === false) hidden[id] = true;
-      // Missing or true → leave as visible (no entry).
-    }
-    return {
-      audio,
-      profileId: profile ?? undefined,
-      hiddenForActive: hidden,
-    };
-  };
+  const buildResult = (): OnboardingResult => ({
+    profileId: profile ?? undefined,
+  });
 
   return (
     <div style={{
@@ -81,10 +61,8 @@ export function Onboarding({ accent, profiles, onFinish }: {
       </div>
       <div style={{ flex: 1, position: 'relative', zIndex: 2, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 40 }}>
         {step === 0 && <OnbWelcome accent={accent} />}
-        {step === 1 && <OnbAudio accent={accent} value={audio} setValue={setAudio} />}
-        {step === 2 && <OnbProfile accent={accent} profiles={profiles} value={profile} setValue={setProfile} />}
-        {step === 3 && <OnbTiles accent={accent} tiles={tiles} setTiles={setTiles} />}
-        {step === 4 && <OnbReady accent={accent} profile={profile} profiles={profiles} audio={audio} tiles={tiles} />}
+        {step === 1 && <OnbProfile accent={accent} profiles={profiles} value={profile} setValue={setProfile} />}
+        {step === 2 && <OnbReady accent={accent} profile={profile} profiles={profiles} />}
       </div>
       <div style={{ position: 'relative', zIndex: 2, padding: '24px 48px', display: 'flex', alignItems: 'center', gap: 12, borderTop: '1px solid rgba(255,255,255,0.04)' }}>
         <button onClick={() => step > 0 && setStep(step - 1)} disabled={step === 0} style={{
@@ -130,7 +108,7 @@ function OnbWelcome({ accent }: { accent: string }) {
       </h1>
       <p style={{ fontSize: 18, color: 'rgba(255,255,255,0.6)', lineHeight: 1.5, margin: '0 0 40px 0' }}>
         Hub turns spare screens into a glanceable cockpit. Audio reactive visualizers, system monitor, your apps as tiles —
-        all themed to whatever's playing.
+        all themed to whatever's playing. Audio just works: Hub captures your system audio (WASAPI loopback), no configuration needed.
       </p>
       <div style={{ display: 'flex', gap: 24, justifyContent: 'center', marginTop: 48 }}>
         {[
@@ -143,39 +121,6 @@ function OnbWelcome({ accent }: { accent: string }) {
             <div style={{ width: 48, height: 48, borderRadius: 10, background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 22, color: accent }}>{f.i}</div>
             <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)' }}>{f.label}</span>
           </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function OnbAudio({ accent, value, setValue }: { accent: string; value: string; setValue: (s: string) => void }) {
-  const SOURCES = [
-    { id: 'wasapi',  name: 'System loopback', subtitle: 'Capture everything on this PC (recommended)', sub2: 'WASAPI · zero config',     icon: '◢' },
-    { id: 'spotify', name: 'Spotify',         subtitle: 'Direct from Spotify with track metadata',     sub2: 'Connects to your account', icon: '♪' },
-    { id: 'mic',     name: 'Microphone',      subtitle: 'Vocal-driven viz for streaming or DJ sets',   sub2: 'Default input device',     icon: '◓' },
-    { id: 'cable',   name: 'Virtual cable',   subtitle: 'Route any specific app or hardware',          sub2: 'Advanced · VB-Audio',      icon: '⌥' },
-  ];
-  return (
-    <div style={{ maxWidth: 880, width: '100%' }}>
-      <h1 style={{ fontSize: 40, fontWeight: 700, margin: '0 0 8px 0', letterSpacing: '-0.02em', textAlign: 'center' }}>Where's the audio coming from?</h1>
-      <p style={{ fontSize: 15, color: 'rgba(255,255,255,0.5)', margin: '0 0 36px 0', textAlign: 'center' }}>The visualizer needs an audio stream. You can change this anytime.</p>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 14 }}>
-        {SOURCES.map((s) => (
-          <button key={s.id} onClick={() => setValue(s.id)} style={{
-            display: 'flex', alignItems: 'flex-start', gap: 16, padding: 20, borderRadius: 12,
-            background: value === s.id ? `${accent}10` : 'rgba(255,255,255,0.02)',
-            border: value === s.id ? `2px solid ${accent}` : '2px solid rgba(255,255,255,0.06)',
-            color: '#fff', textAlign: 'left', cursor: 'pointer',
-          }}>
-            <div style={{ width: 44, height: 44, borderRadius: 10, background: value === s.id ? accent : 'rgba(255,255,255,0.04)', color: value === s.id ? '#000' : accent, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 22, flexShrink: 0 }}>{s.icon}</div>
-            <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 4 }}>{s.name}</div>
-              <div style={{ fontSize: 13, color: 'rgba(255,255,255,0.6)', marginBottom: 6, lineHeight: 1.4 }}>{s.subtitle}</div>
-              <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.35)', fontFamily: '"JetBrains Mono", ui-monospace, monospace', textTransform: 'uppercase', letterSpacing: '.06em' }}>{s.sub2}</div>
-            </div>
-            {value === s.id && <span style={{ fontSize: 14, color: accent }}>●</span>}
-          </button>
         ))}
       </div>
     </div>
@@ -228,63 +173,11 @@ function OnbProfile({ accent, profiles, value, setValue }: {
   );
 }
 
-function OnbTiles({ accent, tiles, setTiles }: { accent: string; tiles: Record<string, boolean>; setTiles: (t: Record<string, boolean>) => void }) {
-  // Tile ids must match the dashboard's TileId set (excluding `viz`, which
-  // can't be hidden). Toggling a card flips that tile's visibility for the
-  // selected profile when onboarding finishes.
-  const AVAILABLE = [
-    { id: 'spotify', name: 'Spotify',        desc: 'Now playing + Up next',  icon: '♪', type: 'integration' },
-    { id: 'discord', name: 'Discord',        desc: 'Voice + speaking ring',  icon: '◇', type: 'integration' },
-    { id: 'claude',  name: 'Claude Code',    desc: 'CLI session viewer',     icon: '◐', type: 'integration' },
-    { id: 'sysmon',  name: 'System monitor', desc: 'CPU · RAM · GPU · Net',  icon: '▤', type: 'built-in' },
-    { id: 'notes',   name: 'Todos',          desc: 'Quick scratchpad',       icon: '✎', type: 'built-in' },
-    { id: 'clock',   name: 'Now & forecast', desc: 'Weather + clock',        icon: '◑', type: 'built-in' },
-  ];
-  return (
-    <div style={{ maxWidth: 980, width: '100%' }}>
-      <h1 style={{ fontSize: 40, fontWeight: 700, margin: '0 0 8px 0', letterSpacing: '-0.02em', textAlign: 'center' }}>Connect your tiles</h1>
-      <p style={{ fontSize: 15, color: 'rgba(255,255,255,0.5)', margin: '0 0 36px 0', textAlign: 'center' }}>Tap to add. Integrations open auth in a popup. Add more anytime from edit mode.</p>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
-        {AVAILABLE.map((t) => {
-          const on = !!tiles[t.id];
-          return (
-            <button key={t.id} onClick={() => setTiles({ ...tiles, [t.id]: !on })} style={{
-              padding: 16, borderRadius: 10, textAlign: 'left',
-              background: on ? `${accent}10` : 'rgba(255,255,255,0.02)',
-              border: on ? `1.5px solid ${accent}` : '1.5px solid rgba(255,255,255,0.06)',
-              color: '#fff', cursor: 'pointer',
-              display: 'flex', flexDirection: 'column', gap: 8,
-              minHeight: 110,
-            }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                <div style={{ width: 36, height: 36, borderRadius: 8, background: on ? accent : 'rgba(255,255,255,0.04)', color: on ? '#000' : accent, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18 }}>{t.icon}</div>
-                {on ? (
-                  <span style={{ fontSize: 10, color: accent, padding: '2px 8px', background: `${accent}20`, borderRadius: 3, fontFamily: '"JetBrains Mono", ui-monospace, monospace' }}>● ADDED</span>
-                ) : (
-                  <span style={{ fontSize: 14, color: 'rgba(255,255,255,0.3)' }}>+</span>
-                )}
-              </div>
-              <div>
-                <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 2 }}>{t.name}</div>
-                <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)', marginBottom: 4 }}>{t.desc}</div>
-                <div style={{ fontSize: 9, color: 'rgba(255,255,255,0.3)', fontFamily: '"JetBrains Mono", ui-monospace, monospace', textTransform: 'uppercase', letterSpacing: '.06em' }}>{t.type}</div>
-              </div>
-            </button>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-function OnbReady({ accent, profile, profiles, audio, tiles }: {
+function OnbReady({ accent, profile, profiles }: {
   accent: string;
   profile: string | null;
   profiles: { id: string; name: string }[];
-  audio: string;
-  tiles: Record<string, boolean>;
 }) {
-  const tileCount = Object.values(tiles).filter(Boolean).length;
   const profileName = profile ? (profiles.find((p) => p.id === profile)?.name ?? profiles[0]?.name ?? 'Work') : (profiles[0]?.name ?? 'Work');
   return (
     <div style={{ maxWidth: 720, textAlign: 'center' }}>
@@ -298,7 +191,7 @@ function OnbReady({ accent, profile, profiles, audio, tiles }: {
       </div>
       <h1 style={{ fontSize: 48, fontWeight: 800, margin: '0 0 16px 0', letterSpacing: '-0.03em' }}>You're set.</h1>
       <p style={{ fontSize: 16, color: 'rgba(255,255,255,0.6)', lineHeight: 1.5, margin: '0 0 40px 0' }}>
-        Hub will launch with your <b style={{ color: accent }}>{profileName}</b> profile, <b style={{ color: accent }}>{tileCount}</b> tiles, audio from <b style={{ color: accent }}>{audio === 'wasapi' ? 'system loopback' : audio}</b>.
+        Hub will launch with your <b style={{ color: accent }}>{profileName}</b> profile.
       </p>
       <div style={{
         padding: 20, borderRadius: 12, background: 'rgba(255,255,255,0.02)',
@@ -307,10 +200,8 @@ function OnbReady({ accent, profile, profiles, audio, tiles }: {
       }}>
         <KbHint k="⌘ E" desc="Toggle edit mode" />
         <KbHint k="⌘ 1/2/3" desc="Switch profiles" />
-        <KbHint k="⌘ K" desc="Command palette" />
-        <KbHint k="⌘ ," desc="Settings" />
         <KbHint k="V" desc="Cycle viz mode" />
-        <KbHint k="?" desc="All shortcuts" />
+        <KbHint k="Esc" desc="Close any overlay" />
       </div>
     </div>
   );

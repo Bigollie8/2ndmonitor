@@ -4,6 +4,7 @@ import type { Density } from '../types';
 import {
   type MixerOutputDevice,
   type SpectrumState,
+  isTauri,
   mixerControls,
   useMixerState,
 } from '../state/tauri';
@@ -21,6 +22,18 @@ export function AudioMixerTile({
   const master = state?.master ?? null;
   const sessions = state?.sessions ?? [];
   const devices = state?.devices ?? [];
+
+  // Tell the Rust worker someone is actually looking: the 1Hz COM
+  // device/session enumeration only runs while a mixer tile is mounted.
+  useEffect(() => {
+    if (!isTauri) return;
+    const setActive = (active: boolean) =>
+      import('@tauri-apps/api/core')
+        .then(({ invoke }) => invoke('set_mixer_active', { active }))
+        .catch(() => {});
+    void setActive(true);
+    return () => { void setActive(false); };
+  }, []);
 
   return (
     <HFTile
@@ -89,15 +102,26 @@ function MasterRow({
   useEffect(() => {
     if (!spectrumRef) return;
     let raf = 0;
+    // Once the idle glow is painted there's nothing to animate until audio
+    // arrives — skip the style write instead of rewriting it at 60fps.
+    let settled = false;
     const tick = () => {
-      const el = trackRef.current;
-      if (el) {
-        const live = spectrumRef.current.live;
-        const lvl = live ? spectrumRef.current.level : 0;
-        const intensity = Math.min(1, lvl * 1.2);
-        el.style.boxShadow = `0 0 ${10 + intensity * 16}px ${accent}${Math.round(20 + intensity * 60).toString(16).padStart(2, '0')}`;
-      }
       raf = requestAnimationFrame(tick);
+      if (document.hidden) return;
+      const el = trackRef.current;
+      if (!el) return;
+      const live = spectrumRef.current.live;
+      if (!live) {
+        if (!settled) {
+          el.style.boxShadow = `0 0 10px ${accent}14`;
+          settled = true;
+        }
+        return;
+      }
+      settled = false;
+      const lvl = spectrumRef.current.level;
+      const intensity = Math.min(1, lvl * 1.2);
+      el.style.boxShadow = `0 0 ${10 + intensity * 16}px ${accent}${Math.round(20 + intensity * 60).toString(16).padStart(2, '0')}`;
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);

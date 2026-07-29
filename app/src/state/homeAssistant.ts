@@ -5,8 +5,11 @@
  *
  *  Reference: https://developers.home-assistant.io/docs/api/rest/ */
 
+// The long-lived token lives in the encrypted secret store (see
+// state/secrets.ts, key "ha_token"; legacy localStorage key "2mh.ha.token"
+// is migrated on first read). Base URL + entity list are not secrets and
+// stay in plain localStorage.
 const URL_KEY = '2mh.ha.url';
-const TOKEN_KEY = '2mh.ha.token';
 const ENTITIES_KEY = '2mh.ha.entities';
 
 export interface HaState {
@@ -23,13 +26,6 @@ export function setStoredUrl(u: string): void {
   const cleaned = u.trim().replace(/\/$/, '');
   if (cleaned) localStorage.setItem(URL_KEY, cleaned);
   else localStorage.removeItem(URL_KEY);
-}
-export function getStoredToken(): string {
-  return localStorage.getItem(TOKEN_KEY) ?? '';
-}
-export function setStoredToken(t: string): void {
-  if (t.trim()) localStorage.setItem(TOKEN_KEY, t.trim());
-  else localStorage.removeItem(TOKEN_KEY);
 }
 export function getStoredEntities(): string[] {
   const raw = localStorage.getItem(ENTITIES_KEY);

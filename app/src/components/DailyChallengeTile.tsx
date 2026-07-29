@@ -1,7 +1,8 @@
-import React, { useEffect, useState } from 'react';
+import React from 'react';
 import { HFTile } from './tiles';
 import { appActions } from '../state/tauri';
 import { type DailyChallenge, fetchDailyChallenge } from '../state/dailyChallenge';
+import { usePoll } from '../state/usePoll';
 import type { Density } from '../types';
 
 const REFRESH_MS = 6 * 60 * 60 * 1000;
@@ -13,18 +14,14 @@ const DIFFICULTY_COLOR: Record<DailyChallenge['difficulty'], string> = {
 };
 
 export function DailyChallengeTile({ density, accent }: { density: Density; accent: string }) {
-  const [challenge, setChallenge] = useState<DailyChallenge | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    const load = async () => {
+  const { data: challenge } = usePoll<DailyChallenge>(
+    async () => {
       const c = await fetchDailyChallenge();
-      if (!cancelled && c) setChallenge(c);
-    };
-    void load();
-    const id = setInterval(load, REFRESH_MS);
-    return () => { cancelled = true; clearInterval(id); };
-  }, []);
+      if (c == null) throw new Error('fetch failed');
+      return c;
+    },
+    REFRESH_MS,
+  );
 
   const headRight = (
     <span style={{

@@ -6,8 +6,8 @@
 
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
-use std::time::Duration;
+use std::sync::{Arc, Condvar, Mutex as StdMutex};
+use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager, Runtime, State};
 
 const POLL_INTERVAL_SECS: u64 = 30 * 60;
@@ -27,8 +27,11 @@ impl Default for WeatherLocation {
 
 pub struct WeatherState {
     pub location: Mutex<WeatherLocation>,
-    /// One-shot signaler — the poll loop drops its sleep and refetches when this flips.
-    pub refetch_now: Mutex<bool>,
+    /// One-shot signaler — the poll loop refetches immediately when this flips.
+    /// std Mutex (not parking_lot) because it pairs with `refetch_cv`: the
+    /// worker blocks on the Condvar instead of polling the flag every 200 ms.
+    pub refetch_now: StdMutex<bool>,
+    pub refetch_cv: Condvar,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -105,7 +108,8 @@ struct DailyResp {
 pub fn spawn<R: Runtime>(app: AppHandle<R>) {
     let state = Arc::new(WeatherState {
         location: Mutex::new(WeatherLocation::default()),
-        refetch_now: Mutex::new(false),
+        refetch_now: StdMutex::new(false),
+        refetch_cv: Condvar::new(),
     });
     app.manage(state.clone());
 
@@ -117,18 +121,30 @@ pub fn spawn<R: Runtime>(app: AppHandle<R>) {
             }
             Err(e) => eprintln!("weather: {e}"),
         }
-        // Sleep up to POLL_INTERVAL_SECS, but wake early if `refetch_now` flips.
-        let total_ms = POLL_INTERVAL_SECS * 1000;
-        let step = 200u64;
-        let mut waited = 0u64;
-        while waited < total_ms {
-            std::thread::sleep(Duration::from_millis(step));
-            waited += step;
-            if *state.refetch_now.lock() {
-                *state.refetch_now.lock() = false;
+        // Sleep up to POLL_INTERVAL_SECS, but wake early if `refetch_now`
+        // flips. Condvar wait means zero wakeups while idle — the thread only
+        // runs on notify (location change) or when the 30-min deadline passes.
+        let deadline = Instant::now() + Duration::from_secs(POLL_INTERVAL_SECS);
+        let mut refetch = state
+            .refetch_now
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        loop {
+            if *refetch {
                 break;
             }
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                break;
+            }
+            // Loop guards against spurious wakeups: re-check flag + deadline.
+            let (guard, _timed_out) = state
+                .refetch_cv
+                .wait_timeout(refetch, remaining)
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            refetch = guard;
         }
+        *refetch = false;
     });
 }
 
@@ -139,7 +155,11 @@ pub fn set_weather_location<R: Runtime>(
     label: String, lat: f64, lon: f64,
 ) -> Result<(), String> {
     *state.location.lock() = WeatherLocation { label, lat, lon };
-    *state.refetch_now.lock() = true;
+    *state
+        .refetch_now
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = true;
+    state.refetch_cv.notify_one();
     Ok(())
 }
 

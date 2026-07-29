@@ -208,6 +208,107 @@ fn chrono_now_yyyymmdd() -> String {
     format!("{:04}{:02}{:02}", year, m, d)
 }
 
+/// One aircraft state vector, normalized to what the tile actually renders.
+/// OpenSky returns a positional array of length 17; we only keep the fields
+/// the AircraftTile uses (callsign, position, altitude, velocity, heading,
+/// origin country, on-ground flag).
+#[derive(Serialize, Debug)]
+pub struct AircraftState {
+    pub icao24: String,
+    pub callsign: String,
+    pub origin_country: String,
+    pub lat: f64,
+    pub lon: f64,
+    pub altitude: f64,
+    pub velocity: f64,
+    pub heading: f64,
+    pub on_ground: bool,
+}
+
+#[derive(Serialize, Debug)]
+pub struct AircraftResult {
+    pub states: Vec<AircraftState>,
+    /// Set when OpenSky responds with a non-200 (typically 429 rate-limit).
+    /// Frontend surfaces this in the tile header so the user can see why
+    /// the count is stuck.
+    pub error: Option<String>,
+}
+
+#[tauri::command]
+pub async fn fetch_aircraft_states(
+    lat: f64,
+    lon: f64,
+    radius_km: f64,
+) -> Result<AircraftResult, String> {
+    if !lat.is_finite() || !lon.is_finite() || !radius_km.is_finite() {
+        return Err("invalid bbox".into());
+    }
+    if !(1.0..=500.0).contains(&radius_km) {
+        return Err("radius out of range (1..500 km)".into());
+    }
+    tokio::task::spawn_blocking(move || fetch_aircraft_blocking(lat, lon, radius_km))
+        .await
+        .map_err(|e| format!("join error: {e}"))
+}
+
+fn fetch_aircraft_blocking(lat: f64, lon: f64, radius_km: f64) -> AircraftResult {
+    let d_lat = radius_km / 111.0;
+    let cos_lat = (lat * std::f64::consts::PI / 180.0).cos().max(0.1);
+    let d_lon = radius_km / (111.0 * cos_lat);
+    let url = format!(
+        "https://opensky-network.org/api/states/all?lamin={:.3}&lomin={:.3}&lamax={:.3}&lomax={:.3}",
+        lat - d_lat, lon - d_lon, lat + d_lat, lon + d_lon,
+    );
+    let resp = match ureq::get(&url)
+        .set("User-Agent", "SecondMonitorHub/0.4 (+anonymous OpenSky read)")
+        .timeout(std::time::Duration::from_secs(10))
+        .call()
+    {
+        Ok(r) => r,
+        Err(ureq::Error::Status(code, r)) => {
+            let body = r.into_string().unwrap_or_default();
+            let snippet = body.chars().take(120).collect::<String>();
+            return AircraftResult {
+                states: vec![],
+                error: Some(format!("OpenSky HTTP {code}: {snippet}")),
+            };
+        }
+        Err(e) => {
+            return AircraftResult { states: vec![], error: Some(format!("network: {e}")) };
+        }
+    };
+    let json: serde_json::Value = match resp.into_json() {
+        Ok(v) => v,
+        Err(e) => return AircraftResult { states: vec![], error: Some(format!("parse: {e}")) },
+    };
+    let raw = match json.get("states").and_then(|v| v.as_array()) {
+        Some(arr) => arr,
+        None => return AircraftResult { states: vec![], error: None },
+    };
+    let states: Vec<AircraftState> = raw
+        .iter()
+        .filter_map(|row| {
+            let arr = row.as_array()?;
+            if arr.len() < 12 {
+                return None;
+            }
+            let lat = arr.get(6)?.as_f64()?;
+            let lon = arr.get(5)?.as_f64()?;
+            Some(AircraftState {
+                icao24: arr.get(0).and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                callsign: arr.get(1).and_then(|v| v.as_str()).unwrap_or("").trim().to_string(),
+                origin_country: arr.get(2).and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                lat, lon,
+                altitude: arr.get(7).and_then(|v| v.as_f64()).unwrap_or(0.0),
+                velocity: arr.get(9).and_then(|v| v.as_f64()).unwrap_or(0.0),
+                heading: arr.get(10).and_then(|v| v.as_f64()).unwrap_or(0.0),
+                on_ground: arr.get(8).and_then(|v| v.as_bool()).unwrap_or(false),
+            })
+        })
+        .collect();
+    AircraftResult { states, error: None }
+}
+
 /// Generic GitHub fetcher used by the PRs tile. Sends the user's PAT as a
 /// Bearer token; no auth caching here — the front-end stores the PAT and
 /// passes it on each request, which is fine for a single-user desktop app.

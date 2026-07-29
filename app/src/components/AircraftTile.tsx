@@ -1,10 +1,11 @@
-import React, { useEffect, useState } from 'react';
+import React from 'react';
 import { HFTile } from './tiles';
-import { type Aircraft, fetchAircraftInBox } from '../state/opensky';
+import { fetchAircraftInBox } from '../state/opensky';
 import { distanceKm } from '../state/iss';
+import { usePoll } from '../state/usePoll';
 import type { Density, WeatherLocation } from '../types';
 
-const REFRESH_MS = 30 * 1000;
+const REFRESH_MS = 60 * 1000;
 const RADIUS_KM = 80;
 
 export interface AircraftTileProps {
@@ -14,21 +15,19 @@ export interface AircraftTileProps {
 }
 
 export function AircraftTile({ density, accent, location }: AircraftTileProps) {
-  const [planes, setPlanes] = useState<Aircraft[]>([]);
-  const [loading, setLoading] = useState<boolean>(true);
-
-  useEffect(() => {
-    let cancelled = false;
-    const load = async () => {
-      const next = await fetchAircraftInBox(location.lat, location.lon, RADIUS_KM);
-      if (cancelled) return;
-      setPlanes(next);
-      setLoading(false);
-    };
-    void load();
-    const id = setInterval(load, REFRESH_MS);
-    return () => { cancelled = true; clearInterval(id); };
-  }, [location.lat, location.lon]);
+  const { data, error, loading } = usePoll(
+    async () => {
+      const result = await fetchAircraftInBox(location.lat, location.lon, RADIUS_KM);
+      // usePoll drives backoff off thrown errors; OpenSky rate-limit responses
+      // arrive as result.error, so promote them to a throw. Last good data is
+      // kept, so the radar doesn't blank out during a 429 window.
+      if (result.error) throw new Error(result.error);
+      return result.aircraft;
+    },
+    REFRESH_MS,
+    [location.lat, location.lon],
+  );
+  const planes = data ?? [];
 
   const sorted = [...planes]
     .map((p) => ({ ...p, dist: distanceKm(p.lat, p.lon, location.lat, location.lon) }))
@@ -36,9 +35,12 @@ export function AircraftTile({ density, accent, location }: AircraftTileProps) {
 
   const headRight = (
     <span style={{
-      fontSize: 10, color: 'rgba(255,255,255,0.55)',
+      fontSize: 10,
+      color: error ? '#fca5a5' : 'rgba(255,255,255,0.55)',
       fontFamily: '"JetBrains Mono", ui-monospace, monospace',
-    }}>{loading ? '…' : `${planes.length} · ${RADIUS_KM} km`}</span>
+    }} title={error ?? undefined}>
+      {loading ? '…' : error ? 'OpenSky error' : `${planes.length} · ${RADIUS_KM} km`}
+    </span>
   );
 
   return (
@@ -116,9 +118,17 @@ export function AircraftTile({ density, accent, location }: AircraftTileProps) {
               </span>
             </div>
           ))}
-          {sorted.length === 0 && !loading && (
+          {sorted.length === 0 && !loading && !error && (
             <div style={{ color: 'rgba(255,255,255,0.45)', fontSize: 10.5, padding: 4 }}>
               No aircraft within {RADIUS_KM} km.
+            </div>
+          )}
+          {error && !loading && (
+            <div style={{ color: '#fca5a5', fontSize: 10.5, padding: 4, lineHeight: 1.4 }}>
+              {error}
+              <div style={{ color: 'rgba(255,255,255,0.45)', marginTop: 2 }}>
+                OpenSky throttles anonymous reads — usually clears in a minute.
+              </div>
             </div>
           )}
         </div>

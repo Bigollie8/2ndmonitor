@@ -1,15 +1,16 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import { HFTile } from './tiles';
 import { appActions } from '../state/tauri';
 import {
   type GithubFilter,
   type GithubPr,
   fetchAllPrs,
-  getStoredToken,
   getStoredUser,
-  setStoredToken,
   setStoredUser,
 } from '../state/github';
+import { useSecret } from '../state/secrets';
+import { usePoll } from '../state/usePoll';
+import { TileEmpty, TileError, TileNeedsSetup, TileSkeleton } from './tileStates';
 import type { Density } from '../types';
 
 const REFRESH_MS = 5 * 60 * 1000;
@@ -29,35 +30,22 @@ export interface GithubPrsTileProps {
 }
 
 export function GithubPrsTile({ density, accent, editing }: GithubPrsTileProps) {
-  const [token, setToken] = useState<string>(getStoredToken);
+  const { value: token, loaded, save: saveToken, clear: clearToken } =
+    useSecret('github_pat', { legacyLocalStorageKey: '2mh.github.pat' });
   const [user, setUser] = useState<string>(getStoredUser);
-  const [prs, setPrs] = useState<GithubPr[]>([]);
-  const [loading, setLoading] = useState<boolean>(false);
-  const [error, setError] = useState<string | null>(null);
+  const [setupOpen, setSetupOpen] = useState(false);
 
   const configured = !!token && !!user;
 
-  useEffect(() => {
-    if (!configured) { setPrs([]); return; }
-    let cancelled = false;
-    const load = async () => {
-      setLoading(true);
-      setError(null);
-      try {
-        const next = await fetchAllPrs(token, user);
-        if (cancelled) return;
-        setPrs(next);
-      } catch (err) {
-        if (cancelled) return;
-        setError(String(err));
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    };
-    void load();
-    const id = setInterval(load, REFRESH_MS);
-    return () => { cancelled = true; clearInterval(id); };
-  }, [token, user, configured]);
+  const { data, error, loading, refresh } = usePoll<GithubPr[]>(
+    async () => {
+      if (!token || !user) return [];
+      return fetchAllPrs(token, user);
+    },
+    REFRESH_MS,
+    [token, user, configured],
+  );
+  const prs = configured ? (data ?? []) : [];
 
   const headRight = (
     <span style={{
@@ -75,25 +63,27 @@ export function GithubPrsTile({ density, accent, editing }: GithubPrsTileProps) 
         display: 'flex', flexDirection: 'column', gap: 6,
         overflow: 'hidden',
       }}>
-        {!configured && (
-          <ConnectPanel
-            editing={editing}
+        {loaded && !configured && !(editing || setupOpen) && (
+          <TileNeedsSetup
             accent={accent}
-            onSave={(t, u) => { setStoredToken(t); setStoredUser(u); setToken(t); setUser(u); }}
+            line={
+              <>
+                Connect to GitHub with a personal access token (classic, scope <span style={{ fontFamily: 'monospace', color: accent }}>repo</span>) and your username.
+              </>
+            }
+            onSetup={() => setSetupOpen(true)}
           />
         )}
-        {configured && error && (
-          <div style={{
-            color: '#fca5a5', fontSize: 11, padding: 8,
-            background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)', borderRadius: 5,
-          }}>
-            {error}
-          </div>
+        {loaded && !configured && (editing || setupOpen) && (
+          <ConnectPanel
+            accent={accent}
+            onSave={(t, u) => { void saveToken(t); setStoredUser(u); setUser(u); }}
+          />
         )}
+        {configured && error && <TileError line={error} onRetry={refresh} />}
+        {configured && !error && loading && prs.length === 0 && <TileSkeleton rows={4} />}
         {configured && !error && prs.length === 0 && !loading && (
-          <div style={{ color: 'rgba(255,255,255,0.45)', fontSize: 11, padding: 8 }}>
-            No open PRs.
-          </div>
+          <TileEmpty icon="⊕" line="No open PRs." />
         )}
         {configured && prs.length > 0 && (
           <div style={{
@@ -118,7 +108,7 @@ export function GithubPrsTile({ density, accent, editing }: GithubPrsTileProps) 
         )}
         {configured && editing && (
           <button
-            onClick={() => { setStoredToken(''); setStoredUser(''); setToken(''); setUser(''); }}
+            onClick={() => { void clearToken(); setStoredUser(''); setUser(''); }}
             style={{
               padding: '4px 10px', fontSize: 10, fontWeight: 600, borderRadius: 4,
               background: 'rgba(255,255,255,0.05)', color: 'rgba(255,255,255,0.7)',
@@ -162,8 +152,8 @@ function PrRow({ pr, accent }: { pr: GithubPr; accent: string }) {
 }
 
 function ConnectPanel({
-  editing, accent, onSave,
-}: { editing: boolean; accent: string; onSave: (token: string, user: string) => void }) {
+  accent, onSave,
+}: { accent: string; onSave: (token: string, user: string) => void }) {
   const [tok, setTok] = useState('');
   const [user, setUser] = useState('');
   return (
@@ -174,38 +164,30 @@ function ConnectPanel({
       <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.7)', lineHeight: 1.5 }}>
         Connect to GitHub with a personal access token (classic, scope <span style={{ fontFamily: 'monospace', color: accent }}>repo</span>) and your username.
       </div>
-      {editing ? (
-        <>
-          <input
-            type="password"
-            value={tok}
-            onChange={(e) => setTok(e.target.value)}
-            placeholder="ghp_..."
-            style={inputStyle}
-          />
-          <input
-            value={user}
-            onChange={(e) => setUser(e.target.value)}
-            placeholder="GitHub username"
-            style={inputStyle}
-          />
-          <button
-            onClick={() => { if (tok.trim() && user.trim()) onSave(tok.trim(), user.trim()); }}
-            disabled={!tok.trim() || !user.trim()}
-            style={{
-              padding: '7px 12px', fontSize: 11, fontWeight: 700,
-              background: tok.trim() && user.trim() ? accent : 'rgba(255,255,255,0.06)',
-              color: tok.trim() && user.trim() ? '#000' : 'rgba(255,255,255,0.4)',
-              border: 'none', borderRadius: 5,
-              cursor: tok.trim() && user.trim() ? 'pointer' : 'not-allowed',
-            }}
-          >Connect</button>
-        </>
-      ) : (
-        <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.45)' }}>
-          Enter edit mode to configure.
-        </div>
-      )}
+      <input
+        type="password"
+        value={tok}
+        onChange={(e) => setTok(e.target.value)}
+        placeholder="ghp_..."
+        style={inputStyle}
+      />
+      <input
+        value={user}
+        onChange={(e) => setUser(e.target.value)}
+        placeholder="GitHub username"
+        style={inputStyle}
+      />
+      <button
+        onClick={() => { if (tok.trim() && user.trim()) onSave(tok.trim(), user.trim()); }}
+        disabled={!tok.trim() || !user.trim()}
+        style={{
+          padding: '7px 12px', fontSize: 11, fontWeight: 700,
+          background: tok.trim() && user.trim() ? accent : 'rgba(255,255,255,0.06)',
+          color: tok.trim() && user.trim() ? '#000' : 'rgba(255,255,255,0.4)',
+          border: 'none', borderRadius: 5,
+          cursor: tok.trim() && user.trim() ? 'pointer' : 'not-allowed',
+        }}
+      >Connect</button>
     </div>
   );
 }

@@ -1,17 +1,18 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import { HFTile } from './tiles';
 import {
   type HaState,
   fetchAllStates,
   getStoredEntities,
-  getStoredToken,
   getStoredUrl,
   isActionable,
   pressEntity,
   setStoredEntities,
-  setStoredToken,
   setStoredUrl,
 } from '../state/homeAssistant';
+import { useSecret } from '../state/secrets';
+import { usePoll } from '../state/usePoll';
+import { TileEmpty, TileNeedsSetup } from './tileStates';
 import type { Density } from '../types';
 
 const REFRESH_MS = 10 * 1000;
@@ -24,31 +25,32 @@ export interface HomeAssistantTileProps {
 
 export function HomeAssistantTile({ density, accent, editing }: HomeAssistantTileProps) {
   const [url, setUrl] = useState<string>(getStoredUrl);
-  const [token, setToken] = useState<string>(getStoredToken);
+  const { value: token, loaded, save: saveToken, clear: clearToken } =
+    useSecret('ha_token', { legacyLocalStorageKey: '2mh.ha.token' });
   const [entities, setEntities] = useState<string[]>(getStoredEntities);
-  const [states, setStates] = useState<HaState[]>([]);
+  const [setupOpen, setSetupOpen] = useState(false);
 
   const configured = !!url && !!token;
 
-  useEffect(() => {
-    if (!configured || entities.length === 0) { setStates([]); return; }
-    let cancelled = false;
-    const load = async () => {
-      const next = await fetchAllStates(url, token, entities);
-      if (cancelled) return;
-      setStates(next);
-    };
-    void load();
-    const id = setInterval(load, REFRESH_MS);
-    return () => { cancelled = true; clearInterval(id); };
-  }, [url, token, entities.join(',')]);
+  const { data, refresh } = usePoll(
+    async () => {
+      // Unconfigured tiles poll an empty list instead of not polling at all —
+      // no network is involved, and the dep change on connect kicks off a real
+      // fetch immediately.
+      if (!url || !token || entities.length === 0) return [];
+      return fetchAllStates(url, token, entities);
+    },
+    REFRESH_MS,
+    [url, token, entities.join(',')],
+  );
+  const states = data ?? [];
 
   const handlePress = async (state: HaState) => {
+    if (!token) return;
     const ok = await pressEntity(url, token, state);
     if (ok) {
       // Optimistic refresh.
-      const next = await fetchAllStates(url, token, entities);
-      setStates(next);
+      refresh();
     }
   };
 
@@ -68,23 +70,36 @@ export function HomeAssistantTile({ density, accent, editing }: HomeAssistantTil
         display: 'flex', flexDirection: 'column', gap: 6,
         overflow: 'hidden',
       }}>
-        {!configured && (
+        {loaded && !configured && !(editing || setupOpen) && (
+          <TileNeedsSetup
+            accent={accent}
+            line={
+              <>
+                Connect to Home Assistant with a long-lived access token. Create one in HA at{' '}
+                <span style={{ color: accent, fontFamily: 'monospace' }}>Profile → Security</span>.
+              </>
+            }
+            onSetup={() => setSetupOpen(true)}
+          />
+        )}
+        {loaded && !configured && (editing || setupOpen) && (
           <ConnectPanel
-            editing={editing}
             accent={accent}
             initialUrl={url}
-            onSave={(u, t) => { setStoredUrl(u); setStoredToken(t); setUrl(u); setToken(t); }}
+            onSave={(u, t) => { setStoredUrl(u); void saveToken(t); setUrl(u); }}
           />
         )}
         {configured && entities.length === 0 && (
-          <div style={{
-            color: 'rgba(255,255,255,0.55)', fontSize: 11, padding: 12, textAlign: 'center',
-            lineHeight: 1.5,
-          }}>
-            Add some entity IDs to monitor (e.g. <span style={{ fontFamily: 'monospace', color: accent }}>light.kitchen</span>).
-            <br />
-            {editing ? 'Use the editor below.' : 'Enter edit mode to configure.'}
-          </div>
+          <TileEmpty
+            icon="⌂"
+            line={
+              <>
+                Add some entity IDs to monitor (e.g. <span style={{ fontFamily: 'monospace', color: accent }}>light.kitchen</span>).
+                <br />
+                {editing ? 'Use the editor below.' : 'Enter edit mode to configure.'}
+              </>
+            }
+          />
         )}
         {configured && states.length > 0 && (
           <div style={{
@@ -109,7 +124,7 @@ export function HomeAssistantTile({ density, accent, editing }: HomeAssistantTil
               }}
             >{showEntityEditor ? 'done' : 'entities'}</button>
             <button
-              onClick={() => { setStoredUrl(''); setStoredToken(''); setUrl(''); setToken(''); }}
+              onClick={() => { setStoredUrl(''); void clearToken(); setUrl(''); }}
               style={{
                 padding: '4px 10px', fontSize: 10, fontWeight: 600, borderRadius: 4,
                 background: 'rgba(255,255,255,0.05)', color: 'rgba(255,255,255,0.7)',
@@ -229,8 +244,8 @@ function EntityEditor({
 }
 
 function ConnectPanel({
-  editing, accent, initialUrl, onSave,
-}: { editing: boolean; accent: string; initialUrl: string; onSave: (url: string, token: string) => void }) {
+  accent, initialUrl, onSave,
+}: { accent: string; initialUrl: string; onSave: (url: string, token: string) => void }) {
   const [u, setU] = useState(initialUrl || 'http://homeassistant.local:8123');
   const [tok, setTok] = useState('');
   return (
@@ -242,38 +257,30 @@ function ConnectPanel({
         Connect to Home Assistant with a long-lived access token. Create one in HA at{' '}
         <span style={{ color: accent, fontFamily: 'monospace' }}>Profile → Security</span>.
       </div>
-      {editing ? (
-        <>
-          <input
-            value={u}
-            onChange={(e) => setU(e.target.value)}
-            placeholder="http://homeassistant.local:8123"
-            style={inputStyle}
-          />
-          <input
-            type="password"
-            value={tok}
-            onChange={(e) => setTok(e.target.value)}
-            placeholder="Long-lived access token"
-            style={inputStyle}
-          />
-          <button
-            onClick={() => { if (u.trim() && tok.trim()) onSave(u.trim(), tok.trim()); }}
-            disabled={!u.trim() || !tok.trim()}
-            style={{
-              padding: '7px 12px', fontSize: 11, fontWeight: 700,
-              background: u.trim() && tok.trim() ? accent : 'rgba(255,255,255,0.06)',
-              color: u.trim() && tok.trim() ? '#000' : 'rgba(255,255,255,0.4)',
-              border: 'none', borderRadius: 5,
-              cursor: u.trim() && tok.trim() ? 'pointer' : 'not-allowed',
-            }}
-          >Connect</button>
-        </>
-      ) : (
-        <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.45)' }}>
-          Enter edit mode to configure.
-        </div>
-      )}
+      <input
+        value={u}
+        onChange={(e) => setU(e.target.value)}
+        placeholder="http://homeassistant.local:8123"
+        style={inputStyle}
+      />
+      <input
+        type="password"
+        value={tok}
+        onChange={(e) => setTok(e.target.value)}
+        placeholder="Long-lived access token"
+        style={inputStyle}
+      />
+      <button
+        onClick={() => { if (u.trim() && tok.trim()) onSave(u.trim(), tok.trim()); }}
+        disabled={!u.trim() || !tok.trim()}
+        style={{
+          padding: '7px 12px', fontSize: 11, fontWeight: 700,
+          background: u.trim() && tok.trim() ? accent : 'rgba(255,255,255,0.06)',
+          color: u.trim() && tok.trim() ? '#000' : 'rgba(255,255,255,0.4)',
+          border: 'none', borderRadius: 5,
+          cursor: u.trim() && tok.trim() ? 'pointer' : 'not-allowed',
+        }}
+      >Connect</button>
     </div>
   );
 }

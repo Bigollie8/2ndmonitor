@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { TileType, Layout, TileInstance, OrientationLayout, Rect } from './state/layout';
 import {
   DEFAULT_LANDSCAPE_LAYOUT,
@@ -14,7 +14,7 @@ import {
   removeInstance,
   updateInstance,
 } from './state/layout';
-import type { Track, Profile, AccentTheme, VizMode, Density, Todo, WeatherLocation, AppMetrics } from './types';
+import type { Track, Profile, AccentTheme, VizMode, Density, Todo, WeatherLocation } from './types';
 import type { GeocodeResult } from './state/weatherLocation';
 import {
   DEFAULT_POMODORO_STATE,
@@ -22,6 +22,7 @@ import {
   type PomodoroState,
   type PomodoroSettings,
 } from './state/pomodoro';
+import { TILE_META } from './state/tileMeta';
 import { TRACKS, ACCENT_PALETTES } from './data';
 import { useTweaks } from './state/useTweaks';
 import { useSysmon, useNowPlaying, useSpectrumRef } from './state/tauri';
@@ -39,12 +40,14 @@ import { DiscordTile } from './components/discord-tile';
 import { NowAndForecastTile } from './components/forecast-tile';
 import { AudioMixerTile } from './components/audio-mixer-tile';
 import { EditModeOverlay } from './components/edit';
+import { TileLibrary } from './components/TileLibrary';
 import { ProfileSwitcher } from './components/profile';
 import { Onboarding } from './components/onboarding';
 import { TileFrame } from './components/TileFrame';
 import {
   TweaksPanel, TweakSection, TweakRadio, TweakSelect, TweakButton,
 } from './components/tweaks';
+import { SettingsWindow, useAutostart } from './components/settings';
 import { StreamDeckTile } from './components/StreamDeckTile';
 import { RadarTile } from './components/RadarTile';
 import { PomodoroTile } from './components/PomodoroTile';
@@ -74,6 +77,16 @@ import { ActiveWindowTile } from './components/ActiveWindowTile';
 import { DockerTile } from './components/DockerTile';
 import { EnergyTile } from './components/EnergyTile';
 import { parseStreamDeckConfig } from './state/actions';
+
+// Vite injects `import.meta.env` at build time; the project has no
+// vite-env.d.ts / "vite/client" types reference, so declare the one flag we
+// use (DEV gates the dev-only Tweaks panel below).
+declare global {
+  interface ImportMeta {
+    readonly env: { readonly DEV: boolean };
+  }
+}
+
 interface VizColorOverride {
   enabled: boolean;
   accent: string;
@@ -265,16 +278,14 @@ function migrateTweaks(loaded: Record<string, unknown>): Record<string, unknown>
   return result;
 }
 
-const ALL_TILES: { id: TileType; label: string }[] = [
-  { id: 'discord', label: 'Discord' },
-  { id: 'spotify', label: 'Now playing' },
-  { id: 'claude',  label: 'Claude Code' },
-  { id: 'mixer',   label: 'Audio mixer' },
-  { id: 'notes',   label: 'Todos' },
-  { id: 'sysmon',  label: 'System monitor' },
-  { id: 'clock',   label: 'Now & forecast' },
-  { id: 'viz',     label: 'Audio visualizer' },
-];
+/** Dev-only Tweaks-panel visibility checklist. Singleton tiles only —
+ *  multi-instance tiles (stream deck, stocks, chat, scratchpad) are
+ *  added/removed per instance from the Tile Library. Derived from the registry, so
+ *  new tiles show up here automatically (this list used to be a stale
+ *  hand-copy of the original 8 tiles). */
+const ALL_TILES: { id: TileType; label: string }[] = ALL_TILE_TYPES
+  .filter((id) => !TILE_META[id].multiInstance)
+  .map((id) => ({ id, label: TILE_META[id].label }));
 
 export default function App() {
   const [t, setTweak] = useTweaks<TweakState>(TWEAK_DEFAULTS, { migrate: migrateTweaks });
@@ -305,8 +316,14 @@ export default function App() {
   const [showSwitcher, setShowSwitcher] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [showGallery, setShowGallery] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
+  const [showTileLibrary, setShowTileLibrary] = useState(false);
+  const [showShortcuts, setShowShortcuts] = useState(false);
   const [selectedInstanceId, setSelectedInstanceId] = useState<string>('');
-  const sysmon = useSysmon();
+  // Transient "theme synced" toast: holds the track title being announced, or
+  // null when hidden. Set by the effect below when accent is track-linked and
+  // the title changes; auto-cleared after 2s.
+  const [themeToast, setThemeToast] = useState<string | null>(null);
   const spectrumRef = useSpectrumRef();
   const { track: livePlaying, playback: livePlayback, sourceAppId: liveSourceAppId } = useNowPlaying();
   // Real GSMTC track wins when it's available; otherwise the user's manual
@@ -326,6 +343,20 @@ export default function App() {
     document.documentElement.style.setProperty('--accent2', accent2);
   }, [accent, accent2]);
 
+  // Theme-sync toast: when the accent follows the track ("auto" theme) and the
+  // track title changes, announce it for 2 seconds. Skips the initial mount
+  // (prev === null) so app launch doesn't toast. Timer is cleared on re-fire
+  // and unmount via the effect cleanup.
+  const prevToastTitleRef = useRef<string | null>(null);
+  useEffect(() => {
+    const prev = prevToastTitleRef.current;
+    prevToastTitleRef.current = track.title;
+    if (!accentLinked || prev === null || prev === track.title) return;
+    setThemeToast(track.title);
+    const id = setTimeout(() => setThemeToast(null), 2000);
+    return () => clearTimeout(id);
+  }, [accentLinked, track.title]);
+
   // Perf-debug instrumentation: enable/disable the long-task observer +
   // ResizeObserver-wrap + window-resize counter as the user toggles. When off,
   // every record* call short-circuits, so the data feeds below cost ~nothing.
@@ -339,13 +370,6 @@ export default function App() {
   useEffect(() => {
     perfDebug.recordContext(t.perfMode, t.vizMode);
   }, [t.perfMode, t.vizMode]);
-
-  // Push every sysmon GPU sample (1Hz from the Rust core) into the spike
-  // detector. The detector keeps a rolling baseline and snapshots when delta
-  // crosses the threshold.
-  useEffect(() => {
-    perfDebug.recordGpuSample(sysmon.latest.app?.gpu);
-  }, [sysmon.latest.app?.gpu]);
 
   useEffect(() => {
     let audioHz = 30;
@@ -397,6 +421,7 @@ export default function App() {
       const tag = target?.tagName ?? '';
       const editing = tag === 'INPUT' || tag === 'TEXTAREA' || target?.isContentEditable === true;
       if (cmd && e.key === 'e') { e.preventDefault(); setEditMode((m) => !m); }
+      else if (cmd && e.key === ',') { e.preventDefault(); setShowSettings((s) => !s); }
       else if (cmd && (e.key === '1' || e.key === '2' || e.key === '3')) {
         e.preventDefault();
         const idx = parseInt(e.key, 10) - 1;
@@ -404,10 +429,24 @@ export default function App() {
         if (p) setTweak('activeProfileId', p.id);
       }
       else if (e.key === 'Escape') {
-        if (showGallery) setShowGallery(false);
+        if (showShortcuts) setShowShortcuts(false);
+        else if (showTileLibrary) setShowTileLibrary(false);
+        else if (showSettings) setShowSettings(false);
+        else if (showGallery) setShowGallery(false);
         else if (showSwitcher) setShowSwitcher(false);
         else if (showOnboarding) setShowOnboarding(false);
         else if (editMode) setEditMode(false);
+      }
+      else if (!editing && !cmd && e.key === '?') {
+        // Toggle the shortcut cheat sheet. Opens only when no other modal is
+        // up (it would z-fight and confuse the Esc cascade); "?" again closes.
+        if (showShortcuts) {
+          e.preventDefault();
+          setShowShortcuts(false);
+        } else if (!showTileLibrary && !showSettings && !showGallery && !showSwitcher && !showOnboarding) {
+          e.preventDefault();
+          setShowShortcuts(true);
+        }
       }
       else if (!editing && !cmd && (e.key === 'v' || e.key === 'V')) {
         const ids = VIZ_STYLES.map((s) => s.id);
@@ -417,9 +456,10 @@ export default function App() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [showSwitcher, editMode, showOnboarding, showGallery, t.vizMode, t.profiles, setTweak]);
+  }, [showSwitcher, editMode, showOnboarding, showGallery, showSettings, showTileLibrary, showShortcuts, t.vizMode, t.profiles, setTweak]);
 
   const orientation = useOrientation();
+  const canvas = useCanvas();
 
   const overlaysOpen = editMode || showSwitcher || showOnboarding;
   const fallbackProfile = useMemo<Profile>(() => ({
@@ -434,8 +474,6 @@ export default function App() {
     if (selectedInstanceId && activeOrientation.tiles.some((t) => t.instanceId === selectedInstanceId)) return;
     setSelectedInstanceId(activeOrientation.tiles[0]?.instanceId ?? '');
   }, [activeOrientation.tiles, selectedInstanceId]);
-  const fps = useFrameRate();
-
   const updateActiveProfile = (patch: Partial<Profile>) => {
     setTweak('profiles', t.profiles.map((p) =>
       p.id === activeProfile.id ? { ...p, ...patch } : p
@@ -464,6 +502,14 @@ export default function App() {
     if (visible) addTileByType(type);
     else removeTileByType(type);
   };
+  const resetLayout = () => {
+    const defaults = orientation === 'portrait' ? DEFAULT_PORTRAIT_LAYOUT : DEFAULT_LANDSCAPE_LAYOUT;
+    updateActiveOrientation({
+      tiles: ALL_TILE_TYPES.map((type) => ({
+        instanceId: newId(), type, rect: defaults[type],
+      })),
+    });
+  };
 
   const renderTile = (instance: TileInstance) => {
     switch (instance.type) {
@@ -478,7 +524,7 @@ export default function App() {
       case 'notes':
         return <NotesTile density={t.density} accent={accent} todos={t.todos} setTodos={(next) => setTweak('todos', next)} />;
       case 'sysmon':
-        return <SysMonTile density={t.density} accent={accent} accent2={accent2} history={sysmon} />;
+        return <SysMonTile density={t.density} accent={accent} accent2={accent2} />;
       case 'clock':
         return <NowAndForecastTile density={t.density} accent={accent} accent2={accent2} />;
       case 'viz':
@@ -502,7 +548,7 @@ export default function App() {
             onToggleVideo={() => setTweak('videoEnabled', !t.videoEnabled)}
             onNavigate={(url) => setTweak('videoCurrentUrl', url)}
             onExit={() => setTweak('videoEnabled', false)}
-            overlaysOpen={showGallery || editMode}
+            overlaysOpen={showGallery || editMode || showTileLibrary}
             paused={(t.videoEnabled && t.videoBookmarks.length > 0) || showGallery || (t.perfMode !== 'uncapped' && livePlayback?.playing !== true)}
             onConfigure={() => setShowGallery(true)}
             audioDebug={t.audioDebug}
@@ -653,7 +699,7 @@ export default function App() {
       case 'dailyChallenge':
         return <DailyChallengeTile density={t.density} accent={accent} />;
       case 'pollen':
-        return <PollenTile density={t.density} accent={accent} location={t.weatherLocation} />;
+        return <PollenTile density={t.density} accent={accent} editing={editMode} location={t.weatherLocation} />;
       case 'birds':
         return (
           <BirdsTile
@@ -697,13 +743,17 @@ export default function App() {
       }}>
         <TopChrome
           accent={accent} editMode={editMode} setEditMode={setEditMode}
-          accentLinked={accentLinked} track={track}
           profiles={t.profiles}
           activeProfileId={t.activeProfileId}
           setActiveProfileId={(id) => setTweak('activeProfileId', id)}
           onSwitcher={() => setShowSwitcher(true)}
           onOnboarding={() => setShowOnboarding(true)}
+          onSettings={() => setShowSettings(true)}
+          onShortcuts={() => setShowShortcuts(true)}
         />
+        {accentLinked && !showOnboarding && themeToast !== null && (
+          <ThemeToast accent={accent} title={themeToast} />
+        )}
         {activeOrientation.tiles.map((instance) => {
           return (
             <TileFrame
@@ -728,8 +778,6 @@ export default function App() {
           onSwitcher={() => setShowSwitcher(true)}
           profileName={activeProfile.name}
           tileCount={visibleTileCount}
-          app={sysmon.latest.app}
-          fps={fps}
         />
         {editMode && (
           <EditModeOverlay
@@ -807,8 +855,49 @@ export default function App() {
             onClose={() => setShowGallery(false)}
           />
         )}
+        {showTileLibrary && (
+          <TileLibrary
+            orientation={orientation}
+            canvas={canvas}
+            tiles={activeOrientation.tiles}
+            profileName={activeProfile.name}
+            accent={accent}
+            onAdd={(type, rect) => updateActiveOrientation({
+              tiles: addInstance(activeOrientation.tiles, {
+                instanceId: newId(), type, rect,
+              }),
+            })}
+            onRemove={(instanceId) => updateActiveOrientation({
+              tiles: removeInstance(activeOrientation.tiles, instanceId),
+            })}
+            onClose={() => setShowTileLibrary(false)}
+          />
+        )}
       </div>
 
+      {showSettings && (
+        <SettingsWindow
+          values={t}
+          // TweakState is a strict superset of SettingsValues (same keys, same
+          // types), but TS can't prove the per-key correspondence across two
+          // generic signatures — hence the unknown bridge. Callers stay typed.
+          set={(key, value) => setTweak(key, value as unknown as TweakState[typeof key])}
+          accent={accent}
+          accent2={accent2}
+          accentLinked={accentLinked}
+          trackTitle={track.title}
+          onOpenTileLibrary={() => { setShowSettings(false); setShowTileLibrary(true); }}
+          onReplayOnboarding={() => { setShowSettings(false); setShowOnboarding(true); }}
+          onResetLayout={resetLayout}
+          onClose={() => setShowSettings(false)}
+        />
+      )}
+
+      {showShortcuts && (
+        <ShortcutsOverlay accent={accent} onClose={() => setShowShortcuts(false)} />
+      )}
+
+      {import.meta.env.DEV && (
       <TweaksPanel title="Tweaks" defaultOpen={true}>
         <TweakSection label="Visualizer" />
         <TweakRadio<VizMode>
@@ -934,14 +1023,7 @@ export default function App() {
           label="Tile density" value={t.density}
           options={['compact', 'regular', 'spacious']}
           onChange={(v) => setTweak('density', v)} />
-        <TweakButton label="Reset layout" onClick={() => {
-          const defaults = orientation === 'portrait' ? DEFAULT_PORTRAIT_LAYOUT : DEFAULT_LANDSCAPE_LAYOUT;
-          updateActiveOrientation({
-            tiles: ALL_TILE_TYPES.map((type) => ({
-              instanceId: newId(), type, rect: defaults[type],
-            })),
-          });
-        }} />
+        <TweakButton label="Reset layout" onClick={resetLayout} />
         <TweakSection label="Weather" />
         <WeatherSearch
           current={t.weatherLocation}
@@ -960,6 +1042,8 @@ export default function App() {
           {t.perfMode === 'balanced' && 'DPR cap 1× · 60 fps · 30 Hz audio · pauses when nothing plays'}
           {t.perfMode === 'battery'  && 'DPR cap 1× · 30 fps · 15 Hz audio · pauses when nothing plays'}
         </div>
+        <TweakSection label="System" />
+        <AutostartToggle />
         <TweakSection label="Tiles · show / hide" />
         {ALL_TILES.filter(({ id }) => id !== 'viz').map((def) => {
           const visible = findInstance(activeOrientation.tiles, def.id) !== undefined;
@@ -1002,26 +1086,64 @@ export default function App() {
           what was on screen at the moment of each spike.
         </div>
       </TweaksPanel>
+      )}
       {t.perfDebug && <PerfDebugHUD />}
     </div>
   );
 }
 
-function TopChrome({ accent, editMode, setEditMode, accentLinked, track, profiles, activeProfileId, setActiveProfileId, onSwitcher, onOnboarding }: {
+function TopChrome({ accent, editMode, setEditMode, profiles, activeProfileId, setActiveProfileId, onSwitcher, onOnboarding, onSettings, onShortcuts }: {
   accent: string;
   editMode: boolean;
   setEditMode: (b: boolean) => void;
-  accentLinked: boolean;
-  track: Track;
   profiles: Profile[];
   activeProfileId: string;
   setActiveProfileId: (id: string) => void;
   onSwitcher: () => void;
   onOnboarding: () => void;
+  onSettings: () => void;
+  onShortcuts: () => void;
 }) {
-  const canvas = useCanvas();
   const visibleProfiles = profiles.slice(0, 4);
   const overflow = Math.max(0, profiles.length - visibleProfiles.length);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+
+  // Anchored ⋯ menu: outside pointerdown or Esc closes. The Esc handler lives
+  // on document (bubbles before App's window-level cascade) and stops
+  // propagation so closing the menu doesn't also pop an overlay.
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onDown = (e: PointerEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.stopPropagation();
+        setMenuOpen(false);
+      }
+    };
+    document.addEventListener('pointerdown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('pointerdown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [menuOpen]);
+
+  const ghostButton: React.CSSProperties = {
+    padding: '5px 10px', fontSize: 11, borderRadius: 6,
+    background: 'transparent', color: 'rgba(255,255,255,0.7)',
+    border: '1px solid rgba(255,255,255,0.1)',
+    cursor: 'pointer', fontWeight: 600,
+  };
+  const menuItem: React.CSSProperties = {
+    display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12,
+    width: '100%', padding: '7px 10px', fontSize: 11.5, borderRadius: 5,
+    background: 'transparent', color: 'rgba(255,255,255,0.75)',
+    border: 'none', cursor: 'pointer', textAlign: 'left', fontWeight: 500,
+  };
+
   return (
     <div style={{
       position: 'absolute', top: 0, left: 0, right: 0, height: 56,
@@ -1054,24 +1176,150 @@ function TopChrome({ accent, editMode, setEditMode, accentLinked, track, profile
         }}>{overflow > 0 ? `+${overflow} More` : '⌃ More'}</button>
       </div>
       <div style={{ flex: 1 }} />
-      {accentLinked && (
-        <span style={{ fontSize: 10, color: accent, padding: '3px 8px', background: accent + '15', borderRadius: 4, border: `1px solid ${accent}44`, letterSpacing: '.05em' }}>
-          ◐ Theme synced to "{track.title}"
-        </span>
-      )}
-      <button onClick={onOnboarding} title="Replay first-launch setup" style={{
-        padding: '5px 10px', fontSize: 11, borderRadius: 6,
-        background: 'transparent', color: 'rgba(255,255,255,0.5)',
-        border: '1px solid rgba(255,255,255,0.1)',
-        cursor: 'pointer', fontWeight: 500,
-      }}>↻ Setup</button>
       <button onClick={() => setEditMode(!editMode)} style={{
-        padding: '5px 10px', fontSize: 11, borderRadius: 6,
-        background: editMode ? accent : 'transparent', color: editMode ? '#000' : 'rgba(255,255,255,0.7)',
-        border: editMode ? 'none' : '1px solid rgba(255,255,255,0.1)',
-        cursor: 'pointer', fontWeight: 600,
-      }}>✎ Edit</button>
-      <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)', fontFamily: '"JetBrains Mono", ui-monospace, monospace' }}>{Math.round(canvas.w)}×{Math.round(canvas.h)}</span>
+        ...ghostButton,
+        display: 'flex', alignItems: 'center', gap: 7,
+        background: editMode ? accent : 'transparent',
+        color: editMode ? '#000' : 'rgba(255,255,255,0.7)',
+        border: editMode ? '1px solid transparent' : '1px solid rgba(255,255,255,0.1)',
+      }}>
+        <span>✎ Edit</span>
+        <span style={{
+          fontSize: 9.5, fontFamily: '"JetBrains Mono", ui-monospace, monospace',
+          color: editMode ? 'rgba(0,0,0,0.55)' : 'rgba(255,255,255,0.35)',
+          fontWeight: 500, letterSpacing: '.03em',
+        }}>⌘E</span>
+      </button>
+      <button onClick={onSettings} title="Settings (⌘,)" style={{ ...ghostButton, padding: '5px 9px' }}>⚙</button>
+      <div ref={menuRef} style={{ position: 'relative' }}>
+        <button
+          onClick={() => setMenuOpen((o) => !o)}
+          title="More"
+          style={{
+            ...ghostButton, padding: '5px 9px',
+            background: menuOpen ? 'rgba(255,255,255,0.08)' : 'transparent',
+          }}
+        >⋯</button>
+        {menuOpen && (
+          <div style={{
+            position: 'absolute', top: 'calc(100% + 6px)', right: 0, minWidth: 190,
+            background: 'rgba(20,22,28,0.96)', border: '1px solid rgba(255,255,255,0.08)',
+            borderRadius: 8, padding: 4, zIndex: 30,
+            boxShadow: '0 12px 40px rgba(0,0,0,0.5)',
+          }}>
+            <button
+              onClick={() => { setMenuOpen(false); onOnboarding(); }}
+              style={menuItem}
+              onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.06)'; }}
+              onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+            >
+              <span>Replay setup</span>
+              <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.35)' }}>↻</span>
+            </button>
+            <button
+              onClick={() => { setMenuOpen(false); onShortcuts(); }}
+              style={menuItem}
+              onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.06)'; }}
+              onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+            >
+              <span>Keyboard shortcuts</span>
+              <span style={{
+                fontSize: 10, fontFamily: '"JetBrains Mono", ui-monospace, monospace',
+                color: 'rgba(255,255,255,0.4)',
+                background: 'rgba(255,255,255,0.06)', borderRadius: 4, padding: '1px 6px',
+              }}>?</span>
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** Transient "theme synced" pill just under the top bar. Fades in on mount
+ *  (opacity transition kicked off one frame after mount) and fades back out
+ *  shortly before the parent unmounts it at the 2s mark. Re-keyed re-renders
+ *  restart the cycle via the [title] dep. */
+function ThemeToast({ accent, title }: { accent: string; title: string }) {
+  const [visible, setVisible] = useState(false);
+  useEffect(() => {
+    setVisible(false);
+    const raf = requestAnimationFrame(() => setVisible(true));
+    const hide = setTimeout(() => setVisible(false), 1700);
+    return () => { cancelAnimationFrame(raf); clearTimeout(hide); };
+  }, [title]);
+  return (
+    <div style={{
+      position: 'absolute', top: 64, left: '50%', transform: 'translateX(-50%)',
+      zIndex: 11, pointerEvents: 'none',
+      fontSize: 10, color: accent, padding: '4px 10px',
+      background: 'rgba(8,9,12,0.85)', backdropFilter: 'blur(8px)',
+      borderRadius: 5, border: `1px solid ${accent}44`,
+      boxShadow: `0 4px 18px rgba(0,0,0,0.4), 0 0 12px ${accent}22`,
+      letterSpacing: '.05em', whiteSpace: 'nowrap',
+      opacity: visible ? 1 : 0, transition: 'opacity 260ms ease',
+    }}>
+      ◐ Theme synced to “{title}”
+    </div>
+  );
+}
+
+const SHORTCUT_ROWS: ReadonlyArray<readonly [string, string]> = [
+  ['V', 'Cycle visualizer style'],
+  ['⌘E', 'Edit layout'],
+  ['⌘,', 'Settings'],
+  ['⌘1/2/3', 'Switch profile'],
+  ['Esc', 'Close overlays'],
+  ['?', 'This overlay'],
+];
+
+/** Centered keyboard-shortcut cheat sheet. Opened by "?" or the ⋯ menu;
+ *  closed by Esc (front of App's cascade), "?" again, or backdrop click. */
+function ShortcutsOverlay({ accent, onClose }: { accent: string; onClose: () => void }) {
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: 'fixed', inset: 0, zIndex: 70,
+        background: 'rgba(0,0,0,0.55)', backdropFilter: 'blur(4px)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          width: 420, maxWidth: 'calc(100vw - 48px)',
+          background: 'rgba(20,22,28,0.96)', border: '1px solid rgba(255,255,255,0.08)',
+          borderRadius: 12, padding: '18px 20px 10px',
+          boxShadow: '0 24px 80px rgba(0,0,0,0.6)',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+          <span style={{ fontSize: 13, fontWeight: 700, letterSpacing: '-0.01em', color: 'rgba(255,255,255,0.9)' }}>
+            Keyboard shortcuts
+          </span>
+          <span style={{
+            fontSize: 10, fontFamily: '"JetBrains Mono", ui-monospace, monospace',
+            color: accent, background: `${accent}15`, border: `1px solid ${accent}44`,
+            borderRadius: 4, padding: '1px 7px',
+          }}>?</span>
+        </div>
+        {SHORTCUT_ROWS.map(([keys, desc], i) => (
+          <div key={keys} style={{
+            display: 'flex', alignItems: 'center', gap: 14, padding: '9px 0',
+            borderTop: i === 0 ? 'none' : '1px solid rgba(255,255,255,0.05)',
+          }}>
+            <span style={{
+              minWidth: 64, textAlign: 'center',
+              fontSize: 11, fontFamily: '"JetBrains Mono", ui-monospace, monospace',
+              color: 'rgba(255,255,255,0.85)',
+              background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.08)',
+              borderRadius: 5, padding: '3px 8px',
+            }}>{keys}</span>
+            <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.65)' }}>{desc}</span>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -1296,6 +1544,28 @@ const addInputStyle: React.CSSProperties = {
   fontFamily: '"JetBrains Mono", ui-monospace, monospace',
 };
 
+/** Launch-at-startup checkbox for the dev Tweaks panel. Registry state and
+ *  toggle logic live in the shared useAutostart hook (components/settings.tsx),
+ *  which the Settings window's System pane also uses. */
+function AutostartToggle() {
+  const [enabled, toggle] = useAutostart();
+  return (
+    <label style={{
+      display: 'flex', alignItems: 'center', gap: 8, padding: '3px 0',
+      cursor: 'pointer', userSelect: 'none', color: 'rgba(41,38,27,0.85)',
+    }}>
+      <input
+        type="checkbox"
+        checked={enabled === true}
+        disabled={enabled === null}
+        onChange={(e) => toggle(e.target.checked)}
+        style={{ accentColor: '#29261b', width: 13, height: 13 }}
+      />
+      <span style={{ fontSize: 11.5, fontWeight: 500 }}>Launch at startup</span>
+    </label>
+  );
+}
+
 /** Measures actual rAF frame interval as a rolling average and returns FPS.
  *  Updates state once per second so we don't trash React with 60Hz re-renders.
  *  Also pushes the rolling rate into perf-debug for spike snapshots. */
@@ -1323,15 +1593,24 @@ function useFrameRate(): number {
 }
 
 function BottomStatus({
-  accent, onSwitcher, profileName, tileCount, app, fps,
+  accent, onSwitcher, profileName, tileCount,
 }: {
   accent: string;
   onSwitcher: () => void;
   profileName: string;
   tileCount: number;
-  app: AppMetrics | null;
-  fps: number;
 }) {
+  // The 1Hz sysmon subscription and rAF frame counter live HERE, not in App:
+  // this bar is the only chrome that displays them, and keeping them out of
+  // the root means the ~36 tile subtrees no longer reconcile every second.
+  const sysmon = useSysmon();
+  const fps = useFrameRate();
+  const app = sysmon.latest.app;
+  // GPU spike feed for perf-debug snapshots rides along with the only
+  // remaining chrome-level sysmon subscriber.
+  useEffect(() => {
+    perfDebug.recordGpuSample(app?.gpu);
+  }, [app?.gpu]);
   const cpuText = app ? `${app.cpu.toFixed(1)}%` : '—';
   const ramText = app ? (app.ram_mb >= 1024 ? `${(app.ram_mb / 1024).toFixed(2)} GB` : `${Math.round(app.ram_mb)} MB`) : '—';
   const gpuText = app && app.gpu != null ? `${app.gpu.toFixed(0)}%` : '—';

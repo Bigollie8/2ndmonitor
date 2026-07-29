@@ -1,31 +1,30 @@
-import React, { useEffect, useState } from 'react';
+import React, { useRef } from 'react';
 import { HFTile } from './tiles';
 import {
-  type SolarXrayReading,
   SUN_IMAGE_URL,
   fetchSolarXray,
   flareSeverity,
 } from '../state/solarFlare';
+import { usePoll } from '../state/usePoll';
 import type { Density } from '../types';
 
 const REFRESH_MS = 5 * 60 * 1000;
 
 export function SolarFlareTile({ density, accent }: { density: Density; accent: string }) {
-  const [reading, setReading] = useState<SolarXrayReading | null>(null);
-  // Cache-buster so the SDO image refreshes alongside the X-ray reading.
-  const [imageBust, setImageBust] = useState<number>(() => Date.now());
-
-  useEffect(() => {
-    let cancelled = false;
-    const load = async () => {
+  const { data } = usePoll(
+    async () => {
       const r = await fetchSolarXray();
-      if (!cancelled && r) setReading(r);
-      if (!cancelled) setImageBust(Date.now());
-    };
-    void load();
-    const id = setInterval(load, REFRESH_MS);
-    return () => { cancelled = true; clearInterval(id); };
-  }, []);
+      if (r == null) throw new Error('fetch failed');
+      // Cache-buster so the SDO image refreshes alongside the X-ray reading.
+      return { reading: r, imageBust: Date.now() };
+    },
+    REFRESH_MS,
+  );
+  /* Bust value for the initial render, before the first reading lands, so the
+   * image URL stays stable across re-renders instead of reloading each time. */
+  const initialBust = useRef(Date.now());
+  const reading = data?.reading ?? null;
+  const imageBust = data?.imageBust ?? initialBust.current;
 
   const severity = reading ? flareSeverity(reading.classLetter) : null;
 

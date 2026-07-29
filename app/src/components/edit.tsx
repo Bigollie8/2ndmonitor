@@ -1,17 +1,18 @@
 import React, { useState } from 'react';
 import type { TileType, TileInstance, Rect } from '../state/layout';
 import {
+  ALL_TILE_TYPES,
   DEFAULT_LANDSCAPE_LAYOUT,
   DEFAULT_PORTRAIT_LAYOUT,
   clampRectFrac,
   useCanvas,
   useOrientation,
-  findInstance,
   getInstance,
   removeInstance,
   updateInstance,
 } from '../state/layout';
-import { TilePickerGallery } from './TilePickerGallery';
+import { TILE_META } from '../state/tileMeta';
+import { TileLibrary } from './TileLibrary';
 
 export function EditModeOverlay({
   accent, accent2, onExit, onRemove, onAdd,
@@ -33,44 +34,15 @@ export function EditModeOverlay({
   setSnap: (enabled: boolean) => void;
   profileName: string;
 }) {
-  const [tool, setTool] = useState<'select' | 'move' | 'resize' | 'comment'>('select');
   const [showGuides, setShowGuides] = useState(true);
   const [showGrid, setShowGrid] = useState(true);
   const [pickerOpen, setPickerOpen] = useState(false);
 
-  const ALL_LABELS: Record<TileType, string> = {
-    discord: 'Discord', spotify: 'Now playing', claude: 'Claude Code',
-    mixer: 'Audio mixer',
-    notes: 'Todos', sysmon: 'System monitor', clock: 'Now & forecast', viz: 'Audio visualizer',
-    streamDeck: 'Stream Deck',
-    weatherRadar: 'Weather radar',
-    pomodoro: 'Pomodoro',
-    sun: 'Sun & golden hour',
-    aurora: 'Aurora & moon',
-    airQuality: 'Air quality',
-    stocks: 'Stocks',
-    tides: 'Tides',
-    githubPrs: 'GitHub PRs',
-    streamChat: 'Stream chat',
-    phoneNotifs: 'Phone notifs',
-    homeAssistant: 'Smart home',
-    scratchpad: 'Scratchpad',
-    quote: 'Quote of the day',
-    onThisDay: 'On this day',
-    randomWiki: 'Random Wikipedia',
-    wordOfDay: 'Word of the day',
-    iss: 'ISS · live',
-    launches: 'Space launches',
-    dailyChallenge: 'Daily challenge',
-    pollen: 'Pollen & smoke',
-    birds: 'Recent birds',
-    solarFlare: 'Sun · X-ray',
-    lightning: 'Lightning · live',
-    aircraft: 'Aircraft overhead',
-    activeWindow: 'Active windows',
-    docker: 'Docker',
-    energy: 'Energy',
-  };
+  // Labels/icons come from the shared registry — this used to be a third
+  // hand-maintained copy of the tile metadata.
+  const ALL_LABELS = Object.fromEntries(
+    ALL_TILE_TYPES.map((k) => [k, TILE_META[k].label]),
+  ) as Record<TileType, string>;
 
   const orientation = useOrientation();
   const canvas = useCanvas();
@@ -99,14 +71,13 @@ export function EditModeOverlay({
       pointerEvents: 'none',
     }}>
       <div style={{ pointerEvents: 'auto' }}>
-        <EditToolbar accent={accent} tool={tool} setTool={setTool}
+        <EditToolbar accent={accent}
           showGuides={showGuides} setShowGuides={setShowGuides}
           showGrid={showGrid} setShowGrid={setShowGrid}
           snap={snap} setSnap={setSnap}
           profileName={profileName}
           onExit={onExit}
           onPickerOpen={() => setPickerOpen(true)} />
-        <EditLeftRail accent={accent} tool={tool} setTool={setTool} />
       </div>
       {showGrid && <GridOverlay />}
       {showGuides && sel && <SmartGuides rect={sel.rect} accent={accent2} canvas={canvas} />}
@@ -134,7 +105,7 @@ export function EditModeOverlay({
       </div>
       {pickerOpen && (
         <div style={{ pointerEvents: 'auto' }}>
-          <TilePickerGallery
+          <TileLibrary
             orientation={orientation}
             canvas={canvas}
             tiles={tiles}
@@ -151,11 +122,9 @@ export function EditModeOverlay({
 }
 
 function EditToolbar({
-  accent, tool, setTool, showGuides, setShowGuides, showGrid, setShowGrid, snap, setSnap, onExit, profileName, onPickerOpen,
+  accent, showGuides, setShowGuides, showGrid, setShowGrid, snap, setSnap, onExit, profileName, onPickerOpen,
 }: {
   accent: string;
-  tool: 'select' | 'move' | 'resize' | 'comment';
-  setTool: (t: 'select' | 'move' | 'resize' | 'comment') => void;
   showGuides: boolean;
   setShowGuides: (b: boolean) => void;
   showGrid: boolean;
@@ -175,9 +144,6 @@ function EditToolbar({
       border: '1px solid rgba(255,255,255,0.08)',
       boxShadow: '0 12px 40px rgba(0,0,0,0.5)', zIndex: 60,
     }}>
-      <ToolBtn icon="↖" label="Select" active={tool === 'select'} onClick={() => setTool('select')} accent={accent} />
-      <ToolBtn icon="✥" label="Move" active={tool === 'move'} onClick={() => setTool('move')} accent={accent} />
-      <ToolBtn icon="◰" label="Resize" active={tool === 'resize'} onClick={() => setTool('resize')} accent={accent} />
       <ToolBtn icon="+" label="Add tile" active={false} onClick={onPickerOpen} accent={accent} />
       <Divider />
       <ToolToggle label="Snap" active={snap} onClick={() => setSnap(!snap)} accent={accent} />
@@ -223,40 +189,6 @@ function ToolToggle({ label, active, onClick, accent }: { label: string; active:
 
 function Divider() {
   return <div style={{ width: 1, height: 20, background: 'rgba(255,255,255,0.08)', margin: '0 4px' }} />;
-}
-
-function EditLeftRail({ accent, tool, setTool }: { accent: string; tool: string; setTool: (s: any) => void }) {
-  const tools = [
-    { id: 'select', icon: '↖', label: 'V' },
-    { id: 'move', icon: '✥', label: 'M' },
-    { id: 'resize', icon: '◰', label: 'R' },
-    { id: 'comment', icon: '◐', label: 'C' },
-  ];
-  return (
-    <div style={{
-      position: 'absolute', top: '50%', left: 16, transform: 'translateY(-50%)',
-      display: 'flex', flexDirection: 'column', gap: 6,
-      padding: 8, borderRadius: 10,
-      background: 'rgba(20,22,28,0.95)', backdropFilter: 'blur(20px)',
-      border: '1px solid rgba(255,255,255,0.08)',
-      boxShadow: '0 12px 40px rgba(0,0,0,0.5)', zIndex: 55,
-    }}>
-      {tools.map((t) => (
-        <button key={t.id} onClick={() => setTool(t.id)} title={t.id} style={{
-          width: 36, height: 36, borderRadius: 6, fontSize: 16,
-          background: tool === t.id ? `${accent}20` : 'transparent',
-          color: tool === t.id ? accent : 'rgba(255,255,255,0.65)',
-          border: tool === t.id ? `1px solid ${accent}55` : '1px solid transparent',
-          cursor: 'pointer',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          flexDirection: 'column', gap: 0,
-        }}>
-          <span style={{ lineHeight: 1 }}>{t.icon}</span>
-          <span style={{ fontSize: 8, color: 'rgba(255,255,255,0.4)', fontFamily: '"JetBrains Mono", ui-monospace, monospace' }}>{t.label}</span>
-        </button>
-      ))}
-    </div>
-  );
 }
 
 function GridOverlay() {
@@ -366,7 +298,7 @@ function PropertiesPanel({
         <button
           onClick={onRemove}
           disabled={!onRemove}
-          title={onRemove ? 'Hide this tile (toggle back from Tweaks → Tiles)' : 'The visualizer cannot be hidden'}
+          title={onRemove ? 'Remove this tile (add it back from the Tile Library)' : 'The visualizer cannot be removed'}
           style={{
             flex: 1, padding: '7px', fontSize: 10.5, fontWeight: 600,
             background: 'rgba(239,68,68,0.1)', color: onRemove ? '#fca5a5' : 'rgba(239,68,68,0.4)',
@@ -441,37 +373,7 @@ function LayersPanel({ accent, selectedInstanceId, setSelectedInstanceId, tiles,
   canvas: { w: number; h: number };
   labels: Record<TileType, string>;
 }) {
-  const kindIcon = (type: TileType): string => ({
-    viz: '◢', spotify: '♪', discord: '◇', claude: '⌘', mixer: '♬', notes: '✎',
-    sysmon: '▤', clock: '◐', streamDeck: '▦',
-    weatherRadar: '☂',
-    pomodoro: '◷',
-    sun: '☀',
-    aurora: '🌌',
-    airQuality: '🌫',
-    stocks: '📈',
-    tides: '🌊',
-    githubPrs: '⊕',
-    streamChat: '💬',
-    phoneNotifs: '📱',
-    homeAssistant: '🏠',
-    scratchpad: '✎',
-    quote: '❝',
-    onThisDay: '📜',
-    randomWiki: '🎲',
-    wordOfDay: '📖',
-    iss: '🛰',
-    launches: '🚀',
-    dailyChallenge: '⚡',
-    pollen: '🌾',
-    birds: '🐦',
-    solarFlare: '☀',
-    lightning: '⚡',
-    aircraft: '✈',
-    activeWindow: '🪟',
-    docker: '🐳',
-    energy: '⚡',
-  }[type] ?? '?');
+  const kindIcon = (type: TileType): string => TILE_META[type].icon;
   return (
     <div style={{
       position: 'absolute', bottom: 16, left: 16, width: 240,

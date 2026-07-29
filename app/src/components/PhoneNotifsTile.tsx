@@ -5,11 +5,11 @@ import {
   type NtfyNotification,
   type NtfyStatus,
   getStoredServer,
-  getStoredTopic,
   setStoredServer,
-  setStoredTopic,
   subscribeNtfy,
 } from '../state/ntfy';
+import { useSecret } from '../state/secrets';
+import { TileEmpty, TileError, TileNeedsSetup } from './tileStates';
 import type { Density } from '../types';
 
 const MAX_NOTIFICATIONS = 50;
@@ -21,16 +21,18 @@ export interface PhoneNotifsTileProps {
 }
 
 export function PhoneNotifsTile({ density, accent, editing }: PhoneNotifsTileProps) {
-  const [topic, setTopic] = useState<string>(getStoredTopic);
+  const { value: topic, loaded, save: saveTopic, clear: clearTopic } =
+    useSecret('ntfy_topic', { legacyLocalStorageKey: '2mh.ntfy.topic' });
   const [server, setServer] = useState<string>(getStoredServer);
   const [notifs, setNotifs] = useState<NtfyNotification[]>([]);
   const [status, setStatus] = useState<NtfyStatus>({ kind: 'disconnected' });
+  const [setupOpen, setSetupOpen] = useState(false);
   const seenIdsRef = useRef<Set<string>>(new Set());
 
   const configured = !!topic;
 
   useEffect(() => {
-    if (!configured) { setNotifs([]); setStatus({ kind: 'disconnected' }); return; }
+    if (!topic) { setNotifs([]); setStatus({ kind: 'disconnected' }); return; }
     seenIdsRef.current = new Set();
     const cleanup = subscribeNtfy(server, topic, {
       onNotification: (n) => {
@@ -64,25 +66,37 @@ export function PhoneNotifsTile({ density, accent, editing }: PhoneNotifsTilePro
         display: 'flex', flexDirection: 'column',
         overflow: 'hidden',
       }}>
-        {!configured && (
+        {loaded && !configured && !(editing || setupOpen) && (
+          <TileNeedsSetup
+            accent={accent}
+            line={
+              <>
+                Pick a long random topic name and subscribe to it from the{' '}
+                <span style={{ color: accent, fontFamily: 'monospace' }}>ntfy</span> app on your phone. Same topic on both sides.
+              </>
+            }
+            onSetup={() => setSetupOpen(true)}
+          />
+        )}
+        {loaded && !configured && (editing || setupOpen) && (
           <ConfigPanel
-            editing={editing}
             accent={accent}
             initialServer={server}
             onSave={(t, s) => {
-              setStoredTopic(t); setStoredServer(s); setTopic(t); setServer(s);
+              void saveTopic(t); setStoredServer(s); setServer(s);
             }}
           />
         )}
-        {configured && notifs.length === 0 && (
-          <div style={{
-            flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center',
-            color: 'rgba(255,255,255,0.45)', fontSize: 11, padding: 12, textAlign: 'center',
-          }}>
-            {status.kind === 'connecting' ? 'connecting…'
-              : status.kind === 'connected' ? `Listening on ${topic}.\nPublish from your phone to see notifications here.`
-              : 'disconnected.'}
-          </div>
+        {configured && notifs.length === 0 && status.kind === 'disconnected' && (
+          <TileError line="disconnected." />
+        )}
+        {configured && notifs.length === 0 && status.kind !== 'disconnected' && (
+          <TileEmpty
+            icon="▯"
+            line={status.kind === 'connecting'
+              ? 'connecting…'
+              : `Listening on ${topic}. Publish from your phone to see notifications here.`}
+          />
         )}
         {configured && notifs.length > 0 && (
           <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '4px 6px' }}>
@@ -92,7 +106,7 @@ export function PhoneNotifsTile({ density, accent, editing }: PhoneNotifsTilePro
         {configured && editing && (
           <div style={{ padding: 8, borderTop: '1px solid rgba(255,255,255,0.06)', flexShrink: 0 }}>
             <button
-              onClick={() => { setStoredTopic(''); setTopic(''); setNotifs([]); }}
+              onClick={() => { void clearTopic(); setNotifs([]); }}
               style={{
                 padding: '4px 10px', fontSize: 10, fontWeight: 600, borderRadius: 4,
                 background: 'rgba(255,255,255,0.05)', color: 'rgba(255,255,255,0.7)',
@@ -164,8 +178,8 @@ function StatusDot({ status }: { status: NtfyStatus }) {
 }
 
 function ConfigPanel({
-  editing, accent, initialServer, onSave,
-}: { editing: boolean; accent: string; initialServer: string; onSave: (topic: string, server: string) => void }) {
+  accent, initialServer, onSave,
+}: { accent: string; initialServer: string; onSave: (topic: string, server: string) => void }) {
   const [topic, setTopic] = useState('');
   const [server, setServer] = useState(initialServer);
   return (
@@ -177,38 +191,30 @@ function ConfigPanel({
         Pick a long random topic name and subscribe to it from the{' '}
         <span style={{ color: accent, fontFamily: 'monospace' }}>ntfy</span> app on your phone. Same topic on both sides.
       </div>
-      {editing ? (
-        <>
-          <input
-            value={topic}
-            onChange={(e) => setTopic(e.target.value)}
-            placeholder="topic name (e.g. xj91k_phone)"
-            maxLength={64}
-            style={inputStyle}
-          />
-          <input
-            value={server}
-            onChange={(e) => setServer(e.target.value)}
-            placeholder="server (default: https://ntfy.sh)"
-            style={inputStyle}
-          />
-          <button
-            onClick={() => { if (topic.trim()) onSave(topic.trim(), server.trim() || 'https://ntfy.sh'); }}
-            disabled={!topic.trim()}
-            style={{
-              padding: '7px 12px', fontSize: 11, fontWeight: 700,
-              background: topic.trim() ? accent : 'rgba(255,255,255,0.06)',
-              color: topic.trim() ? '#000' : 'rgba(255,255,255,0.4)',
-              border: 'none', borderRadius: 5,
-              cursor: topic.trim() ? 'pointer' : 'not-allowed',
-            }}
-          >Subscribe</button>
-        </>
-      ) : (
-        <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.45)' }}>
-          Enter edit mode to configure.
-        </div>
-      )}
+      <input
+        value={topic}
+        onChange={(e) => setTopic(e.target.value)}
+        placeholder="topic name (e.g. xj91k_phone)"
+        maxLength={64}
+        style={inputStyle}
+      />
+      <input
+        value={server}
+        onChange={(e) => setServer(e.target.value)}
+        placeholder="server (default: https://ntfy.sh)"
+        style={inputStyle}
+      />
+      <button
+        onClick={() => { if (topic.trim()) onSave(topic.trim(), server.trim() || 'https://ntfy.sh'); }}
+        disabled={!topic.trim()}
+        style={{
+          padding: '7px 12px', fontSize: 11, fontWeight: 700,
+          background: topic.trim() ? accent : 'rgba(255,255,255,0.06)',
+          color: topic.trim() ? '#000' : 'rgba(255,255,255,0.4)',
+          border: 'none', borderRadius: 5,
+          cursor: topic.trim() ? 'pointer' : 'not-allowed',
+        }}
+      >Subscribe</button>
     </div>
   );
 }

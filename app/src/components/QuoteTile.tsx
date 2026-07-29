@@ -1,24 +1,22 @@
-import React, { useEffect, useState } from 'react';
+import React from 'react';
 import { HFTile } from './tiles';
 import { type Quote, fetchQuoteOfTheDay } from '../state/quote';
+import { usePoll } from '../state/usePoll';
 import type { Density } from '../types';
 
 const REFRESH_MS = 60 * 60 * 1000;
 
 export function QuoteTile({ density, accent }: { density: Density; accent: string }) {
-  const [quote, setQuote] = useState<Quote | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    const load = async () => {
+  /* fetchQuoteOfTheDay owns the day-keyed localStorage cache — it serves the
+   * cached quote for today and only hits the network on a new day. */
+  const { data: quote } = usePoll<Quote>(
+    async () => {
       const q = await fetchQuoteOfTheDay();
-      if (cancelled) return;
-      if (q) setQuote(q);
-    };
-    void load();
-    const id = setInterval(load, REFRESH_MS);
-    return () => { cancelled = true; clearInterval(id); };
-  }, []);
+      if (q == null) throw new Error('fetch failed');
+      return q;
+    },
+    REFRESH_MS,
+  );
 
   return (
     <HFTile title="Quote of the day" accent={accent} density={density} style={{ height: '100%' }}>

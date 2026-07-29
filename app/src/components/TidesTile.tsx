@@ -6,6 +6,7 @@ import {
   parseNoaaTime,
   parseTidesConfig,
 } from '../state/tides';
+import { usePoll } from '../state/usePoll';
 import type { Density } from '../types';
 
 const REFRESH_MS = 30 * 60 * 1000; // tides are predicted, not live — half-hour refresh is plenty
@@ -20,21 +21,21 @@ export interface TidesTileProps {
 
 export function TidesTile({ density, accent, editing, config, setConfig }: TidesTileProps) {
   const parsed = useMemo(() => parseTidesConfig(config), [config]);
-  const [data, setData] = useState<TidePredictions | null>(null);
   const [now, setNow] = useState<number>(() => Date.now());
 
-  useEffect(() => {
-    let cancelled = false;
-    if (!parsed.stationId) { setData(null); return; }
-    const load = async () => {
+  const { data, error } = usePoll<TidePredictions | null>(
+    async () => {
+      if (!parsed.stationId) return null;
       const next = await fetchTidePredictions(parsed.stationId);
-      if (cancelled) return;
-      setData(next);
-    };
-    void load();
-    const id = setInterval(load, REFRESH_MS);
-    return () => { cancelled = true; clearInterval(id); };
-  }, [parsed.stationId]);
+      if (next == null) throw new Error('fetch failed');
+      // NOAA errors arrive as next.error; promote to a throw so usePoll backs
+      // off and keeps the last good predictions visible.
+      if (next.error) throw new Error(next.error);
+      return next;
+    },
+    REFRESH_MS,
+    [parsed.stationId],
+  );
 
   // Tick "now" every minute so the next-tide countdown stays current.
   useEffect(() => {
@@ -75,16 +76,16 @@ export function TidesTile({ density, accent, editing, config, setConfig }: Tides
             onSave={(stationId, stationLabel) => setConfig({ stationId, stationLabel } as unknown as Record<string, unknown>)}
           />
         )}
-        {parsed.stationId && data && data.error && (
+        {parsed.stationId && error && (
           <div style={{
             color: '#fca5a5', fontSize: 11, padding: 8,
             background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)',
             borderRadius: 5,
           }}>
-            {data.error}
+            {error}
           </div>
         )}
-        {parsed.stationId && data && !data.error && upcoming.length === 0 && (
+        {parsed.stationId && data && !error && upcoming.length === 0 && (
           <div style={{ color: 'rgba(255,255,255,0.45)', fontSize: 11, padding: 8 }}>
             Loading predictions…
           </div>

@@ -1,7 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { HFTile, Sparkline } from './tiles';
-import { fetchEntityState, getStoredToken, getStoredUrl } from '../state/homeAssistant';
+import { fetchEntityState, getStoredUrl } from '../state/homeAssistant';
+import { getSecret } from '../state/secrets';
 import { type EnergyConfig, parseEnergyConfig, parseEntityNumber } from '../state/energy';
+import { usePoll } from '../state/usePoll';
 import type { Density } from '../types';
 
 const POLL_MS = 15 * 1000;
@@ -19,49 +21,54 @@ export interface EnergyTileProps {
 export function EnergyTile({ density, accent, accent2, editing, config, setConfig }: EnergyTileProps) {
   const parsed = useMemo(() => parseEnergyConfig(config), [config]);
   const [haUrl, setHaUrl] = useState<string>(getStoredUrl);
-  const [haToken, setHaToken] = useState<string>(getStoredToken);
-  const [solar, setSolar] = useState<number | null>(null);
-  const [grid, setGrid] = useState<number | null>(null);
+  const [haToken, setHaToken] = useState<string>('');
+  const [haTokenLoaded, setHaTokenLoaded] = useState(false);
   const solarHistoryRef = useRef<number[]>([]);
   const gridHistoryRef = useRef<number[]>([]);
-  const [, force] = useState(0);
 
-  // Refresh HA creds in case the user just connected via the Home Assistant
-  // tile — we re-read from localStorage on focus.
+  // Refresh HA creds on mount and in case the user just connected via the
+  // Home Assistant tile — we re-read (URL from localStorage, token from the
+  // secret store) on focus.
   useEffect(() => {
-    const onFocus = () => { setHaUrl(getStoredUrl()); setHaToken(getStoredToken()); };
-    window.addEventListener('focus', onFocus);
-    return () => window.removeEventListener('focus', onFocus);
+    let cancelled = false;
+    const load = () => {
+      setHaUrl(getStoredUrl());
+      getSecret('ha_token', { legacyLocalStorageKey: '2mh.ha.token' })
+        .then((t) => { if (!cancelled) { setHaToken(t ?? ''); setHaTokenLoaded(true); } })
+        .catch(() => { if (!cancelled) setHaTokenLoaded(true); });
+    };
+    load();
+    window.addEventListener('focus', load);
+    return () => { cancelled = true; window.removeEventListener('focus', load); };
   }, []);
 
   const haReady = !!haUrl && !!haToken;
   const configured = !!parsed.solarEntity || !!parsed.gridEntity;
 
-  useEffect(() => {
-    if (!haReady || !configured) return;
-    let cancelled = false;
-    const poll = async () => {
+  const { data } = usePoll(
+    async () => {
+      if (!haReady || !configured) return null;
       const [solarState, gridState] = await Promise.all([
         parsed.solarEntity ? fetchEntityState(haUrl, haToken, parsed.solarEntity) : Promise.resolve(null),
         parsed.gridEntity ? fetchEntityState(haUrl, haToken, parsed.gridEntity) : Promise.resolve(null),
       ]);
-      if (cancelled) return;
       const s = parseEntityNumber(solarState?.state);
       const g = parseEntityNumber(gridState?.state);
-      setSolar(s);
-      setGrid(g);
       if (s != null) {
         solarHistoryRef.current = [...solarHistoryRef.current, s].slice(-HISTORY_LEN);
       }
       if (g != null) {
         gridHistoryRef.current = [...gridHistoryRef.current, g].slice(-HISTORY_LEN);
       }
-      force((n) => n + 1);
-    };
-    void poll();
-    const id = setInterval(poll, POLL_MS);
-    return () => { cancelled = true; clearInterval(id); };
-  }, [haReady, configured, haUrl, haToken, parsed.solarEntity, parsed.gridEntity]);
+      // usePoll's own setState is the render tick that used to be `force` —
+      // the fresh object each poll keeps the history refs painting.
+      return { solar: s, grid: g };
+    },
+    POLL_MS,
+    [haReady, configured, haUrl, haToken, parsed.solarEntity, parsed.gridEntity],
+  );
+  const solar = data?.solar ?? null;
+  const grid = data?.grid ?? null;
 
   const headRight = (
     <span style={{
@@ -77,7 +84,7 @@ export function EnergyTile({ density, accent, accent2, editing, config, setConfi
         display: 'flex', flexDirection: 'column', gap: 6,
         overflow: 'hidden',
       }}>
-        {!haReady && (
+        {haTokenLoaded && !haReady && (
           <div style={{
             color: 'rgba(255,255,255,0.55)', fontSize: 11, padding: 8,
             background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)',

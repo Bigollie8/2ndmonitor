@@ -1,9 +1,10 @@
-import React, { useEffect, useState } from 'react';
+import React from 'react';
 import { HFTile } from './tiles';
-import { type IssPosition, distanceKm, fetchIssPosition } from '../state/iss';
+import { distanceKm, fetchIssPosition } from '../state/iss';
+import { usePoll } from '../state/usePoll';
 import type { Density, WeatherLocation } from '../types';
 
-const REFRESH_MS = 5 * 1000;
+const REFRESH_MS = 15 * 1000;
 
 export interface IssTileProps {
   density: Density;
@@ -12,18 +13,18 @@ export interface IssTileProps {
 }
 
 export function IssTile({ density, accent, location }: IssTileProps) {
-  const [pos, setPos] = useState<IssPosition | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    const load = async () => {
+  const { data: pos } = usePoll(
+    async () => {
+      // fetchIssPosition returns null on failure; usePoll drives backoff off
+      // thrown errors, so promote the null to a throw. Last good position is
+      // kept, matching the old only-set-when-truthy behavior.
       const p = await fetchIssPosition();
-      if (!cancelled && p) setPos(p);
-    };
-    void load();
-    const id = setInterval(load, REFRESH_MS);
-    return () => { cancelled = true; clearInterval(id); };
-  }, []);
+      if (p == null) throw new Error('fetch failed');
+      return p;
+    },
+    REFRESH_MS,
+    [],
+  );
 
   const distance = pos ? distanceKm(pos.lat, pos.lon, location.lat, location.lon) : null;
   const inEclipse = pos?.visibility === 'eclipsed';

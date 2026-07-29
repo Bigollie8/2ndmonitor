@@ -6,6 +6,7 @@ import {
   loadUsage,
   saveUsage,
 } from '../state/foreground';
+import { usePoll } from '../state/usePoll';
 import type { Density } from '../types';
 
 const POLL_MS = 3 * 1000;
@@ -14,20 +15,17 @@ const SAVE_MS = 30 * 1000;
 interface UsageMap { [appName: string]: number }
 
 export function ActiveWindowTile({ density, accent }: { density: Density; accent: string }) {
-  const [current, setCurrent] = useState<{ app: string; title: string } | null>(null);
   const [usage, setUsage] = useState<UsageMap>(() => loadUsage().perApp);
   const lastTickRef = useRef<number>(Date.now());
   const lastPersistRef = useRef<number>(Date.now());
 
-  useEffect(() => {
-    let cancelled = false;
-    const tick = async () => {
+  const { data: current } = usePoll(
+    async () => {
       const now = Date.now();
       const elapsed = (now - lastTickRef.current) / 1000;
       lastTickRef.current = now;
 
       const info = await fetchForeground();
-      if (cancelled) return;
       const appKey = info?.process_name ?? '';
       const title = info?.window_title ?? '';
 
@@ -43,12 +41,11 @@ export function ActiveWindowTile({ density, accent }: { density: Density; accent
           return next;
         });
       }
-      setCurrent(appKey ? { app: appKey, title } : null);
-    };
-    void tick();
-    const id = setInterval(tick, POLL_MS);
-    return () => { cancelled = true; clearInterval(id); };
-  }, []);
+      return appKey ? { app: appKey, title } : null;
+    },
+    POLL_MS,
+    [],
+  );
 
   // Reset bucket on date roll-over.
   useEffect(() => {

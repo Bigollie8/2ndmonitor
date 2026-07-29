@@ -89,7 +89,8 @@ export function connectBlitzortung(handlers: BlitzortungHandlers): () => void {
  *  Blitzortung WebSocket payload format. Operates on the raw string as a
  *  sequence of charCodes; builds a dictionary up to 256+, emits decoded UTF-16
  *  text suitable for JSON.parse. */
-function decodeLZW(input: string): string {
+// Exported for unit tests only.
+export function decodeLZW(input: string): string {
   if (!input) return '';
   const dict: Record<number, string> = {};
   const data = input.split('');

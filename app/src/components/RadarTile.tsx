@@ -7,6 +7,7 @@ import {
   fetchRainViewerManifest,
   radarTileUrl,
 } from '../state/rainviewer';
+import { usePoll } from '../state/usePoll';
 import type { Density, WeatherLocation } from '../types';
 
 const RADAR_Z = 7;
@@ -39,10 +40,21 @@ export interface RadarTileProps {
 }
 
 export function RadarTile({ density, accent, location }: RadarTileProps) {
-  const [manifest, setManifest] = useState<RainViewerManifest | null>(null);
   const [frameIndex, setFrameIndex] = useState<number>(0);
   const [playing, setPlaying] = useState<boolean>(true);
   const [scrubbing, setScrubbing] = useState<boolean>(false);
+
+  // Manifest fetch: on mount + every 5 minutes. Returns null on failure —
+  // throw so usePoll backs off and keeps the last good manifest visible.
+  const { data: manifest } = usePoll(
+    async () => {
+      const m = await fetchRainViewerManifest();
+      if (m == null) throw new Error('fetch failed');
+      return m;
+    },
+    MANIFEST_REFRESH_MS,
+    [],
+  );
 
   const frames: RainViewerFrame[] = useMemo(
     () => (manifest ? [...manifest.past, ...manifest.nowcast] : []),
@@ -56,23 +68,11 @@ export function RadarTile({ density, accent, location }: RadarTileProps) {
 
   const currentFrame = frames[frameIndex];
 
-  // Manifest fetch: on mount + every 5 minutes
-  useEffect(() => {
-    let cancelled = false;
-    const load = async () => {
-      const m = await fetchRainViewerManifest();
-      if (cancelled) return;
-      if (m) setManifest(m);
-    };
-    void load();
-    const id = setInterval(load, MANIFEST_REFRESH_MS);
-    return () => { cancelled = true; clearInterval(id); };
-  }, []);
-
   // Auto-advance frames when playing AND not scrubbing
   useEffect(() => {
     if (!playing || scrubbing || frames.length === 0) return;
     const id = setInterval(() => {
+      if (document.hidden) return;
       setFrameIndex((i) => (i + 1) % frames.length);
     }, FRAME_INTERVAL_MS);
     return () => clearInterval(id);

@@ -113,7 +113,8 @@ interface ParsedPrivmsg {
   text: string;
 }
 
-function parsePrivmsg(line: string): ParsedPrivmsg | null {
+// Exported for unit tests only.
+export function parsePrivmsg(line: string): ParsedPrivmsg | null {
   // IRCv3 with tags: "@key=val;key=val :nick!nick@nick.tmi.twitch.tv PRIVMSG #channel :message"
   if (!line.includes(' PRIVMSG ')) return null;
   let tags: Record<string, string> = {};
@@ -139,7 +140,8 @@ function parsePrivmsg(line: string): ParsedPrivmsg | null {
   };
 }
 
-function parseTags(s: string): Record<string, string> {
+// Exported for unit tests only.
+export function parseTags(s: string): Record<string, string> {
   const out: Record<string, string> = {};
   for (const pair of s.split(';')) {
     const eq = pair.indexOf('=');

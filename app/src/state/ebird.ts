@@ -3,7 +3,9 @@
  *  Requires a free API key obtained at https://ebird.org/api/keygen.
  *  CORS friendly. */
 
-const TOKEN_KEY = '2mh.ebird.token';
+// The API key lives in the encrypted secret store (see state/secrets.ts,
+// key "ebird_key"; legacy localStorage key "2mh.ebird.token" is migrated on
+// first read). The radius is not a secret and stays in plain localStorage.
 const RADIUS_KEY = '2mh.ebird.radius';
 
 export interface BirdObservation {
@@ -17,13 +19,6 @@ export interface BirdObservation {
   distanceKm?: number;
 }
 
-export function getStoredToken(): string {
-  return localStorage.getItem(TOKEN_KEY) ?? '';
-}
-export function setStoredToken(t: string): void {
-  if (t.trim()) localStorage.setItem(TOKEN_KEY, t.trim());
-  else localStorage.removeItem(TOKEN_KEY);
-}
 export function getStoredRadius(): number {
   const raw = localStorage.getItem(RADIUS_KEY);
   const n = raw != null ? Number(raw) : NaN;

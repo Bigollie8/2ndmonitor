@@ -9,6 +9,7 @@ mod lyrics;
 mod market;
 mod mixer;
 mod nowplaying;
+mod secrets;
 mod spotify;
 mod sysmon;
 mod tweaks;
@@ -18,6 +19,21 @@ mod webtiles;
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        // Single-instance must be the FIRST plugin registered so a second
+        // launch is intercepted before any other plugin does work. The
+        // callback re-surfaces the existing window instead of opening a new one.
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            use tauri::Manager;
+            if let Some(win) = app.get_webview_window("main") {
+                let _ = win.unminimize();
+                let _ = win.set_focus();
+            }
+        }))
+        .plugin(tauri_plugin_window_state::Builder::default().build())
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            None,
+        ))
         .invoke_handler(tauri::generate_handler![
             webtiles::position_tile,
             webtiles::close_tile,
@@ -38,6 +54,7 @@ pub fn run() {
             market::fetch_stock_quotes,
             market::fetch_tide_predictions,
             market::fetch_github_prs,
+            market::fetch_aircraft_states,
             foreground::foreground_get,
             docker_tile::docker_list_containers,
             spotify::spotify_status,
@@ -55,6 +72,10 @@ pub fn run() {
             mixer::mixer_set_session_mute,
             mixer::mixer_set_default_output,
             mixer::mixer_refresh,
+            mixer::set_mixer_active,
+            secrets::secret_get,
+            secrets::secret_set,
+            secrets::secret_delete,
         ])
         .setup(|app| {
             sysmon::spawn(app.handle().clone());

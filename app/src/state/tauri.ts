@@ -293,7 +293,27 @@ export function useNowPlaying(): NowPlayingState {
               }
             }
           }
-          return { track, playback: nextPlayback, sourceAppId: p.source_app_id ?? '' };
+          // Referential stability: the Rust side emits every 2s whether or
+          // not anything changed, and payloadToTrack builds a fresh object
+          // each tick. Returning `prev` when nothing actually changed lets
+          // React bail out of the re-render entirely — this hook sits at the
+          // App root, so without this the whole tile tree reconciles at 0.5Hz.
+          const sameTrack =
+            (track === null && prev.track === null) ||
+            (track !== null && prev.track !== null &&
+              track.title === prev.track.title &&
+              track.artist === prev.track.artist &&
+              track.album === prev.track.album &&
+              track.cover === prev.track.cover);
+          const nextSourceAppId = p.source_app_id ?? '';
+          if (sameTrack && nextPlayback === prev.playback && nextSourceAppId === prev.sourceAppId) {
+            return prev;
+          }
+          return {
+            track: sameTrack ? prev.track : track,
+            playback: nextPlayback,
+            sourceAppId: nextSourceAppId,
+          };
         });
       }))
       .then((unlisten) => {

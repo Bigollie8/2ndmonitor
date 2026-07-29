@@ -1,24 +1,17 @@
 import React, { useEffect, useState } from 'react';
 import { HFTile } from './tiles';
 import { type SpaceLaunch, fetchUpcomingLaunches } from '../state/launches';
+import { usePoll } from '../state/usePoll';
 import type { Density } from '../types';
 
 const REFRESH_MS = 30 * 60 * 1000; // 30m — anon rate limit on Launch Library is 15/h
 
 export function LaunchesTile({ density, accent }: { density: Density; accent: string }) {
-  const [launches, setLaunches] = useState<SpaceLaunch[]>([]);
+  /* fetchUpcomingLaunches swallows failures and returns [] — same shape as an
+   * empty schedule — so there is nothing to promote to a throw here. */
+  const { data } = usePoll(async () => fetchUpcomingLaunches(8), REFRESH_MS);
+  const launches = data ?? [];
   const [now, setNow] = useState<number>(() => Date.now());
-
-  useEffect(() => {
-    let cancelled = false;
-    const load = async () => {
-      const next = await fetchUpcomingLaunches(8);
-      if (!cancelled) setLaunches(next);
-    };
-    void load();
-    const id = setInterval(load, REFRESH_MS);
-    return () => { cancelled = true; clearInterval(id); };
-  }, []);
 
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now()), 60 * 1000);

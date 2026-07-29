@@ -20,6 +20,15 @@ pub async fn position_tile<R: Runtime>(
     w: f64,
     h: f64,
 ) -> Result<(), String> {
+    // Only real web origins may be mounted — reject javascript:, file:, data:,
+    // tauri: etc. before the string ever reaches WebView2. The frontend passes
+    // user-configured URLs here, so this is the trust boundary.
+    let url = url.trim().to_string();
+    let scheme_check = url.to_ascii_lowercase();
+    if !scheme_check.starts_with("https://") && !scheme_check.starts_with("http://") {
+        return Err(format!("refusing non-http(s) tile url: {url}"));
+    }
+
     // Reposition existing webview if it's already mounted — the common path on
     // every resize / canvas-scale change.
     if let Some(existing) = app.webviews().get(&label) {

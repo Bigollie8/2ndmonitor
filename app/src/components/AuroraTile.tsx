@@ -2,13 +2,13 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { HFTile } from './tiles';
 import {
   type AuroraVisibility,
-  type KpEntry,
   auroraVisibility,
   fetchKpForecast,
   fetchKpRecent,
   moonPhase,
   moonPhaseEmoji,
 } from '../state/aurora';
+import { usePoll } from '../state/usePoll';
 import type { Density, WeatherLocation } from '../types';
 
 const KP_REFRESH_MS = 10 * 60 * 1000;
@@ -40,23 +40,21 @@ export interface AuroraTileProps {
 }
 
 export function AuroraTile({ density, accent, location }: AuroraTileProps) {
-  const [recent, setRecent] = useState<KpEntry[]>([]);
-  const [forecast, setForecast] = useState<KpEntry[]>([]);
   const [, setTick] = useState(0);
 
-  // Fetch KP on mount + every 10 minutes
-  useEffect(() => {
-    let cancelled = false;
-    const load = async () => {
+  // Fetch KP on mount + every 10 minutes. Both fetchers return [] on failure
+  // (indistinguishable from a legitimately empty response), so nothing to
+  // promote to a throw here.
+  const { data } = usePoll(
+    async () => {
       const [r, f] = await Promise.all([fetchKpRecent(), fetchKpForecast()]);
-      if (cancelled) return;
-      setRecent(r);
-      setForecast(f);
-    };
-    void load();
-    const id = setInterval(load, KP_REFRESH_MS);
-    return () => { cancelled = true; clearInterval(id); };
-  }, []);
+      return { recent: r, forecast: f };
+    },
+    KP_REFRESH_MS,
+    [],
+  );
+  const recent = data?.recent ?? [];
+  const forecast = data?.forecast ?? [];
 
   // Re-render every minute (for moon phase + relative time labels)
   useEffect(() => {

@@ -1,23 +1,25 @@
-import React, { useEffect, useState } from 'react';
+import React from 'react';
 import { HFTile } from './tiles';
-import { type DockerContainer, type DockerListResult, fetchDockerContainers } from '../state/docker';
+import { type DockerContainer, fetchDockerContainers } from '../state/docker';
+import { usePoll } from '../state/usePoll';
 import type { Density } from '../types';
 
-const REFRESH_MS = 10 * 1000;
+const REFRESH_MS = 30 * 1000;
 
 export function DockerTile({ density, accent }: { density: Density; accent: string }) {
-  const [result, setResult] = useState<DockerListResult | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    const load = async () => {
+  const { data: result } = usePoll(
+    async () => {
+      // fetchDockerContainers returns null outside Tauri / on invoke failure;
+      // usePoll drives backoff off thrown errors, so promote the null to a
+      // throw. A daemon-side problem still arrives as result.error and renders
+      // through the normal "unavailable" path below.
       const r = await fetchDockerContainers();
-      if (!cancelled && r) setResult(r);
-    };
-    void load();
-    const id = setInterval(load, REFRESH_MS);
-    return () => { cancelled = true; clearInterval(id); };
-  }, []);
+      if (r == null) throw new Error('fetch failed');
+      return r;
+    },
+    REFRESH_MS,
+    [],
+  );
 
   const running = result?.containers.filter((c) => c.state === 'running').length ?? 0;
   const total = result?.containers.length ?? 0;

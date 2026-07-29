@@ -5,7 +5,10 @@
  *  No auth: ntfy.sh treats topic names as the credential. Use a long random
  *  string per user to keep notifications private. */
 
-const TOPIC_KEY = '2mh.ntfy.topic';
+// The topic IS the credential, so it lives in the encrypted secret store
+// (see state/secrets.ts, key "ntfy_topic"; legacy localStorage key
+// "2mh.ntfy.topic" is migrated on first read). The server URL is not a
+// secret and stays in plain localStorage.
 const SERVER_KEY = '2mh.ntfy.server';
 
 export interface NtfyNotification {
@@ -30,13 +33,6 @@ export type NtfyStatus =
   | { kind: 'connected' }
   | { kind: 'disconnected'; reason?: string };
 
-export function getStoredTopic(): string {
-  return localStorage.getItem(TOPIC_KEY) ?? '';
-}
-export function setStoredTopic(t: string): void {
-  if (t.trim()) localStorage.setItem(TOPIC_KEY, t.trim());
-  else localStorage.removeItem(TOPIC_KEY);
-}
 export function getStoredServer(): string {
   return localStorage.getItem(SERVER_KEY) ?? 'https://ntfy.sh';
 }

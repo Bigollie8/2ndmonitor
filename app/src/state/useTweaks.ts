@@ -6,7 +6,8 @@ const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
 // One-level deep-merge: for each key, if both sides are plain objects, merge fields;
 // otherwise replace. Prevents partial saved JSON from dropping nested fields like
 // weatherLocation.{lat,lon} or vizColorOverride.{accent,accent2}.
-function mergeTweaks<T extends Record<string, unknown>>(defaults: T, loaded: Record<string, unknown>): T {
+// Exported for unit tests — every persisted setting in the app flows through this.
+export function mergeTweaks<T extends Record<string, unknown>>(defaults: T, loaded: Record<string, unknown>): T {
   const out: Record<string, unknown> = { ...defaults };
   for (const k of Object.keys(loaded)) {
     const lv = loaded[k];
@@ -76,12 +77,15 @@ export function useTweaks<T extends Record<string, unknown>>(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Persist on change.
+  // Persist on change. Both sinks share the 300ms debounce: serializing the
+  // full state (profiles, bookmarks, todos) is not free, and without the
+  // debounce the localStorage write fired per pointermove while dragging the
+  // sensitivity/smoothing sliders.
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(values)); } catch { /* noop */ }
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
+      try { localStorage.setItem(STORAGE_KEY, JSON.stringify(values)); } catch { /* noop */ }
       void tauriSave(values).catch((err) => console.warn('tweaks_save failed:', err));
     }, 300);
     return () => {

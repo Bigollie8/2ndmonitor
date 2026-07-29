@@ -1,36 +1,25 @@
-import React, { useEffect, useState } from 'react';
+import React from 'react';
 import { HFTile } from './tiles';
 import { appActions } from '../state/tauri';
 import { type WikiArticle, fetchRandomArticle } from '../state/randomWiki';
+import { usePoll } from '../state/usePoll';
 import type { Density } from '../types';
 
 const REFRESH_MS = 60 * 60 * 1000;
 
 export function RandomWikiTile({ density, accent }: { density: Density; accent: string }) {
-  const [article, setArticle] = useState<WikiArticle | null>(null);
-  const [loading, setLoading] = useState<boolean>(true);
-
-  const load = async () => {
-    setLoading(true);
-    const a = await fetchRandomArticle();
-    if (a) setArticle(a);
-    setLoading(false);
-  };
-
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
+  const { data: article, loading, refresh } = usePoll<WikiArticle>(
+    async () => {
       const a = await fetchRandomArticle();
-      if (!cancelled && a) setArticle(a);
-      if (!cancelled) setLoading(false);
-    })();
-    const id = setInterval(load, REFRESH_MS);
-    return () => { cancelled = true; clearInterval(id); };
-  }, []);
+      if (a == null) throw new Error('fetch failed');
+      return a;
+    },
+    REFRESH_MS,
+  );
 
   const headRight = (
     <button
-      onClick={() => void load()}
+      onClick={refresh}
       title="New article"
       style={{
         padding: '3px 8px', fontSize: 10, fontWeight: 600, borderRadius: 4,

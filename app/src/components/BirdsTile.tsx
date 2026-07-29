@@ -1,13 +1,14 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import { HFTile } from './tiles';
 import {
   type BirdObservation,
   fetchRecentBirds,
   getStoredRadius,
-  getStoredToken,
   setStoredRadius,
-  setStoredToken,
 } from '../state/ebird';
+import { useSecret } from '../state/secrets';
+import { usePoll } from '../state/usePoll';
+import { TileEmpty, TileError, TileNeedsSetup, TileSkeleton } from './tileStates';
 import type { Density, WeatherLocation } from '../types';
 
 const REFRESH_MS = 15 * 60 * 1000;
@@ -20,32 +21,22 @@ export interface BirdsTileProps {
 }
 
 export function BirdsTile({ density, accent, editing, location }: BirdsTileProps) {
-  const [token, setToken] = useState<string>(getStoredToken);
+  const { value: token, loaded, save: saveToken, clear: clearToken } =
+    useSecret('ebird_key', { legacyLocalStorageKey: '2mh.ebird.token' });
   const [radius, setRadius] = useState<number>(getStoredRadius);
-  const [obs, setObs] = useState<BirdObservation[]>([]);
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState<boolean>(false);
-
-  useEffect(() => {
-    if (!token) { setObs([]); return; }
-    let cancelled = false;
-    const load = async () => {
-      setLoading(true);
-      setError(null);
-      try {
-        const next = await fetchRecentBirds(token, location.lat, location.lon, radius);
-        if (cancelled) return;
-        setObs(next);
-      } catch (err) {
-        if (!cancelled) setError(String(err));
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    };
-    void load();
-    const id = setInterval(load, REFRESH_MS);
-    return () => { cancelled = true; clearInterval(id); };
-  }, [token, radius, location.lat, location.lon]);
+  const [setupOpen, setSetupOpen] = useState(false);
+  const { data, error, loading, refresh } = usePoll<BirdObservation[]>(
+    async () => {
+      /* No key yet: nothing to fetch — the connect panel is showing. Saving a
+       * key changes `token`, which is in the deps, so the first real fetch
+       * fires immediately. */
+      if (!token) return [];
+      return fetchRecentBirds(token, location.lat, location.lon, radius);
+    },
+    REFRESH_MS,
+    [token, radius, location.lat, location.lon],
+  );
+  const obs = data ?? [];
 
   const headRight = (
     <span style={{
@@ -61,33 +52,36 @@ export function BirdsTile({ density, accent, editing, location }: BirdsTileProps
         display: 'flex', flexDirection: 'column', gap: 6,
         overflow: 'hidden',
       }}>
-        {!token && (
+        {loaded && !token && !(editing || setupOpen) && (
+          <TileNeedsSetup
+            accent={accent}
+            line={
+              <>
+                Get a free eBird API key at{' '}
+                <span style={{ color: accent, fontFamily: 'monospace' }}>ebird.org/api/keygen</span>
+                .
+              </>
+            }
+            onSetup={() => setSetupOpen(true)}
+          />
+        )}
+        {loaded && !token && (editing || setupOpen) && (
           <ConnectPanel
-            editing={editing}
             accent={accent}
             initialRadius={radius}
             onSave={(t, r) => {
-              setStoredToken(t); setStoredRadius(r);
-              setToken(t); setRadius(r);
+              void saveToken(t); setStoredRadius(r);
+              setRadius(r);
             }}
           />
         )}
-        {token && error && (
-          <div style={{
-            color: '#fca5a5', fontSize: 11, padding: 8,
-            background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)', borderRadius: 5,
-          }}>{error}</div>
+        {token && error && <TileError line={error} onRetry={refresh} />}
+        {token && !error && loading && obs.length === 0 && <TileSkeleton rows={4} />}
+        {token && !error && !loading && obs.length === 0 && (
+          <TileEmpty icon="◔" line="No recent observations." />
         )}
-        {token && !error && (
+        {token && !error && obs.length > 0 && (
           <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 1 }}>
-            {loading && obs.length === 0 && (
-              <div style={{ color: 'rgba(255,255,255,0.45)', fontSize: 11, padding: 8 }}>Loading…</div>
-            )}
-            {!loading && obs.length === 0 && (
-              <div style={{ color: 'rgba(255,255,255,0.45)', fontSize: 11, padding: 8 }}>
-                No recent observations.
-              </div>
-            )}
             {obs.slice(0, 30).map((o, i) => (
               <BirdRow key={`${o.speciesCode}-${i}`} obs={o} accent={accent} />
             ))}
@@ -95,7 +89,7 @@ export function BirdsTile({ density, accent, editing, location }: BirdsTileProps
         )}
         {token && editing && (
           <button
-            onClick={() => { setStoredToken(''); setToken(''); }}
+            onClick={() => { void clearToken(); }}
             style={{
               padding: '4px 10px', fontSize: 10, fontWeight: 600, borderRadius: 4,
               background: 'rgba(255,255,255,0.05)', color: 'rgba(255,255,255,0.7)',
@@ -138,8 +132,8 @@ function BirdRow({ obs, accent }: { obs: BirdObservation; accent: string }) {
 }
 
 function ConnectPanel({
-  editing, accent, initialRadius, onSave,
-}: { editing: boolean; accent: string; initialRadius: number; onSave: (token: string, radius: number) => void }) {
+  accent, initialRadius, onSave,
+}: { accent: string; initialRadius: number; onSave: (token: string, radius: number) => void }) {
   const [token, setToken] = useState('');
   const [radius, setRadius] = useState<number>(initialRadius);
   return (
@@ -152,45 +146,37 @@ function ConnectPanel({
         <span style={{ color: accent, fontFamily: 'monospace' }}>ebird.org/api/keygen</span>
         .
       </div>
-      {editing ? (
-        <>
-          <input
-            type="password"
-            value={token}
-            onChange={(e) => setToken(e.target.value)}
-            placeholder="eBird API key"
-            style={inputStyle}
-          />
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.5)' }}>Radius</span>
-            <input
-              type="range" min={5} max={50} step={5}
-              value={radius}
-              onChange={(e) => setRadius(Number(e.target.value))}
-              style={{ flex: 1, accentColor: accent }}
-            />
-            <span style={{
-              fontSize: 10, color: 'rgba(255,255,255,0.7)', minWidth: 36,
-              fontFamily: '"JetBrains Mono", ui-monospace, monospace',
-            }}>{radius} km</span>
-          </div>
-          <button
-            onClick={() => { if (token.trim()) onSave(token.trim(), radius); }}
-            disabled={!token.trim()}
-            style={{
-              padding: '7px 12px', fontSize: 11, fontWeight: 700,
-              background: token.trim() ? accent : 'rgba(255,255,255,0.06)',
-              color: token.trim() ? '#000' : 'rgba(255,255,255,0.4)',
-              border: 'none', borderRadius: 5,
-              cursor: token.trim() ? 'pointer' : 'not-allowed',
-            }}
-          >Connect</button>
-        </>
-      ) : (
-        <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.45)' }}>
-          Enter edit mode to configure.
-        </div>
-      )}
+      <input
+        type="password"
+        value={token}
+        onChange={(e) => setToken(e.target.value)}
+        placeholder="eBird API key"
+        style={inputStyle}
+      />
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.5)' }}>Radius</span>
+        <input
+          type="range" min={5} max={50} step={5}
+          value={radius}
+          onChange={(e) => setRadius(Number(e.target.value))}
+          style={{ flex: 1, accentColor: accent }}
+        />
+        <span style={{
+          fontSize: 10, color: 'rgba(255,255,255,0.7)', minWidth: 36,
+          fontFamily: '"JetBrains Mono", ui-monospace, monospace',
+        }}>{radius} km</span>
+      </div>
+      <button
+        onClick={() => { if (token.trim()) onSave(token.trim(), radius); }}
+        disabled={!token.trim()}
+        style={{
+          padding: '7px 12px', fontSize: 11, fontWeight: 700,
+          background: token.trim() ? accent : 'rgba(255,255,255,0.06)',
+          color: token.trim() ? '#000' : 'rgba(255,255,255,0.4)',
+          border: 'none', borderRadius: 5,
+          cursor: token.trim() ? 'pointer' : 'not-allowed',
+        }}
+      >Connect</button>
     </div>
   );
 }

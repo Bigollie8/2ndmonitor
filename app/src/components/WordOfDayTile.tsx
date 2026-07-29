@@ -1,25 +1,20 @@
-import React, { useEffect, useState } from 'react';
+import React from 'react';
 import { HFTile } from './tiles';
 import { type WordEntry, fetchWordEntry, wordForToday } from '../state/wordOfDay';
+import { usePoll } from '../state/usePoll';
 import type { Density } from '../types';
 
 const REFRESH_MS = 6 * 60 * 60 * 1000; // 6h — date-seeded so same word per day anyway
 
 export function WordOfDayTile({ density, accent }: { density: Density; accent: string }) {
-  const [entry, setEntry] = useState<WordEntry | null>(null);
-  const [loading, setLoading] = useState<boolean>(true);
-
-  useEffect(() => {
-    let cancelled = false;
-    const load = async () => {
+  const { data: entry, loading } = usePoll<WordEntry>(
+    async () => {
       const e = await fetchWordEntry(wordForToday());
-      if (!cancelled && e) setEntry(e);
-      if (!cancelled) setLoading(false);
-    };
-    void load();
-    const id = setInterval(load, REFRESH_MS);
-    return () => { cancelled = true; clearInterval(id); };
-  }, []);
+      if (e == null) throw new Error('fetch failed');
+      return e;
+    },
+    REFRESH_MS,
+  );
 
   return (
     <HFTile title="Word of the day" accent={accent} density={density} style={{ height: '100%' }}>
