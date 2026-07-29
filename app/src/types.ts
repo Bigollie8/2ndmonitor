@@ -1,5 +1,6 @@
 export type Density = 'compact' | 'regular' | 'spacious';
-export type VizMode =
+/** Styles compiled into the binary. */
+export type BuiltinVizMode =
   | 'bars' | 'waveform' | 'radial' | 'particles' | 'ambient'
   | 'neonbars' | 'splitmirror' | 'circular' | 'tunnel' | 'pixelled'
   | 'ribbon' | 'scope' | 'spectrogram' | 'vinyl' | 'kaleidoscope'
@@ -7,6 +8,10 @@ export type VizMode =
   | 'starfield' | 'perlin' | 'orbital' | 'aurora' | 'city'
   | 'strings' | 'hud' | 'liquid' | 'cassette' | 'constellation'
   | 'milkdrop' | 'scripted';
+
+/** A selected style: a built-in, or an installed marketplace bundle. Bundle
+ *  ids are namespaced so they can never collide with a built-in. */
+export type VizMode = BuiltinVizMode | `bundle:${string}`;
 export interface Profile {
   /** Stable id (UUID). Used for activeProfileId references. */
   id: string;
