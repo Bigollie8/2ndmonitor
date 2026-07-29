@@ -12,3 +12,18 @@ export function paceFrame(now: number, state: PaceState, minDelta: number): bool
   state.nextDue = now - state.nextDue > minDelta ? now + minDelta : state.nextDue + minDelta;
   return true;
 }
+
+/** True while the OS-level parent window is hidden (minimized to tray). wry
+ *  never flips `document.visibilityState` on a Win32 hide — SetIsVisible(false)
+ *  is only called on tab-switch/minimize in browsers, not on a parent-window
+ *  hide — so the Rust side emits `hub://window-visibility` explicitly and
+ *  App.tsx mirrors it here for the rAF viz gate to read. */
+let windowHidden = false;
+
+export function setWindowHidden(hidden: boolean): void {
+  windowHidden = hidden;
+}
+
+export function isWindowHidden(): boolean {
+  return windowHidden;
+}

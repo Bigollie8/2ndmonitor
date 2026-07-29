@@ -24,11 +24,12 @@ pub fn run() {
         // launch is intercepted before any other plugin does work. The
         // callback re-surfaces the existing window instead of opening a new one.
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            use tauri::Manager;
+            use tauri::{Emitter, Manager};
             if let Some(win) = app.get_webview_window("main") {
                 let _ = win.show();
                 let _ = win.unminimize();
                 let _ = win.set_focus();
+                let _ = win.emit("hub://window-visibility", true);
             }
         }))
         .plugin(tauri_plugin_window_state::Builder::default().build())
@@ -100,8 +101,10 @@ pub fn run() {
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 if window.label() == "main" && tray::close_to_tray_enabled() {
+                    use tauri::Emitter;
                     api.prevent_close();
                     let _ = window.hide();
+                    let _ = window.emit("hub://window-visibility", false);
                 }
             }
         })

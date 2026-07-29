@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { paceFrame, type PaceState } from './framePace';
+import { paceFrame, isWindowHidden, setWindowHidden, type PaceState } from './framePace';
 
 function simulate(vsyncHz: number, capFps: number, frames: number): number[] {
   const minDelta = 1000 / capFps;
@@ -39,4 +39,20 @@ test('falling behind re-snaps instead of bursting', () => {
   // and nextDue does NOT owe a burst of back-to-back accepts.
   assert.equal(paceFrame(500, state, minDelta), true);
   assert.equal(paceFrame(500 + 1000 / 144, state, minDelta), false);
+});
+
+test('window-hidden flag defaults to false', () => {
+  assert.equal(isWindowHidden(), false);
+});
+
+test('setWindowHidden(true) flips isWindowHidden to true', () => {
+  setWindowHidden(true);
+  assert.equal(isWindowHidden(), true);
+  setWindowHidden(false); // reset for any subsequent tests in this process
+});
+
+test('setWindowHidden(false) flips isWindowHidden back to false', () => {
+  setWindowHidden(true);
+  setWindowHidden(false);
+  assert.equal(isWindowHidden(), false);
 });

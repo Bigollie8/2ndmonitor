@@ -3,7 +3,7 @@ import type { VizMode, Track } from '../types';
 import { type SpectrumState, type Playback, mediaControls } from '../state/tauri';
 import { useLyrics, currentLineIndex } from '../state/lyrics';
 import { recordDraw, useRegisterSurface } from '../perf/debug';
-import { paceFrame } from '../state/framePace';
+import { paceFrame, isWindowHidden } from '../state/framePace';
 import { VIZ_STYLES } from './viz-styles';
 import { BrowserPlayer, type Bookmark } from './browser-player';
 
@@ -210,6 +210,7 @@ export function useAnimateGate(paused?: boolean, name?: string): { shouldDraw():
 
   return {
     shouldDraw(): boolean {
+      if (isWindowHidden()) return false;
       if (!visibleRef.current) return false;
       if (vizMaxFps > 0 && !paceFrame(performance.now(), paceRef.current, 1000 / vizMaxFps)) {
         return false;

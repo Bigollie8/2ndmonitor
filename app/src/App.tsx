@@ -24,6 +24,7 @@ import {
 import { TRACKS, ACCENT_PALETTES } from './data';
 import { useTweaks } from './state/useTweaks';
 import { useSysmon, useNowPlaying, useSpectrumRef } from './state/tauri';
+import { setWindowHidden } from './state/framePace';
 import { VizHero, setVizDprCap, setVizMaxFps, getVizMaxFps } from './components/viz';
 import * as perfDebug from './perf/debug';
 import { PerfDebugHUD } from './perf/PerfDebugHUD';
@@ -381,6 +382,21 @@ export default function App() {
   useEffect(() => {
     perfDebug.recordContext(t.perfMode, t.vizMode);
   }, [t.perfMode, t.vizMode]);
+
+  // wry never flips document.visibilityState when the parent window is
+  // hidden to the tray (SetIsVisible(false) isn't called on a Win32 hide), so
+  // the Rust side tells us explicitly. Without this, the rAF viz loop keeps
+  // drawing at the FPS cap while minimized to the tray.
+  useEffect(() => {
+    let un: (() => void) | undefined;
+    (async () => {
+      try {
+        const { listen } = await import('@tauri-apps/api/event');
+        un = await listen<boolean>('hub://window-visibility', (e) => setWindowHidden(!e.payload));
+      } catch { /* browser dev — no tauri */ }
+    })();
+    return () => { un?.(); };
+  }, []);
 
   useEffect(() => {
     let audioHz = 30;
