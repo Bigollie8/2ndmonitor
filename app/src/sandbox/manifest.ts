@@ -101,7 +101,7 @@ export function validateManifest(
 // ── postMessage protocol ─────────────────────────────────────────────────────
 // Host → sandbox:
 //   { type: 'init', code, settings, size, theme }
-//   { type: 'frame', spectrum, waveform, bands, onset, level, dt, size, theme, track }
+//   { type: 'frame', spectrum, waveform, bands, onset, level, dt, size, theme, track, playback }
 // Sandbox → host:
 //   { type: 'ready' }
 //   { type: 'error', message, line }
@@ -116,6 +116,22 @@ export const MSG_SETTINGS_SET = 'settings:set';
 export interface VizTheme { accent: string; accent2: string }
 export interface VizSize { width: number; height: number }
 export interface VizTrackInfo { title: string; artist: string }
+
+/** Live playback state. Additive to api 1 — bundles that don't read it are
+ *  unaffected. Used by tape/record-style visualizers (cassette, vinyl).
+ *
+ *  Deliberately NOT the host's `Playback` shape. That type carries GSMTC sync
+ *  internals (`positionAtSync` + `syncedAt`) that every consumer must
+ *  interpolate to get a usable position; exposing them would make each bundle
+ *  reimplement `useLivePos`. The host does the projection once per frame and
+ *  hands over a plain answer. */
+export interface VizPlayback {
+  playing: boolean;
+  /** Live position in seconds at this frame, already interpolated. */
+  position: number;
+  /** Track duration in seconds. 0 when unknown. */
+  duration: number;
+}
 
 export interface InitMessage {
   type: typeof MSG_INIT;
@@ -139,6 +155,7 @@ export interface FrameMessage {
   size: VizSize;
   theme: VizTheme;
   track: VizTrackInfo | null;
+  playback: VizPlayback | null;
 }
 
 export interface ReadyMessage { type: typeof MSG_READY }

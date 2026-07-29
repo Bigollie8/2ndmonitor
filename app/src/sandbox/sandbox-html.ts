@@ -11,6 +11,8 @@
 //   - The ONLY channel in or out is postMessage (see manifest.ts protocol).
 // ─────────────────────────────────────────────────────────────────────────────
 
+import { BINS_SHIM_SRC } from './bins';
+
 export const SANDBOX_ATTR = 'allow-scripts';
 export const SANDBOX_CSP = "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'";
 
@@ -19,12 +21,15 @@ export const SANDBOX_CSP = "default-src 'none'; script-src 'unsafe-inline'; styl
  *  message shapes. */
 const RUNTIME = String.raw`
 'use strict';
+` + BINS_SHIM_SRC + String.raw`
 var frameCbs = [];
 var settingsCache = {};
 var lastErrorAt = 0;
 var canvas = document.getElementById('c');
 var ctx2d = null;
 var userGotContext = false;
+var lastSpectrum = null;
+var binCache = {};
 
 // Broker RPC: requests go up as {type:'rpc', rpcId, rpc, ...}; the host
 // consults the installed manifest's permissions and answers with
@@ -46,6 +51,11 @@ function rpc(payload) {
 // across hot reloads by monkey-patching.
 var viz = Object.freeze({
   canvas: canvas,
+  bins: function (n) {
+    var count = Math.max(1, Math.min(4096, n | 0));
+    if (!binCache[count]) binCache[count] = new Float32Array(count);
+    return __resample(lastSpectrum, count, binCache[count]);
+  },
   on: function (name, cb) {
     if (name === 'frame' && typeof cb === 'function') frameCbs.push(cb);
   },
@@ -114,6 +124,7 @@ window.addEventListener('message', function (ev) {
       try { ctx2d = canvas.getContext('2d'); } catch (e) { /* user took webgl */ }
       userGotContext = true;
     }
+    lastSpectrum = msg.spectrum;
     var payload = {
       ctx: ctx2d,
       spectrum: msg.spectrum,
@@ -125,6 +136,7 @@ window.addEventListener('message', function (ev) {
       size: msg.size,
       theme: msg.theme,
       track: msg.track,
+      playback: msg.playback || null,
     };
     for (var i = 0; i < frameCbs.length; i++) {
       try { frameCbs[i](payload); } catch (e) { reportError(e); }

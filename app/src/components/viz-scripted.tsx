@@ -3,7 +3,8 @@ import { useAnimateGate, makeSpectrumReader, type VizProps } from './viz';
 import { useWaveformRef } from '../state/waveform';
 import { buildSandboxHtml, SANDBOX_ATTR } from '../sandbox/sandbox-html';
 import { validateManifest } from '../sandbox/manifest';
-import type { FrameMessage, InitMessage, SandboxToHost } from '../sandbox/manifest';
+import type { InitMessage, SandboxToHost } from '../sandbox/manifest';
+import { buildFrameMessage, toVizPlayback } from '../sandbox/frame';
 import { makeBrokerHandler, permissionsOf, type RpcRequest } from '../sandbox/broker';
 import { newVizManifest, NEW_VIZ_CODE } from '../sandbox/template';
 
@@ -29,7 +30,7 @@ export function VizScripted(props: VizProps) {
   return <ScriptedSurface {...props} />;
 }
 
-function ScriptedSurface({ accent, accent2, spectrumRef, sensitivity = 1, smoothing = 0, paused, track }: VizProps) {
+function ScriptedSurface({ accent, accent2, spectrumRef, sensitivity = 1, smoothing = 0, paused, track, playback }: VizProps) {
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const hostRef = useRef<HTMLDivElement | null>(null);
   const waveRef = useWaveformRef();
@@ -50,6 +51,8 @@ function ScriptedSurface({ accent, accent2, spectrumRef, sensitivity = 1, smooth
   themeRef.current = { accent, accent2 };
   const trackRef = useRef(track ?? null);
   trackRef.current = track ?? null;
+  const playbackRef = useRef(playback ?? null);
+  playbackRef.current = playback ?? null;
 
   const refreshList = useCallback(async () => {
     try {
@@ -186,22 +189,22 @@ function ScriptedSurface({ accent, accent2, spectrumRef, sensitivity = 1, smooth
       if (!win || !readyRef.current || !hostRef.current) return;
       if (!gate.shouldDraw()) return;
       const now = performance.now();
-      const dt = Math.min(0.25, (now - last) / 1000);
+      const dtMs = now - last;
       last = now;
       reader.read();
       const rect = hostRef.current.getBoundingClientRect();
-      const msg: FrameMessage = {
-        type: 'frame',
+      const msg = buildFrameMessage({
         spectrum: reader.out,
         waveform: waveRef.current.mono,
         bands: reader.bands,
         onset: reader.onset,
         level: spectrumRef?.current.level ?? 0,
-        dt,
+        dtMs,
         size: { width: Math.round(rect.width), height: Math.round(rect.height) },
         theme: themeRef.current,
         track: trackRef.current ? { title: trackRef.current.title, artist: trackRef.current.artist } : null,
-      };
+        playback: toVizPlayback(playbackRef.current, now),
+      });
       win.postMessage(msg, '*');
     };
     raf = requestAnimationFrame(tick);
