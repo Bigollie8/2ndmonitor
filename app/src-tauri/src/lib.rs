@@ -9,6 +9,7 @@ mod lyrics;
 mod market;
 mod mixer;
 mod nowplaying;
+mod presets;
 mod secrets;
 mod spotify;
 mod sysmon;
@@ -72,6 +73,8 @@ pub fn run() {
             weather::set_weather_location,
             audio::set_audio_emit_hz,
             audio::set_waveform_enabled,
+            presets::presets_list,
+            presets::presets_read,
             mixer::mixer_set_master_volume,
             mixer::mixer_set_master_mute,
             mixer::mixer_set_session_volume,
