@@ -93,7 +93,7 @@ interface PaneDef {
 
 export function SettingsWindow({
   values: v, set, accent, accent2, accentLinked, trackTitle,
-  onOpenTileLibrary, onReplayOnboarding, onResetLayout, onClose,
+  onOpenTileLibrary, onReplayOnboarding, onResetLayout, onExportSettings, onImportSettings, onClose,
 }: {
   values: SettingsValues;
   set: SettingsSetter;
@@ -105,6 +105,8 @@ export function SettingsWindow({
   onOpenTileLibrary?: () => void;
   onReplayOnboarding: () => void;
   onResetLayout: () => void;
+  onExportSettings?: () => void;
+  onImportSettings?: () => void;
   onClose: () => void;
 }) {
   const [activePane, setActivePane] = useState('visualizer');
@@ -308,6 +310,16 @@ export function SettingsWindow({
           id: 'advanced-reset-layout', label: 'Reset layout',
           hint: 'Restore default tile positions for this profile and orientation',
           control: <SettingsButton label="Reset" onClick={onResetLayout} />,
+        },
+        {
+          id: 'advanced-export', label: 'Export settings',
+          hint: 'Save all settings to a JSON file. API keys and tokens are stored separately (encrypted) and are never included.',
+          control: <SettingsButton label="Export…" onClick={() => onExportSettings?.()} />,
+        },
+        {
+          id: 'advanced-import', label: 'Import settings',
+          hint: 'Load settings from an exported JSON file — merges over current settings',
+          control: <SettingsButton label="Import…" onClick={() => onImportSettings?.()} />,
         },
       ],
     },

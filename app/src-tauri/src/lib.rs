@@ -34,6 +34,7 @@ pub fn run() {
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             None,
         ))
+        .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             webtiles::position_tile,
             webtiles::close_tile,
@@ -64,6 +65,8 @@ pub fn run() {
             spotify::spotify_set_volume,
             tweaks::tweaks_load,
             tweaks::tweaks_save,
+            tweaks::tweaks_export,
+            tweaks::tweaks_import,
             weather::set_weather_location,
             audio::set_audio_emit_hz,
             mixer::mixer_set_master_volume,

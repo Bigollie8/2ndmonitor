@@ -276,7 +276,7 @@ function migrateTweaks(loaded: Record<string, unknown>): Record<string, unknown>
 }
 
 export default function App() {
-  const [t, setTweak] = useTweaks<TweakState>(TWEAK_DEFAULTS, { migrate: migrateTweaks });
+  const [t, setTweak, replaceTweaks] = useTweaks<TweakState>(TWEAK_DEFAULTS, { migrate: migrateTweaks });
   useEffect(() => {
     if (t.profiles.length > 0 && t.activeProfileId) return;
     const seeded: Profile[] = [
@@ -873,6 +873,23 @@ export default function App() {
           onOpenTileLibrary={() => { setShowSettings(false); setShowTileLibrary(true); }}
           onReplayOnboarding={() => { setShowSettings(false); setShowOnboarding(true); }}
           onResetLayout={resetLayout}
+          onExportSettings={async () => {
+            try {
+              const { invoke } = await import('@tauri-apps/api/core');
+              await invoke('tweaks_export', { json: JSON.stringify(t) });
+            } catch (err) {
+              console.warn('settings export/import failed:', err);
+            }
+          }}
+          onImportSettings={async () => {
+            try {
+              const { invoke } = await import('@tauri-apps/api/core');
+              const text = await invoke<string | null>('tweaks_import');
+              if (text) replaceTweaks(JSON.parse(text) as Record<string, unknown>);
+            } catch (err) {
+              console.warn('settings export/import failed:', err);
+            }
+          }}
           onClose={() => setShowSettings(false)}
         />
       )}

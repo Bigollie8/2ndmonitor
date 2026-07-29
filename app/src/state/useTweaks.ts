@@ -34,7 +34,7 @@ async function tauriSave(value: unknown): Promise<void> {
 export function useTweaks<T extends Record<string, unknown>>(
   defaults: T,
   opts?: { migrate?: (loaded: Record<string, unknown>) => Record<string, unknown> },
-): [T, <K extends keyof T>(key: K, value: T[K]) => void] {
+): [T, <K extends keyof T>(key: K, value: T[K]) => void, (raw: Record<string, unknown>) => void] {
   // Synchronous initial state from localStorage (browser dev + first-paint hint).
   const [values, setValues] = useState<T>(() => {
     try {
@@ -97,5 +97,14 @@ export function useTweaks<T extends Record<string, unknown>>(
     setValues((prev) => ({ ...prev, [key]: value }));
   }, []);
 
-  return [values, setTweak];
+  // Wholesale replace (import). Closes over `defaults`/`opts` the same way the
+  // hydrate effect above does — they aren't expected to change across renders.
+  const replaceAll = useCallback((raw: Record<string, unknown>) => {
+    let next = raw;
+    if (opts?.migrate) next = opts.migrate(next);
+    setValues(mergeTweaks(defaults, next));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  return [values, setTweak, replaceAll];
 }

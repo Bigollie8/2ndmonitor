@@ -6,6 +6,7 @@ use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
 use tauri::{AppHandle, Manager, Runtime};
+use tauri_plugin_dialog::DialogExt;
 
 fn tweaks_path<R: Runtime>(app: &AppHandle<R>) -> Result<PathBuf, String> {
     let dir = app
@@ -42,4 +43,41 @@ pub fn tweaks_save<R: Runtime>(app: AppHandle<R>, value: Value) -> Result<(), St
     drop(f);
     fs::rename(&tmp, &path).map_err(|e| format!("rename to {}: {e}", path.display()))?;
     Ok(())
+}
+
+/// Save-dialog + write. `json` is the frontend's current tweak state,
+/// pretty-printed here so hand-editing the exported file is pleasant.
+#[tauri::command]
+pub async fn tweaks_export<R: Runtime>(app: AppHandle<R>, json: String) -> Result<bool, String> {
+    let value: Value = serde_json::from_str(&json).map_err(|e| format!("bad json: {e}"))?;
+    let Some(path) = app
+        .dialog()
+        .file()
+        .set_file_name("2ndmonitor-settings.json")
+        .add_filter("JSON", &["json"])
+        .blocking_save_file()
+        .and_then(|p| p.into_path().ok())
+    else {
+        return Ok(false);
+    };
+    fs::write(&path, serde_json::to_string_pretty(&value).unwrap())
+        .map_err(|e| format!("write {}: {e}", path.display()))?;
+    Ok(true)
+}
+
+#[tauri::command]
+pub async fn tweaks_import<R: Runtime>(app: AppHandle<R>) -> Result<Option<String>, String> {
+    let Some(path) = app
+        .dialog()
+        .file()
+        .add_filter("JSON", &["json"])
+        .blocking_pick_file()
+        .and_then(|p| p.into_path().ok())
+    else {
+        return Ok(None);
+    };
+    let text = fs::read_to_string(&path).map_err(|e| format!("read {}: {e}", path.display()))?;
+    // Parse to validate early — a clear error beats a silent no-op merge.
+    serde_json::from_str::<Value>(&text).map_err(|e| format!("not valid JSON: {e}"))?;
+    Ok(Some(text))
 }
