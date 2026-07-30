@@ -461,6 +461,15 @@ export function removeInstance(tiles: TileInstance[], instanceId: string): TileI
   return tiles.filter((t) => t.instanceId !== instanceId);
 }
 
+/** Remove every instance of `type` immutably. Used when a catalog item is
+ *  removed (see ContentLibrary.tsx): a compiled-in tile's fixed `renderTile`
+ *  case in App.tsx renders any placed instance unconditionally, regardless of
+ *  the catalog's removed list, so the instance itself has to go too — the
+ *  removed list alone only keeps it out of pickers. */
+export function removeTilesOfType(tiles: TileInstance[], type: TileType): TileInstance[] {
+  return tiles.filter((t) => t.type !== type);
+}
+
 /** Patch an instance immutably. Non-matching instances are returned by reference. */
 export function updateInstance(
   tiles: TileInstance[],

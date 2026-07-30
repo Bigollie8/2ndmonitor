@@ -13,6 +13,7 @@ import {
   findInstance,
   addInstance,
   removeInstance,
+  removeTilesOfType,
   updateInstance,
 } from './state/layout';
 import { isBundleTile, bundleIdOf } from './tiles/tileRegistry';
@@ -38,7 +39,7 @@ import {
   SysMonTile,
 } from './components/tiles';
 import { EditModeOverlay } from './components/edit';
-import { TileLibrary } from './components/TileLibrary';
+import { ContentLibrary } from './components/ContentLibrary';
 import { ProfileSwitcher } from './components/profile';
 import { Onboarding } from './components/onboarding';
 import { TileFrame } from './components/TileFrame';
@@ -49,7 +50,7 @@ import { parseStreamDeckConfig } from './state/actions';
 // Standalone tiles are lazy-loaded per-tile so the initial bundle only pays
 // for what's actually visible in the active profile/orientation. Kept EAGER:
 // './components/tiles' (Spotify/Notes/Sysmon — entangled with boot), VizHero,
-// TileFrame, EditModeOverlay, TileLibrary, ProfileSwitcher, Onboarding,
+// TileFrame, EditModeOverlay, ContentLibrary, ProfileSwitcher, Onboarding,
 // SettingsWindow (see imports above/below).
 const VizGallery = lazy(() => import('./components/viz-gallery').then((m) => ({ default: m.VizGallery })));
 const ClaudeCodeTile = lazy(() => import('./components/claude-tile').then((m) => ({ default: m.ClaudeCodeTile })));
@@ -337,11 +338,6 @@ export default function App() {
   const [showGallery, setShowGallery] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showTileLibrary, setShowTileLibrary] = useState(false);
-  // Set right before opening the Tile Library from a `MissingTileCard`'s
-  // "Open Marketplace" action, so it lands on the Marketplace tab instead of
-  // the default tile grid. Reset on close so a plain library open (Settings,
-  // edit-mode "+") doesn't inherit it.
-  const [tileLibraryStartOnMarket, setTileLibraryStartOnMarket] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [selectedInstanceId, setSelectedInstanceId] = useState<string>('');
   // Transient "theme synced" toast: holds the track title being announced, or
@@ -793,7 +789,7 @@ export default function App() {
               bundleId={bundleIdOf(instance.type) ?? instance.type}
               density={t.density}
               accent={accent}
-              onOpenMarketplace={() => { setTileLibraryStartOnMarket(true); setShowTileLibrary(true); }}
+              onOpenMarketplace={() => setShowTileLibrary(true)}
             />
           );
         }
@@ -937,23 +933,16 @@ export default function App() {
           </Suspense>
         )}
         {showTileLibrary && (
-          <TileLibrary
-            orientation={orientation}
-            canvas={canvas}
-            tiles={activeOrientation.tiles}
-            profileName={activeProfile.name}
+          <ContentLibrary
             accent={accent}
-            onAdd={(type, rect) => updateActiveOrientation({
-              tiles: addInstance(activeOrientation.tiles, {
-                instanceId: newId(), type, rect,
-              }),
-            })}
-            onRemove={(instanceId) => updateActiveOrientation({
-              tiles: removeInstance(activeOrientation.tiles, instanceId),
-            })}
-            onClose={() => { setShowTileLibrary(false); setTileLibraryStartOnMarket(false); }}
-            startOnMarket={tileLibraryStartOnMarket}
             catalogRemoved={t.catalogRemoved}
+            setCatalogRemoved={(next) => setTweak('catalogRemoved', next)}
+            onRemoveTileInstances={(type) => setTweak('profiles', t.profiles.map((p) => ({
+              ...p,
+              landscape: { tiles: removeTilesOfType(p.landscape.tiles, type) },
+              portrait: { tiles: removeTilesOfType(p.portrait.tiles, type) },
+            })))}
+            onClose={() => setShowTileLibrary(false)}
           />
         )}
       </div>

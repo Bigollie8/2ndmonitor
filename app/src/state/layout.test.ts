@@ -12,7 +12,9 @@ import {
   SNAP_FRAC,
   DEFAULT_LANDSCAPE_LAYOUT,
   DEFAULT_PORTRAIT_LAYOUT,
+  removeTilesOfType,
 } from './layout';
+import type { TileInstance } from './layout';
 
 const LANDSCAPE = { w: 2560, h: 1440 };
 const PORTRAIT = { w: 1080, h: 1920 };
@@ -269,4 +271,30 @@ test('migrateLayoutHiddenToTiles: result preserves ALL_TILE_TYPES order', () => 
   const tiles = migrateLayoutHiddenToTiles({}, {}, DEFAULT_LANDSCAPE_LAYOUT);
   const types = tiles.map((t) => t.type);
   assert.deepEqual(types, ALL_TILE_TYPES);
+});
+
+test('removeTilesOfType: drops every instance matching the type, keeps the rest', () => {
+  const tiles: TileInstance[] = [
+    { instanceId: 'a', type: 'notes', rect: { x: 0, y: 0, w: 1, h: 1 } },
+    { instanceId: 'b', type: 'clock', rect: { x: 0, y: 0, w: 1, h: 1 } },
+    { instanceId: 'c', type: 'notes', rect: { x: 0, y: 0, w: 1, h: 1 } },
+  ];
+  const out = removeTilesOfType(tiles, 'notes');
+  assert.deepEqual(out.map((t) => t.instanceId), ['b']);
+});
+
+test('removeTilesOfType: matches bundle: ids by exact type, not by prefix', () => {
+  const tiles: TileInstance[] = [
+    { instanceId: 'a', type: 'bundle:foo', rect: { x: 0, y: 0, w: 1, h: 1 } },
+    { instanceId: 'b', type: 'bundle:foobar', rect: { x: 0, y: 0, w: 1, h: 1 } },
+  ];
+  const out = removeTilesOfType(tiles, 'bundle:foo');
+  assert.deepEqual(out.map((t) => t.instanceId), ['b']);
+});
+
+test('removeTilesOfType: no match leaves the array unchanged (by value)', () => {
+  const tiles: TileInstance[] = [
+    { instanceId: 'a', type: 'notes', rect: { x: 0, y: 0, w: 1, h: 1 } },
+  ];
+  assert.deepEqual(removeTilesOfType(tiles, 'clock'), tiles);
 });
