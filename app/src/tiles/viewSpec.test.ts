@@ -76,3 +76,63 @@ test('validateViewSpec: select must be a dot-path, not an expression', () => {
   assert.equal(validateViewSpec({ ...ok, select: 'items[0].x' }).ok, false);
   assert.equal(validateViewSpec({ ...ok, select: 'a.b.c' }).ok, true);
 });
+
+test('validateViewSpec: rejects optional string fields that are not strings', () => {
+  // stat.label must be a string if present
+  assert.equal(validateViewSpec({ ...ok, view: { type: 'stat', value: '{{data.n}}', label: 42 } }).ok, false);
+  // stat.delta must be a string if present
+  assert.equal(validateViewSpec({ ...ok, view: { type: 'stat', value: '{{data.n}}', delta: null } }).ok, false);
+  // text.attribution must be a string if present
+  assert.equal(validateViewSpec({ ...ok, view: { type: 'text', body: '{{data.t}}', attribution: true } }).ok, false);
+  // badge.label must be a string if present
+  assert.equal(validateViewSpec({ ...ok, view: { type: 'badge', value: '{{data.s}}', label: {} } }).ok, false);
+  // list.emptyText must be a string if present
+  assert.equal(validateViewSpec({ ...ok, view: { type: 'list', row: { title: '{{item.a}}' }, emptyText: [] } }).ok, false);
+});
+
+test('validateViewSpec: {{secret.x}} deeply nested in view.row.title is rejected', () => {
+  const r = validateViewSpec({ ...ok, view: { type: 'list', row: { title: 'ID: {{secret.id}}' } } });
+  assert.equal(r.ok, false);
+  assert.match(r.ok ? '' : r.error, /secret/i);
+});
+
+test('validateViewSpec: {{secret.x}} deeply nested in rows[n].value is rejected', () => {
+  const r = validateViewSpec({
+    ...ok,
+    view: { type: 'rows', rows: [{ label: 'Token', value: 'secret: {{secret.token}}' }] },
+  });
+  assert.equal(r.ok, false);
+  assert.match(r.ok ? '' : r.error, /secret/i);
+});
+
+test('validateViewSpec: {{secret.x}} with unusual spacing is rejected', () => {
+  // Extra spaces
+  assert.equal(validateViewSpec({ ...ok, view: { type: 'text', body: '{{  secret.token  }}' } }).ok, false);
+  // Tab character
+  assert.equal(validateViewSpec({ ...ok, view: { type: 'text', body: '{{\tsecret.token}}' } }).ok, false);
+});
+
+test('validateViewSpec: {{secret.x}} in view.row.openUrl is rejected', () => {
+  const r = validateViewSpec({
+    ...ok,
+    view: { type: 'list', row: { title: 'Link', openUrl: 'https://x.com?token={{secret.token}}' } },
+  });
+  assert.equal(r.ok, false);
+  assert.match(r.ok ? '' : r.error, /secret/i);
+});
+
+test('validateViewSpec: intervalMs boundary — exactly 15000 passes, 14999 fails', () => {
+  assert.equal(validateViewSpec({ ...ok, source: { kind: 'http', url: 'https://x.com', intervalMs: 15000 } }).ok, true);
+  assert.equal(validateViewSpec({ ...ok, source: { kind: 'http', url: 'https://x.com', intervalMs: 14999 } }).ok, false);
+});
+
+test('validateViewSpec: select rejects array indexing syntax', () => {
+  assert.equal(validateViewSpec({ ...ok, select: "a['b']" }).ok, false);
+  assert.equal(validateViewSpec({ ...ok, select: 'a.b()' }).ok, false);
+  assert.equal(validateViewSpec({ ...ok, select: '' }).ok, false);
+});
+
+test('validateViewSpec: uppercase HTTPS:// is rejected (case-sensitive)', () => {
+  const r = validateViewSpec({ ...ok, source: { kind: 'http', url: 'HTTPS://x.com', intervalMs: 60000 } });
+  assert.equal(r.ok, false);
+});

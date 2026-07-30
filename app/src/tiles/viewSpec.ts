@@ -11,10 +11,6 @@
 // a bigger grammar.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Where `{{secret.*}}` may legally appear. Anywhere else — above all inside
- *  `view` — would render a credential on screen. */
-export const SECRET_ALLOWED_IN = ['source.url', 'source.headers'] as const;
-
 /** Lowest refresh interval a bundle may request, so a published tile cannot
  *  hammer a third-party API from every install. */
 export const MIN_INTERVAL_MS = 15_000;
@@ -113,43 +109,67 @@ function validateSource(raw: unknown): { ok: true; source: TileSource } | { ok: 
 
 function validateView(raw: unknown): { ok: true; view: TileView } | { ok: false; error: string } {
   if (!isPlainObject(raw)) return fail('view must be an object');
-  const str = (k: string, required: boolean): string | null | undefined => {
-    const v = raw[k];
-    if (v === undefined) return required ? undefined : null;
-    return typeof v === 'string' ? v : undefined;
-  };
   switch (raw.type) {
     case 'list': {
       if (!isPlainObject(raw.row)) return fail('list view requires a `row` object');
       const title = raw.row.title;
       if (typeof title !== 'string') return fail('list row requires a string `title`');
-      for (const k of ['left', 'right', 'openUrl']) {
-        if (raw.row[k] !== undefined && typeof raw.row[k] !== 'string') {
-          return fail(`list row.${k} must be a string`);
-        }
-      }
-      return { ok: true, view: { type: 'list', row: raw.row as unknown as ListRow, emptyText: raw.emptyText as string | undefined } };
+      const left = raw.row.left;
+      if (left !== undefined && typeof left !== 'string') return fail('list row.left must be a string');
+      const right = raw.row.right;
+      if (right !== undefined && typeof right !== 'string') return fail('list row.right must be a string');
+      const openUrl = raw.row.openUrl;
+      if (openUrl !== undefined && typeof openUrl !== 'string') return fail('list row.openUrl must be a string');
+      const emptyText = raw.emptyText;
+      if (emptyText !== undefined && typeof emptyText !== 'string') return fail('list emptyText must be a string');
+      return {
+        ok: true,
+        view: {
+          type: 'list',
+          row: { title, ...(left !== undefined && { left }), ...(right !== undefined && { right }), ...(openUrl !== undefined && { openUrl }) },
+          ...(emptyText !== undefined && { emptyText }),
+        },
+      };
     }
     case 'stat': {
-      if (str('value', true) === undefined) return fail('stat view requires a string `value`');
-      return { ok: true, view: { type: 'stat', value: raw.value as string, label: raw.label as string | undefined, delta: raw.delta as string | undefined } };
+      if (typeof raw.value !== 'string') return fail('stat view requires a string `value`');
+      const label = raw.label;
+      if (label !== undefined && typeof label !== 'string') return fail('stat label must be a string');
+      const delta = raw.delta;
+      if (delta !== undefined && typeof delta !== 'string') return fail('stat delta must be a string');
+      return {
+        ok: true,
+        view: { type: 'stat', value: raw.value, ...(label !== undefined && { label }), ...(delta !== undefined && { delta }) },
+      };
     }
     case 'rows': {
       if (!Array.isArray(raw.rows) || raw.rows.length === 0) return fail('rows view requires a non-empty `rows` array');
+      const validated: { label: string; value: string }[] = [];
       for (const r of raw.rows) {
         if (!isPlainObject(r) || typeof r.label !== 'string' || typeof r.value !== 'string') {
           return fail('each rows entry needs string `label` and `value`');
         }
+        validated.push({ label: r.label, value: r.value });
       }
-      return { ok: true, view: { type: 'rows', rows: raw.rows as { label: string; value: string }[] } };
+      return { ok: true, view: { type: 'rows', rows: validated } };
     }
     case 'text': {
-      if (str('body', true) === undefined) return fail('text view requires a string `body`');
-      return { ok: true, view: { type: 'text', body: raw.body as string, attribution: raw.attribution as string | undefined } };
+      if (typeof raw.body !== 'string') return fail('text view requires a string `body`');
+      const attribution = raw.attribution;
+      if (attribution !== undefined && typeof attribution !== 'string') return fail('text attribution must be a string');
+      return {
+        ok: true,
+        view: { type: 'text', body: raw.body, ...(attribution !== undefined && { attribution }) },
+      };
     }
     case 'badge': {
-      if (str('value', true) === undefined) return fail('badge view requires a string `value`');
-      return { ok: true, view: { type: 'badge', value: raw.value as string, label: raw.label as string | undefined } };
+      if (typeof raw.value !== 'string') return fail('badge view requires a string `value`');
+      const label = raw.label;
+      if (label !== undefined && typeof label !== 'string') return fail('badge label must be a string');
+      return {
+        ok: true,
+        view: { type: 'badge', value: raw.value, ...(label !== undefined && { label }) },
+      };
     }
     default:
       return fail(`unknown view type ${JSON.stringify(raw.type)} (expected list, stat, rows, text or badge)`);
@@ -173,14 +193,11 @@ export function validateViewSpec(
   const view = validateView(raw.view);
   if (!view.ok) return view;
 
-  // A credential may only be substituted into the outgoing request. Anywhere in
-  // `view` it would be rendered on screen, so reject it at validation time
-  // rather than trusting authors.
+  // A credential may only be substituted into the outgoing request (in source.url
+  // or source.headers). Anywhere in `view` or `select` it would be rendered on
+  // screen, so reject it at validation time rather than trusting authors.
   if (containsSecretRef(raw.view)) {
     return fail('{{secret.*}} is not allowed in `view` — secrets may only appear in source.url or source.headers');
-  }
-  if (raw.select !== undefined && SECRET_RE.test(String(raw.select))) {
-    return fail('{{secret.*}} is not allowed in `select`');
   }
 
   return { ok: true, spec: { source: src.source, select: raw.select as string | undefined, view: view.view } };
