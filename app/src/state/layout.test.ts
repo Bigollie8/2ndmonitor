@@ -155,11 +155,11 @@ test('DEFAULT_PORTRAIT_LAYOUT contains all tile types', () => {
   // (airQuality precedes aircraft, etc.).
   assert.deepEqual(ids, [
     'activeWindow', 'airQuality', 'aircraft', 'aurora', 'birds', 'claude',
-    'clock', 'dailyChallenge', 'discord', 'docker', 'energy', 'githubPrs',
+    'clock', 'discord', 'docker', 'energy', 'githubPrs',
     'homeAssistant', 'iss', 'launches', 'lightning', 'mixer', 'notes',
-    'onThisDay', 'phoneNotifs', 'pollen', 'pomodoro', 'quote', 'randomWiki',
+    'onThisDay', 'phoneNotifs', 'pollen', 'pomodoro', 'randomWiki',
     'scratchpad', 'solarFlare', 'spotify', 'stocks', 'streamChat',
-    'streamDeck', 'sun', 'sysmon', 'tides', 'viz', 'weatherRadar', 'wordOfDay',
+    'streamDeck', 'sun', 'sysmon', 'tides', 'viz', 'weatherRadar',
   ]);
 });
 
@@ -297,4 +297,20 @@ test('removeTilesOfType: no match leaves the array unchanged (by value)', () => 
     { instanceId: 'a', type: 'notes', rect: { x: 0, y: 0, w: 1, h: 1 } },
   ];
   assert.deepEqual(removeTilesOfType(tiles, 'clock'), tiles);
+});
+
+import { remapRetiredTileType } from './layout';
+
+test('remapRetiredTileType: retired built-ins point at their bundle ids', () => {
+  assert.equal(remapRetiredTileType('quote'), 'bundle:tile-quote');
+  assert.equal(remapRetiredTileType('wordOfDay'), 'bundle:tile-dictionary');
+  assert.equal(remapRetiredTileType('dailyChallenge'), 'bundle:tile-dailychallenge');
+});
+
+test('remapRetiredTileType: a live built-in is unchanged', () => {
+  assert.equal(remapRetiredTileType('mixer'), 'mixer');
+});
+
+test('remapRetiredTileType: an already-bundle type is unchanged', () => {
+  assert.equal(remapRetiredTileType('bundle:tile-quote'), 'bundle:tile-quote');
 });

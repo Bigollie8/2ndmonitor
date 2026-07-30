@@ -16,6 +16,7 @@ import {
   removeInstance,
   removeTilesOfType,
   updateInstance,
+  remapRetiredTileType,
 } from './state/layout';
 import { isBundleTile, bundleIdOf } from './tiles/tileRegistry';
 import { useTileCatalog } from './tiles/useTileCatalog';
@@ -76,13 +77,10 @@ const StreamChatTile = lazy(() => import('./components/StreamChatTile').then((m)
 const PhoneNotifsTile = lazy(() => import('./components/PhoneNotifsTile').then((m) => ({ default: m.PhoneNotifsTile })));
 const HomeAssistantTile = lazy(() => import('./components/HomeAssistantTile').then((m) => ({ default: m.HomeAssistantTile })));
 const ScratchpadTile = lazy(() => import('./components/ScratchpadTile').then((m) => ({ default: m.ScratchpadTile })));
-const QuoteTile = lazy(() => import('./components/QuoteTile').then((m) => ({ default: m.QuoteTile })));
 const OnThisDayTile = lazy(() => import('./components/OnThisDayTile').then((m) => ({ default: m.OnThisDayTile })));
 const RandomWikiTile = lazy(() => import('./components/RandomWikiTile').then((m) => ({ default: m.RandomWikiTile })));
-const WordOfDayTile = lazy(() => import('./components/WordOfDayTile').then((m) => ({ default: m.WordOfDayTile })));
 const IssTile = lazy(() => import('./components/IssTile').then((m) => ({ default: m.IssTile })));
 const LaunchesTile = lazy(() => import('./components/LaunchesTile').then((m) => ({ default: m.LaunchesTile })));
-const DailyChallengeTile = lazy(() => import('./components/DailyChallengeTile').then((m) => ({ default: m.DailyChallengeTile })));
 const PollenTile = lazy(() => import('./components/PollenTile').then((m) => ({ default: m.PollenTile })));
 const BirdsTile = lazy(() => import('./components/BirdsTile').then((m) => ({ default: m.BirdsTile })));
 const SolarFlareTile = lazy(() => import('./components/SolarFlareTile').then((m) => ({ default: m.SolarFlareTile })));
@@ -310,6 +308,37 @@ function migrateTweaks(loaded: Record<string, unknown>): Record<string, unknown>
     }
     result.tile_array_migration_v1 = true;
   }
+
+  // Three built-ins retired in favor of published bundles (quote, word of the
+  // day, daily challenge). A saved tile instance naming one is rewritten to
+  // its bundle id on every load, so an existing placement keeps working the
+  // moment the bundle is installed — and falls back to MissingTileCard via
+  // renderTile's default case until it is. Mirrors the vizMode remap above.
+  {
+    const profiles = result.profiles as Array<Record<string, unknown>> | undefined;
+    if (profiles) {
+      result.profiles = profiles.map((p) => {
+        const profile = p as Record<string, unknown>;
+        const remapOrientation = (slotRaw: unknown): unknown => {
+          const slot = slotRaw as { tiles?: TileInstance[] } | undefined;
+          if (!slot?.tiles) return slotRaw;
+          return {
+            ...slot,
+            tiles: slot.tiles.map((inst) => ({
+              ...inst,
+              type: remapRetiredTileType(inst.type) as TileType,
+            })),
+          };
+        };
+        return {
+          ...profile,
+          landscape: remapOrientation(profile.landscape),
+          portrait: remapOrientation(profile.portrait),
+        };
+      });
+    }
+  }
+
   return result;
 }
 
@@ -765,20 +794,14 @@ export default function App() {
             accent={accent}
           />
         );
-      case 'quote':
-        return <QuoteTile density={t.density} accent={accent} />;
       case 'onThisDay':
         return <OnThisDayTile density={t.density} accent={accent} />;
       case 'randomWiki':
         return <RandomWikiTile density={t.density} accent={accent} />;
-      case 'wordOfDay':
-        return <WordOfDayTile density={t.density} accent={accent} />;
       case 'iss':
         return <IssTile density={t.density} accent={accent} location={t.weatherLocation} />;
       case 'launches':
         return <LaunchesTile density={t.density} accent={accent} />;
-      case 'dailyChallenge':
-        return <DailyChallengeTile density={t.density} accent={accent} />;
       case 'pollen':
         return <PollenTile density={t.density} accent={accent} editing={editMode} location={t.weatherLocation} />;
       case 'birds':

@@ -15,8 +15,8 @@ export type BuiltinTileType =
   | 'streamDeck' | 'weatherRadar' | 'pomodoro' | 'sun' | 'aurora'
   | 'airQuality' | 'stocks' | 'tides' | 'githubPrs' | 'streamChat'
   | 'phoneNotifs' | 'homeAssistant'
-  | 'scratchpad' | 'quote' | 'onThisDay' | 'randomWiki' | 'wordOfDay'
-  | 'iss' | 'launches' | 'dailyChallenge' | 'pollen' | 'birds'
+  | 'scratchpad' | 'onThisDay' | 'randomWiki'
+  | 'iss' | 'launches' | 'pollen' | 'birds'
   | 'solarFlare' | 'lightning' | 'aircraft' | 'activeWindow' | 'docker' | 'energy';
 
 /** A tile that can be placed on a dashboard: a built-in, or an installed
@@ -34,8 +34,8 @@ export const ALL_TILE_TYPES: BuiltinTileType[] = [
   'streamDeck', 'weatherRadar', 'pomodoro', 'sun', 'aurora',
   'airQuality', 'stocks', 'tides', 'githubPrs', 'streamChat',
   'phoneNotifs', 'homeAssistant',
-  'scratchpad', 'quote', 'onThisDay', 'randomWiki', 'wordOfDay',
-  'iss', 'launches', 'dailyChallenge', 'pollen', 'birds',
+  'scratchpad', 'onThisDay', 'randomWiki',
+  'iss', 'launches', 'pollen', 'birds',
   'solarFlare', 'lightning', 'aircraft', 'activeWindow', 'docker', 'energy',
 ];
 
@@ -168,13 +168,10 @@ export const DEFAULT_LANDSCAPE_LAYOUT: Record<BuiltinTileType, Rect> = {
   phoneNotifs: { x: 0.72, y: 0.36, w: 0.20, h: 0.18 },
   homeAssistant: { x: 0.72, y: 0.05, w: 0.20, h: 0.30 },
   scratchpad: { x: 0.05, y: 0.55, w: 0.20, h: 0.18 },
-  quote: { x: 0.27, y: 0.05, w: 0.13, h: 0.10 },
   onThisDay: { x: 0.40, y: 0.05, w: 0.30, h: 0.18 },
   randomWiki: { x: 0.27, y: 0.16, w: 0.13, h: 0.18 },
-  wordOfDay: { x: 0.40, y: 0.24, w: 0.30, h: 0.10 },
   iss: { x: 0.05, y: 0.05, w: 0.20, h: 0.18 },
   launches: { x: 0.40, y: 0.36, w: 0.30, h: 0.18 },
-  dailyChallenge: { x: 0.05, y: 0.20, w: 0.20, h: 0.14 },
   pollen: { x: 0.27, y: 0.55, w: 0.13, h: 0.18 },
   birds: { x: 0.40, y: 0.55, w: 0.30, h: 0.18 },
   solarFlare: { x: 0.72, y: 0.55, w: 0.20, h: 0.30 },
@@ -247,13 +244,10 @@ export const DEFAULT_PORTRAIT_LAYOUT: Record<BuiltinTileType, Rect> = {
   phoneNotifs: { x: 0.05, y: 0.42, w: 0.90, h: 0.10 },
   homeAssistant: { x: 0.05, y: 0.42, w: 0.90, h: 0.18 },
   scratchpad: { x: 0.05, y: 0.30, w: 0.90, h: 0.18 },
-  quote: { x: 0.05, y: 0.30, w: 0.90, h: 0.10 },
   onThisDay: { x: 0.05, y: 0.30, w: 0.90, h: 0.18 },
   randomWiki: { x: 0.05, y: 0.30, w: 0.90, h: 0.14 },
-  wordOfDay: { x: 0.05, y: 0.30, w: 0.90, h: 0.10 },
   iss: { x: 0.05, y: 0.30, w: 0.90, h: 0.18 },
   launches: { x: 0.05, y: 0.30, w: 0.90, h: 0.20 },
-  dailyChallenge: { x: 0.05, y: 0.30, w: 0.90, h: 0.12 },
   pollen: { x: 0.05, y: 0.30, w: 0.90, h: 0.14 },
   birds: { x: 0.05, y: 0.30, w: 0.90, h: 0.18 },
   solarFlare: { x: 0.05, y: 0.30, w: 0.90, h: 0.30 },
@@ -439,6 +433,20 @@ export function findEmptyRect(
   }
 
   return best ?? preferred;
+}
+
+/** Built-in tiles that moved to the marketplace. A saved layout naming one is
+ *  rewritten to its bundle id on load, so an existing dashboard keeps working
+ *  the moment the bundle is installed — and falls back to MissingTileCard
+ *  until it is. */
+const RETIRED_TILE_TYPES: Record<string, string> = {
+  quote: 'bundle:tile-quote',
+  wordOfDay: 'bundle:tile-dictionary',
+  dailyChallenge: 'bundle:tile-dailychallenge',
+};
+
+export function remapRetiredTileType(type: string): string {
+  return RETIRED_TILE_TYPES[type] ?? type;
 }
 
 /** Find the first instance of a given type. For singleton types this is "the" instance. */
