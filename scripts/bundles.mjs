@@ -52,6 +52,19 @@ const ID_RE = /^[a-z0-9-]{1,64}$/;
 // token before it ever reaches that string.
 const VERSION_RE = /^[\w.+-]+$/;
 
+// The `seed` verb's stricter charsets, mirroring `is_safe_id` / `is_safe_version`
+// in app/src-tauri/src/seed.rs exactly — NOT the same as ID_RE/VERSION_RE above.
+// build/publish legitimately allow the looser [\w.+-] charset (semver
+// pre-release tags like "1.0.0-beta" are fine on the marketplace server), but
+// a seed filename is `<id>-<version>.zip` split on the LAST hyphen
+// (parse_seed_path). A version containing a hyphen shifts the split: e.g.
+// "aurora-1.0.0-beta.zip" parses to id "aurora-1.0.0" (rejected by
+// is_safe_id's dot exclusion) and version "beta" — parse_seed_path then
+// returns None and seed_sync silently skips the file, so `npm run
+// bundles:seed` would print a "✓" for a zip the installer can never install.
+const SEED_ID_RE = /^[a-z0-9-]{1,64}$/;
+const SEED_VERSION_RE = /^[a-z0-9.]{1,32}$/;
+
 function bundleIds() {
   return readdirSync(BUNDLES, { withFileTypes: true })
     .filter((d) => d.isDirectory() && d.name !== 'dist')
@@ -170,6 +183,21 @@ for (const id of ids) {
     if (cmd === 'build' || cmd === 'publish') {
       path = zip(id, m.version, codeFile);
     } else if (cmd === 'seed') {
+      // Defense in depth: reject anything parse_seed_path/is_safe_id/
+      // is_safe_version (seed.rs) would reject, before writing a zip that
+      // *looks* successful but that seed_sync will silently never install.
+      // Do NOT rename or coerce the version to fit — fail the build instead.
+      if (!SEED_ID_RE.test(id)) {
+        throw new Error(`${id}: id has characters outside seed.rs's is_safe_id charset [a-z0-9-]`);
+      }
+      if (!SEED_VERSION_RE.test(m.version)) {
+        throw new Error(
+          `${id}: version "${m.version}" has characters outside seed.rs's is_safe_version charset ` +
+          `[a-z0-9.] (no hyphen). Seed filenames are <id>-<version>.zip split on the LAST hyphen ` +
+          `(parse_seed_path), so a hyphenated version like a pre-release tag cannot round-trip — ` +
+          `bump to a plain version instead of coercing this one.`
+        );
+      }
       // `kind` here is only ever "tile" or "visualizer" (validate()/bundleKind()
       // throws for anything else), matching the two subdirectories seed.rs walks.
       const outDir = join(SEED_ROOT, kind);
