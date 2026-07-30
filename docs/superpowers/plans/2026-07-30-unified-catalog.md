@@ -163,7 +163,7 @@ Expected: PASS. New total: 339 (334 + 5).
 
 - [ ] **Step 6: Fix the type errors the category field introduced**
 
-Run: `cd app && npx tsc -b --noEmit`
+Run: `cd app && npx tsc -b`
 Expected: clean. `VizStyle` gained a required field; any literal built elsewhere must be updated. If `useVizStyles.ts` or `contentRegistry.ts` constructs a `VizStyle`, give it `category: 'ambient'`.
 
 - [ ] **Step 7: Commit**
@@ -647,7 +647,7 @@ Update every call site to pass `t.catalogRemoved`.
 
 - [ ] **Step 5: Run the tests to verify they pass**
 
-Run: `cd app && npm test && npx tsc -b --noEmit`
+Run: `cd app && npm test && npx tsc -b`
 Expected: PASS. New total: 356 (350 + 6).
 
 - [ ] **Step 6: Commit**
@@ -1127,7 +1127,7 @@ Create `ContentLibrary.tsx` rendering layout B: a fixed 104px left rail listing 
 
 - [ ] **Step 5: Run the tests**
 
-Run: `cd app && npm test && npx tsc -b --noEmit`
+Run: `cd app && npm test && npx tsc -b`
 Expected: PASS. New total: 360 (356 + 4).
 
 - [ ] **Step 6: Commit**
@@ -1253,7 +1253,7 @@ export function searchItems(items: CatalogItem[], query: string): CatalogItem[] 
 
 - [ ] **Step 5: Run the tests**
 
-Run: `cd app && npm test && npx tsc -b --noEmit`
+Run: `cd app && npm test && npx tsc -b`
 Expected: PASS. New total: 364 (360 + 4).
 
 - [ ] **Step 6: Commit**
@@ -1288,7 +1288,7 @@ Delete both components. `validateManifest` is re-exported from `MarketplaceTab.t
 
 - [ ] **Step 4: Verify nothing references the deleted modules**
 
-Run: `cd app && npx tsc -b --noEmit && npm test`
+Run: `cd app && npx tsc -b && npm test`
 Expected: clean, 364 tests.
 
 - [ ] **Step 5: Verify in the running app**
@@ -1370,7 +1370,7 @@ Delete the three components, their `TILE_META` entries, their `ALL_TILE_TYPES` e
 
 - [ ] **Step 5: Run the tests**
 
-Run: `cd app && npm test && npx tsc -b --noEmit`
+Run: `cd app && npm test && npx tsc -b`
 Expected: PASS, 367 tests. Note `firstParty.test.ts` still passes — none of the three is first-party.
 
 - [ ] **Step 6: Verify the upgrade path in the running app**
