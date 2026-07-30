@@ -221,7 +221,12 @@ export function DeclarativeTile({ bundleId, instanceId, density, accent, editing
     if (!decision.allow) throw new Error(decision.reason);
 
     const { invoke } = await import('@tauri-apps/api/core');
-    const res = await invoke<{ status: number; body: string }>('broker_fetch', { url: req.url });
+    // Send `undefined` rather than `{}` when there are no headers, so the
+    // common no-header case is unchanged on the wire (and the Rust side's
+    // `Option<HashMap<...>>` sees `None`, skipping header validation
+    // entirely instead of validating an empty map).
+    const headers = Object.keys(req.headers).length > 0 ? req.headers : undefined;
+    const res = await invoke<{ status: number; body: string }>('broker_fetch', { url: req.url, headers });
     if (res.status < 200 || res.status >= 300) {
       throw new Error(`request failed: HTTP ${res.status}`);
     }
@@ -230,12 +235,6 @@ export function DeclarativeTile({ bundleId, instanceId, density, accent, editing
     } catch {
       throw new Error('response body was not valid JSON');
     }
-    // Note: broker_fetch (src-tauri/marketplace.rs) takes only a url, not
-    // headers — the same limitation viz-sandbox-surface.tsx's broker deps
-    // have. req.headers is therefore currently unused for the actual
-    // network call; it exists so buildRequest's contract (and its tests)
-    // cover header substitution for when the Rust command grows header
-    // support.
   }, intervalMs, [bundle, needsSetup, JSON.stringify(configValues), JSON.stringify(secretValues)]);
 
   const title = bundle?.manifest.name ?? 'Tile';

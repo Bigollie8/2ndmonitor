@@ -71,8 +71,13 @@ export function brokerDecide(
 }
 
 export interface BrokerDeps {
-  /** Performs the actual fetch (Rust `broker_fetch`: https-only, size-capped). */
-  fetch(url: string): Promise<{ status: number; body: string }>;
+  /** Performs the actual fetch (Rust `broker_fetch`: https-only, size-capped).
+   *  `headers` is optional — visualizers never declare secrets and pass
+   *  none; declarative tiles (DeclarativeTile.tsx) use it to carry a
+   *  substituted `Authorization`-style header, which the Rust side validates
+   *  strictly (see `validate_headers` in marketplace.rs) since header values
+   *  are built from config/secret substitution, not fully-trusted input. */
+  fetch(url: string, headers?: Record<string, string>): Promise<{ status: number; body: string }>;
   /** Invokes an allowlisted tauri command. */
   invoke(command: string, args: unknown): Promise<unknown>;
 }

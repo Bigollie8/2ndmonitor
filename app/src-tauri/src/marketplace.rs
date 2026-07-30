@@ -213,18 +213,82 @@ pub struct BrokerResponse {
     pub body: String,
 }
 
+const MAX_HEADERS: usize = 16;
+const MAX_HEADER_VALUE_BYTES: usize = 4096;
+
+fn is_valid_header_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 64
+        && name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+}
+
+/// Non-empty, size-capped, and free of CR/LF/NUL/other ASCII control bytes
+/// (`is_ascii_control` covers 0x00-0x1F and 0x7F, i.e. exactly the CRLF-
+/// injection-capable range plus NUL).
+fn is_valid_header_value(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= MAX_HEADER_VALUE_BYTES
+        && !value.bytes().any(|b| b.is_ascii_control())
+}
+
+/// Validates a bundle-declared header map before it reaches the outgoing
+/// request. These names/values are built host-side from substituted config
+/// and secret values (see `tiles/request.ts`'s `buildRequest`), so unlike the
+/// url check above they are NOT trusted input — a manifest author (or a
+/// compromised/malicious upstream API response feeding back into a config
+/// value) could otherwise smuggle a CRLF sequence into a header and inject a
+/// second header or split the request. Reject rather than sanitise: a value
+/// that needed stripping is a bug the tile author should see, not something
+/// silently fixed up for them.
+fn validate_headers(headers: &std::collections::HashMap<String, String>) -> Result<(), String> {
+    if headers.len() > MAX_HEADERS {
+        return Err(format!("too many headers (max {MAX_HEADERS})"));
+    }
+    for (name, value) in headers {
+        if !is_valid_header_name(name) {
+            return Err(format!(
+                "invalid header name {name:?} (must be 1-64 chars of [A-Za-z0-9-])"
+            ));
+        }
+        // Case-insensitive: a bundle setting either of these could retarget
+        // the request (Host) or desync the body length (Content-Length).
+        let lower = name.to_ascii_lowercase();
+        if lower == "host" || lower == "content-length" {
+            return Err(format!("header {name:?} may not be set by a tile"));
+        }
+        if !is_valid_header_value(value) {
+            return Err(format!(
+                "invalid value for header {name:?} (must be non-empty, <= {MAX_HEADER_VALUE_BYTES} bytes, no control characters)"
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// The fetch the sandbox broker performs for installed tiles. Host allowlisting
 /// is enforced in the frontend broker (broker.ts) before this is called; this
-/// enforces https + size caps as defense in depth.
+/// enforces https + size caps as defense in depth. `headers` lets a tile's
+/// declared request (e.g. `Authorization: Bearer <secret>`) actually reach the
+/// server — see `validate_headers` for why they're strictly validated rather
+/// than passed through as-is.
 #[tauri::command]
-pub fn broker_fetch(url: String) -> Result<BrokerResponse, String> {
+pub fn broker_fetch(
+    url: String,
+    headers: Option<std::collections::HashMap<String, String>>,
+) -> Result<BrokerResponse, String> {
     if !url.starts_with("https://") {
         return Err("only https URLs are allowed".into());
     }
-    let resp = ureq::get(&url)
-        .timeout(std::time::Duration::from_secs(10))
-        .call()
-        .map_err(|e| format!("request failed: {e}"))?;
+    if let Some(h) = &headers {
+        validate_headers(h)?;
+    }
+    let mut req = ureq::get(&url).timeout(std::time::Duration::from_secs(10));
+    if let Some(h) = &headers {
+        for (name, value) in h {
+            req = req.set(name, value);
+        }
+    }
+    let resp = req.call().map_err(|e| format!("request failed: {e}"))?;
     let status = resp.status();
     let mut buf = Vec::new();
     resp.into_reader()
@@ -272,5 +336,64 @@ mod tests {
         assert!(!is_safe_id("../etc"));
         assert!(!is_safe_id("Up"));
         assert!(!is_safe_id(""));
+    }
+
+    fn headers(pairs: &[(&str, &str)]) -> std::collections::HashMap<String, String> {
+        pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+    }
+
+    #[test]
+    fn validate_headers_accepts_a_valid_set() {
+        let h = headers(&[("Authorization", "Bearer sk-1"), ("X-Plain", "v1")]);
+        assert!(validate_headers(&h).is_ok());
+    }
+
+    #[test]
+    fn validate_headers_rejects_crlf_in_a_value() {
+        let h = headers(&[("Authorization", "Bearer sk-1\r\nX-Injected: evil")]);
+        let err = validate_headers(&h).unwrap_err();
+        assert!(err.contains("Authorization"), "{err}");
+    }
+
+    #[test]
+    fn validate_headers_rejects_a_bad_name() {
+        let h = headers(&[("X Bad Name", "v1")]);
+        let err = validate_headers(&h).unwrap_err();
+        assert!(err.contains("invalid header name"), "{err}");
+    }
+
+    #[test]
+    fn validate_headers_rejects_host() {
+        let h = headers(&[("Host", "evil.example.com")]);
+        let err = validate_headers(&h).unwrap_err();
+        assert!(err.contains("Host"), "{err}");
+        // Case-insensitive.
+        let h2 = headers(&[("host", "evil.example.com")]);
+        assert!(validate_headers(&h2).is_err());
+    }
+
+    #[test]
+    fn validate_headers_rejects_content_length() {
+        let h = headers(&[("Content-Length", "0")]);
+        assert!(validate_headers(&h).is_err());
+    }
+
+    #[test]
+    fn validate_headers_enforces_the_16_header_cap() {
+        let pairs: Vec<(String, String)> = (0..17)
+            .map(|i| (format!("X-Header-{i}"), "v".to_string()))
+            .collect();
+        let h: std::collections::HashMap<String, String> =
+            pairs.into_iter().collect();
+        let err = validate_headers(&h).unwrap_err();
+        assert!(err.contains("too many headers"), "{err}");
+    }
+
+    #[test]
+    fn validate_headers_rejects_empty_and_oversized_values() {
+        let empty = headers(&[("X-Empty", "")]);
+        assert!(validate_headers(&empty).is_err());
+        let oversized = headers(&[("X-Big", &"a".repeat(MAX_HEADER_VALUE_BYTES + 1))]);
+        assert!(validate_headers(&oversized).is_err());
     }
 }
