@@ -4,7 +4,9 @@ import { readdirSync, readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { validateManifest } from './manifest';
-import { resampleBins } from './bins';
+import { resampleBins, clampBinCount } from './bins';
+import { RETIRED_BUILTIN_VIZ_MODES } from '../state/contentRegistry';
+import { BUILTIN_VIZ_STYLES } from '../components/viz-styles';
 
 // ─────────────────────────────────────────────────────────────────────────
 // What this harness proves, and what it does not.
@@ -76,18 +78,34 @@ function frame(opts: {
 }
 
 /** Runs a bundle's main.js against a minimal `viz` global and returns its
- *  registered frame callbacks. Mirrors what sandbox-html.ts's shim does. */
+ *  registered frame callbacks. Mirrors what sandbox-html.ts's shim actually
+ *  does (see FIX 6 in the final-fix-report): same input clamp, a cached
+ *  output buffer per bin count so repeated `viz.bins(n)` calls alias exactly
+ *  as they do in the real shim (a bundle that treated them as independent
+ *  snapshots would otherwise pass here and alias in the app), the whole
+ *  object frozen, and a `canvas.getContext` that returns the fake 2D ctx. */
 function loadBundle(id: string) {
   const code = readFileSync(join(BUNDLES, id, 'main.js'), 'utf8');
   const cbs: ((f: unknown) => void)[] = [];
-  const viz = {
-    canvas: { width: 800, height: 600 },
+  const { ctx: canvasCtx } = fakeCtx();
+  const binCache: Record<number, Float32Array> = {};
+  // Fixed source for viz.bins() — mirrors the real shim's `lastSpectrum`,
+  // which a bundle can read from its module body (before the first frame)
+  // when it's still null; resampleBins' null-source guard covers that case,
+  // not this harness (this harness always has a spectrum available).
+  const spectrum = frame().spectrum;
+  const viz = Object.freeze({
+    canvas: { width: 800, height: 600, getContext: () => canvasCtx },
     on: (name: string, cb: (f: unknown) => void) => { if (name === 'frame') cbs.push(cb); },
-    bins: (n: number) => resampleBins(frame().spectrum, n),
-    settings: { get: () => undefined, set: () => {} },
-    net: { fetch: async () => ({}) },
-    tauri: { invoke: async () => ({}) },
-  };
+    bins: (n: number) => {
+      const count = clampBinCount(n);
+      if (!binCache[count]) binCache[count] = new Float32Array(count);
+      return resampleBins(spectrum, count, binCache[count]);
+    },
+    settings: Object.freeze({ get: () => undefined, set: () => {} }),
+    net: Object.freeze({ fetch: async () => ({}) }),
+    tauri: Object.freeze({ invoke: async () => ({}) }),
+  });
   new Function('viz', code)(viz);
   return cbs;
 }
@@ -100,6 +118,24 @@ const ids = existsSync(BUNDLES)
 
 test('bundles: at least one bundle exists', () => {
   assert.ok(ids.length > 0, 'no bundles found — expected bundles/<id>/');
+});
+
+// RETIRED_BUILTIN_VIZ_MODES is the sole bridge for every upgrading user's
+// saved vizMode — it must be pinned to the actual bundle folders, not just its
+// length, or a bundle rename (or a name colliding with a still-live built-in)
+// silently strands users on Bars.
+test('RETIRED_BUILTIN_VIZ_MODES: every retired id has a matching bundles/<id>/ folder', () => {
+  const idSet = new Set(ids);
+  for (const retiredId of RETIRED_BUILTIN_VIZ_MODES) {
+    assert.ok(idSet.has(retiredId), `bundles/${retiredId}/ does not exist — remap would strand saved selections`);
+  }
+});
+
+test('RETIRED_BUILTIN_VIZ_MODES: none collide with a live built-in style', () => {
+  const builtinIds = new Set(BUILTIN_VIZ_STYLES.map((s) => s.id));
+  for (const retiredId of RETIRED_BUILTIN_VIZ_MODES) {
+    assert.ok(!builtinIds.has(retiredId), `${retiredId} is both retired and a live built-in — the remap would hijack it`);
+  }
 });
 
 for (const id of ids) {

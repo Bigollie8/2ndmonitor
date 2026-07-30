@@ -5,6 +5,16 @@
 // bins K). That's wrong — each string continuously excites off its own
 // spectrum bin (reader.out[s.idx]). The original reader size is N=32
 // (makeSpectrumReader(N, ...) where N=32), so bins K is 32.
+//
+// This style never reads `f.bands`, so no bands port is needed here. It does
+// read `f.onset.{kick,snare,hat}`, which is NOT reproducible in-bundle: onset
+// is stateful (an EMA baseline plus a decaying envelope tracked across
+// frames), computed once by the host's single running reader. The host
+// computes it at 64 bins; the original built-in computed it at 32, so onset
+// magnitudes here differ by a few percent from the original. The pluck
+// thresholds below (`kick > 0.18 && lastOnset.kick < 0.08`, same for
+// snare/hat) were tuned against 32-bin onsets, so pluck frequency may differ
+// slightly from the built-in original.
 function hex2(n) {
   return Math.max(0, Math.min(255, Math.round(n))).toString(16).padStart(2, '0');
 }

@@ -11,7 +11,7 @@
 //   - The ONLY channel in or out is postMessage (see manifest.ts protocol).
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { BINS_SHIM_SRC } from './bins';
+import { BINS_SHIM_SRC, CLAMP_SHIM_SRC } from './bins';
 
 export const SANDBOX_ATTR = 'allow-scripts';
 export const SANDBOX_CSP = "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'";
@@ -21,7 +21,7 @@ export const SANDBOX_CSP = "default-src 'none'; script-src 'unsafe-inline'; styl
  *  message shapes. */
 const RUNTIME = String.raw`
 'use strict';
-` + BINS_SHIM_SRC + String.raw`
+` + BINS_SHIM_SRC + CLAMP_SHIM_SRC + String.raw`
 var frameCbs = [];
 var settingsCache = {};
 var lastErrorAt = 0;
@@ -52,7 +52,7 @@ function rpc(payload) {
 var viz = Object.freeze({
   canvas: canvas,
   bins: function (n) {
-    var count = Math.max(1, Math.min(4096, n | 0));
+    var count = __clampBinCount(n);
     if (!binCache[count]) binCache[count] = new Float32Array(count);
     return __resample(lastSpectrum, count, binCache[count]);
   },

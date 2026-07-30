@@ -175,14 +175,6 @@ export interface VizProps {
   preview?: boolean;
 }
 
-/** Format seconds as M:SS. Exported so playback-aware visualizers (cassette)
- *  can label their UI with the track length. */
-export function fmtTime(seconds: number): string {
-  if (!isFinite(seconds) || seconds <= 0) return '—';
-  const total = Math.floor(seconds);
-  return `${Math.floor(total / 60)}:${(total % 60).toString().padStart(2, '0')}`;
-}
-
 /** Combined visibility + frame-rate gate. Each viz calls `shouldDraw()` once
  *  per rAF; returns true only when (a) not paused, (b) document not hidden,
  *  and (c) enough time has elapsed since the last successful draw to honour

@@ -39,6 +39,12 @@ const SERVER = process.env.MARKET_URL ?? 'https://market.basedsecurity.net';
 
 const REQUIRED = ['manifest.json', 'main.js'];
 const ID_RE = /^[a-z0-9-]{1,64}$/;
+// m.version is interpolated straight into a PowerShell -Command string in
+// zip() below. Only reachable by someone who can already edit the repo, but
+// a version containing a quote (or backtick, `$`, etc.) would escape the
+// Compress-Archive argument — reject anything that isn't a plain version-ish
+// token before it ever reaches that string.
+const VERSION_RE = /^[\w.+-]+$/;
 
 function bundleIds() {
   return readdirSync(BUNDLES, { withFileTypes: true })
@@ -56,6 +62,7 @@ function validate(id) {
   if (m.api !== 1) throw new Error(`${id}: api must be 1`);
   if (!Array.isArray(m.permissions)) throw new Error(`${id}: permissions must be an array`);
   if (!m.version) throw new Error(`${id}: version is required`);
+  if (!VERSION_RE.test(m.version)) throw new Error(`${id}: version "${m.version}" has characters outside [\\w.+-]`);
   return m;
 }
 

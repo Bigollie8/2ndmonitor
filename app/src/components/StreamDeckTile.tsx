@@ -32,7 +32,7 @@ export function StreamDeckTile({
   vizMode, setVizMode, profiles, setActiveProfileId,
 }: StreamDeckTileProps) {
   const [pickerState, setPickerState] = useState<PickerState>({ open: false });
-  const { styles: vizStyles } = useVizStyles();
+  const { styles: vizStyles, loaded: vizStylesLoaded } = useVizStyles();
 
   const ctx: ActionContext = {
     vizMode, setVizMode, setActiveProfileId,
@@ -43,6 +43,13 @@ export function StreamDeckTile({
     if (editing) {
       setPickerState({ open: true, mode: 'edit', index });
     } else {
+      // A Stream Deck is a physical device and can fire a cycleViz press
+      // before visualizers_list resolves. Before that, a `bundle:` vizMode
+      // has no match in ctx.vizIds, so cycleViz's indexOf(-1) math lands on
+      // index 0 and silently persists 'bars' over the user's actual
+      // selection — same root cause as the Critical fixed in Task 9. Make
+      // cycling a no-op until the catalog is known rather than guessing.
+      if (button.action.kind === 'cycleViz' && !vizStylesLoaded) return;
       void executeAction(button.action, ctx);
     }
   };

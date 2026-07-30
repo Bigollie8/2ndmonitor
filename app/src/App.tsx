@@ -332,7 +332,7 @@ export default function App() {
   // null when hidden. Set by the effect below when accent is track-linked and
   // the title changes; auto-cleared after 2s.
   const [themeToast, setThemeToast] = useState<string | null>(null);
-  const { styles: vizStyles } = useVizStyles();
+  const { styles: vizStyles, loaded: vizStylesLoaded } = useVizStyles();
   const spectrumRef = useSpectrumRef();
   const { track: livePlaying, playback: livePlayback, sourceAppId: liveSourceAppId } = useNowPlaying();
   // Real GSMTC track wins when it's available; otherwise the user's manual
@@ -469,6 +469,12 @@ export default function App() {
         }
       }
       else if (!editing && !cmd && (e.key === 'v' || e.key === 'V')) {
+        // Guard on vizStylesLoaded — same root cause as the Critical fixed in
+        // Task 9. Before visualizers_list resolves, a `bundle:` t.vizMode has
+        // no match in `ids`, so indexOf is -1 and (−1+1)%len lands on index 0
+        // — silently persisting 'bars' over the user's actual selection. Make
+        // cycling a no-op until the catalog is known rather than guessing.
+        if (!vizStylesLoaded) return;
         const ids = vizStyles.map((s) => s.id);
         const i = ids.indexOf(t.vizMode);
         setTweak('vizMode', ids[(i + 1) % ids.length] ?? 'bars');
@@ -476,7 +482,7 @@ export default function App() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [showSwitcher, editMode, showOnboarding, showGallery, showSettings, showTileLibrary, showShortcuts, t.vizMode, t.profiles, setTweak, vizStyles]);
+  }, [showSwitcher, editMode, showOnboarding, showGallery, showSettings, showTileLibrary, showShortcuts, t.vizMode, t.profiles, setTweak, vizStyles, vizStylesLoaded]);
 
   const orientation = useOrientation();
   const canvas = useCanvas();

@@ -19,7 +19,8 @@ Saves hot-reload within ~2 seconds — edit in the built-in editor (✎ on the t
   "author": "you",          // optional
   "version": "0.1.0",
   "api": 1,                 // frame-payload contract version
-  "permissions": []         // must be [] — reserved for the future marketplace broker
+  "permissions": []         // must be [] for locally-authored visualizers — see
+                            // "Permissions" below for what marketplace bundles may declare
 }
 ```
 
@@ -28,7 +29,7 @@ Saves hot-reload within ~2 seconds — edit in the built-in editor (✎ on the t
 Your code runs inside a sandboxed iframe: **no network, no filesystem, no app APIs** — audio data in, pixels out. The global `viz` is your whole world:
 
 ```js
-viz.on('frame', ({ ctx, spectrum, waveform, bands, onset, level, dt, size, theme, track }) => {
+viz.on('frame', ({ ctx, spectrum, waveform, bands, onset, level, dt, size, theme, track, playback }) => {
   // draw!
 });
 
@@ -36,6 +37,12 @@ viz.settings.get('speed');        // persisted per-visualizer
 viz.settings.set('speed', 2);
 viz.canvas;                        // the <canvas>; grab webgl/webgl2 yourself if you
                                    // don't want the default 2D ctx
+viz.bins(n);                       // resample the host's 64 spectrum bins to n bins,
+                                   // by nearest-neighbour. Use this instead of hand-
+                                   // rolling your own resample if you want a different
+                                   // bin count than 64 — it's the same formula every
+                                   // built-in style uses, so your output matches theirs
+                                   // instead of silently drifting.
 ```
 
 ### Frame payload
@@ -52,6 +59,9 @@ viz.canvas;                        // the <canvas>; grab webgl/webgl2 yourself i
 | `size` | `{ width, height }` | canvas size in pixels (canvas is auto-resized) |
 | `theme` | `{ accent, accent2 }` | current accent colors, hex strings |
 | `track` | `{ title, artist } \| null` | now-playing metadata |
+| `playback` | `{ playing, position, duration } \| null` | live playback state, position/duration in seconds |
+
+`track` and `playback` are both `null` when nothing is playing.
 
 API v1 is frozen — future fields will be added, never changed or removed.
 

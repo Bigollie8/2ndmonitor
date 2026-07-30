@@ -4,6 +4,37 @@
 // Note: the original creates its spectrum reader with makeSpectrumReader(32,
 // ...) and the bottom "SPEC.LOCK" strip reads reader.out[i] for i in 0..31
 // (its own local `const N = 32`). So bins K is 32, matching the task table.
+//
+// `f.bands` (bass/mid/treble) is computed host-side over 64 bins; the
+// boundaries scale with N (see makeSpectrumReader in
+// app/src/components/viz.tsx), so they don't match what an N=32 reader would
+// have produced. `bands` is a pure per-frame mean, so it's reproduced exactly
+// from viz.bins(32) below with the same boundary formula evaluated at K=32.
+//
+// `f.onset.kick` is NOT reproduced the same way: onset is stateful (an EMA
+// baseline plus a decaying envelope tracked across frames), so it can only be
+// computed by the host's single running reader. The host computes it at 64
+// bins; the original built-in computed it at 32. Onset magnitudes will
+// therefore differ by a few percent from the original — the lock-indicator
+// flash on `kick > 0.3` may trigger a hair earlier/later than it used to.
+
+function localBands(bins, K) {
+  const bassN = Math.max(1, Math.floor(K * 0.338));
+  const midEnd = Math.max(bassN + 1, Math.floor(K * 0.669));
+  let bassSum = 0, midSum = 0, trebleSum = 0;
+  let bassCount = 0, midCount = 0, trebleCount = 0;
+  for (let i = 0; i < K; i++) {
+    const v = bins[i] || 0;
+    if (i < bassN) { bassSum += v; bassCount++; }
+    else if (i < midEnd) { midSum += v; midCount++; }
+    else { trebleSum += v; trebleCount++; }
+  }
+  return {
+    bass: bassSum / Math.max(1, bassCount),
+    mid: midSum / Math.max(1, midCount),
+    treble: trebleSum / Math.max(1, trebleCount),
+  };
+}
 
 function drawTape(ctx, accent, x, y, val, label, right) {
   const tapeH = 200, tapeW = 50;
@@ -40,13 +71,11 @@ viz.on('frame', (f) => {
   const w = f.size.width;
   const h = f.size.height;
   if (w <= 0 || h <= 0) return;
-  const bass = f.bands.bass;
-  const mid = f.bands.mid;
-  const treble = f.bands.treble;
   const kick = f.onset.kick;
   const accent = f.theme.accent;
   const accent2 = f.theme.accent2;
   const bins = viz.bins(32);
+  const { bass, mid, treble } = localBands(bins, 32);
 
   t += 0.04;
   const cx = w / 2, cy = h / 2;

@@ -50,7 +50,11 @@ export function SandboxVizSurface({
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const hostRef = useRef<HTMLDivElement | null>(null);
   const waveRef = useWaveformRef();
-  const gate = useAnimateGate(paused, 'scripted');
+  // Label the perf-debug draw-rate bucket with the concrete bundle (or the
+  // authoring surface's fixed id) rather than a hardcoded 'scripted' — all 12
+  // installed bundle styles otherwise collapse into a single indistinguishable
+  // bucket in the perf HUD.
+  const gate = useAnimateGate(paused, bundleId ? `scripted:${bundleId}` : 'scripted');
 
   const [scriptError, setScriptErrorState] = useState<ScriptError>(null);
   const onErrorRef = useRef(onError);
@@ -77,6 +81,18 @@ export function SandboxVizSurface({
     if (!bundleId) return;
     let cancelled = false;
     setScriptError(null); // clear any stale banner immediately on switch/reload
+    // Clear stale code/broker BEFORE the async read below. The iframe remounts
+    // (key={bundleId}) and its inline script posts `ready` almost immediately —
+    // often before `invoke('visualizers_read')` resolves — so if the old
+    // bundle's code/broker were still sitting in the refs, `ready`'s call to
+    // sendInit() would init the NEW iframe with the OLD bundle's code while
+    // sendInit's closure already has the new bundleId. That produces a
+    // visible wrong-style flash, can write a `settings:set` from the old
+    // bundle's module body under the new bundle's settings key, and can leave
+    // the old bundle's interval brokered under the new bundle's permissions.
+    // Do not delete this as "redundant" — it is the fix for that race.
+    codeRef.current = '';
+    brokerRef.current = null;
     (async () => {
       try {
         const { invoke } = await import('@tauri-apps/api/core');
@@ -199,8 +215,10 @@ export function SandboxVizSurface({
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
+    // bundleId is a dep so `gate` (whose perf-debug label is derived from it)
+    // is re-captured by this closure on every bundle switch, not just at mount.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [spectrumRef, sensitivity, smoothing]);
+  }, [spectrumRef, sensitivity, smoothing, bundleId]);
 
   return (
     <div ref={hostRef} style={{ position: 'absolute', inset: 0, background: '#000', overflow: 'hidden' }}>

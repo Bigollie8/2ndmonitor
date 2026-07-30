@@ -22,8 +22,13 @@ export const NEW_VIZ_CODE = `// Second-Monitor Hub scripted visualizer (API v1).
 //   size      { width, height } of the canvas in device pixels
 //   theme     { accent, accent2 } current accent colors (hex strings)
 //   track     { title, artist } or null
+//   playback  { playing, position, duration } or null (null when nothing is playing)
 //
 // viz.settings.get(key) / viz.settings.set(key, value) — persisted per-visualizer.
+// viz.bins(n) — resample the 64 host spectrum bins to n bins (nearest-neighbour).
+//   Use this instead of rolling your own resample when you want a bin count
+//   other than 64 — it's the same formula every built-in style uses, so your
+//   output matches theirs instead of silently drifting.
 
 viz.on('frame', ({ ctx, spectrum, bands, onset, size, theme }) => {
   if (!ctx) return;

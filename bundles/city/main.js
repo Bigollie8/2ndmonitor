@@ -8,6 +8,20 @@ function hex2(n) {
   return Math.max(0, Math.min(255, Math.round(n))).toString(16).padStart(2, '0');
 }
 
+// `f.bands` is computed host-side over 64 bins and is NOT reproducible at a
+// different bin count K — the bass/mid/treble boundaries scale with N (see
+// makeSpectrumReader in app/src/components/viz.tsx). This style only needs
+// `bass`, and bands are a pure per-frame mean over the bin array, so it's
+// derived locally from viz.bins(24) using the exact same boundary formula the
+// host uses at N=64, evaluated at K=24 instead. This is bit-for-bit what a
+// hypothetical N=24 makeSpectrumReader would have produced.
+function localBass(bins, K) {
+  const bassN = Math.max(1, Math.floor(K * 0.338));
+  let sum = 0;
+  for (let i = 0; i < bassN; i++) sum += bins[i] || 0;
+  return sum / bassN;
+}
+
 // Buildings depend on both canvas dimensions (bh derives from h), which
 // aren't known until the first frame. Regenerate whenever either changes
 // — mirrors the original's ResizeObserver, which fires on width OR height
@@ -38,10 +52,10 @@ viz.on('frame', (f) => {
   const w = f.size.width;
   const h = f.size.height;
   if (w <= 0 || h <= 0) return;
-  const bass = f.bands.bass;
   const accent = f.theme.accent;
   const accent2 = f.theme.accent2;
   const bins = viz.bins(24);
+  const bass = localBass(bins, 24);
 
   if (w !== lastGenW || h !== lastGenH) {
     buildings = genBuildings(w, h);
