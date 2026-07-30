@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    AppHandle, Manager, Runtime,
+    AppHandle, Emitter, Manager, Runtime,
 };
 
 static CLOSE_TO_TRAY: AtomicBool = AtomicBool::new(true);
@@ -23,8 +23,16 @@ pub fn set_close_to_tray(enabled: bool) {
 fn toggle_window<R: Runtime>(app: &AppHandle<R>) {
     if let Some(win) = app.get_webview_window("main") {
         match win.is_visible() {
-            Ok(true) => { let _ = win.hide(); }
-            _ => { let _ = win.show(); let _ = win.unminimize(); let _ = win.set_focus(); }
+            Ok(true) => {
+                let _ = win.hide();
+                let _ = win.emit("hub://window-visibility", false);
+            }
+            _ => {
+                let _ = win.show();
+                let _ = win.unminimize();
+                let _ = win.set_focus();
+                let _ = win.emit("hub://window-visibility", true);
+            }
         }
     }
 }
