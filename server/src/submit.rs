@@ -4,7 +4,7 @@
 
 use crate::auth::bearer_user;
 use crate::db::now;
-use crate::manifest::{validate, Perm};
+use crate::manifest::{validate, validate_view_spec, Perm};
 use crate::state::AppState;
 use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
@@ -80,6 +80,12 @@ pub async fn submit(
                 return Err((StatusCode::BAD_REQUEST, "preset_json must be an object".into()));
             }
             ("preset.json", p.to_string())
+        }
+        "tile" => {
+            let c = body.code.as_deref().ok_or((StatusCode::BAD_REQUEST, "code required".into()))?;
+            static_check_code(c).map_err(|e| (StatusCode::BAD_REQUEST, e))?;
+            validate_view_spec(c).map_err(|e| (StatusCode::BAD_REQUEST, e))?;
+            ("main.js", c.to_string())
         }
         _ => {
             let c = body.code.as_deref().ok_or((StatusCode::BAD_REQUEST, "code required".into()))?;
