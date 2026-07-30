@@ -1,12 +1,14 @@
 import { useEffect, useMemo, useState } from 'react';
-import type { TileType, BuiltinTileType, TileInstance, Rect, Orientation } from '../state/layout';
+import type { TileType, TileInstance, Rect, Orientation } from '../state/layout';
 import {
-  ALL_TILE_TYPES,
   DEFAULT_LANDSCAPE_LAYOUT,
   DEFAULT_PORTRAIT_LAYOUT,
+  DEFAULT_BUNDLE_TILE_RECT,
   findEmptyRect,
 } from '../state/layout';
-import { TILE_META, TILE_CATEGORY_LABELS, type TileCategory } from '../state/tileMeta';
+import { TILE_CATEGORY_LABELS, type TileCategory, type TileMeta } from '../state/tileMeta';
+import { isBundleTile } from '../tiles/tileRegistry';
+import { useTileCatalog } from '../tiles/useTileCatalog';
 import { MarketplaceTab } from './MarketplaceTab';
 
 const MONO = '"JetBrains Mono", ui-monospace, monospace';
@@ -19,7 +21,7 @@ const CATEGORY_ORDER = Object.keys(TILE_CATEGORY_LABELS) as TileCategory[];
  *  edit-mode picker gallery so edit mode and App can drop it in. */
 export function TileLibrary({
   orientation, canvas, tiles, profileName, accent,
-  onAdd, onRemove, onClose,
+  onAdd, onRemove, onClose, startOnMarket,
 }: {
   orientation: Orientation;
   canvas: { w: number; h: number };
@@ -29,10 +31,16 @@ export function TileLibrary({
   onAdd: (type: TileType, rect: Rect) => void;
   onRemove: (instanceId: string) => void;
   onClose: () => void;
+  /** Open directly on the Marketplace tab instead of the tile grid — used by
+   *  `MissingTileCard`'s "Open Marketplace" action. Read once at mount (this
+   *  component is only ever mounted while the library is open), not synced
+   *  on change. */
+  startOnMarket?: boolean;
 }) {
   const [query, setQuery] = useState('');
   const [activeCategory, setActiveCategory] = useState<TileCategory | 'all'>('all');
-  const [showMarket, setShowMarket] = useState(false);
+  const [showMarket, setShowMarket] = useState(() => startOnMarket ?? false);
+  const { entries: catalog } = useTileCatalog();
 
   // Esc closes the modal (capture + stopPropagation so App's cascade doesn't
   // also fire).
@@ -49,12 +57,12 @@ export function TileLibrary({
 
   const defaults = orientation === 'portrait' ? DEFAULT_PORTRAIT_LAYOUT : DEFAULT_LANDSCAPE_LAYOUT;
 
-  // Built-in only: this library still lists `ALL_TILE_TYPES` (see `searchMatches`
-  // below). Rendering installed bundle tiles here is a later task — this
-  // function's `defaults` lookup would need `DEFAULT_BUNDLE_TILE_RECT` (see
-  // `../state/layout.ts`) once it does.
-  const handleAdd = (type: BuiltinTileType) => {
-    const preferred = defaults[type];
+  // An installed bundle tile has no compile-time entry in `defaults` (it's
+  // keyed by BuiltinTileType) — fall back to the shared bundle default rect
+  // for this orientation, same convention as App.tsx's addTileByType and
+  // edit.tsx's resetRect.
+  const handleAdd = (type: TileType) => {
+    const preferred = isBundleTile(type) ? DEFAULT_BUNDLE_TILE_RECT[orientation] : defaults[type];
     const rect = findEmptyRect(tiles.map((t) => t.rect), preferred, canvas);
     onAdd(type, rect);
   };
@@ -69,21 +77,22 @@ export function TileLibrary({
 
   // Search filters on label + description substring; combines with the
   // active category chip. Chip counts are live (they reflect the search).
+  // Iterates the merged catalog (built-ins + installed bundles) so an
+  // installed tile bundle gets a card here too, under `integrations`.
   const q = query.trim().toLowerCase();
   const searchMatches = useMemo(
-    () => ALL_TILE_TYPES.filter((id) => {
+    () => catalog.filter((entry) => {
       if (!q) return true;
-      const meta = TILE_META[id];
-      return `${meta.label} ${meta.description}`.toLowerCase().includes(q);
+      return `${entry.meta.label} ${entry.meta.description}`.toLowerCase().includes(q);
     }),
-    [q],
+    [q, catalog],
   );
   const countFor = (cat: TileCategory | 'all') =>
     cat === 'all'
       ? searchMatches.length
-      : searchMatches.filter((id) => TILE_META[id].category === cat).length;
+      : searchMatches.filter((entry) => entry.meta.category === cat).length;
   const visible = searchMatches.filter(
-    (id) => activeCategory === 'all' || TILE_META[id].category === activeCategory,
+    (entry) => activeCategory === 'all' || entry.meta.category === activeCategory,
   );
 
   return (
@@ -183,14 +192,15 @@ export function TileLibrary({
               No tiles match "{query.trim()}"
             </div>
           )}
-          {visible.map((id) => (
+          {visible.map((entry) => (
             <TileCard
-              key={id}
-              id={id}
-              count={tiles.filter((t) => t.type === id).length}
+              key={entry.type}
+              type={entry.type}
+              meta={entry.meta}
+              count={tiles.filter((t) => t.type === entry.type).length}
               accent={accent}
-              onAdd={() => handleAdd(id)}
-              onRemove={() => handleRemove(id)}
+              onAdd={() => handleAdd(entry.type)}
+              onRemove={() => handleRemove(entry.type)}
             />
           ))}
         </div>}
@@ -228,23 +238,26 @@ function CategoryChip({ label, count, active, onClick, accent }: {
   );
 }
 
-function TileCard({ id, count, accent, onAdd, onRemove }: {
-  id: BuiltinTileType;
+function TileCard({ type, meta, count, accent, onAdd, onRemove }: {
+  type: TileType;
+  meta: TileMeta;
   count: number;
   accent: string;
   onAdd: () => void;
   onRemove: () => void;
 }) {
-  const meta = TILE_META[id];
-  const isViz = id === 'viz';
+  const isViz = type === 'viz';
+  const isBundle = isBundleTile(type);
   const added = count > 0;
 
-  // Tag chip: NEEDS KEY > ACCOUNT > BUILT-IN.
+  // Tag chip: NEEDS KEY > ACCOUNT > INSTALLED (bundle) > BUILT-IN.
   const tag = meta.needsKey
     ? { text: 'NEEDS KEY', color: '#fbbf24', bg: 'rgba(245,158,11,0.1)' }
     : meta.account
       ? { text: 'ACCOUNT', color: '#7cf5d4', bg: 'rgba(124,245,212,0.08)' }
-      : { text: 'BUILT-IN', color: 'rgba(255,255,255,0.4)', bg: 'rgba(255,255,255,0.05)' };
+      : isBundle
+        ? { text: 'INSTALLED', color: '#a5b4fc', bg: 'rgba(129,140,248,0.1)' }
+        : { text: 'BUILT-IN', color: 'rgba(255,255,255,0.4)', bg: 'rgba(255,255,255,0.05)' };
 
   // Action buttons. Card body clicks never add/remove.
   //  - multi-instance: always "+ Add"; "Remove" (last instance) when any exist

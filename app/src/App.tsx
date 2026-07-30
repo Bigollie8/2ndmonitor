@@ -15,7 +15,8 @@ import {
   removeInstance,
   updateInstance,
 } from './state/layout';
-import { isBundleTile } from './tiles/tileRegistry';
+import { isBundleTile, bundleIdOf } from './tiles/tileRegistry';
+import { useTileCatalog } from './tiles/useTileCatalog';
 import type { Track, Profile, AccentTheme, VizMode, Density, Todo, WeatherLocation } from './types';
 import {
   DEFAULT_POMODORO_STATE,
@@ -83,6 +84,8 @@ const AircraftTile = lazy(() => import('./components/AircraftTile').then((m) => 
 const ActiveWindowTile = lazy(() => import('./components/ActiveWindowTile').then((m) => ({ default: m.ActiveWindowTile })));
 const DockerTile = lazy(() => import('./components/DockerTile').then((m) => ({ default: m.DockerTile })));
 const EnergyTile = lazy(() => import('./components/EnergyTile').then((m) => ({ default: m.EnergyTile })));
+const DeclarativeTile = lazy(() => import('./components/DeclarativeTile').then((m) => ({ default: m.DeclarativeTile })));
+const MissingTileCard = lazy(() => import('./components/MissingTileCard').then((m) => ({ default: m.MissingTileCard })));
 
 // Vite injects `import.meta.env` at build time; the project has no
 // vite-env.d.ts / "vite/client" types reference, so declare the one flag we
@@ -328,6 +331,11 @@ export default function App() {
   const [showGallery, setShowGallery] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showTileLibrary, setShowTileLibrary] = useState(false);
+  // Set right before opening the Tile Library from a `MissingTileCard`'s
+  // "Open Marketplace" action, so it lands on the Marketplace tab instead of
+  // the default tile grid. Reset on close so a plain library open (Settings,
+  // edit-mode "+") doesn't inherit it.
+  const [tileLibraryStartOnMarket, setTileLibraryStartOnMarket] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [selectedInstanceId, setSelectedInstanceId] = useState<string>('');
   // Transient "theme synced" toast: holds the track title being announced, or
@@ -335,6 +343,7 @@ export default function App() {
   // the title changes; auto-cleared after 2s.
   const [themeToast, setThemeToast] = useState<string | null>(null);
   const { styles: vizStyles, loaded: vizStylesLoaded } = useVizStyles();
+  const { entries: tileCatalog, loaded: tileCatalogLoaded } = useTileCatalog();
   const spectrumRef = useSpectrumRef();
   const { track: livePlaying, playback: livePlayback, sourceAppId: liveSourceAppId } = useNowPlaying();
   // Real GSMTC track wins when it's available; otherwise the user's manual
@@ -759,12 +768,37 @@ export default function App() {
             })}
           />
         );
-      default:
-        // Bundle tiles (`bundle:<id>`) are a real TileType as of the tile-
-        // registry work, but nothing yet creates a TileInstance of one —
-        // rendering its view.json payload is a later task in the
-        // marketplace-tiles plan. Render nothing rather than throw.
-        return null;
+      default: {
+        // Every BuiltinTileType is handled by a case above, so reaching here
+        // means instance.type is a `bundle:<id>` tile. Four states:
+        //  1. (not bundle — unreachable, handled by the cases above)
+        //  2. catalog hasn't loaded yet — render nothing rather than guess.
+        //  3. present in the loaded catalog — render its view.json payload.
+        //  4. absent from a loaded catalog — offer to install it, without
+        //     touching the layout (the slot is the user's to keep or remove).
+        if (!isBundleTile(instance.type)) return null;
+        if (!tileCatalogLoaded) return null;
+        const entry = tileCatalog.find((e) => e.type === instance.type);
+        if (!entry) {
+          return (
+            <MissingTileCard
+              bundleId={bundleIdOf(instance.type) ?? instance.type}
+              density={t.density}
+              accent={accent}
+              onOpenMarketplace={() => { setTileLibraryStartOnMarket(true); setShowTileLibrary(true); }}
+            />
+          );
+        }
+        return (
+          <DeclarativeTile
+            bundleId={entry.bundleId ?? bundleIdOf(instance.type) ?? instance.type}
+            instanceId={instance.instanceId}
+            density={t.density}
+            accent={accent}
+            editing={editMode}
+          />
+        );
+      }
     }
   };
 
@@ -907,7 +941,8 @@ export default function App() {
             onRemove={(instanceId) => updateActiveOrientation({
               tiles: removeInstance(activeOrientation.tiles, instanceId),
             })}
-            onClose={() => setShowTileLibrary(false)}
+            onClose={() => { setShowTileLibrary(false); setTileLibraryStartOnMarket(false); }}
+            startOnMarket={tileLibraryStartOnMarket}
           />
         )}
       </div>

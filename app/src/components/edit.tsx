@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
 import type { TileType, TileInstance, Rect } from '../state/layout';
 import {
-  ALL_TILE_TYPES,
   DEFAULT_LANDSCAPE_LAYOUT,
   DEFAULT_PORTRAIT_LAYOUT,
   DEFAULT_BUNDLE_TILE_RECT,
@@ -13,7 +12,8 @@ import {
   updateInstance,
 } from '../state/layout';
 import { TILE_META } from '../state/tileMeta';
-import { isBundleTile, BUNDLE_TILE_ICON } from '../tiles/tileRegistry';
+import { isBundleTile, bundleIdOf, BUNDLE_TILE_ICON } from '../tiles/tileRegistry';
+import { useTileCatalog } from '../tiles/useTileCatalog';
 import { TileLibrary } from './TileLibrary';
 
 export function EditModeOverlay({
@@ -41,10 +41,21 @@ export function EditModeOverlay({
   const [pickerOpen, setPickerOpen] = useState(false);
 
   // Labels/icons come from the shared registry — this used to be a third
-  // hand-maintained copy of the tile metadata.
-  const ALL_LABELS = Object.fromEntries(
-    ALL_TILE_TYPES.map((k) => [k, TILE_META[k].label]),
-  ) as Record<TileType, string>;
+  // hand-maintained copy of the tile metadata. A plain `Record<TileType, ...>`
+  // built from `ALL_TILE_TYPES` (built-ins only) type-checks against the
+  // `bundle:${string}` half of TileType but has no entries for it — a lookup
+  // for a placed bundle tile would return `undefined` at runtime with no
+  // compiler complaint. `labelFor` instead resolves a bundle tile against the
+  // live catalog, falling back to the bundle id (never `undefined`) if the
+  // catalog hasn't loaded yet or the bundle was uninstalled.
+  const { entries: tileCatalog } = useTileCatalog();
+  const labelFor = (type: TileType): string => {
+    if (isBundleTile(type)) {
+      const entry = tileCatalog.find((e) => e.type === type);
+      return entry?.meta.label ?? bundleIdOf(type) ?? type;
+    }
+    return TILE_META[type].label;
+  };
 
   const orientation = useOrientation();
   const canvas = useCanvas();
@@ -52,10 +63,10 @@ export function EditModeOverlay({
 
   const tileMap: Record<string, { rect: Rect; label: string; type: TileType }> = {};
   for (const inst of tiles) {
-    tileMap[inst.instanceId] = { rect: inst.rect, label: ALL_LABELS[inst.type], type: inst.type };
+    tileMap[inst.instanceId] = { rect: inst.rect, label: labelFor(inst.type), type: inst.type };
   }
 
-  const sel = tileMap[selectedInstanceId] ?? (tiles[0] ? { rect: tiles[0].rect, label: ALL_LABELS[tiles[0].type], type: tiles[0].type } : undefined);
+  const sel = tileMap[selectedInstanceId] ?? (tiles[0] ? { rect: tiles[0].rect, label: labelFor(tiles[0].type), type: tiles[0].type } : undefined);
 
   const setRect = (instanceId: string, r: Rect) =>
     setTiles(updateInstance(tiles, instanceId, { rect: clampRectFrac(r, canvas) }));
@@ -106,7 +117,7 @@ export function EditModeOverlay({
             }
           />
         )}
-        <LayersPanel accent={accent} selectedInstanceId={selectedInstanceId} setSelectedInstanceId={setSelectedInstanceId} tiles={tiles} canvas={canvas} labels={ALL_LABELS} />
+        <LayersPanel accent={accent} selectedInstanceId={selectedInstanceId} setSelectedInstanceId={setSelectedInstanceId} tiles={tiles} canvas={canvas} labelFor={labelFor} />
       </div>
       {pickerOpen && (
         <div style={{ pointerEvents: 'auto' }}>
@@ -370,13 +381,13 @@ function EmToggle({ on, accent }: { on: boolean; accent: string }) {
   );
 }
 
-function LayersPanel({ accent, selectedInstanceId, setSelectedInstanceId, tiles, canvas, labels }: {
+function LayersPanel({ accent, selectedInstanceId, setSelectedInstanceId, tiles, canvas, labelFor }: {
   accent: string;
   selectedInstanceId: string;
   setSelectedInstanceId: (id: string) => void;
   tiles: TileInstance[];
   canvas: { w: number; h: number };
-  labels: Record<TileType, string>;
+  labelFor: (type: TileType) => string;
 }) {
   // A bundle tile (`bundle:<id>`) has no entry in TILE_META — it shares the
   // same fallback glyph the tile registry synthesizes for it.
@@ -405,7 +416,7 @@ function LayersPanel({ accent, selectedInstanceId, setSelectedInstanceId, tiles,
               textAlign: 'left',
             }}>
               <span style={{ fontSize: 11 }}>{kindIcon(inst.type)}</span>
-              <span style={{ fontSize: 11, flex: 1 }}>{inst.name ?? labels[inst.type]}</span>
+              <span style={{ fontSize: 11, flex: 1 }}>{inst.name ?? labelFor(inst.type)}</span>
               <span style={{ fontSize: 9, color: 'rgba(255,255,255,0.3)', fontFamily: '"JetBrains Mono", ui-monospace, monospace' }}>
                 {Math.round(inst.rect.w * canvas.w)}×{Math.round(inst.rect.h * canvas.h)}
               </span>

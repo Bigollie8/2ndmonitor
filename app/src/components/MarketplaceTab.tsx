@@ -56,11 +56,27 @@ export function MarketplaceTab({ accent, onClose }: { accent: string; onClose: (
   const [confirming, setConfirming] = useState<IndexBundle | null>(null);
   const [toast, setToast] = useState('');
 
+  // Visualizer and tile ids are separate namespaces on the server (a
+  // visualizer and a tile could in principle share an id), so the local
+  // "is this installed" set keys by `kind:id`, not bare id — otherwise one
+  // would mask the other's installed state. Each list is fetched
+  // independently (`allSettled`, not `all`) so a Tauri error on one command
+  // doesn't blank out the other's already-known installed state.
   const refreshInstalled = useCallback(async () => {
     try {
       const { invoke } = await import('@tauri-apps/api/core');
-      const list = await invoke<{ id: string }[]>('visualizers_list');
-      setInstalled(new Set(list.map((f) => f.id)));
+      const [visualizers, tiles] = await Promise.allSettled([
+        invoke<{ id: string }[]>('visualizers_list'),
+        invoke<{ id: string }[]>('tiles_list'),
+      ]);
+      const next = new Set<string>();
+      if (visualizers.status === 'fulfilled') {
+        for (const f of visualizers.value) next.add(`visualizer:${f.id}`);
+      }
+      if (tiles.status === 'fulfilled') {
+        for (const f of tiles.value) next.add(`tile:${f.id}`);
+      }
+      setInstalled(next);
     } catch { /* leave as-is */ }
   }, []);
 
@@ -213,7 +229,7 @@ export function MarketplaceTab({ accent, onClose }: { accent: string; onClose: (
               </div>
             )}
             {bundles?.map((b) => {
-              const isInstalled = b.kind !== 'preset' && installed.has(b.id);
+              const isInstalled = b.kind !== 'preset' && installed.has(`${b.kind}:${b.id}`);
               return (
                 <div key={`${b.id}@${b.version}`} style={{
                   padding: 12, borderRadius: 10, background: 'rgba(255,255,255,0.03)',
