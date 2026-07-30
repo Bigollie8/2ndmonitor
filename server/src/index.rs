@@ -16,7 +16,8 @@ pub async fn index_json(State(state): State<AppState>) -> Result<Response, Statu
         let db = state.db.lock();
         let mut stmt = db
             .prepare(
-                "SELECT b.id, b.version, b.kind, b.name, b.permissions, b.sha256, b.size, b.downloads, u.email
+                "SELECT b.id, b.version, b.kind, b.name, b.permissions, b.sha256, b.size, b.downloads, u.email,
+                        b.preview IS NOT NULL AS has_preview
                  FROM bundles b JOIN users u ON u.id = b.author_id
                  WHERE b.status = 'approved' ORDER BY b.id, b.created_at",
             )
@@ -36,6 +37,7 @@ pub async fn index_json(State(state): State<AppState>) -> Result<Response, Statu
                     "size": r.get::<_, Option<i64>>(6)?,
                     "downloads": r.get::<_, i64>(7)?,
                     "author": masked,
+                    "hasPreview": r.get::<_, bool>(9)?,
                 }))
             })
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
@@ -59,6 +61,23 @@ pub async fn index_json(State(state): State<AppState>) -> Result<Response, Statu
         body,
     )
         .into_response())
+}
+
+pub async fn preview(
+    State(state): State<AppState>,
+    Path((id, version)): Path<(String, String)>,
+) -> Result<Response, StatusCode> {
+    let bytes: Vec<u8> = state
+        .db
+        .lock()
+        .query_row(
+            "SELECT preview FROM bundles WHERE id = ?1 AND version = ?2 AND status = 'approved' AND preview IS NOT NULL",
+            rusqlite::params![id, version],
+            |r| r.get(0),
+        )
+        .map_err(|_| StatusCode::NOT_FOUND)?;
+    let mime = crate::submit::sniff_image(&bytes).ok_or(StatusCode::NOT_FOUND)?;
+    Ok(([(header::CONTENT_TYPE, mime)], bytes).into_response())
 }
 
 pub async fn download(

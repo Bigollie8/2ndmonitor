@@ -19,13 +19,28 @@ pub const CODE_MAX: usize = 262_144; // 256 KB
 pub const PRESET_MAX: usize = 1_048_576; // 1 MiB
 pub const PREVIEW_CAP: usize = 262_144; // 256 KiB — mirrors the app's PREVIEW_CAP
 
-/// Same rule as the app's `sniff_image`: accept a preview on its magic
-/// number only, never on a caller-declared content type — there isn't even
-/// a content-type header here, just base64 in a JSON field, and trusting a
-/// submitter's say-so about the bytes' format is exactly the mistake this
-/// exists to avoid. Empty and oversize previews are rejected explicitly so
-/// a bad submission fails with a clear reason instead of silently storing
-/// zero/garbage bytes.
+/// Same rule as the app's `sniff_image`: identify an image by its magic
+/// number only, never by a caller-declared content type. Shared by
+/// `validate_preview` below (submission time) and `index::preview`
+/// (serving time) so there is exactly one place that decides what counts as
+/// a PNG or JPEG — a second copy could quietly drift and accept at serve
+/// time what was rejected at submit time, or vice versa.
+pub fn sniff_image(bytes: &[u8]) -> Option<&'static str> {
+    if bytes.len() >= 8 && bytes.starts_with(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]) {
+        return Some("image/png");
+    }
+    if bytes.len() >= 3 && bytes.starts_with(&[0xFF, 0xD8, 0xFF]) {
+        return Some("image/jpeg");
+    }
+    None
+}
+
+/// Accept a preview on its magic number only, never on a caller-declared
+/// content type — there isn't even a content-type header here, just base64
+/// in a JSON field, and trusting a submitter's say-so about the bytes'
+/// format is exactly the mistake `sniff_image` exists to avoid. Empty and
+/// oversize previews are rejected explicitly so a bad submission fails with
+/// a clear reason instead of silently storing zero/garbage bytes.
 pub fn validate_preview(bytes: &[u8]) -> Result<(), String> {
     if bytes.is_empty() {
         return Err("preview is empty".into());
@@ -33,10 +48,7 @@ pub fn validate_preview(bytes: &[u8]) -> Result<(), String> {
     if bytes.len() > PREVIEW_CAP {
         return Err(format!("preview too large ({} > {PREVIEW_CAP} bytes)", bytes.len()));
     }
-    let is_png = bytes.len() >= 8
-        && bytes.starts_with(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]);
-    let is_jpeg = bytes.len() >= 3 && bytes.starts_with(&[0xFF, 0xD8, 0xFF]);
-    if !is_png && !is_jpeg {
+    if sniff_image(bytes).is_none() {
         return Err("preview is not a PNG or JPEG".into());
     }
     Ok(())

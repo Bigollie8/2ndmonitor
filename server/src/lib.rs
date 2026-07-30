@@ -36,6 +36,7 @@ pub fn router(state: AppState) -> Router {
         .route("/admin/decide", post(admin::decide))
         .route("/index.json", get(index::index_json))
         .route("/bundle/:id/:version", get(index::download))
+        .route("/bundle/:id/:version/preview", get(index::preview))
         .with_state(state)
 }
 

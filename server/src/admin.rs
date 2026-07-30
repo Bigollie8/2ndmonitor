@@ -37,13 +37,24 @@ pub async fn queue(
         .prepare(
             "SELECT b.id, b.version, b.kind, b.name, b.permissions, b.manifest, b.code, b.ai_report, u.email,
                     (SELECT code FROM bundles p WHERE p.id = b.id AND p.status = 'approved'
-                     ORDER BY p.created_at DESC LIMIT 1) AS diff_base
+                     ORDER BY p.created_at DESC LIMIT 1) AS diff_base,
+                    b.preview
              FROM bundles b JOIN users u ON u.id = b.author_id
              WHERE b.status = 'pending' ORDER BY b.created_at",
         )
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let rows = stmt
         .query_map([], |r| {
+            // Rendered as a `data:` URL so a human approving the bundle sees
+            // exactly the image that goes public the moment they click
+            // approve — the preview endpoint only ever serves approved rows.
+            let preview: Option<Vec<u8>> = r.get(10)?;
+            let preview_data_url = preview.and_then(|bytes| {
+                crate::submit::sniff_image(&bytes).map(|mime| {
+                    use base64::Engine;
+                    format!("data:{mime};base64,{}", base64::engine::general_purpose::STANDARD.encode(&bytes))
+                })
+            });
             Ok(json!({
                 "id": r.get::<_, String>(0)?,
                 "version": r.get::<_, String>(1)?,
@@ -56,6 +67,7 @@ pub async fn queue(
                     .and_then(|s| serde_json::from_str::<Value>(&s).ok()),
                 "author": r.get::<_, String>(8)?,
                 "diff_base": r.get::<_, Option<String>>(9)?,
+                "preview": preview_data_url,
             }))
         })
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
@@ -126,6 +138,7 @@ button{cursor:pointer}button.ok{border-color:#2c7}button.no{border-color:#c44}
 .card{border:1px solid #2a2d35;border-radius:10px;padding:14px;margin:14px 0;background:#101218}
 pre{background:#0d0f14;border:1px solid #23262e;border-radius:8px;padding:10px;overflow:auto;max-height:320px;font-size:12px}
 .perm{display:inline-block;background:#1d2436;border:1px solid #35507a;border-radius:5px;padding:1px 8px;margin:2px;font-size:12px}
+.preview{max-width:220px;max-height:220px;display:block;border:1px solid #2a2d35;border-radius:8px;margin:8px 0}
 .ai{border-left:3px solid #557;padding-left:10px;margin:8px 0;font-size:13px}
 small{color:#889}
 </style></head><body>
@@ -146,7 +159,8 @@ async function load(){
     const perms=(b.permissions||[]).map(p=>'<span class=perm>'+p+'</span>').join('')||'<small>no permissions</small>';
     const ai=b.ai_report?('<div class=ai><b>AI review ('+(b.ai_report.verdict||'?')+'):</b> '+(b.ai_report.notes||'')+'</div>'):'<div class=ai><small>no AI report</small></div>';
     const diff=b.diff_base?'<details><summary>Previous approved version (diff base)</summary><pre></pre></details>':'';
-    el.innerHTML='<b>'+b.name+'</b> <small>'+b.id+' v'+b.version+' · '+b.kind+' · by '+b.author+'</small><br>'+perms+ai+
+    const preview=b.preview?'<img class=preview src="'+b.preview+'" alt="preview">':'';
+    el.innerHTML='<b>'+b.name+'</b> <small>'+b.id+' v'+b.version+' · '+b.kind+' · by '+b.author+'</small><br>'+preview+perms+ai+
       '<details open><summary>code</summary><pre></pre></details>'+diff+
       '<input placeholder="note (optional)" size=40 class=note> '+
       '<button class=ok>Approve</button> <button class=no>Reject</button>';
