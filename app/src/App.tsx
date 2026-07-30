@@ -830,7 +830,7 @@ export default function App() {
               bundleId={bundleIdOf(instance.type) ?? instance.type}
               density={t.density}
               accent={accent}
-              onOpenMarketplace={() => setShowTileLibrary(true)}
+              onOpenLibrary={() => setShowTileLibrary(true)}
             />
           );
         }
@@ -901,11 +901,7 @@ export default function App() {
             onRemove={(instanceId) => updateActiveOrientation({
               tiles: removeInstance(activeOrientation.tiles, instanceId),
             })}
-            onAdd={(type, rect) => updateActiveOrientation({
-              tiles: addInstance(activeOrientation.tiles, {
-                instanceId: newId(), type, rect,
-              }),
-            })}
+            onOpenLibrary={() => setShowTileLibrary(true)}
             tiles={activeOrientation.tiles}
             setTiles={(next) => updateActiveOrientation({ tiles: next })}
             selectedInstanceId={selectedInstanceId}

@@ -14,10 +14,9 @@ import {
 import { TILE_META } from '../state/tileMeta';
 import { isBundleTile, bundleIdOf, BUNDLE_TILE_ICON } from '../tiles/tileRegistry';
 import { useTileCatalog } from '../tiles/useTileCatalog';
-import { TileLibrary } from './TileLibrary';
 
 export function EditModeOverlay({
-  accent, accent2, onExit, onRemove, onAdd,
+  accent, accent2, onExit, onRemove, onOpenLibrary,
   tiles, setTiles,
   selectedInstanceId, setSelectedInstanceId,
   snap, setSnap,
@@ -28,7 +27,13 @@ export function EditModeOverlay({
   accent2: string;
   onExit: () => void;
   onRemove?: (instanceId: string) => void;
-  onAdd: (type: TileType, rect: Rect) => void;
+  /** Opens the unified content library (App owns it — same instance Settings
+   *  and a missing bundle tile open) to add or remove tiles. Edit mode used
+   *  to mount its own standalone tile picker here (the old TileLibrary
+   *  component); now it just surfaces the one canonical catalog surface,
+   *  which stacks fine on top of the edit overlay and closes independently
+   *  via the Esc cascade in App.tsx. */
+  onOpenLibrary: () => void;
   tiles: TileInstance[];
   setTiles: (next: TileInstance[]) => void;
   selectedInstanceId: string;
@@ -41,7 +46,6 @@ export function EditModeOverlay({
 }) {
   const [showGuides, setShowGuides] = useState(true);
   const [showGrid, setShowGrid] = useState(true);
-  const [pickerOpen, setPickerOpen] = useState(false);
 
   // Labels/icons come from the shared registry — this used to be a third
   // hand-maintained copy of the tile metadata. A plain `Record<TileType, ...>`
@@ -96,7 +100,7 @@ export function EditModeOverlay({
           snap={snap} setSnap={setSnap}
           profileName={profileName}
           onExit={onExit}
-          onPickerOpen={() => setPickerOpen(true)} />
+          onPickerOpen={onOpenLibrary} />
       </div>
       {showGrid && <GridOverlay />}
       {showGuides && sel && <SmartGuides rect={sel.rect} accent={accent2} canvas={canvas} />}
@@ -122,21 +126,6 @@ export function EditModeOverlay({
         )}
         <LayersPanel accent={accent} selectedInstanceId={selectedInstanceId} setSelectedInstanceId={setSelectedInstanceId} tiles={tiles} canvas={canvas} labelFor={labelFor} />
       </div>
-      {pickerOpen && (
-        <div style={{ pointerEvents: 'auto' }}>
-          <TileLibrary
-            orientation={orientation}
-            canvas={canvas}
-            tiles={tiles}
-            profileName={profileName}
-            accent={accent}
-            onAdd={(type, rect) => onAdd(type, rect)}
-            onRemove={(instanceId) => onRemove && onRemove(instanceId)}
-            onClose={() => setPickerOpen(false)}
-            catalogRemoved={catalogRemoved}
-          />
-        </div>
-      )}
     </div>
   );
 }
@@ -318,7 +307,7 @@ function PropertiesPanel({
         <button
           onClick={onRemove}
           disabled={!onRemove}
-          title={onRemove ? 'Remove this tile (add it back from the Tile Library)' : 'The visualizer cannot be removed'}
+          title={onRemove ? 'Remove this tile (add it back from the content library)' : 'The visualizer cannot be removed'}
           style={{
             flex: 1, padding: '7px', fontSize: 10.5, fontWeight: 600,
             background: 'rgba(239,68,68,0.1)', color: onRemove ? '#fca5a5' : 'rgba(239,68,68,0.4)',

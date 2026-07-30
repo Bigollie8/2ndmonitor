@@ -6,6 +6,9 @@ import { ACCENT_PALETTES } from '../data';
 import { useVizStyles } from './useVizStyles';
 import { defaultBookmarks, type Bookmark } from './browser-player';
 import { isTauri } from '../state/tauri';
+import {
+  LS_URL, LS_PUBKEY, DEFAULT_URL, DEFAULT_PUBKEY, cfgUrl, cfgPubkey, isDefaultServer,
+} from '../state/marketplaceConfig';
 
 const MONO = '"JetBrains Mono", ui-monospace, monospace';
 const HAIRLINE = '1px solid rgba(255,255,255,0.05)';
@@ -105,7 +108,7 @@ export function SettingsWindow({
   accent2: string;
   accentLinked: boolean;
   trackTitle: string;
-  /** Closes Settings and opens the Tile Library (App owns both). */
+  /** Closes Settings and opens the content library (App owns both). */
   onOpenTileLibrary?: () => void;
   onReplayOnboarding: () => void;
   onResetLayout: () => void;
@@ -235,9 +238,19 @@ export function SettingsWindow({
       id: 'tiles', icon: '⊞', title: 'Tiles',
       rows: [
         {
-          id: 'tiles-library', label: 'Tile Library',
-          hint: 'Add and remove tiles for the active profile from one place — search, categories, and explicit per-tile controls.',
-          control: <SettingsButton label="Open Tile Library →" onClick={() => onOpenTileLibrary?.()} accent={accent} />,
+          id: 'tiles-library', label: 'Content library',
+          hint: 'Add and remove tiles and visualizers for the active profile from one place — search, categories, and explicit per-item controls.',
+          control: <SettingsButton label="Open content library →" onClick={() => onOpenTileLibrary?.()} accent={accent} />,
+        },
+      ],
+    },
+    {
+      id: 'marketplace', icon: '⇄', title: 'Marketplace',
+      rows: [
+        {
+          id: 'marketplace-server', label: 'Server & signing key', stacked: true,
+          hint: 'The app ships pointed at the official marketplace. To use your own server, enter its URL and the signing public key it prints on startup — the app verifies the index signature and every bundle’s checksum before installing.',
+          control: <MarketplaceServerEditor accent={accent} />,
         },
       ],
     },
@@ -661,6 +674,90 @@ function SettingsButton({ label, onClick, accent }: { label: string; onClick: ()
 function AutostartSwitch({ accent }: { accent: string }) {
   const [enabled, toggle] = useAutostart();
   return <Toggle checked={enabled === true} disabled={enabled === null} onChange={toggle} accent={accent} />;
+}
+
+// ---------------------------------------------------------------------------
+// Marketplace server config — URL + pinned signing pubkey. Lifted from the
+// old MarketplaceTab.tsx unchanged in validation behavior: URL must start
+// with https:// (the Rust client refuses anything else), pubkey must be 64
+// hex characters. Reads/writes the same `marketplace.url` / `marketplace.pubkey`
+// localStorage keys, via the shared state/marketplaceConfig module (the same
+// module ContentLibrary imports), so a user override survives the move and
+// there is exactly one place the pinned key lives.
+// ---------------------------------------------------------------------------
+
+function MarketplaceServerEditor({ accent }: { accent: string }) {
+  const [url, setUrl] = useState(cfgUrl);
+  const [pubkey, setPubkey] = useState(cfgPubkey);
+  const [error, setError] = useState('');
+  const [saved, setSaved] = useState(false);
+
+  const save = () => {
+    // The Rust client refuses anything but https, so reject it here too.
+    if (!url.trim().startsWith('https://')) {
+      setError('Server URL must start with https://');
+      setSaved(false);
+      return;
+    }
+    if (!/^[0-9a-f]{64}$/i.test(pubkey.trim())) {
+      setError('Signing public key must be 64 hex characters');
+      setSaved(false);
+      return;
+    }
+    localStorage.setItem(LS_URL, url.trim());
+    localStorage.setItem(LS_PUBKEY, pubkey.trim());
+    setError('');
+    setSaved(true);
+  };
+
+  const reset = () => {
+    localStorage.removeItem(LS_URL);
+    localStorage.removeItem(LS_PUBKEY);
+    setUrl(DEFAULT_URL);
+    setPubkey(DEFAULT_PUBKEY);
+    setError('');
+    setSaved(true);
+  };
+
+  const fieldInputStyle: React.CSSProperties = {
+    width: '100%', fontSize: 11.5, padding: '6px 9px', marginTop: 3,
+    background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.08)',
+    borderRadius: 6, color: '#fff', outline: 'none', boxSizing: 'border-box',
+  };
+  const fieldLabelStyle: React.CSSProperties = {
+    fontSize: 10.5, color: 'rgba(255,255,255,0.45)',
+  };
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 10, maxWidth: 460 }}>
+      <div>
+        <label style={fieldLabelStyle}>Server URL</label>
+        <input
+          value={url}
+          onChange={(e) => { setUrl(e.target.value); setSaved(false); }}
+          placeholder="https://market.example.com"
+          spellCheck={false}
+          style={fieldInputStyle}
+        />
+      </div>
+      <div>
+        <label style={fieldLabelStyle}>Signing public key (hex)</label>
+        <input
+          value={pubkey}
+          onChange={(e) => { setPubkey(e.target.value); setSaved(false); }}
+          placeholder="64 hex chars"
+          spellCheck={false}
+          style={{ ...fieldInputStyle, fontFamily: MONO }}
+        />
+      </div>
+      {error && <div style={{ color: '#fb7185', fontSize: 11 }}>{error}</div>}
+      {saved && !error && <div style={{ color: accent, fontSize: 11 }}>Saved — reopen the content library to reload.</div>}
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+        <SettingsButton label="Save" onClick={save} accent={accent} />
+        {!isDefaultServer() && <SettingsButton label="Use official server" onClick={reset} />}
+      </div>
+    </div>
+  );
 }
 
 // ---------------------------------------------------------------------------

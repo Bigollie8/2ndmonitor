@@ -9,8 +9,8 @@ export interface MissingTileCardProps {
   bundleId: string;
   density: Density;
   accent: string;
-  /** Opens the Tile Library with its Marketplace tab active. */
-  onOpenMarketplace: () => void;
+  /** Opens the unified content library. */
+  onOpenLibrary: () => void;
 }
 
 /** Rendered in place of a `bundle:<id>` tile instance whose bundle is not in
@@ -21,14 +21,14 @@ export interface MissingTileCardProps {
  *  same way a `TileError` never removes itself. Reuses `HFTile` +
  *  `TileNeedsSetup` so it sits in the dashboard looking like any other tile
  *  waiting to be connected, not like an error. */
-export function MissingTileCard({ bundleId, density, accent, onOpenMarketplace }: MissingTileCardProps) {
+export function MissingTileCard({ bundleId, density, accent, onOpenLibrary }: MissingTileCardProps) {
   return (
     <HFTile title={bundleId} accent={accent} density={density} style={{ height: '100%' }}>
       <TileNeedsSetup
         accent={accent}
-        line={`"${bundleId}" isn't installed. Get it from the Marketplace to bring this tile back.`}
-        buttonLabel="Open Marketplace →"
-        onSetup={onOpenMarketplace}
+        line={`"${bundleId}" isn't installed. Get it from the content library to bring this tile back.`}
+        buttonLabel="Open content library →"
+        onSetup={onOpenLibrary}
       />
     </HFTile>
   );

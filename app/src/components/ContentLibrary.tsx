@@ -13,22 +13,12 @@ import { buildRail } from './catalogRail';
 import { searchItems } from './catalogSearch';
 import { CatalogCard } from './CatalogCard';
 import { parsePermission } from '../sandbox/manifest';
+import { cfgUrl, cfgPubkey } from '../state/marketplaceConfig';
 
 const MONO = '"JetBrains Mono", ui-monospace, monospace';
 
-// Same marketplace server config MarketplaceTab.tsx reads — mirrored here
-// rather than imported so this task doesn't touch that file. Task 11 moves
-// this config to Settings; until then both surfaces read the same
-// localStorage keys and defaults.
-const LS_URL = 'marketplace.url';
-const LS_PUBKEY = 'marketplace.pubkey';
-const DEFAULT_URL = 'https://market.basedsecurity.net';
-const DEFAULT_PUBKEY = '35a3b117c5e6ed793b5b78640db3075c48feb0d943541d86f3b462c9bed8d816';
-const cfgUrl = () => localStorage.getItem(LS_URL) || DEFAULT_URL;
-const cfgPubkey = () => localStorage.getItem(LS_PUBKEY) || DEFAULT_PUBKEY;
-
 /** Human phrasing for a permission string, shown in the install confirm
- *  dialog. Lifted from MarketplaceTab.tsx unchanged in behavior. */
+ *  dialog. */
 function describePermission(p: string): string {
   const parsed = parsePermission(p);
   if (!parsed.ok) return p;
