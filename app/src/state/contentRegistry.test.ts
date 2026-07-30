@@ -9,9 +9,9 @@ import type { VizStyle } from '../components/viz-styles';
 import { BUILTIN_VIZ_STYLES } from '../components/viz-styles';
 
 const builtin: VizStyle[] = [
-  { id: 'bars', label: 'Bars', desc: 'Classic spectrum analyzer' },
-  { id: 'milkdrop', label: 'MilkDrop', desc: 'Butterchurn' },
-  { id: 'scripted', label: 'Scripted', desc: 'Your JS visualizers' },
+  { id: 'bars', label: 'Bars', desc: 'Classic spectrum analyzer', category: 'spectrum' },
+  { id: 'milkdrop', label: 'MilkDrop', desc: 'Butterchurn', category: 'engine' },
+  { id: 'scripted', label: 'Scripted', desc: 'Your JS visualizers', category: 'engine' },
 ];
 
 const folder = (over: Partial<InstalledVizFolder> = {}): InstalledVizFolder => ({
