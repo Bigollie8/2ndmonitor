@@ -106,3 +106,70 @@ test('validateManifest: a declared secret must have a matching secret: permissio
   assert.equal(r.ok, false);
   assert.match(r.ok ? '' : r.error, /secret:token/);
 });
+
+test('validateManifest: a secret: permission with no secrets array at all is rejected', () => {
+  const r = validateManifest({
+    id: 'x', name: 'X', version: '1.0.0', api: 1,
+    permissions: ['secret:token'],
+  }, { allowPermissions: true });
+  assert.equal(r.ok, false);
+  assert.match(r.ok ? '' : r.error, /secret:token/);
+});
+
+test('validateManifest: a secret: permission not covered by any secrets entry is rejected', () => {
+  const r = validateManifest({
+    id: 'x', name: 'X', version: '1.0.0', api: 1,
+    // 'other' is present and matched (satisfies the forward rule) so this
+    // isolates the reverse rule: 'token' has a permission but no secrets entry.
+    permissions: ['secret:token', 'secret:other'],
+    secrets: [{ key: 'other', label: 'Other', kind: 'text' }],
+  }, { allowPermissions: true });
+  assert.equal(r.ok, false);
+  assert.match(r.ok ? '' : r.error, /secret:token/);
+});
+
+function secretsOf(n: number) {
+  return Array.from({ length: n }, (_, i) => ({ key: `key${i}`, label: `key${i}`, kind: 'text' as const }));
+}
+function permsOf(n: number) {
+  return Array.from({ length: n }, (_, i) => `secret:key${i}`);
+}
+function configOf(n: number) {
+  return Array.from({ length: n }, (_, i) => ({ key: `key${i}`, label: `key${i}`, type: 'text' as const }));
+}
+
+test('validateManifest: exactly 8 secrets passes', () => {
+  const r = validateManifest({
+    id: 'x', name: 'X', version: '1.0.0', api: 1,
+    permissions: permsOf(8),
+    secrets: secretsOf(8),
+  }, { allowPermissions: true });
+  assert.equal(r.ok, true);
+});
+
+test('validateManifest: 9 secrets fails', () => {
+  const r = validateManifest({
+    id: 'x', name: 'X', version: '1.0.0', api: 1,
+    permissions: permsOf(9),
+    secrets: secretsOf(9),
+  }, { allowPermissions: true });
+  assert.equal(r.ok, false);
+});
+
+test('validateManifest: exactly 8 config entries passes', () => {
+  const r = validateManifest({
+    id: 'x', name: 'X', version: '1.0.0', api: 1,
+    permissions: [],
+    config: configOf(8),
+  }, { allowPermissions: true });
+  assert.equal(r.ok, true);
+});
+
+test('validateManifest: 9 config entries fails', () => {
+  const r = validateManifest({
+    id: 'x', name: 'X', version: '1.0.0', api: 1,
+    permissions: [],
+    config: configOf(9),
+  }, { allowPermissions: true });
+  assert.equal(r.ok, false);
+});

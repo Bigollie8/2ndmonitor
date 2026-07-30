@@ -151,6 +151,22 @@ export function validateManifest(
     }
   }
 
+  // Reverse of the rule above, and just as load-bearing: the install dialog
+  // renders each `secret:<key>` permission as "this tile needs a credential
+  // named <key>", implying an input the tile can fill in. Without a matching
+  // `secrets` entry there is no label, no kind, and no input for it — an
+  // orphaned prompt for a credential the tile can never actually collect.
+  // Must run even when `secrets` is undefined entirely (not nested in the
+  // `if (m.secrets !== undefined)` block above).
+  for (const p of permissions) {
+    if (p.startsWith('secret:')) {
+      const key = p.slice(7);
+      if (!secrets?.some((decl) => decl.key === key)) {
+        return { ok: false, error: `permission secret:${key} declared but missing matching secrets entry` };
+      }
+    }
+  }
+
   let config: ConfigDecl[] | undefined;
   if (m.config !== undefined) {
     if (!Array.isArray(m.config)) return { ok: false, error: 'config must be an array' };
