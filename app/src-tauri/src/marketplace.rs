@@ -224,6 +224,40 @@ pub fn install_bundle_zip<R: Runtime>(
     Ok(())
 }
 
+/// Decides which bytes `marketplace_install` should proceed with: the
+/// network's, or — only on network failure — the seed's. Pulled out as a
+/// pure function (no `AppHandle`, no I/O) so this decision is unit-testable
+/// without a live app or a network seam, the same shape `plan_seeds` (Task 5)
+/// used to make the seed-install decision testable independent of the real
+/// directory walk.
+///
+/// `seed_lookup` is only invoked in the `Err` arm — a `FnOnce` closure that
+/// panics or sets a flag when called lets a test prove a successful fetch
+/// never consults the seed at all, not just that it doesn't end up using it.
+///
+/// On fetch failure with no matching seed, the ORIGINAL network error is
+/// returned verbatim (not a substituted "no seed" message) — the caller
+/// needs the real failure reason (offline vs. server error vs. bad request),
+/// and a seed simply not existing for this id@version is not itself
+/// noteworthy.
+///
+/// Deliberately does NOT verify the returned bytes — sha256 verification
+/// stays the caller's job, downstream of this function, so it can never be
+/// bypassed no matter how many byte sources this function grows to choose
+/// between.
+fn resolve_zip_bytes(
+    fetched: Result<Vec<u8>, String>,
+    seed_lookup: impl FnOnce() -> Option<Vec<u8>>,
+) -> Result<Vec<u8>, String> {
+    match fetched {
+        Ok(bytes) => Ok(bytes),
+        Err(net_err) => match seed_lookup() {
+            Some(bytes) => Ok(bytes),
+            None => Err(net_err),
+        },
+    }
+}
+
 #[tauri::command]
 pub fn marketplace_install<R: Runtime>(
     app: AppHandle<R>,
@@ -237,23 +271,19 @@ pub fn marketplace_install<R: Runtime>(
         return Err("invalid bundle id".into());
     }
     let base = url.trim_end_matches('/');
-    let zip_bytes = match get_capped(&format!("{base}/bundle/{id}/{version}")) {
-        Ok(bytes) => bytes,
-        // Offline reinstall: a network failure (no connection, server down,
-        // plane wifi) falls back to the seed copy shipped in resources, if
-        // one exists for this EXACT id@version — see `seed_zip_for`'s doc for
-        // why a stale seed can never satisfy a different version. A
-        // successful fetch always wins here (this arm only runs when the
-        // fetch itself failed), so a server update is never silently
-        // replaced by stale seed content. The seed bytes still go through
-        // the sha256 check below exactly like a download — verification is
-        // not relaxed for seeds, so a corrupted or tampered seed zip fails
-        // the same way a corrupted download would.
-        Err(net_err) => match crate::seed::seed_zip_for(&app, &kind, &id, &version) {
-            Some(bytes) => bytes,
-            None => return Err(net_err),
-        },
-    };
+    // Offline reinstall: a network failure (no connection, server down, plane
+    // wifi) falls back to the seed copy shipped in resources, if one exists
+    // for this EXACT id@version — see `seed_zip_for`'s doc for why a stale
+    // seed can never satisfy a different version. `resolve_zip_bytes` only
+    // calls the seed closure when the fetch failed, so a successful fetch
+    // always wins and is never silently replaced by stale seed content. The
+    // bytes it returns — from either source — still go through the sha256
+    // check below exactly like a download; verification is not relaxed for
+    // seeds, so a corrupted or tampered seed zip fails the same way a
+    // corrupted download would.
+    let zip_bytes = resolve_zip_bytes(get_capped(&format!("{base}/bundle/{id}/{version}")), || {
+        crate::seed::seed_zip_for(&app, &kind, &id, &version)
+    })?;
     if zip_bytes.len() > ZIP_CAP {
         return Err("bundle too large".into());
     }
@@ -445,6 +475,41 @@ mod tests {
         assert!(!is_safe_id("../etc"));
         assert!(!is_safe_id("Up"));
         assert!(!is_safe_id(""));
+    }
+
+    #[test]
+    fn resolve_zip_bytes_prefers_the_network_and_never_consults_the_seed() {
+        // A successful fetch must win outright — not just "the seed isn't
+        // used", but the seed closure is never even called, so a server
+        // update can never be silently replaced by stale seed content.
+        let got = resolve_zip_bytes(Ok(vec![1, 2, 3]), || {
+            panic!("seed_lookup must not be called when the fetch succeeded")
+        });
+        assert_eq!(got, Ok(vec![1, 2, 3]));
+    }
+
+    #[test]
+    fn resolve_zip_bytes_falls_back_to_the_seed_on_fetch_failure() {
+        let got = resolve_zip_bytes(Err("connection refused".into()), || Some(vec![9, 9, 9]));
+        assert_eq!(got, Ok(vec![9, 9, 9]));
+    }
+
+    #[test]
+    fn resolve_zip_bytes_propagates_the_original_network_error_when_no_seed_exists() {
+        // Not a substituted "no seed" message — the caller needs the real
+        // failure reason (offline vs. server error vs. bad request).
+        let got = resolve_zip_bytes(Err("connection refused".into()), || None);
+        assert_eq!(got, Err("connection refused".to_string()));
+    }
+
+    #[test]
+    fn resolve_zip_bytes_hands_seed_bytes_onward_unmodified() {
+        // The bytes chosen here are exactly what the caller's sha256 check
+        // sees — resolve_zip_bytes must not touch, hash, or otherwise
+        // transform them; verification stays the caller's job.
+        let seed_bytes = vec![0xDE, 0xAD, 0xBE, 0xEF];
+        let got = resolve_zip_bytes(Err("timed out".into()), || Some(seed_bytes.clone()));
+        assert_eq!(got, Ok(seed_bytes));
     }
 
     #[test]
