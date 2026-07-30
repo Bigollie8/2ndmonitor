@@ -16,7 +16,8 @@
 - Frontend tests run under `npm test` (`tsx --test src/**/*.test.ts`), using `node:test` + `node:assert/strict`. Pure modules only — no React, no Tauri imports in a `.test.ts`.
 - The first-party set is exactly 12 items: tiles `viz`, `spotify`, `mixer`, `sysmon`, `discord`, `claude`, `streamDeck`, `activeWindow`, `docker`, `streamChat`; viz engines `milkdrop`, `scripted`.
 - Item identity everywhere is `` `${kind}:${id}` `` — e.g. `tile:quote`, `visualizer:aurora`.
-- Existing test counts must not regress: 332 frontend, 41 cargo. Each task states its new total.
+- Existing test counts must not regress: **334 frontend, 47 cargo** (verified 2026-07-30 before Task 1). Each task states its new total.
+- `useTweaks` is called **exactly once**, in `App.tsx:304`, as `const [t, setTweak, replaceTweaks] = useTweaks<TweakState>(TWEAK_DEFAULTS, …)`. Its signature is `[values, setTweak(key, value), replaceAll(raw)]` — `setTweak` takes a key and a value, **not** a functional updater. There is no tweaks context. Never call `useTweaks` a second time: it would create an independent store. New persisted state is added to `TweakState` / `TWEAK_DEFAULTS` in `App.tsx` and threaded down as props, like every other tweak.
 
 ---
 
@@ -158,7 +159,7 @@ export function isFirstParty(kind: 'tile' | 'visualizer', id: string): boolean {
 - [ ] **Step 5: Run the tests to verify they pass**
 
 Run: `cd app && npm test`
-Expected: PASS. New total: 337 (332 + 5).
+Expected: PASS. New total: 339 (334 + 5).
 
 - [ ] **Step 6: Fix the type errors the category field introduced**
 
@@ -497,7 +498,7 @@ export function mergeCatalog(args: MergeCatalogArgs): CatalogItem[] {
 - [ ] **Step 4: Run the tests to verify they pass**
 
 Run: `cd app && npm test`
-Expected: PASS. New total: 348 (337 + 11).
+Expected: PASS. New total: 350 (339 + 11).
 
 - [ ] **Step 5: Commit**
 
@@ -518,7 +519,7 @@ git commit -m "feat(catalog): unified catalog merge over tables, folders, index 
 
 **Interfaces:**
 - Consumes: `catalogKey` (Task 2), the existing `useTweaks` store.
-- Produces: `applyRemovals(keys, items, kind)` (pure), and the `useRemovedContent()` hook returning `{ removed, remove, restore, restoreAll }`.
+- Produces: pure helpers `applyRemovals(removed, items, kind)`, `withRemoval(removed, key)`, `withoutRemoval(removed, key)`, plus the `catalogRemoved` field on `TweakState`/`TWEAK_DEFAULTS` in `App.tsx`.
 
 **Why the tweaks store, not localStorage:** `catalog.removed` is a content choice, so it should travel with settings export/import and come back with a restored backup. `tweaks.rs` already persists a single JSON blob atomically.
 
@@ -566,9 +567,11 @@ Expected: FAIL — `Cannot find module './removedContent'`.
 // One list covers both backings. A bundle removal needs a tombstone even
 // though its folder is already gone, otherwise the next seed sync reinstalls
 // it — which is exactly the bug this list exists to prevent.
+//
+// Pure module: the list itself lives in TweakState (App.tsx) because
+// useTweaks is instantiated exactly once and threaded as props. These are the
+// transformations over it, so they stay node-testable.
 // ─────────────────────────────────────────────────────────────────────────────
-import { useCallback } from 'react';
-import { useTweaks } from './useTweaks';
 import { catalogKey, type CatalogKind } from './catalog';
 
 const BUNDLE_PREFIX = 'bundle:';
@@ -589,40 +592,49 @@ export function applyRemovals<T extends { id: string }>(
   });
 }
 
-export function useRemovedContent() {
-  const [tweaks, setTweaks] = useTweaks();
-  const removed: string[] = Array.isArray(tweaks.catalogRemoved) ? tweaks.catalogRemoved : [];
+/** Adds a key. Idempotent — re-removing an already-removed item is a no-op
+ *  rather than a duplicate entry that survives into settings export. */
+export function withRemoval(removed: string[], key: string): string[] {
+  return removed.includes(key) ? removed : [...removed, key];
+}
 
-  const remove = useCallback((key: string) => {
-    setTweaks((t) => {
-      const cur: string[] = Array.isArray(t.catalogRemoved) ? t.catalogRemoved : [];
-      return cur.includes(key) ? t : { ...t, catalogRemoved: [...cur, key] };
-    });
-  }, [setTweaks]);
-
-  const restore = useCallback((key: string) => {
-    setTweaks((t) => {
-      const cur: string[] = Array.isArray(t.catalogRemoved) ? t.catalogRemoved : [];
-      return { ...t, catalogRemoved: cur.filter((k) => k !== key) };
-    });
-  }, [setTweaks]);
-
-  const restoreAll = useCallback(() => {
-    setTweaks((t) => ({ ...t, catalogRemoved: [] }));
-  }, [setTweaks]);
-
-  return { removed, remove, restore, restoreAll };
+/** Drops a key. Called on install, so reinstalling clears the tombstone and
+ *  the next seed sync stops skipping it. */
+export function withoutRemoval(removed: string[], key: string): string[] {
+  return removed.filter((k) => k !== key);
 }
 ```
 
-**Note on `useTweaks`'s actual signature:** read `app/src/state/useTweaks.ts` first. If it exposes an object API rather than a `[state, setState]` tuple, adapt the three callbacks to it — do not change `useTweaks` itself. The pure `applyRemovals` above is what the tests cover and must not change shape.
+Add two tests for the new helpers to the test file in Step 1:
+
+```ts
+test('withRemoval: is idempotent', () => {
+  assert.deepEqual(withRemoval(['tile:x'], 'tile:x'), ['tile:x']);
+  assert.deepEqual(withRemoval([], 'tile:x'), ['tile:x']);
+});
+
+test('withoutRemoval: drops only the named key', () => {
+  assert.deepEqual(withoutRemoval(['tile:x', 'tile:y'], 'tile:x'), ['tile:y']);
+});
+```
+
+- [ ] **Step 3b: Add the persisted field in App.tsx**
+
+`useTweaks` is called once at `App.tsx:304` and threaded down as props — there is no context, and calling it again would create a second independent store. So:
+
+- Add `catalogRemoved: string[];` to the `TweakState` interface (`App.tsx:107`).
+- Add `catalogRemoved: [],` to `TWEAK_DEFAULTS` (`App.tsx:146`).
+- Pass `t.catalogRemoved` and `setTweak` down to the catalog UI and the picker hooks.
+
+Writes go through the existing `setTweak('catalogRemoved', withRemoval(t.catalogRemoved, key))`.
 
 - [ ] **Step 4: Enforce removals in the pickers**
 
-In `app/src/components/useVizStyles.ts`, wrap the merged result:
+Both hooks take the removal list as a **parameter** — they must not call `useTweaks` themselves (Global Constraints).
+
+In `app/src/components/useVizStyles.ts`, add a `removed: string[]` parameter and wrap the merged result:
 
 ```ts
-const { removed } = useRemovedContent();
 const styles = useMemo(
   () => applyRemovals(removed, mergeVizStyles(BUILTIN_VIZ_STYLES, folders), 'visualizer'),
   [removed, folders],
@@ -631,10 +643,12 @@ const styles = useMemo(
 
 Do the same in `app/src/tiles/useTileCatalog.ts` with `'tile'`, filtering the `TileEntry[]` — note `TileEntry` keys on `type`, not `id`, so map it: `applyRemovals(removed, entries.map((e) => ({ ...e, id: e.type })), 'tile')`.
 
+Update every call site to pass `t.catalogRemoved`.
+
 - [ ] **Step 5: Run the tests to verify they pass**
 
 Run: `cd app && npm test && npx tsc -b --noEmit`
-Expected: PASS. New total: 352 (348 + 4).
+Expected: PASS. New total: 356 (350 + 6).
 
 - [ ] **Step 6: Commit**
 
@@ -658,7 +672,7 @@ This is a pure refactor: no behaviour change, so the existing cargo tests are th
 - [ ] **Step 1: Run the existing tests to establish the baseline**
 
 Run: `cd app/src-tauri && cargo test`
-Expected: PASS, 41 tests. Record the number.
+Expected: PASS, 47 tests. Record the number.
 
 - [ ] **Step 2: Extract the function**
 
@@ -714,7 +728,7 @@ If the allowlist check is inline rather than in a helper, extract it as `fn entr
 - [ ] **Step 4: Run the tests**
 
 Run: `cd app/src-tauri && cargo test`
-Expected: PASS, 42 tests.
+Expected: PASS, 48 tests.
 
 - [ ] **Step 5: Commit**
 
@@ -890,7 +904,7 @@ In `tauri.conf.json`, under `bundle`, add:
 - [ ] **Step 5: Run the tests**
 
 Run: `cd app/src-tauri && cargo test`
-Expected: PASS, 46 tests.
+Expected: PASS, 52 tests.
 
 - [ ] **Step 6: Commit**
 
@@ -948,7 +962,7 @@ The sha256 check still runs on whatever bytes came back. A seed whose hash does 
 - [ ] **Step 4: Run the tests**
 
 Run: `cd app/src-tauri && cargo test`
-Expected: PASS, 47 tests.
+Expected: PASS, 53 tests.
 
 - [ ] **Step 5: Commit**
 
@@ -1109,12 +1123,12 @@ export function buildRail(items: CatalogItem[]): RailSection[] {
 
 - [ ] **Step 4: Build the ContentLibrary shell**
 
-Create `ContentLibrary.tsx` rendering layout B: a fixed 104px left rail listing `buildRail` rows (headings styled as small uppercase labels, selectable rows showing `label · count`, the active row accented) and a right pane that, for now, renders the filtered item count. Wire it to the same modal frame `TileLibrary` currently uses so it can be opened from the existing entry point. Data comes from `mergeCatalog` fed by `tiles_list`, `visualizers_list`, `marketplace_fetch_index` and `useRemovedContent`.
+Create `ContentLibrary.tsx` rendering layout B: a fixed 104px left rail listing `buildRail` rows (headings styled as small uppercase labels, selectable rows showing `label · count`, the active row accented) and a right pane that, for now, renders the filtered item count. Wire it to the same modal frame `TileLibrary` currently uses so it can be opened from the existing entry point. Data comes from `mergeCatalog` fed by `tiles_list`, `visualizers_list`, `marketplace_fetch_index`, and the `catalogRemoved` list passed down from `App.tsx`.
 
 - [ ] **Step 5: Run the tests**
 
 Run: `cd app && npm test && npx tsc -b --noEmit`
-Expected: PASS. New total: 356 (352 + 4).
+Expected: PASS. New total: 360 (356 + 4).
 
 - [ ] **Step 6: Commit**
 
@@ -1132,7 +1146,7 @@ git commit -m "feat(catalog): ContentLibrary shell with category rail and live c
 - Modify: `app/src/components/ContentLibrary.tsx`
 
 **Interfaces:**
-- Consumes: `CatalogItem`, `useRemovedContent` (Task 3), the existing `marketplace_install` / `marketplace_uninstall` commands.
+- Consumes: `CatalogItem`, the `withRemoval`/`withoutRemoval` helpers and the `catalogRemoved` prop threaded from `App.tsx` (Task 3), the existing `marketplace_install` / `marketplace_uninstall` commands.
 
 - [ ] **Step 1: Build the card**
 
@@ -1152,8 +1166,8 @@ Primary action: `Remove` when `installed`, otherwise `Install`. Both disabled wh
 
 In `ContentLibrary.tsx`:
 
-- **Install** — for a `bundle` item with permissions, show the existing confirmation dialog (lift it out of `MarketplaceTab.tsx` unchanged), then `invoke('marketplace_install', { url, id, version, sha256, kind })`, then `restore(key)` to clear any tombstone, then refresh.
-- **Remove** — for a `bundle` item that is installed, `invoke('marketplace_uninstall', { id, kind })`; for a `first-party` item, skip the invoke. In both cases call `remove(key)` **only after** a successful uninstall (or immediately for first-party), so a failed uninstall leaves state honest.
+- **Install** — for a `bundle` item with permissions, show the existing confirmation dialog (lift it out of `MarketplaceTab.tsx` unchanged), then `invoke('marketplace_install', { url, id, version, sha256, kind })`, then clear any tombstone with `setTweak('catalogRemoved', withoutRemoval(catalogRemoved, key))`, then refresh.
+- **Remove** — for a `bundle` item that is installed, `invoke('marketplace_uninstall', { id, kind })`; for a `first-party` item, skip the invoke. In both cases write the tombstone with `setTweak('catalogRemoved', withRemoval(catalogRemoved, key))` **only after** a successful uninstall (or immediately for first-party), so a failed uninstall leaves state honest.
 - Removing an item also removes its dashboard instances in the same action.
 
 - [ ] **Step 3: Verify in the running app**
@@ -1235,12 +1249,12 @@ export function searchItems(items: CatalogItem[], query: string): CatalogItem[] 
 
 - **Index unreachable** — `mergeCatalog` already renders from tables plus disk when `index` is `[]`. Show an inline notice, `marketplace unreachable — showing local content`, with a Retry button. It must not be a red error and must not replace the grid. This is the fix for the failure observed on 2026-07-30 after a cold boot.
 - **Search finds nothing in the current slice** — offer "search all content", which switches the rail to `all` and keeps the query.
-- **Everything removed** — the grid shows an empty state with a **Restore defaults** button calling `restoreAll()` then `seed_sync`.
+- **Everything removed** — the grid shows an empty state with a **Restore defaults** button calling `setTweak('catalogRemoved', [])` then `seed_sync`.
 
 - [ ] **Step 5: Run the tests**
 
 Run: `cd app && npm test && npx tsc -b --noEmit`
-Expected: PASS. New total: 360 (356 + 4).
+Expected: PASS. New total: 364 (360 + 4).
 
 - [ ] **Step 6: Commit**
 
@@ -1275,7 +1289,7 @@ Delete both components. `validateManifest` is re-exported from `MarketplaceTab.t
 - [ ] **Step 4: Verify nothing references the deleted modules**
 
 Run: `cd app && npx tsc -b --noEmit && npm test`
-Expected: clean, 360 tests.
+Expected: clean, 364 tests.
 
 - [ ] **Step 5: Verify in the running app**
 
@@ -1357,7 +1371,7 @@ Delete the three components, their `TILE_META` entries, their `ALL_TILE_TYPES` e
 - [ ] **Step 5: Run the tests**
 
 Run: `cd app && npm test && npx tsc -b --noEmit`
-Expected: PASS, 363 tests. Note `firstParty.test.ts` still passes — none of the three is first-party.
+Expected: PASS, 367 tests. Note `firstParty.test.ts` still passes — none of the three is first-party.
 
 - [ ] **Step 6: Verify the upgrade path in the running app**
 
@@ -1390,6 +1404,6 @@ git commit -m "refactor(tiles): retire the three built-ins that shipped as bundl
 
 **Known gaps, deliberate:** preview thumbnails are placeholder blocks (spec C), and `mergeCatalog` accepts `needsSetup` as an input rather than computing it — the credential-state logic lives in `TileCredentialPanel` and Task 9 passes it in. Neither is a placeholder in the plan sense; both are scoped out in spec §10.
 
-**Type consistency:** `catalogKey`, `CatalogItem`, `CatalogKind`, `CatalogSource`, `mergeCatalog`, `MergeCatalogArgs`, `IndexBundle`, `applyRemovals`, `useRemovedContent`, `buildRail`, `RailSection`, `searchItems`, `install_bundle_zip`, `seed_zip_for`, `seed_lookup_name`, `seed_sync`, `should_skip`, `parse_seed_path`, `is_installed`, `remapRetiredTileType` — each is defined in exactly one task and used with the same signature everywhere after.
+**Type consistency:** `catalogKey`, `CatalogItem`, `CatalogKind`, `CatalogSource`, `mergeCatalog`, `MergeCatalogArgs`, `IndexBundle`, `applyRemovals`, `withRemoval`, `withoutRemoval`, `buildRail`, `RailSection`, `searchItems`, `install_bundle_zip`, `seed_zip_for`, `seed_lookup_name`, `seed_sync`, `should_skip`, `parse_seed_path`, `is_installed`, `remapRetiredTileType` — each is defined in exactly one task and used with the same signature everywhere after.
 
-**Test totals:** frontend 332 → 363; cargo 41 → 47.
+**Test totals:** frontend 334 → 367; cargo 47 → 53.
