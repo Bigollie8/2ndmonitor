@@ -248,3 +248,34 @@ export function planRemoval(item: CatalogItem): RemovalPlan {
     instanceType: tileInstanceType(item),
   };
 }
+
+/** Pure decision for the catalog empty state's recovery path
+ *  (ContentLibrary.tsx's handleRestoreDefaults) — extracted so the ordering
+ *  below, which is load-bearing and easy to get backwards, is covered by a
+ *  fast deterministic test instead of living only in an async component
+ *  method that only live testing exercised (see task-10-report.md for the
+ *  StrictMode bug that slipped through exactly that gap once already).
+ *
+ *  `clearRemoved` MUST run, and complete, before `seedSync` is called:
+ *  `seed_sync` (the Rust command `seedSync` wraps) reads the removed list it
+ *  is given and skips every key still on it. Clearing after syncing would
+ *  leave the tombstones in place and the sync would skip everything —
+ *  restore-defaults would silently do nothing. `seedSync` is always called
+ *  with `[]` explicitly, never with whatever `clearRemoved` wrote, so this
+ *  function has no dependency on `clearRemoved`'s write having been observed
+ *  anywhere (relevant in the real caller, where it's a React state setter and
+ *  not synchronously readable back).
+ *
+ *  If `seedSync` throws, the removal list is NOT rolled back: `clearRemoved`
+ *  already ran and this function does not undo it. The user explicitly asked
+ *  for a clean slate; a failed sync (the marketplace being unreachable, say)
+ *  means fewer seed bundles got reinstalled, which is not a reason to
+ *  silently restore old tombstones the user just asked to clear. The error
+ *  propagates to the caller, which decides how to surface it. */
+export async function restoreDefaults(deps: {
+  clearRemoved: () => void;
+  seedSync: (removed: string[]) => Promise<string[]>;
+}): Promise<string[]> {
+  deps.clearRemoved();
+  return deps.seedSync([]);
+}

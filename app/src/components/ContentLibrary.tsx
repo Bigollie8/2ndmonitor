@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  mergeCatalog, catalogKey, planRemoval, tileInstanceType, type CatalogItem, type IndexBundle,
+  mergeCatalog, catalogKey, planRemoval, restoreDefaults, tileInstanceType,
+  type CatalogItem, type IndexBundle,
 } from '../state/catalog';
 import { withRemoval, withoutRemoval } from '../state/removedContent';
 import { TILE_META } from '../state/tileMeta';
@@ -219,10 +220,16 @@ export function ContentLibrary({
   // way to widen it — query state is untouched by that switch, so the search
   // carries over.
   const searched = useMemo(() => searchItems(filtered, query), [filtered, query]);
+  // A real search with zero hits in the active slice — distinct from an
+  // empty catalog (items.length === 0), which has its own branch below.
+  const noMatches = query.trim() !== '' && searched.length === 0;
   // Only offer to widen when there's an actually wider slice to search —
   // 'all' already is that slice, so a still-empty result there is a genuine
-  // "no matches", not something a wider search could fix.
-  const canWiden = query.trim() !== '' && searched.length === 0 && active.id !== 'all';
+  // "no matches", not something a wider search could fix. `noMatches` is
+  // still shown in that case (see the render branch), just without the
+  // widen button, so a zero-hit search in 'all' doesn't read as an empty
+  // catalog.
+  const canWiden = noMatches && active.id !== 'all';
 
   const runInstall = useCallback(async (item: CatalogItem, bundle: IndexBundle) => {
     setConfirming(null);
@@ -296,19 +303,18 @@ export function ContentLibrary({
     if (type != null) onAddTileInstance(type);
   };
 
-  // The empty state's recovery path: clears the removal list, then re-runs
-  // seed_sync so every seed bundle not already installed comes back. Order
-  // matters — seed_sync reads `removed` itself, so it must see it already
-  // cleared. It's passed `[]` directly (not `catalogRemoved`) rather than
-  // relying on the setCatalogRemoved write above having landed by the time
-  // this runs: that's a React state update, not synchronous, so reading the
-  // prop back here could still see the pre-clear list.
+  // The empty state's recovery path. The actual clear-before-sync ordering
+  // decision lives in the pure, tested `restoreDefaults` (state/catalog.ts)
+  // — this is just the real closures it's injected with, plus the busy flag
+  // and post-sync bookkeeping that only make sense here.
   const handleRestoreDefaults = useCallback(async () => {
-    setCatalogRemoved([]);
     setRestoring(true);
     try {
       const { invoke } = await import('@tauri-apps/api/core');
-      await invoke<string[]>('seed_sync', { removed: [] });
+      await restoreDefaults({
+        clearRemoved: () => setCatalogRemoved([]),
+        seedSync: (removed) => invoke<string[]>('seed_sync', { removed }),
+      });
       await refreshInstalled();
       flash('Restored defaults');
     } catch (e) {
@@ -514,6 +520,21 @@ export function ContentLibrary({
                     border: `1px solid ${accent}55`, cursor: 'pointer',
                   }}
                 >Search all content</button>
+              </div>
+            ) : noMatches ? (
+              // Zero hits searching the 'all' slice itself — there is no
+              // wider slice to offer, so no widen button, but this still
+              // needs the same "No matches" messaging as the canWiden case
+              // above: falling through to the plain grid here would render
+              // "0 items" over an empty grid, which reads as an empty
+              // catalog rather than a search that simply missed.
+              <div style={{
+                display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 10,
+                padding: '28px 4px', maxWidth: 360,
+              }}>
+                <div style={{ fontSize: 11.5, color: 'rgba(255,255,255,0.5)' }}>
+                  No matches for "{query.trim()}".
+                </div>
               </div>
             ) : (
               <>

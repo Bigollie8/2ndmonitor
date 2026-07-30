@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mergeCatalog, catalogKey, planRemoval, type MergeCatalogArgs } from './catalog';
+import { mergeCatalog, catalogKey, planRemoval, restoreDefaults, type MergeCatalogArgs } from './catalog';
 import { TILE_META } from './tileMeta';
 import { BUILTIN_VIZ_STYLES } from '../components/viz-styles';
 import type { InstalledTileFolder } from '../tiles/tileRegistry';
@@ -186,4 +186,51 @@ test('planRemoval: a removed-but-index-listed item is idempotent — still no un
   assert.equal(plan.uninstall, false, 'already removed — nothing on disk to uninstall');
   assert.equal(plan.tombstoneKey, 'visualizer:aurora', 're-removing is a harmless no-op, not a new key');
   assert.equal(plan.instanceType, null, 'a visualizer, so no tile instance type either way');
+});
+
+// restoreDefaults — the previously-untested logic behind
+// handleRestoreDefaults (ContentLibrary.tsx). The ordering here is
+// load-bearing: seed_sync (what `seedSync` wraps) reads the removed list it
+// is given, so clearing it AFTER syncing would leave every tombstone in
+// place and the sync would skip everything — restore-defaults would
+// silently do nothing. See the doc comment on restoreDefaults in catalog.ts.
+
+test('restoreDefaults: clears removed before syncing, not after', async () => {
+  const calls: string[] = [];
+  await restoreDefaults({
+    clearRemoved: () => { calls.push('clear'); },
+    seedSync: async (removed) => { calls.push('sync'); return []; },
+  });
+  assert.deepEqual(calls, ['clear', 'sync'], 'clear must be observed to happen before sync starts');
+});
+
+test('restoreDefaults: seedSync always receives [], never a stale removal list', async () => {
+  let received: string[] | null = null;
+  await restoreDefaults({
+    clearRemoved: () => {},
+    seedSync: async (removed) => { received = removed; return []; },
+  });
+  assert.deepEqual(received, [], 'seedSync must not see the pre-clear tombstones');
+});
+
+test('restoreDefaults: propagates the installed keys seedSync returns', async () => {
+  const installed = ['tile:quote', 'visualizer:aurora'];
+  const result = await restoreDefaults({
+    clearRemoved: () => {},
+    seedSync: async () => installed,
+  });
+  assert.deepEqual(result, installed);
+});
+
+test('restoreDefaults: a throwing seedSync still leaves clearRemoved having run, and rejects', async () => {
+  let cleared = false;
+  await assert.rejects(
+    () => restoreDefaults({
+      clearRemoved: () => { cleared = true; },
+      seedSync: async () => { throw new Error('marketplace unreachable'); },
+    }),
+    /marketplace unreachable/,
+    'the error must propagate so the caller can surface it',
+  );
+  assert.equal(cleared, true, 'clearRemoved already ran and is not rolled back on a sync failure');
 });
