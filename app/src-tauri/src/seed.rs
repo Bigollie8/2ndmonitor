@@ -108,6 +108,14 @@ fn seed_dir<R: Runtime>(app: &AppHandle<R>) -> Option<std::path::PathBuf> {
     app.path().resource_dir().ok().map(|d| d.join("resources/seed"))
 }
 
+/// The `<id>-<version>.zip` naming rule, in one place. Mirrors the filename
+/// shape `parse_seed_path` reads on disk; `seed_zip_for` calls this rather
+/// than repeating the `format!` inline so there is exactly one definition of
+/// "what a seed file is called" to keep in sync with `parse_seed_path`.
+pub fn seed_lookup_name(id: &str, version: &str) -> String {
+    format!("{id}-{version}.zip")
+}
+
 /// Returns the seed zip bytes for an exact id@version, if one ships.
 ///
 /// `kind`, `id`, and `version` are all validated before being joined onto the
@@ -127,7 +135,7 @@ pub fn seed_zip_for<R: Runtime>(
         return None;
     }
     let dir = seed_dir(app)?;
-    std::fs::read(dir.join(kind).join(format!("{id}-{version}.zip"))).ok()
+    std::fs::read(dir.join(kind).join(seed_lookup_name(id, version))).ok()
 }
 
 /// Installs every seed bundle that is not already installed and not in
@@ -256,6 +264,15 @@ mod tests {
         assert!(!is_safe_version("1.0.0-beta")); // hyphens excluded by design
         assert!(!is_safe_version("1.0.0\\evil"));
         assert!(is_safe_version("1.0.0"));
+    }
+
+    #[test]
+    fn seed_fallback_only_applies_to_an_exact_version_match() {
+        // seed_zip_for is keyed on id AND version: a seeded 1.0.0 must not satisfy
+        // a request for 1.1.0, or a user would silently get stale content when the
+        // network blips during an update.
+        assert_eq!(seed_lookup_name("aurora", "1.0.0"), "aurora-1.0.0.zip");
+        assert_ne!(seed_lookup_name("aurora", "1.1.0"), "aurora-1.0.0.zip");
     }
 
     #[test]

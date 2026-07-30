@@ -237,7 +237,23 @@ pub fn marketplace_install<R: Runtime>(
         return Err("invalid bundle id".into());
     }
     let base = url.trim_end_matches('/');
-    let zip_bytes = get_capped(&format!("{base}/bundle/{id}/{version}"))?;
+    let zip_bytes = match get_capped(&format!("{base}/bundle/{id}/{version}")) {
+        Ok(bytes) => bytes,
+        // Offline reinstall: a network failure (no connection, server down,
+        // plane wifi) falls back to the seed copy shipped in resources, if
+        // one exists for this EXACT id@version — see `seed_zip_for`'s doc for
+        // why a stale seed can never satisfy a different version. A
+        // successful fetch always wins here (this arm only runs when the
+        // fetch itself failed), so a server update is never silently
+        // replaced by stale seed content. The seed bytes still go through
+        // the sha256 check below exactly like a download — verification is
+        // not relaxed for seeds, so a corrupted or tampered seed zip fails
+        // the same way a corrupted download would.
+        Err(net_err) => match crate::seed::seed_zip_for(&app, &kind, &id, &version) {
+            Some(bytes) => bytes,
+            None => return Err(net_err),
+        },
+    };
     if zip_bytes.len() > ZIP_CAP {
         return Err("bundle too large".into());
     }
