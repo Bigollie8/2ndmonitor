@@ -15,6 +15,15 @@
  *  hammer a third-party API from every install. */
 export const MIN_INTERVAL_MS = 15_000;
 
+/** Highest refresh interval a bundle may request (24h). Without a ceiling,
+ *  `usePoll`'s `backoffDelay` computes `intervalMs * 2 ** n` and hands it to
+ *  `setTimeout`, whose delay argument is coerced to a 32-bit int — anything
+ *  over ~24.8 days silently clamps to 0, turning the "interval" into a tight
+ *  loop against the declared host (I3). Any `intervalMs` above ~3.1 days
+ *  degenerates the same way after 3 consecutive failures once backoff's up to
+ *  8x multiplier is applied, which inverts the whole point of backing off. */
+export const MAX_INTERVAL_MS = 86_400_000;
+
 export type TileSource =
   | { kind: 'http'; url: string; headers?: Record<string, string>; intervalMs: number }
   | { kind: 'tauri'; command: string; args?: Record<string, unknown>; intervalMs: number };
@@ -76,6 +85,9 @@ function validateSource(raw: unknown): { ok: true; source: TileSource } | { ok: 
   }
   if (interval < MIN_INTERVAL_MS) {
     return fail(`source.intervalMs must be at least ${MIN_INTERVAL_MS}ms`);
+  }
+  if (interval > MAX_INTERVAL_MS) {
+    return fail(`source.intervalMs must be at most ${MAX_INTERVAL_MS}ms`);
   }
   if (raw.kind === 'http') {
     if (typeof raw.url !== 'string' || !raw.url.startsWith('https://')) {

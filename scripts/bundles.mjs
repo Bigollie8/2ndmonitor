@@ -90,7 +90,7 @@ function validate(id) {
   return { m, kind, codeFile };
 }
 
-function zip(id, version) {
+function zip(id, version, codeFile) {
   mkdirSync(DIST, { recursive: true });
   const out = join(DIST, `${id}-${version}.zip`);
   // PowerShell's Compress-Archive ships with Windows; no npm dependency needed.
@@ -98,9 +98,17 @@ function zip(id, version) {
   // marketplace flow — the live `/submissions` route does not consume it (see
   // note above): the server builds its own zip from the raw manifest/code
   // strings once a submission is approved.
+  //
+  // Only zip manifest.json + the kind's payload file (main.js or view.json) —
+  // NOT `-Path '<dir>\*'`, which used to sweep up README.md and anything else
+  // sitting in the bundle folder. `marketplace_install`'s entry allowlist
+  // rejects any unexpected zip entry, so an extra file made the locally built
+  // zip uninstallable (M11).
+  const manifestPath = join(BUNDLES, id, 'manifest.json');
+  const codePath = join(BUNDLES, id, codeFile);
   execFileSync('powershell', [
     '-NoProfile', '-Command',
-    `Compress-Archive -Path '${join(BUNDLES, id)}\\*' -DestinationPath '${out}' -Force`,
+    `Compress-Archive -Path '${manifestPath}','${codePath}' -DestinationPath '${out}' -Force`,
   ], { stdio: 'inherit' });
   return out;
 }
@@ -129,7 +137,7 @@ const failed = [];
 for (const id of ids) {
   try {
     const { m, kind, codeFile } = validate(id);
-    const path = cmd === 'build' || cmd === 'publish' ? zip(id, m.version) : null;
+    const path = cmd === 'build' || cmd === 'publish' ? zip(id, m.version, codeFile) : null;
     console.log(`✓ ${id}@${m.version} (${kind})${path ? ` → ${path}` : ''}`);
     built.push({ id, version: m.version, kind, codeFile, path });
   } catch (e) {

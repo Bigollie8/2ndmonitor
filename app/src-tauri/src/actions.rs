@@ -33,6 +33,20 @@ pub fn app_open_url(url: String) -> Result<(), String> {
     {
         return Err("URL must start with http://, https://, or mailto:".into());
     }
+    // On Windows this string reaches `cmd /C start "" <url>`. Rust's own
+    // argument quoting (CommandLineToArgvW rules) is not what cmd.exe parses
+    // — cmd splits on its own metacharacters, so a `"` in the URL closes the
+    // quoted region early and anything after it (e.g. `& powershell ...`) is
+    // interpreted as a new command. This is the caller a marketplace tile's
+    // `openUrl` reaches (DeclarativeTile.tsx), and that value comes from a
+    // remote HTTP response — untrusted input, not something the manifest
+    // author controls. Reject rather than strip: a value that needed
+    // cleaning is a sign the caller should have refused it, not something to
+    // silently repair. Control characters (`is_control`) already cover CR/LF;
+    // check for them explicitly by name too so the intent reads clearly.
+    if trimmed.contains('"') || trimmed.chars().any(|c| c.is_control() || c == '\n' || c == '\r') {
+        return Err("URL must not contain quotes, newlines, or control characters".into());
+    }
     #[cfg(windows)]
     {
         Command::new("cmd")
@@ -164,4 +178,54 @@ fn parse_key(s: &str) -> Result<VIRTUAL_KEY, String> {
         _ => return Err(format!("unsupported key: {upper}")),
     };
     Ok(vk)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // These only exercise app_open_url's early-return validation paths (an
+    // Err never reaches Command::new), so no browser actually launches.
+
+    #[test]
+    fn app_open_url_rejects_embedded_double_quote() {
+        // The C3 attack shape: a quote closes cmd.exe's quoted region early,
+        // letting the rest of the string run as a new command.
+        let err = app_open_url(r#"http://x/a" & powershell -enc AAAA & ""#.into()).unwrap_err();
+        assert!(err.contains("quotes"), "{err}");
+    }
+
+    #[test]
+    fn app_open_url_rejects_control_characters() {
+        let err = app_open_url("http://x/a\u{0007}b".into()).unwrap_err();
+        assert!(err.contains("control"), "{err}");
+    }
+
+    #[test]
+    fn app_open_url_rejects_embedded_newline_and_carriage_return() {
+        assert!(app_open_url("http://x/a\nb".into()).is_err());
+        assert!(app_open_url("http://x/a\rb".into()).is_err());
+    }
+
+    #[test]
+    fn app_open_url_rejects_empty_and_disallowed_schemes() {
+        assert!(app_open_url("".into()).is_err());
+        assert!(app_open_url("   ".into()).is_err());
+        assert!(app_open_url("javascript:alert(1)".into()).is_err());
+        assert!(app_open_url("ftp://x".into()).is_err());
+    }
+
+    #[test]
+    fn app_open_url_accepts_a_clean_https_url() {
+        // Validation-only assertion: we don't call app_open_url here because
+        // a passing input reaches Command::spawn (would actually open a
+        // browser in CI). The scheme/quote/control-char checks above cover
+        // the rejection paths; this documents what a legitimate URL looks
+        // like without invoking the side effect.
+        let candidate = "https://example.com/a/b?c=1";
+        let lower = candidate.to_ascii_lowercase();
+        assert!(lower.starts_with("https://"));
+        assert!(!candidate.contains('"'));
+        assert!(!candidate.chars().any(|c| c.is_control()));
+    }
 }

@@ -85,7 +85,7 @@ pub async fn submit(
             let c = body.code.as_deref().ok_or((StatusCode::BAD_REQUEST, "code required".into()))?;
             static_check_code(c).map_err(|e| (StatusCode::BAD_REQUEST, e))?;
             validate_view_spec(c).map_err(|e| (StatusCode::BAD_REQUEST, e))?;
-            ("main.js", c.to_string())
+            ("view.json", c.to_string())
         }
         _ => {
             let c = body.code.as_deref().ok_or((StatusCode::BAD_REQUEST, "code required".into()))?;

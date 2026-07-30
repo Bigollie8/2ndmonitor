@@ -114,6 +114,103 @@ pub fn validate(kind: &str, manifest_json: &str) -> Result<Validated, String> {
         return Err("too many permissions (max 16)".into());
     }
 
+    // Mirrors `app/src/sandbox/manifest.ts`'s `secrets`/`config` schema and
+    // both cross-checks (I9). Before this, the server accepted
+    // `"secrets": "not-an-array"`, 50 secrets, bad key shapes, and neither
+    // cross-check the app enforces — fail-closed (the app still refuses a
+    // bad manifest at install time), but it let a bundle publish and then
+    // fail to install for every single user, rather than being rejected once
+    // at submission.
+    let mut declared_secret_keys: Vec<String> = Vec::new();
+    if let Some(secrets_val) = obj.get("secrets") {
+        let secrets_arr = secrets_val
+            .as_array()
+            .ok_or_else(|| "secrets must be an array".to_string())?;
+        if secrets_arr.len() > 8 {
+            return Err("too many secrets (max 8)".into());
+        }
+        for s in secrets_arr {
+            let so = s
+                .as_object()
+                .ok_or_else(|| "secrets entries must be objects".to_string())?;
+            let key = so.get("key").and_then(Value::as_str).unwrap_or("");
+            let key_ok = !key.is_empty()
+                && key.len() <= 64
+                && key.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_');
+            if !key_ok {
+                return Err(format!("secret key must be 1-64 chars of [a-z0-9_]: {:?}", key));
+            }
+            let label = so.get("label").and_then(Value::as_str).unwrap_or("").trim();
+            if label.is_empty() {
+                return Err(format!("secret {key} requires a label"));
+            }
+            let kind = so.get("kind").and_then(Value::as_str).unwrap_or("");
+            if kind != "password" && kind != "text" {
+                return Err(format!("secret {key} kind must be \"password\" or \"text\""));
+            }
+            if let Some(help) = so.get("help") {
+                if !help.is_string() {
+                    return Err(format!("secret {key} help must be a string"));
+                }
+            }
+            declared_secret_keys.push(key.to_string());
+        }
+        // Load-bearing on the app side too: the install-time confirmation
+        // dialog lists `permissions`, so a secret without a matching
+        // `secret:<key>` permission would prompt for a credential the user
+        // never approved installing.
+        for key in &declared_secret_keys {
+            let perm_name = format!("secret:{key}");
+            if !permissions.iter().any(|p| p.as_string() == perm_name) {
+                return Err(format!(
+                    "secret {key} declared but missing matching permission {perm_name}"
+                ));
+            }
+        }
+    }
+
+    // Reverse of the check above, and just as load-bearing: without a
+    // matching `secrets` entry there is no label/kind/input for a declared
+    // `secret:<key>` permission — an orphaned prompt for a credential the
+    // tile can never actually collect. Must run even when `secrets` is
+    // absent entirely (not nested in the `if let Some(secrets_val)` block
+    // above).
+    for p in &permissions {
+        if let Perm::Secret(key) = p {
+            if !declared_secret_keys.iter().any(|k| k == key) {
+                return Err(format!(
+                    "permission secret:{key} declared but missing matching secrets entry"
+                ));
+            }
+        }
+    }
+
+    if let Some(config_val) = obj.get("config") {
+        let config_arr = config_val
+            .as_array()
+            .ok_or_else(|| "config must be an array".to_string())?;
+        if config_arr.len() > 8 {
+            return Err("too many config entries (max 8)".into());
+        }
+        for c in config_arr {
+            let co = c
+                .as_object()
+                .ok_or_else(|| "config entries must be objects".to_string())?;
+            let key = co.get("key").and_then(Value::as_str).unwrap_or("").trim();
+            if key.is_empty() {
+                return Err("config entry requires a key".into());
+            }
+            let label = co.get("label").and_then(Value::as_str).unwrap_or("").trim();
+            if label.is_empty() {
+                return Err(format!("config {key} requires a label"));
+            }
+            let ty = co.get("type").and_then(Value::as_str).unwrap_or("");
+            if ty != "text" && ty != "number" {
+                return Err(format!("config {key} type must be \"text\" or \"number\""));
+            }
+        }
+    }
+
     Ok(Validated {
         id: id.to_string(),
         name: name.to_string(),
@@ -134,6 +231,12 @@ pub fn validate(kind: &str, manifest_json: &str) -> Result<Validated, String> {
 /// hammer a third-party API from every install. Mirrors `MIN_INTERVAL_MS` in
 /// viewSpec.ts.
 pub const MIN_INTERVAL_MS: u64 = 15_000;
+
+/// Highest refresh interval a bundle may request (24h). Mirrors
+/// `MAX_INTERVAL_MS` in viewSpec.ts — without this ceiling a submission could
+/// publish an `intervalMs` so large that `setTimeout`'s 32-bit delay argument
+/// clamps it to 0 client-side, turning "interval" into a tight loop (I3).
+pub const MAX_INTERVAL_MS: u64 = 86_400_000;
 
 /// `JSON.stringify(v)` for the subset of values that show up in our error
 /// messages: `None` (an absent/undefined key) prints as `undefined`, matching
@@ -178,24 +281,40 @@ fn is_dot_segment(seg: &str) -> bool {
 
 /// Matches `/\{\{\s*secret\.[^}]*\}\}/`: `{{`, optional whitespace, the
 /// literal `secret.`, any run of non-`}` characters, then `}}`.
+///
+/// Operates on `char`s, not bytes (I10): the whitespace skip below uses
+/// `char::is_whitespace`, which is Unicode-aware, matching what the JS `\s`
+/// class the app's regex (`SECRET_RE` in `viewSpec.ts`) considers whitespace
+/// — including NBSP (U+00A0), U+2028, and U+3000 — instead of the old
+/// `u8::is_ascii_whitespace`, which missed all of them. A byte-indexed scan
+/// can't skip a multi-byte UTF-8 whitespace character correctly at all, so
+/// this also fixes a latent panic/mis-scan risk on non-ASCII input, not just
+/// the app/server disagreement: a `{{<NBSP>secret.token}}` used to publish
+/// (server didn't see it as a secret ref) but get rejected at install time
+/// (app's regex did) — and would have been expanded by the app's substituter
+/// had that install-time check ever been bypassed.
 fn has_secret_ref(s: &str) -> bool {
-    let b = s.as_bytes();
-    let n = b.len();
+    let chars: Vec<char> = s.chars().collect();
+    let n = chars.len();
     let mut i = 0;
     while i + 1 < n {
-        if b[i] == b'{' && b[i + 1] == b'{' {
+        if chars[i] == '{' && chars[i + 1] == '{' {
             let mut j = i + 2;
-            while j < n && b[j].is_ascii_whitespace() {
+            while j < n && chars[j].is_whitespace() {
                 j += 1;
             }
-            const NEEDLE: &[u8] = b"secret.";
-            if j + NEEDLE.len() <= n && &b[j..j + NEEDLE.len()] == NEEDLE {
-                let mut k = j + NEEDLE.len();
-                while k < n && b[k] != b'}' {
-                    k += 1;
-                }
-                if k + 1 < n && b[k] == b'}' && b[k + 1] == b'}' {
-                    return true;
+            const NEEDLE: &str = "secret.";
+            let needle_len = NEEDLE.chars().count();
+            if j + needle_len <= n {
+                let candidate: String = chars[j..j + needle_len].iter().collect();
+                if candidate == NEEDLE {
+                    let mut k = j + needle_len;
+                    while k < n && chars[k] != '}' {
+                        k += 1;
+                    }
+                    if k + 1 < n && chars[k] == '}' && chars[k + 1] == '}' {
+                        return true;
+                    }
                 }
             }
         }
@@ -241,6 +360,9 @@ fn validate_source(raw: &Value) -> Result<(), String> {
     };
     if interval < MIN_INTERVAL_MS as f64 {
         return Err(format!("source.intervalMs must be at least {MIN_INTERVAL_MS}ms"));
+    }
+    if interval > MAX_INTERVAL_MS as f64 {
+        return Err(format!("source.intervalMs must be at most {MAX_INTERVAL_MS}ms"));
     }
 
     match obj.get("kind").and_then(Value::as_str) {
@@ -445,8 +567,133 @@ mod tests {
 
     #[test]
     fn tile_with_secret_perm_passes() {
-        let v = validate("tile", &m(r#"["secret:token"]"#)).unwrap();
+        // Since I9 added the secrets/`secret:` cross-check, a `secret:token`
+        // permission now also needs a matching `secrets` entry to validate —
+        // add one so this test still isolates "a tile may declare a secret:
+        // permission", not the cross-check (covered separately below).
+        let json = format!(
+            r#"{{"id":"my-tile","name":"T","version":"1.0.0","api":1,"permissions":["secret:token"],"secrets":[{{"key":"token","label":"Token","kind":"password"}}]}}"#
+        );
+        let v = validate("tile", &json).unwrap();
         assert_eq!(v.permissions, vec![Perm::Secret("token".into())]);
+    }
+
+    // ── I9: secrets/config schema + cross-checks (mirrors
+    // app/src/sandbox/manifest.test.ts's equivalent cases) ─────────────────
+
+    fn m_full(perms: &str, extra: &str) -> String {
+        format!(
+            r#"{{"id":"x","name":"X","version":"1.0.0","api":1,"permissions":{perms}{extra}}}"#
+        )
+    }
+
+    #[test]
+    fn accepts_secrets_and_config_declarations() {
+        let json = m_full(
+            r#"["secret:token"]"#,
+            r#","secrets":[{"key":"token","label":"API token","kind":"password"}],"config":[{"key":"symbols","label":"Symbols","type":"text"}]"#,
+        );
+        assert!(validate("tile", &json).is_ok());
+    }
+
+    #[test]
+    fn secrets_rejects_non_array() {
+        let json = m_full("[]", r#","secrets":"not-an-array""#);
+        let err = validate("tile", &json).unwrap_err();
+        assert!(err.contains("secrets must be an array"), "{err}");
+    }
+
+    #[test]
+    fn secrets_rejects_bad_key_shape() {
+        // No matching permission on purpose: `secret:UPPER` would itself fail
+        // Perm::parse's identical [a-z0-9_] grammar first, which would mask
+        // which check actually rejected this manifest. Omitting the
+        // permission isolates the `secrets` array's own key-shape guard.
+        let json = m_full("[]", r#","secrets":[{"key":"UPPER","label":"L","kind":"text"}]"#);
+        let err = validate("tile", &json).unwrap_err();
+        assert!(err.contains("secret key must be"), "{err}");
+    }
+
+    #[test]
+    fn secrets_rejects_more_than_8() {
+        let secrets: Vec<_> = (0..9)
+            .map(|i| format!(r#"{{"key":"key{i}","label":"key{i}","kind":"text"}}"#))
+            .collect();
+        let perms: Vec<_> = (0..9).map(|i| format!(r#""secret:key{i}""#)).collect();
+        let json = m_full(
+            &format!("[{}]", perms.join(",")),
+            &format!(r#","secrets":[{}]"#, secrets.join(",")),
+        );
+        assert!(validate("tile", &json).is_err());
+    }
+
+    #[test]
+    fn secrets_exactly_8_passes() {
+        let secrets: Vec<_> = (0..8)
+            .map(|i| format!(r#"{{"key":"key{i}","label":"key{i}","kind":"text"}}"#))
+            .collect();
+        let perms: Vec<_> = (0..8).map(|i| format!(r#""secret:key{i}""#)).collect();
+        let json = m_full(
+            &format!("[{}]", perms.join(",")),
+            &format!(r#","secrets":[{}]"#, secrets.join(",")),
+        );
+        assert!(validate("tile", &json).is_ok());
+    }
+
+    #[test]
+    fn declared_secret_without_matching_permission_is_rejected() {
+        let json = m_full("[]", r#","secrets":[{"key":"token","label":"API token","kind":"password"}]"#);
+        let err = validate("tile", &json).unwrap_err();
+        assert!(err.contains("secret:token"), "{err}");
+    }
+
+    #[test]
+    fn secret_permission_with_no_secrets_array_at_all_is_rejected() {
+        let json = m_full(r#"["secret:token"]"#, "");
+        let err = validate("tile", &json).unwrap_err();
+        assert!(err.contains("secret:token"), "{err}");
+    }
+
+    #[test]
+    fn secret_permission_not_covered_by_any_secrets_entry_is_rejected() {
+        // 'other' is present and matched (satisfies the forward rule) so
+        // this isolates the reverse rule: 'token' has a permission but no
+        // secrets entry.
+        let json = m_full(
+            r#"["secret:token","secret:other"]"#,
+            r#","secrets":[{"key":"other","label":"Other","kind":"text"}]"#,
+        );
+        let err = validate("tile", &json).unwrap_err();
+        assert!(err.contains("secret:token"), "{err}");
+    }
+
+    #[test]
+    fn config_rejects_non_array() {
+        let json = m_full("[]", r#","config":"nope""#);
+        let err = validate("tile", &json).unwrap_err();
+        assert!(err.contains("config must be an array"), "{err}");
+    }
+
+    #[test]
+    fn config_rejects_bad_type() {
+        let json = m_full("[]", r#","config":[{"key":"k","label":"L","type":"bool"}]"#);
+        let err = validate("tile", &json).unwrap_err();
+        assert!(err.contains("type must be"), "{err}");
+    }
+
+    #[test]
+    fn config_exactly_8_passes_and_9_fails() {
+        let cfg8: Vec<_> = (0..8)
+            .map(|i| format!(r#"{{"key":"key{i}","label":"key{i}","type":"text"}}"#))
+            .collect();
+        let json8 = m_full("[]", &format!(r#","config":[{}]"#, cfg8.join(",")));
+        assert!(validate("tile", &json8).is_ok());
+
+        let cfg9: Vec<_> = (0..9)
+            .map(|i| format!(r#"{{"key":"key{i}","label":"key{i}","type":"text"}}"#))
+            .collect();
+        let json9 = m_full("[]", &format!(r#","config":[{}]"#, cfg9.join(",")));
+        assert!(validate("tile", &json9).is_err());
     }
 
     #[test]
@@ -477,6 +724,32 @@ mod tests {
         }"#;
         let err = validate_view_spec(json).unwrap_err();
         assert!(err.contains("15000"), "{err}");
+    }
+
+    #[test]
+    fn interval_above_24h_ceiling_is_rejected() {
+        // At the ceiling: passes.
+        let at_ceiling = r#"{
+            "source": {"kind":"http","url":"https://api.example.com/data","intervalMs":86400000},
+            "view": {"type":"stat","value":"x"}
+        }"#;
+        assert!(validate_view_spec(at_ceiling).is_ok());
+
+        // One past it: rejected.
+        let one_over = r#"{
+            "source": {"kind":"http","url":"https://api.example.com/data","intervalMs":86400001},
+            "view": {"type":"stat","value":"x"}
+        }"#;
+        let err = validate_view_spec(one_over).unwrap_err();
+        assert!(err.contains("86400000"), "{err}");
+
+        // The value from the I3 review finding ("~25 days") that used to
+        // publish and degenerate setTimeout's delay to 0 client-side.
+        let huge = r#"{
+            "source": {"kind":"http","url":"https://api.example.com/data","intervalMs":2200000000},
+            "view": {"type":"stat","value":"x"}
+        }"#;
+        assert!(validate_view_spec(huge).is_err());
     }
 
     #[test]
@@ -590,6 +863,29 @@ mod tests {
         }"#;
         let err = validate_view_spec(json).unwrap_err();
         assert!(err.contains("label"), "{err}");
+    }
+
+    #[test]
+    fn secret_ref_matches_unicode_whitespace_like_js_s(){
+        // NBSP (U+00A0), LINE SEPARATOR (U+2028), IDEOGRAPHIC SPACE (U+3000)
+        // — all whitespace per JS's \s (the app's SECRET_RE in viewSpec.ts),
+        // all missed by the old byte-indexed is_ascii_whitespace scan (I10).
+        assert!(has_secret_ref("{{\u{00A0}secret.token}}"));
+        assert!(has_secret_ref("{{\u{2028}secret.token}}"));
+        assert!(has_secret_ref("{{\u{3000}secret.token}}"));
+        // Plain ASCII whitespace still matches (regression check).
+        assert!(has_secret_ref("{{  secret.token  }}"));
+        assert!(has_secret_ref("{{\tsecret.token}}"));
+    }
+
+    #[test]
+    fn view_with_nbsp_before_secret_is_rejected_end_to_end() {
+        // Before I10's fix this would have PUBLISHED (server didn't see the
+        // secret ref) yet FAILED to install (the app's JS regex did see it) —
+        // a bundle that publishes successfully but breaks for every installer.
+        let json = "{\"source\":{\"kind\":\"http\",\"url\":\"https://x\",\"intervalMs\":30000},\"view\":{\"type\":\"badge\",\"value\":\"{{\u{00A0}secret.token}}\"}}";
+        let err = validate_view_spec(json).unwrap_err();
+        assert!(err.contains("secret"), "{err}");
     }
 
     #[test]

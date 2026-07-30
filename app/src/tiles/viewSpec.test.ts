@@ -148,3 +148,14 @@ test('validateViewSpec: uppercase HTTPS:// is rejected (case-sensitive)', () => 
   const r = validateViewSpec({ ...ok, source: { kind: 'http', url: 'HTTPS://x.com', intervalMs: 60000 } });
   assert.equal(r.ok, false);
 });
+
+test('validateViewSpec: intervalMs has a ceiling of 24h (I3)', () => {
+  // At the ceiling: passes.
+  assert.equal(validateViewSpec({ ...ok, source: { kind: 'http', url: 'https://x.com', intervalMs: 86_400_000 } }).ok, true);
+  // One past it: rejected.
+  const r = validateViewSpec({ ...ok, source: { kind: 'http', url: 'https://x.com', intervalMs: 86_400_001 } });
+  assert.equal(r.ok, false);
+  // The value from the C1/I3 review finding ("~25 days") that used to pass
+  // both validators and degenerate setTimeout's delay to 0.
+  assert.equal(validateViewSpec({ ...ok, source: { kind: 'http', url: 'https://x.com', intervalMs: 2_200_000_000 } }).ok, false);
+});

@@ -265,12 +265,28 @@ fn validate_headers(headers: &std::collections::HashMap<String, String>) -> Resu
     Ok(())
 }
 
+/// True for any 3xx status. Pulled out as a pure function so the "reject a
+/// redirect" rule is unit-testable without a network round-trip.
+fn is_redirect_status(status: u16) -> bool {
+    (300..400).contains(&status)
+}
+
 /// The fetch the sandbox broker performs for installed tiles. Host allowlisting
 /// is enforced in the frontend broker (broker.ts) before this is called; this
 /// enforces https + size caps as defense in depth. `headers` lets a tile's
 /// declared request (e.g. `Authorization: Bearer <secret>`) actually reach the
 /// server — see `validate_headers` for why they're strictly validated rather
 /// than passed through as-is.
+///
+/// Redirects are never followed (`redirects(0)`). `brokerDecide` (broker.ts)
+/// only checks the INITIAL url's host before this command is ever invoked; a
+/// default ureq agent follows up to 5 redirects and isn't `https_only`, so an
+/// allowlisted host could 302 to `http://127.0.0.1:…` or a LAN address and the
+/// response would flow straight into the tile's scope — SSRF straight through
+/// the permission check, with non-Authorization secret headers still attached
+/// across the hop (I2). With `redirects(0)` a 3xx is just an ordinary
+/// response ureq hands back without following; it's turned into a clear error
+/// below instead of silently chasing the Location header.
 #[tauri::command]
 pub fn broker_fetch(
     url: String,
@@ -282,7 +298,8 @@ pub fn broker_fetch(
     if let Some(h) = &headers {
         validate_headers(h)?;
     }
-    let mut req = ureq::get(&url).timeout(std::time::Duration::from_secs(10));
+    let agent = ureq::AgentBuilder::new().redirects(0).build();
+    let mut req = agent.get(&url).timeout(std::time::Duration::from_secs(10));
     if let Some(h) = &headers {
         for (name, value) in h {
             req = req.set(name, value);
@@ -290,6 +307,11 @@ pub fn broker_fetch(
     }
     let resp = req.call().map_err(|e| format!("request failed: {e}"))?;
     let status = resp.status();
+    if is_redirect_status(status) {
+        return Err(format!(
+            "server responded with a redirect (HTTP {status}) — redirects are not followed"
+        ));
+    }
     let mut buf = Vec::new();
     resp.into_reader()
         .take((FETCH_CAP + 1) as u64)
@@ -376,6 +398,20 @@ mod tests {
     fn validate_headers_rejects_content_length() {
         let h = headers(&[("Content-Length", "0")]);
         assert!(validate_headers(&h).is_err());
+    }
+
+    #[test]
+    fn redirect_status_range_matches_ureq_convention_3xx() {
+        // ureq treats 300..399 as "a redirect it could have followed"; with
+        // redirects(0) it hands the un-followed response back as Ok rather
+        // than erroring, so broker_fetch must catch this range itself (I2).
+        assert!(!is_redirect_status(299));
+        assert!(is_redirect_status(300));
+        assert!(is_redirect_status(301));
+        assert!(is_redirect_status(302));
+        assert!(is_redirect_status(399));
+        assert!(!is_redirect_status(400));
+        assert!(!is_redirect_status(200));
     }
 
     #[test]

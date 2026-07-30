@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import type { ConfigDecl, SecretDecl } from '../sandbox/manifest';
-import { setSecret } from '../state/secrets';
+import { bundleSecretKey, setSecret } from '../state/secrets';
 
 /** Host-owned credential + config entry for an installed declarative tile.
  *  The bundle never sees these values — this panel writes secrets straight
@@ -8,6 +8,10 @@ import { setSecret } from '../state/secrets';
  *  persist (per-instance, in localStorage). Visually mirrors GithubPrsTile's
  *  ConnectPanel: one column of labelled inputs and a single primary action. */
 export interface TileCredentialPanelProps {
+  /** Owning bundle's id — secrets are namespaced under it in the store
+   *  (bundleSecretKey) so a bundle can never name a built-in tile's
+   *  credential. */
+  bundleId: string;
   accent: string;
   secrets: SecretDecl[];
   config: ConfigDecl[];
@@ -24,7 +28,7 @@ export interface TileCredentialPanelProps {
 }
 
 export function TileCredentialPanel({
-  accent, secrets, config, initialConfig, introLine, onSaveConfig, onSecretsSaved,
+  bundleId, accent, secrets, config, initialConfig, introLine, onSaveConfig, onSecretsSaved,
 }: TileCredentialPanelProps) {
   const [secretDrafts, setSecretDrafts] = useState<Record<string, string>>({});
   const [configDrafts, setConfigDrafts] = useState<Record<string, string>>(() => {
@@ -38,19 +42,29 @@ export function TileCredentialPanel({
 
   // Every declared secret is required for this phase (the manifest schema
   // has no optional-secret concept) — Save stays disabled until each has a
-  // non-blank draft.
-  const canSave = secrets.every((s) => (secretDrafts[s.key] ?? '').trim().length > 0);
+  // non-blank draft. Same for config: a blank config field used to be
+  // silently coerced to 0 (see handleSave below) which then counted as
+  // "set", locking a config-only tile at 0 forever after the first Save
+  // (I6) — so canSave now blocks on blank config fields too, not just
+  // blank secrets.
+  const canSave =
+    secrets.every((s) => (secretDrafts[s.key] ?? '').trim().length > 0)
+    && config.every((c) => (configDrafts[c.key] ?? '').trim().length > 0);
 
   const handleSave = () => {
     const nextConfig: Record<string, unknown> = {};
     for (const c of config) {
       const raw = configDrafts[c.key] ?? '';
-      nextConfig[c.key] = c.type === 'number' ? Number(raw) || 0 : raw;
+      // No `|| 0` fallback: canSave already guarantees every config draft is
+      // non-blank by the time Save is enabled, so a numeric field that
+      // somehow reaches here blank is a bug to surface (NaN), not a value to
+      // silently paper over as a valid-looking 0.
+      nextConfig[c.key] = c.type === 'number' ? Number(raw) : raw;
     }
     onSaveConfig(nextConfig);
 
     setSaving(true);
-    void Promise.all(secrets.map((s) => setSecret(s.key, secretDrafts[s.key] ?? '')))
+    void Promise.all(secrets.map((s) => setSecret(bundleSecretKey(bundleId, s.key), secretDrafts[s.key] ?? '')))
       .then(() => { setSaving(false); onSecretsSaved(); })
       .catch(() => { setSaving(false); });
   };

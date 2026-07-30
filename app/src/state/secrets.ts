@@ -21,6 +21,21 @@ export interface SecretOpts {
 
 const browserKey = (key: string) => `secret:${key}`;
 
+/** Namespaces a marketplace bundle's declared secret key before it ever
+ *  touches the store. The secret store is one flat namespace shared with
+ *  built-in tiles (whose keys look like `github_pat`, `ha_token`, etc.) — a
+ *  bundle that declared `secret:github_pat` verbatim would read/overwrite/
+ *  delete a built-in tile's credential, and a user who'd already connected
+ *  that built-in would have the value silently handed to the bundle with no
+ *  setup prompt ever shown (see the C2 review finding). A bundle must never
+ *  be able to name a built-in's secret, so every bundle secret is stored
+ *  under `bundle.<bundleId>.<key>`. The *declared* key is still what's shown
+ *  to the user in the UI and the install dialog — only the storage key
+ *  changes. */
+export function bundleSecretKey(bundleId: string, key: string): string {
+  return `bundle.${bundleId}.${key}`;
+}
+
 /** In-memory cache so repeated getSecret calls don't re-invoke the backend.
  *  `null` is cached too ("known absent"). Kept coherent by set/delete. */
 const cache = new Map<string, string | null>();

@@ -90,7 +90,11 @@ pub async fn decide(
         return Err(StatusCode::CONFLICT);
     }
     if body.approve {
-        let payload_name = if kind == "preset" { "preset.json" } else { "main.js" };
+        let payload_name = match kind.as_str() {
+            "preset" => "preset.json",
+            "tile" => "view.json",
+            _ => "main.js",
+        };
         let (zip, sha, size) = zip_bundle(&manifest, payload_name, code.as_deref().unwrap_or("{}"));
         db.execute(
             "UPDATE bundles SET status='approved', zip=?1, sha256=?2, size=?3, review_note=?4 WHERE id=?5 AND version=?6",

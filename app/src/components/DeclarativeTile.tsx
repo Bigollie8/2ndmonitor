@@ -3,7 +3,7 @@ import { HFTile } from './tiles';
 import { TileEmpty, TileError, TileNeedsSetup, TileSkeleton } from './tileStates';
 import { TileCredentialPanel } from './TileCredentialPanel';
 import { usePoll } from '../state/usePoll';
-import { deleteSecret, getSecret } from '../state/secrets';
+import { bundleSecretKey, deleteSecret, getSecret } from '../state/secrets';
 import { appActions } from '../state/tauri';
 import {
   validateManifest,
@@ -89,7 +89,9 @@ function writeStoredConfig(bundleId: string, instanceId: string, config: Record<
  *  of hooks this component calls never depends on bundle contents.
  *  `version` is bumped by the caller after a save/disconnect to force a
  *  re-read without waiting for `keys` to change identity. */
-function useSecretValues(keys: string[], version: number): { values: Record<string, string>; loaded: boolean } {
+function useSecretValues(
+  bundleId: string, keys: string[], version: number,
+): { values: Record<string, string>; loaded: boolean } {
   const keysSignature = keys.join(',');
   const [state, setState] = useState<{ values: Record<string, string>; loaded: boolean }>(
     () => (keys.length === 0 ? { values: {}, loaded: true } : { values: {}, loaded: false }),
@@ -102,7 +104,11 @@ function useSecretValues(keys: string[], version: number): { values: Record<stri
       return;
     }
     setState((s) => ({ values: s.values, loaded: false }));
-    Promise.all(keys.map(async (k) => [k, await getSecret(k)] as const)).then((pairs) => {
+    // Storage is namespaced per-bundle (bundleSecretKey) so a bundle can never
+    // read a built-in tile's credential; `values` stays keyed by the
+    // *declared* key so the rest of this component (buildRequest's secret
+    // scope, needsSetup, etc.) is unaffected by the storage-key change.
+    Promise.all(keys.map(async (k) => [k, await getSecret(bundleSecretKey(bundleId, k))] as const)).then((pairs) => {
       if (cancelled) return;
       const values: Record<string, string> = {};
       for (const [k, v] of pairs) if (v != null) values[k] = v;
@@ -112,9 +118,45 @@ function useSecretValues(keys: string[], version: number): { values: Record<stri
     // keysSignature (not keys) is the real dependency: `keys` is a fresh
     // array each render even when its contents haven't changed.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [keysSignature, version]);
+  }, [bundleId, keysSignature, version]);
 
   return state;
+}
+
+/** A list row's `openUrl` comes from the substituted REMOTE HTTP RESPONSE,
+ *  not from the bundle — the manifest/view.json only supplies the template,
+ *  and the response's own field values fill it in. It must therefore be
+ *  treated as fully untrusted input before it ever reaches `appActions.
+ *  openUrl` (which shells out via `cmd /C start`, see actions.rs). `new
+ *  URL(...)` is the parse; only `http:`/`https:` survive. A parse failure or
+ *  any other scheme returns undefined — deliberately not "cleaned" or
+ *  re-encoded, just refused (C3). */
+function safeExternalUrl(raw: string | undefined): string | undefined {
+  if (!raw) return undefined;
+  try {
+    const parsed = new URL(raw);
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:' ? raw : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Redacts every known secret VALUE from an error message before it's ever
+ *  rendered — `TileError` shows `error` verbatim. `broker_fetch` (marketplace.
+ *  rs) surfaces `format!("request failed: {e}")` on any HTTP failure, and
+ *  ureq's error `Display` includes the full request URL; the view-spec
+ *  grammar explicitly blesses secrets in `source.url` (e.g.
+ *  `?key={{secret.api_key}}`). Without this, a 401/DNS/TLS/timeout would put
+ *  a live credential in plain text on screen (I1). Applied at the one place
+ *  this component produces an error string, since that's where the secret
+ *  values are in scope. */
+function redactSecrets(message: string, secretValues: Record<string, string>): string {
+  let out = message;
+  for (const value of Object.values(secretValues)) {
+    if (!value) continue;
+    out = out.split(value).join('***');
+  }
+  return out;
 }
 
 /** `brokerDecide`'s reason strings are precise on purpose (host names,
@@ -186,7 +228,7 @@ export function DeclarativeTile({ bundleId, instanceId, density, accent, editing
   const configDecls: ConfigDecl[] = bundle?.manifest.config ?? [];
   const secretKeys = secretDecls.map((s) => s.key);
 
-  const { values: secretValues, loaded: secretsLoaded } = useSecretValues(secretKeys, secretsVersion);
+  const { values: secretValues, loaded: secretsLoaded } = useSecretValues(bundleId, secretKeys, secretsVersion);
   // A tile can need setup for a missing secret OR a missing config value —
   // e.g. a config-only tile (no secrets at all, such as a dictionary lookup
   // parameterized by a `word` config entry) has nothing to inject into
@@ -212,40 +254,50 @@ export function DeclarativeTile({ bundleId, instanceId, density, accent, editing
     if (!bundle) throw new Error('tile is not loaded yet');
     if (needsSetup) return null;
 
-    const { spec, perms } = bundle;
-    if (spec.source.kind === 'tauri') {
-      const decision = brokerDecide(perms, {
-        rpc: 'tauri.invoke', command: spec.source.command, args: spec.source.args,
-      });
-      if (!decision.allow) throw new Error(explainBrokerDenial(decision.reason));
-      // Unreachable while BROKER_COMMANDS (sandbox/broker.ts) is empty, which
-      // it is by design this phase — kept so a future allowlisted command
-      // works without touching this component again.
-      const { invoke } = await import('@tauri-apps/api/core');
-      return invoke(spec.source.command, spec.source.args);
-    }
-
-    // http source. Secrets are injected right here, host-side, and only into
-    // the outgoing request — buildRequest's returned url/headers are the
-    // only place a credential value ever exists in this component.
-    const req = buildRequest(spec.source, { config: configValues, secret: secretValues });
-    const decision = brokerDecide(perms, { rpc: 'net.fetch', url: req.url });
-    if (!decision.allow) throw new Error(decision.reason);
-
-    const { invoke } = await import('@tauri-apps/api/core');
-    // Send `undefined` rather than `{}` when there are no headers, so the
-    // common no-header case is unchanged on the wire (and the Rust side's
-    // `Option<HashMap<...>>` sees `None`, skipping header validation
-    // entirely instead of validating an empty map).
-    const headers = Object.keys(req.headers).length > 0 ? req.headers : undefined;
-    const res = await invoke<{ status: number; body: string }>('broker_fetch', { url: req.url, headers });
-    if (res.status < 200 || res.status >= 300) {
-      throw new Error(`request failed: HTTP ${res.status}`);
-    }
+    // Every throw below is funneled through this catch so a secret value
+    // never reaches the rendered error string (I1) — e.g. broker_fetch's
+    // "request failed: {e}" includes ureq's full request URL, which may
+    // itself carry a secret per the view-spec's own `?key={{secret.x}}`
+    // grammar.
     try {
-      return JSON.parse(res.body);
-    } catch {
-      throw new Error('response body was not valid JSON');
+      const { spec, perms } = bundle;
+      if (spec.source.kind === 'tauri') {
+        const decision = brokerDecide(perms, {
+          rpc: 'tauri.invoke', command: spec.source.command, args: spec.source.args,
+        });
+        if (!decision.allow) throw new Error(explainBrokerDenial(decision.reason));
+        // Unreachable while BROKER_COMMANDS (sandbox/broker.ts) is empty,
+        // which it is by design this phase — kept so a future allowlisted
+        // command works without touching this component again.
+        const { invoke } = await import('@tauri-apps/api/core');
+        return await invoke(spec.source.command, spec.source.args);
+      }
+
+      // http source. Secrets are injected right here, host-side, and only
+      // into the outgoing request — buildRequest's returned url/headers are
+      // the only place a credential value ever exists in this component.
+      const req = buildRequest(spec.source, { config: configValues, secret: secretValues });
+      const decision = brokerDecide(perms, { rpc: 'net.fetch', url: req.url });
+      if (!decision.allow) throw new Error(decision.reason);
+
+      const { invoke } = await import('@tauri-apps/api/core');
+      // Send `undefined` rather than `{}` when there are no headers, so the
+      // common no-header case is unchanged on the wire (and the Rust side's
+      // `Option<HashMap<...>>` sees `None`, skipping header validation
+      // entirely instead of validating an empty map).
+      const headers = Object.keys(req.headers).length > 0 ? req.headers : undefined;
+      const res = await invoke<{ status: number; body: string }>('broker_fetch', { url: req.url, headers });
+      if (res.status < 200 || res.status >= 300) {
+        throw new Error(`request failed: HTTP ${res.status}`);
+      }
+      try {
+        return JSON.parse(res.body);
+      } catch {
+        throw new Error('response body was not valid JSON');
+      }
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      throw new Error(redactSecrets(message, secretValues));
     }
   }, intervalMs, [bundle, needsSetup, JSON.stringify(configValues), JSON.stringify(secretValues)]);
 
@@ -263,7 +315,7 @@ export function DeclarativeTile({ bundleId, instanceId, density, accent, editing
 
         {loadState.kind === 'ready' && !secretsLoaded && <TileSkeleton rows={3} />}
 
-        {loadState.kind === 'ready' && secretsLoaded && needsSetup && !(editing || setupOpen) && (
+        {loadState.kind === 'ready' && secretsLoaded && needsSetup && !editing && !setupOpen && (
           <TileNeedsSetup
             accent={accent}
             line={setupHintLine(secretDecls, configDecls)}
@@ -271,8 +323,15 @@ export function DeclarativeTile({ bundleId, instanceId, density, accent, editing
           />
         )}
 
-        {loadState.kind === 'ready' && secretsLoaded && needsSetup && (editing || setupOpen) && (
+        {/* Shown whenever `editing` is true, regardless of `needsSetup` — a
+            placed tile must always be reconfigurable in edit mode (I6). Before
+            this fix, a config-only tile (no secrets) with every config field
+            already non-empty could never reopen this panel again: needsSetup
+            had gone false permanently and there was no disconnect escape
+            hatch (that's gated on secretDecls.length > 0). */}
+        {loadState.kind === 'ready' && secretsLoaded && (editing || (needsSetup && setupOpen)) && (
           <TileCredentialPanel
+            bundleId={bundleId}
             accent={accent}
             secrets={secretDecls}
             config={configDecls}
@@ -283,20 +342,20 @@ export function DeclarativeTile({ bundleId, instanceId, density, accent, editing
           />
         )}
 
-        {loadState.kind === 'ready' && secretsLoaded && !needsSetup && error && (
+        {loadState.kind === 'ready' && secretsLoaded && !needsSetup && !editing && error && (
           <TileError line={error} onRetry={refresh} />
         )}
-        {loadState.kind === 'ready' && secretsLoaded && !needsSetup && !error && loading && data == null && (
+        {loadState.kind === 'ready' && secretsLoaded && !needsSetup && !editing && !error && loading && data == null && (
           <TileSkeleton rows={4} />
         )}
-        {loadState.kind === 'ready' && secretsLoaded && !needsSetup && !error && !loading && (
+        {loadState.kind === 'ready' && secretsLoaded && !needsSetup && !editing && !error && !loading && (
           <ViewRenderer spec={bundle!.spec} data={data} configValues={configValues} accent={accent} />
         )}
 
         {loadState.kind === 'ready' && secretsLoaded && !needsSetup && editing && secretDecls.length > 0 && (
           <button
             onClick={() => {
-              void Promise.all(secretDecls.map((d) => deleteSecret(d.key)))
+              void Promise.all(secretDecls.map((d) => deleteSecret(bundleSecretKey(bundleId, d.key))))
                 .then(() => setSecretsVersion((v) => v + 1));
             }}
             style={{
@@ -387,7 +446,7 @@ function ListPrimitive({
         const title = substitute(row.title, scope);
         const left = row.left !== undefined ? substitute(row.left, scope) : undefined;
         const right = row.right !== undefined ? substitute(row.right, scope) : undefined;
-        const openUrl = row.openUrl !== undefined ? substitute(row.openUrl, scope) : undefined;
+        const openUrl = safeExternalUrl(row.openUrl !== undefined ? substitute(row.openUrl, scope) : undefined);
         return (
           <div
             key={i}

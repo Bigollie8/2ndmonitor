@@ -113,6 +113,64 @@ async fn duplicate_version_409_and_foreign_id_403() {
     assert_eq!(st, StatusCode::FORBIDDEN);
 }
 
+fn tile_manifest(id: &str, version: &str) -> String {
+    serde_json::json!({
+        "id": id, "name": "T", "version": version, "api": 1,
+        "permissions": []
+    }).to_string()
+}
+
+fn tile_view() -> &'static str {
+    r#"{"source":{"kind":"http","url":"https://api.example.com/x","intervalMs":60000},"view":{"type":"stat","value":"{{data.n}}"}}"#
+}
+
+/// Fetches raw response bytes (unlike `call`, which JSON-decodes — a zip body
+/// isn't JSON).
+async fn get_bytes(app: &axum::Router, uri: &str) -> (StatusCode, Vec<u8>) {
+    let req = Request::builder()
+        .method("GET")
+        .uri(uri)
+        .header("x-forwarded-for", "1.1.1.1")
+        .body(Body::empty())
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    let status = res.status();
+    let bytes = res.into_body().collect().await.unwrap().to_bytes().to_vec();
+    (status, bytes)
+}
+
+/// C1 regression: the server used to zip a tile's view.json under the name
+/// "main.js", which `marketplace_install`'s "tile" arm (app/src-tauri/src/
+/// marketplace.rs) rejects outright since it requires "view.json" — every
+/// published tile failed to install. Assert the payload is stored/zipped
+/// under "view.json", not "main.js".
+#[tokio::test]
+async fn tile_submission_is_stored_and_zipped_as_view_json() {
+    let app = router(test_state());
+    let t = make_user(&app, "a@b.c").await;
+    let (st, body) = call(&app, "POST", "/submissions", Some(&t), Some(serde_json::json!({
+        "kind": "tile", "manifest": tile_manifest("my-tile", "1.0.0"), "code": tile_view()
+    }))).await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    assert_eq!(body["status"], "pending");
+
+    // Approve it so a zip gets built, then download and inspect entry names.
+    let (st, _) = call(&app, "POST", "/admin/decide", Some("test-admin"), Some(serde_json::json!({
+        "id": "my-tile", "version": "1.0.0", "approve": true
+    }))).await;
+    assert_eq!(st, StatusCode::OK);
+
+    let (st, zip_bytes) = get_bytes(&app, "/bundle/my-tile/1.0.0").await;
+    assert_eq!(st, StatusCode::OK);
+
+    let mut archive = zip::ZipArchive::new(std::io::Cursor::new(zip_bytes)).unwrap();
+    let mut names: Vec<String> = (0..archive.len())
+        .map(|i| archive.by_index(i).unwrap().name().to_string())
+        .collect();
+    names.sort();
+    assert_eq!(names, vec!["manifest.json".to_string(), "view.json".to_string()]);
+}
+
 #[tokio::test]
 async fn unauthenticated_401_and_mine_lists() {
     let app = router(test_state());
