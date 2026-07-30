@@ -7,7 +7,7 @@ const item = (name: string, description = ''): CatalogItem => ({
   key: `tile:${name}`, kind: 'tile', id: name, name, description, category: 'weather',
   source: 'bundle', installed: false, installedVersion: null, availableVersion: '1.0.0',
   updateAvailable: false, permissions: [], needsSetup: false, downloads: 0, brokenReason: null,
-  removed: false,
+  removed: false, hasPreview: false,
 });
 
 test('searchItems: matches name case-insensitively', () => {

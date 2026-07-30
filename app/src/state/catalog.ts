@@ -34,6 +34,11 @@ export interface IndexBundle {
   sha256: string;
   size: number;
   downloads: number;
+  /** True when the server has a published preview image for this bundle
+   *  (spec C §8's `preview IS NOT NULL AS hasPreview`). Optional because an
+   *  older server's index simply omits the column — treated as `false` by
+   *  the `=== true` check in pass 3 below, never as "unknown". */
+  hasPreview?: boolean;
 }
 
 export interface CatalogItem {
@@ -61,6 +66,12 @@ export interface CatalogItem {
    *  action (see catalogRail.ts and ContentLibrary.tsx). Every OTHER rail
    *  row and the default grid must exclude items with `removed: true`. */
   removed: boolean;
+  /** Whether the marketplace has a published preview image for this item
+   *  (spec C §6, branch 2). `false` for every compile-time table entry and
+   *  installed folder (passes 1 and 2) — neither source knows about a
+   *  published image, only the signed index does. See previewSource.ts for
+   *  the rule that consumes this alongside `installed`/`brokenReason`. */
+  hasPreview: boolean;
 }
 
 export interface MergeCatalogArgs {
@@ -115,7 +126,7 @@ export function mergeCatalog(args: MergeCatalogArgs): CatalogItem[] {
       source: isFirstParty('tile', id) ? 'first-party' : 'bundle',
       installed: true, installedVersion: null, availableVersion: null, updateAvailable: false,
       permissions: [], needsSetup: needsSetup.has(key), downloads: null, brokenReason: null,
-      removed: false,
+      removed: false, hasPreview: false,
     });
   }
   for (const s of args.vizStyles) {
@@ -126,7 +137,7 @@ export function mergeCatalog(args: MergeCatalogArgs): CatalogItem[] {
       source: isFirstParty('visualizer', s.id) ? 'first-party' : 'bundle',
       installed: true, installedVersion: null, availableVersion: null, updateAvailable: false,
       permissions: [], needsSetup: needsSetup.has(key), downloads: null, brokenReason: null,
-      removed: false,
+      removed: false, hasPreview: false,
     });
   }
 
@@ -156,7 +167,7 @@ export function mergeCatalog(args: MergeCatalogArgs): CatalogItem[] {
       needsSetup: needsSetup.has(key),
       downloads: prev?.downloads ?? null,
       brokenReason: f.manifest_error,
-      removed: false,
+      removed: false, hasPreview: false,
     });
   };
   for (const f of args.installedTiles) installedFolder('tile', f, 'integrations');
@@ -188,7 +199,7 @@ export function mergeCatalog(args: MergeCatalogArgs): CatalogItem[] {
       needsSetup: needsSetup.has(key),
       downloads: b.downloads,
       brokenReason: prev?.brokenReason ?? null,
-      removed: false,
+      removed: false, hasPreview: b.hasPreview === true,
     });
   }
 
