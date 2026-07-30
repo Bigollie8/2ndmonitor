@@ -328,13 +328,18 @@ export function DeclarativeTile({ bundleId, instanceId, density, accent, editing
             this fix, a config-only tile (no secrets) with every config field
             already non-empty could never reopen this panel again: needsSetup
             had gone false permanently and there was no disconnect escape
-            hatch (that's gated on secretDecls.length > 0). */}
+            hatch (that's gated on secretDecls.length > 0). `storedSecretKeys`
+            (Object.keys(secretValues) — populated ones only) lets the panel
+            treat an already-configured secret as optional to retype, so
+            reopening this panel to tweak one config field doesn't also force
+            re-entering every working credential. */}
         {loadState.kind === 'ready' && secretsLoaded && (editing || (needsSetup && setupOpen)) && (
           <TileCredentialPanel
             bundleId={bundleId}
             accent={accent}
             secrets={secretDecls}
             config={configDecls}
+            storedSecretKeys={Object.keys(secretValues)}
             initialConfig={configValues}
             introLine={setupHintLine(secretDecls, configDecls)}
             onSaveConfig={saveConfig}

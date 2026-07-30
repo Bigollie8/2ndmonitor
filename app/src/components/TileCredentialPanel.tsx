@@ -15,6 +15,12 @@ export interface TileCredentialPanelProps {
   accent: string;
   secrets: SecretDecl[];
   config: ConfigDecl[];
+  /** Keys (declared, not namespaced) of secrets that already have a stored
+   *  value. A stored secret's draft is optional: leaving it blank on Save
+   *  keeps the existing value rather than blocking Save or overwriting it
+   *  with empty. Never the value itself — this panel must not put a
+   *  credential back on screen just because the tile is already connected. */
+  storedSecretKeys: string[];
   /** Current per-instance config values, used to prefill the form. */
   initialConfig: Record<string, unknown>;
   introLine?: React.ReactNode;
@@ -28,7 +34,7 @@ export interface TileCredentialPanelProps {
 }
 
 export function TileCredentialPanel({
-  bundleId, accent, secrets, config, initialConfig, introLine, onSaveConfig, onSecretsSaved,
+  bundleId, accent, secrets, config, storedSecretKeys, initialConfig, introLine, onSaveConfig, onSecretsSaved,
 }: TileCredentialPanelProps) {
   const [secretDrafts, setSecretDrafts] = useState<Record<string, string>>({});
   const [configDrafts, setConfigDrafts] = useState<Record<string, string>>(() => {
@@ -40,15 +46,19 @@ export function TileCredentialPanel({
   });
   const [saving, setSaving] = useState(false);
 
-  // Every declared secret is required for this phase (the manifest schema
-  // has no optional-secret concept) — Save stays disabled until each has a
-  // non-blank draft. Same for config: a blank config field used to be
+  const isStored = (key: string) => storedSecretKeys.includes(key);
+
+  // A secret that's already stored needs no fresh draft — this is what lets
+  // an already-connected tile reopen this panel (e.g. to tweak an unrelated
+  // config field) in edit mode without being forced to retype a working
+  // credential (I6, corrected per review: the first pass required every
+  // secret unconditionally, which was worse than the lockout it fixed). A
+  // secret that has never been set still blocks Save until it gets one.
+  // Config keeps the plain non-blank rule: a blank config field used to be
   // silently coerced to 0 (see handleSave below) which then counted as
-  // "set", locking a config-only tile at 0 forever after the first Save
-  // (I6) — so canSave now blocks on blank config fields too, not just
-  // blank secrets.
+  // "set", locking a config-only tile at 0 forever after the first Save.
   const canSave =
-    secrets.every((s) => (secretDrafts[s.key] ?? '').trim().length > 0)
+    secrets.every((s) => isStored(s.key) || (secretDrafts[s.key] ?? '').trim().length > 0)
     && config.every((c) => (configDrafts[c.key] ?? '').trim().length > 0);
 
   const handleSave = () => {
@@ -63,8 +73,13 @@ export function TileCredentialPanel({
     }
     onSaveConfig(nextConfig);
 
+    // Only write secrets whose draft was actually filled in. A blank draft
+    // means "keep the existing stored value" — never overwrite it with an
+    // empty string, and never write anything for a secret the user didn't
+    // touch.
+    const toWrite = secrets.filter((s) => (secretDrafts[s.key] ?? '').trim().length > 0);
     setSaving(true);
-    void Promise.all(secrets.map((s) => setSecret(bundleSecretKey(bundleId, s.key), secretDrafts[s.key] ?? '')))
+    void Promise.all(toWrite.map((s) => setSecret(bundleSecretKey(bundleId, s.key), secretDrafts[s.key] ?? '')))
       .then(() => { setSaving(false); onSecretsSaved(); })
       .catch(() => { setSaving(false); });
   };
@@ -81,12 +96,19 @@ export function TileCredentialPanel({
       )}
       {secrets.map((s) => (
         <div key={s.key} style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-          <label style={labelStyle}>{s.label}</label>
+          <label style={labelStyle}>
+            {s.label}
+            {/* Indicates a value is already stored WITHOUT ever showing it —
+                the input below stays empty; typing replaces the stored
+                value, leaving it blank on Save keeps it. */}
+            {isStored(s.key) && <span style={savedBadgeStyle}>saved</span>}
+          </label>
           {s.help && <div style={helpStyle}>{s.help}</div>}
           <input
             type={s.kind === 'password' ? 'password' : 'text'}
             value={secretDrafts[s.key] ?? ''}
             onChange={(e) => setSecretDrafts((d) => ({ ...d, [s.key]: e.target.value }))}
+            placeholder={isStored(s.key) ? 'Leave blank to keep the current value' : undefined}
             style={inputStyle}
           />
         </div>
@@ -124,6 +146,11 @@ const labelStyle: React.CSSProperties = {
 
 const helpStyle: React.CSSProperties = {
   fontSize: 10, color: 'rgba(255,255,255,0.4)', lineHeight: 1.4,
+};
+
+const savedBadgeStyle: React.CSSProperties = {
+  marginLeft: 6, fontSize: 9, fontWeight: 700, letterSpacing: '0.06em',
+  color: 'rgba(120,220,150,0.85)', textTransform: 'uppercase',
 };
 
 const inputStyle: React.CSSProperties = {

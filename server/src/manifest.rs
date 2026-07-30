@@ -293,6 +293,14 @@ fn is_dot_segment(seg: &str) -> bool {
 /// (server didn't see it as a secret ref) but get rejected at install time
 /// (app's regex did) — and would have been expanded by the app's substituter
 /// had that install-time check ever been bypassed.
+///
+/// U+FEFF (ZERO WIDTH NO-BREAK SPACE / BOM) is checked explicitly alongside
+/// `char::is_whitespace`: JS's `\s` includes it per the ECMAScript
+/// `WhiteSpace` production, but Unicode's `White_Space` property (what
+/// `char::is_whitespace` implements) does not — U+FEFF is category `Cf`
+/// (format), not whitespace. Without this, `{{<FEFF>secret.token}}` would
+/// still publish here and be rejected only at install time, the exact
+/// app/server disagreement this function exists to close.
 fn has_secret_ref(s: &str) -> bool {
     let chars: Vec<char> = s.chars().collect();
     let n = chars.len();
@@ -300,7 +308,7 @@ fn has_secret_ref(s: &str) -> bool {
     while i + 1 < n {
         if chars[i] == '{' && chars[i + 1] == '{' {
             let mut j = i + 2;
-            while j < n && chars[j].is_whitespace() {
+            while j < n && (chars[j].is_whitespace() || chars[j] == '\u{FEFF}') {
                 j += 1;
             }
             const NEEDLE: &str = "secret.";
@@ -876,6 +884,25 @@ mod tests {
         // Plain ASCII whitespace still matches (regression check).
         assert!(has_secret_ref("{{  secret.token  }}"));
         assert!(has_secret_ref("{{\tsecret.token}}"));
+    }
+
+    #[test]
+    fn secret_ref_matches_u_feff_explicitly() {
+        // U+FEFF (BOM / ZERO WIDTH NO-BREAK SPACE) is whitespace per JS's \s
+        // (the ECMAScript WhiteSpace production) but NOT per Unicode's
+        // White_Space property, so char::is_whitespace() alone still misses
+        // it — checked for explicitly as a second condition (see has_secret_ref's
+        // doc comment) to close the last app/server disagreement gap.
+        assert!(has_secret_ref("{{\u{FEFF}secret.token}}"));
+        // Mixed with ordinary whitespace, before and after the BOM.
+        assert!(has_secret_ref("{{ \u{FEFF} secret.token}}"));
+    }
+
+    #[test]
+    fn view_with_feff_before_secret_is_rejected_end_to_end() {
+        let json = "{\"source\":{\"kind\":\"http\",\"url\":\"https://x\",\"intervalMs\":30000},\"view\":{\"type\":\"badge\",\"value\":\"{{\u{FEFF}secret.token}}\"}}";
+        let err = validate_view_spec(json).unwrap_err();
+        assert!(err.contains("secret"), "{err}");
     }
 
     #[test]
