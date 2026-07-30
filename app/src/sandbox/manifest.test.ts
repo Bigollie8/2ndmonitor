@@ -72,3 +72,37 @@ test('allowPermissions still validates grammar and caps at 16', () => {
   const many = Array.from({ length: 17 }, (_, i) => `net:h${i}.example.com`);
   assert.ok(!validateManifest({ ...good, permissions: many }, { allowPermissions: true }).ok);
 });
+
+// ── secret:<key> permission + secrets/config manifest fields ────────────────
+
+test('parsePermission: accepts secret:<key>', () => {
+  const r = parsePermission('secret:github_pat');
+  assert.equal(r.ok, true);
+  assert.deepEqual(r.ok && r.perm, { kind: 'secret', key: 'github_pat' });
+});
+
+test('parsePermission: rejects a malformed secret key', () => {
+  assert.equal(parsePermission('secret:').ok, false);
+  assert.equal(parsePermission('secret:Has Space').ok, false);
+  assert.equal(parsePermission('secret:UPPER').ok, false);
+});
+
+test('validateManifest: accepts secrets and config declarations', () => {
+  const r = validateManifest({
+    id: 'x', name: 'X', version: '1.0.0', api: 1,
+    permissions: ['secret:token'],
+    secrets: [{ key: 'token', label: 'API token', kind: 'password' }],
+    config: [{ key: 'symbols', label: 'Symbols', type: 'text' }],
+  }, { allowPermissions: true });
+  assert.equal(r.ok, true);
+});
+
+test('validateManifest: a declared secret must have a matching secret: permission', () => {
+  const r = validateManifest({
+    id: 'x', name: 'X', version: '1.0.0', api: 1,
+    permissions: [],
+    secrets: [{ key: 'token', label: 'API token', kind: 'password' }],
+  }, { allowPermissions: true });
+  assert.equal(r.ok, false);
+  assert.match(r.ok ? '' : r.error, /secret:token/);
+});

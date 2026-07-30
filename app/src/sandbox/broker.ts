@@ -38,6 +38,11 @@ export function brokerDecide(
   perms: Permission[],
   req: RpcRequest,
 ): { allow: true } | { allow: false; reason: string } {
+  // `secret:<key>` permissions are deliberately never consulted below. They
+  // are a declaration for the host's install-time UI and request-injection
+  // path, not a capability — a secret grants no fetch or invoke on its own.
+  // The `p.kind === 'net'` / `p.kind === 'tauri'` filters below already
+  // exclude them; do not widen either check to also match `kind === 'secret'`.
   if (req.rpc === 'net.fetch') {
     let host: string;
     try {

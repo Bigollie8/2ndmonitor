@@ -12,19 +12,44 @@ export interface VizManifest {
   version: string;
   /** Frame-payload contract version. Only 1 exists; evolution is additive. */
   api: 1;
-  /** Broker permissions ("net:<host>" / "tauri:<command>"). Locally-authored
-   *  visualizers must declare none; marketplace-installed bundles may (they
-   *  were reviewed with these permissions and the user approved at install). */
+  /** Broker permissions ("net:<host>" / "tauri:<command>" / "secret:<key>").
+   *  Locally-authored visualizers must declare none; marketplace-installed
+   *  bundles may (they were reviewed with these permissions and the user
+   *  approved at install). */
   permissions: string[];
+  /** Named credentials this tile needs. The host renders an input per entry,
+   *  stores the value, and injects it into outgoing requests — the bundle
+   *  itself never receives it. Every key here must also appear as a
+   *  `secret:<key>` permission (see validateManifest). */
+  secrets?: SecretDecl[];
+  /** Per-instance user settings (e.g. a stock watchlist). Not credentials —
+   *  no permission is required and a later task stores these in plain
+   *  localStorage. */
+  config?: ConfigDecl[];
+}
+
+export interface SecretDecl {
+  key: string;
+  label: string;
+  kind: 'password' | 'text';
+  help?: string;
+}
+
+export interface ConfigDecl {
+  key: string;
+  label: string;
+  type: 'text' | 'number';
 }
 
 export type Permission =
   | { kind: 'net'; host: string }
-  | { kind: 'tauri'; command: string };
+  | { kind: 'tauri'; command: string }
+  | { kind: 'secret'; key: string };
 
 const ID_RE = /^[a-z0-9-]{1,64}$/;
 const CMD_RE = /^[a-z0-9_]{1,64}$/;
 const HOST_LABEL_RE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/i;
+const SECRET_KEY_RE = /^[a-z0-9_]{1,64}$/;
 
 /** Grammar mirrors the server's `Perm::parse` — keep the two in sync. */
 export function parsePermission(s: string): { ok: true; perm: Permission } | { ok: false; error: string } {
@@ -43,7 +68,13 @@ export function parsePermission(s: string): { ok: true; perm: Permission } | { o
       ? { ok: true, perm: { kind: 'tauri', command } }
       : { ok: false, error: `invalid tauri command: ${JSON.stringify(command)}` };
   }
-  return { ok: false, error: `unknown permission ${JSON.stringify(s)} (expected net:<host> or tauri:<command>)` };
+  if (s.startsWith('secret:')) {
+    const key = s.slice(7);
+    return SECRET_KEY_RE.test(key)
+      ? { ok: true, perm: { kind: 'secret', key } }
+      : { ok: false, error: `invalid secret key: ${JSON.stringify(key)}` };
+  }
+  return { ok: false, error: `unknown permission ${JSON.stringify(s)} (expected net:<host>, tauri:<command>, or secret:<key>)` };
 }
 
 export function validateManifest(
@@ -85,6 +116,64 @@ export function validateManifest(
     if (!parsed.ok) return parsed;
     permissions.push(p);
   }
+
+  let secrets: SecretDecl[] | undefined;
+  if (m.secrets !== undefined) {
+    if (!Array.isArray(m.secrets)) return { ok: false, error: 'secrets must be an array' };
+    if (m.secrets.length > 8) return { ok: false, error: 'too many secrets (max 8)' };
+    secrets = [];
+    for (const s of m.secrets) {
+      if (typeof s !== 'object' || s === null || Array.isArray(s)) {
+        return { ok: false, error: 'secrets entries must be objects' };
+      }
+      const sr = s as Record<string, unknown>;
+      if (typeof sr.key !== 'string' || !SECRET_KEY_RE.test(sr.key)) {
+        return { ok: false, error: `secret key must be 1-64 chars of [a-z0-9_]: ${JSON.stringify(sr.key)}` };
+      }
+      if (typeof sr.label !== 'string' || !sr.label.trim()) {
+        return { ok: false, error: `secret ${sr.key} requires a label` };
+      }
+      if (sr.kind !== 'password' && sr.kind !== 'text') {
+        return { ok: false, error: `secret ${sr.key} kind must be "password" or "text"` };
+      }
+      if (sr.help !== undefined && typeof sr.help !== 'string') {
+        return { ok: false, error: `secret ${sr.key} help must be a string` };
+      }
+      secrets.push({ key: sr.key, label: sr.label, kind: sr.kind, help: sr.help as string | undefined });
+    }
+    // Load-bearing: the install-time confirmation dialog lists `permissions`,
+    // so a secret without a matching `secret:<key>` permission would prompt
+    // for a credential the user never approved installing.
+    for (const decl of secrets) {
+      if (!permissions.includes(`secret:${decl.key}`)) {
+        return { ok: false, error: `secret ${decl.key} declared but missing matching permission secret:${decl.key}` };
+      }
+    }
+  }
+
+  let config: ConfigDecl[] | undefined;
+  if (m.config !== undefined) {
+    if (!Array.isArray(m.config)) return { ok: false, error: 'config must be an array' };
+    if (m.config.length > 8) return { ok: false, error: 'too many config entries (max 8)' };
+    config = [];
+    for (const c of m.config) {
+      if (typeof c !== 'object' || c === null || Array.isArray(c)) {
+        return { ok: false, error: 'config entries must be objects' };
+      }
+      const cr = c as Record<string, unknown>;
+      if (typeof cr.key !== 'string' || !cr.key.trim()) {
+        return { ok: false, error: 'config entry requires a key' };
+      }
+      if (typeof cr.label !== 'string' || !cr.label.trim()) {
+        return { ok: false, error: `config ${cr.key} requires a label` };
+      }
+      if (cr.type !== 'text' && cr.type !== 'number') {
+        return { ok: false, error: `config ${cr.key} type must be "text" or "number"` };
+      }
+      config.push({ key: cr.key, label: cr.label, type: cr.type });
+    }
+  }
+
   return {
     ok: true,
     manifest: {
@@ -94,6 +183,8 @@ export function validateManifest(
       version: m.version,
       api: 1,
       permissions,
+      secrets,
+      config,
     },
   };
 }

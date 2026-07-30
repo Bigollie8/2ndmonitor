@@ -3,6 +3,9 @@
 //! marketplace introduces:
 //!   "net:<host>"    broker-proxied fetch to exactly this host
 //!   "tauri:<cmd>"   one whitelisted Tauri command via the broker
+//!   "secret:<key>"  declares (does not grant) a named credential the host
+//!                   injects into outgoing requests; never a fetch/invoke
+//!                   capability on its own
 //! Presets and visualizers must declare zero permissions; only tiles may.
 
 use serde_json::Value;
@@ -11,6 +14,7 @@ use serde_json::Value;
 pub enum Perm {
     Net(String),
     Tauri(String),
+    Secret(String),
 }
 
 impl Perm {
@@ -35,8 +39,16 @@ impl Perm {
                 return Err(format!("invalid tauri command: {cmd:?}"));
             }
             Ok(Perm::Tauri(cmd.to_string()))
+        } else if let Some(key) = s.strip_prefix("secret:") {
+            let ok = !key.is_empty()
+                && key.len() <= 64
+                && key.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_');
+            if !ok {
+                return Err(format!("invalid secret key: {key:?}"));
+            }
+            Ok(Perm::Secret(key.to_string()))
         } else {
-            Err(format!("unknown permission {s:?} (expected net:<host> or tauri:<command>)"))
+            Err(format!("unknown permission {s:?} (expected net:<host>, tauri:<command>, or secret:<key>)"))
         }
     }
 
@@ -44,6 +56,7 @@ impl Perm {
         match self {
             Perm::Net(h) => format!("net:{h}"),
             Perm::Tauri(c) => format!("tauri:{c}"),
+            Perm::Secret(k) => format!("secret:{k}"),
         }
     }
 }
@@ -143,5 +156,19 @@ mod tests {
         assert!(Perm::parse("tauri:get_system_stats").is_ok());
         assert!(Perm::parse("tauri:Bad-Cmd").is_err());
         assert!(Perm::parse("shell:run").is_err());
+    }
+
+    #[test]
+    fn secret_grammar() {
+        assert_eq!(Perm::parse("secret:github_pat").unwrap(), Perm::Secret("github_pat".into()));
+        assert!(Perm::parse("secret:").is_err());
+        assert!(Perm::parse("secret:Has Space").is_err());
+        assert!(Perm::parse("secret:UPPER").is_err());
+    }
+
+    #[test]
+    fn tile_with_secret_perm_passes() {
+        let v = validate("tile", &m(r#"["secret:token"]"#)).unwrap();
+        assert_eq!(v.permissions, vec![Perm::Secret("token".into())]);
     }
 }

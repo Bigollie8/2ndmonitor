@@ -35,6 +35,7 @@ function describePermission(p: string): string {
   const parsed = parsePermission(p);
   if (!parsed.ok) return p;
   if (parsed.perm.kind === 'net') return `Access the internet at ${parsed.perm.host}`;
+  if (parsed.perm.kind === 'secret') return `Store a credential named "${parsed.perm.key}"`;
   return `Run the app command "${parsed.perm.command}"`;
 }
 

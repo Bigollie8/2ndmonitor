@@ -54,3 +54,12 @@ test('handler executes allowed fetch and reports denials without calling deps', 
 test('allowlist is empty at launch (deliberate fail-closed posture)', () => {
   assert.equal(Object.keys(BROKER_COMMANDS).length, 0);
 });
+
+test('brokerDecide: a secret: permission grants no fetch or invoke on its own', () => {
+  const perms = permissionsOf(['secret:token']);
+  // Note: brokerDecide returns `{ allow }`, not `{ ok }` (that shape belongs
+  // to makeBrokerHandler); the brief's snippet used `.ok`, which doesn't
+  // exist on this return type and would fail `tsc --noEmit`.
+  assert.equal(brokerDecide(perms, { rpc: 'net.fetch', url: 'https://x.com/' }).allow, false);
+  assert.equal(brokerDecide(perms, { rpc: 'tauri.invoke', command: 'anything' }).allow, false);
+});
