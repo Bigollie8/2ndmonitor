@@ -37,17 +37,30 @@ fn is_safe_id(id: &str) -> bool {
 
 /// Same shape as `is_safe_id` but for the version segment of a seed filename
 /// or a `seed_zip_for` argument — digits, lowercase letters and `.` only, no
-/// `-` (see the module doc comment for why), no `/`, `\`, or `..`. This is
-/// what stands between `seed_zip_for` and an arbitrary file read: `kind`,
-/// `id`, and `version` all end up `Path::join`-ed onto the resources
-/// directory, and `version` in particular is a `String` that Task 6 wires
-/// straight from a remote-influenced marketplace index — a value like
+/// `-` (see the module doc comment for why), no `/`, `\`, `..`, or a bare
+/// `.`. This is what stands between `seed_zip_for` and an arbitrary file
+/// read: `kind`, `id`, and `version` all end up `Path::join`-ed onto the
+/// resources directory, and `version` in particular is a `String` that Task 6
+/// wires straight from a remote-influenced marketplace index — a value like
 /// `"../../../../Users/x/Desktop/secret"` would otherwise walk straight out
 /// of `resources/seed` (an absolute value would discard the prefix
 /// entirely). Reject rather than sanitise, same as `is_safe_id`.
+///
+/// The charset check alone does NOT reject `".."` or `"."` — both parse as
+/// "lowercase | digit | '.'" — so it is the two explicit equality checks
+/// below, not the charset, that make this function's guarantee true. Every
+/// current call site only ever uses `version` concatenated inside
+/// `format!("{id}-{version}.zip")` (see `seed_lookup_name`), which is safe
+/// regardless: a bare `".."` there produces the literal filename `"id-..zip"`,
+/// not a traversal. But that is a property of the CALL SITES, not of this
+/// function, and this function's job is to make its own name true so the
+/// next call site that uses `version` on its own doesn't have to re-derive
+/// that reasoning from scratch.
 fn is_safe_version(version: &str) -> bool {
     !version.is_empty()
         && version.len() <= 32
+        && version != ".."
+        && version != "."
         && version.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'.')
 }
 
@@ -264,6 +277,16 @@ mod tests {
         assert!(!is_safe_version("1.0.0-beta")); // hyphens excluded by design
         assert!(!is_safe_version("1.0.0\\evil"));
         assert!(is_safe_version("1.0.0"));
+    }
+
+    #[test]
+    fn is_safe_version_rejects_bare_dot_and_dot_dot() {
+        // The charset alone (lowercase | digit | '.') accepts both of these —
+        // it's the explicit equality checks that make the docstring's "no .."
+        // claim true. Regression test for the whole-branch review's Important
+        // 3: the docstring advertised this guarantee before the code gave it.
+        assert!(!is_safe_version(".."));
+        assert!(!is_safe_version("."));
     }
 
     #[test]

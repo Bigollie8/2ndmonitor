@@ -13,6 +13,13 @@ export interface CatalogTag {
  *  keep new conditions here rather than inline in `CatalogCard`'s JSX. */
 export function catalogCardTags(item: CatalogItem): CatalogTag[] {
   const tags: CatalogTag[] = [];
+  if (item.removed) {
+    // Outranks everything else: a removed item's card only offers Restore,
+    // so every other tag (core, update, needs key…) would be describing a
+    // state the card isn't currently acting on.
+    tags.push({ text: 'removed', color: 'rgba(255,255,255,0.55)', bg: 'rgba(255,255,255,0.06)' });
+    return tags;
+  }
   if (item.brokenReason != null) {
     tags.push({ text: 'error', color: '#ff9b9b', bg: 'rgba(255,90,90,0.14)' });
   }
@@ -38,7 +45,7 @@ export function catalogCardTags(item: CatalogItem): CatalogTag[] {
  *  thumbnails. Visual language matches TileLibrary's TileCard: dark
  *  translucent panel, hairline border, JetBrains Mono metadata. */
 export function CatalogCard({
-  item, accent, busy, disabled, onInstall, onRemove, onAdd,
+  item, accent, busy, disabled, onInstall, onRemove, onAdd, onRestore,
 }: {
   item: CatalogItem;
   accent: string;
@@ -56,6 +63,11 @@ export function CatalogCard({
    *  installed tile — a visualizer has no placement action of its own;
    *  selecting one is what the V-cycle and gallery already do. */
   onAdd?: () => void;
+  /** Clears this item's tombstone and re-syncs seeds. Only relevant (and
+   *  only rendered) when `item.removed` — the "Removed" rail row is the one
+   *  place this card is used for a removed item. See
+   *  state/removedContent.ts's `restoreItem`. */
+  onRestore?: () => void;
 }) {
   const tags = catalogCardTags(item);
   const version = item.installed ? item.installedVersion : item.availableVersion;
@@ -101,32 +113,49 @@ export function CatalogCard({
 
       <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
         <div style={{ flex: 1 }} />
-        {onAdd && (
+        {item.removed ? (
           <button
-            onClick={onAdd}
+            onClick={onRestore}
             disabled={disabled}
-            title="Add to dashboard"
+            title="Restore to the catalog"
             style={{
               padding: '3px 10px', fontSize: 10, fontWeight: 600, borderRadius: 5,
-              background: 'transparent', color: `${accent}dd`,
-              border: `1px solid ${accent}33`,
+              background: `${accent}22`, color: accent,
+              border: `1px solid ${accent}44`,
               cursor: disabled ? 'not-allowed' : 'pointer',
               opacity: disabled ? 0.55 : 1,
             }}
-          >+ Add</button>
+          >{busy ? '…' : 'Restore'}</button>
+        ) : (
+          <>
+            {onAdd && (
+              <button
+                onClick={onAdd}
+                disabled={disabled}
+                title="Add to dashboard"
+                style={{
+                  padding: '3px 10px', fontSize: 10, fontWeight: 600, borderRadius: 5,
+                  background: 'transparent', color: `${accent}dd`,
+                  border: `1px solid ${accent}33`,
+                  cursor: disabled ? 'not-allowed' : 'pointer',
+                  opacity: disabled ? 0.55 : 1,
+                }}
+              >+ Add</button>
+            )}
+            <button
+              onClick={item.installed ? onRemove : onInstall}
+              disabled={disabled}
+              style={{
+                padding: '3px 10px', fontSize: 10, fontWeight: 600, borderRadius: 5,
+                background: item.installed ? 'rgba(255,255,255,0.04)' : `${accent}22`,
+                color: item.installed ? 'rgba(255,255,255,0.65)' : accent,
+                border: item.installed ? '1px solid rgba(255,255,255,0.12)' : `1px solid ${accent}44`,
+                cursor: disabled ? 'not-allowed' : 'pointer',
+                opacity: disabled ? 0.55 : 1,
+              }}
+            >{busy ? '…' : item.installed ? 'Remove' : 'Install'}</button>
+          </>
         )}
-        <button
-          onClick={item.installed ? onRemove : onInstall}
-          disabled={disabled}
-          style={{
-            padding: '3px 10px', fontSize: 10, fontWeight: 600, borderRadius: 5,
-            background: item.installed ? 'rgba(255,255,255,0.04)' : `${accent}22`,
-            color: item.installed ? 'rgba(255,255,255,0.65)' : accent,
-            border: item.installed ? '1px solid rgba(255,255,255,0.12)' : `1px solid ${accent}44`,
-            cursor: disabled ? 'not-allowed' : 'pointer',
-            opacity: disabled ? 0.55 : 1,
-          }}
-        >{busy ? '…' : item.installed ? 'Remove' : 'Install'}</button>
       </div>
     </div>
   );

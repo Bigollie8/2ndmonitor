@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  mergeCatalog, catalogKey, planRemoval, restoreDefaults, tileInstanceType,
+  mergeCatalog, catalogKey, planRemoval, restoreDefaults, tileInstanceType, secretSetupCandidates,
   type CatalogItem, type IndexBundle,
 } from '../state/catalog';
-import { withRemoval, withoutRemoval } from '../state/removedContent';
+import { withRemoval, withoutRemoval, restoreItem } from '../state/removedContent';
 import { TILE_META } from '../state/tileMeta';
 import { BUILTIN_VIZ_STYLES } from './viz-styles';
 import type { InstalledTileFolder } from '../tiles/tileRegistry';
@@ -14,6 +14,7 @@ import { searchItems } from './catalogSearch';
 import { CatalogCard } from './CatalogCard';
 import { parsePermission } from '../sandbox/manifest';
 import { cfgUrl, cfgPubkey } from '../state/marketplaceConfig';
+import { getSecret, bundleSecretKey } from '../state/secrets';
 
 const MONO = '"JetBrains Mono", ui-monospace, monospace';
 
@@ -173,23 +174,6 @@ export function ContentLibrary({
     setRetryingIndex(false);
   }, [fetchIndex]);
 
-  const items = useMemo<CatalogItem[]>(() => mergeCatalog({
-    tileMeta: TILE_META,
-    vizStyles: BUILTIN_VIZ_STYLES,
-    installedTiles,
-    installedViz,
-    index,
-    removed: catalogRemoved,
-    // TileCredentialPanel.tsx holds the real "does this bundle still need a
-    // secret/config value" logic, but it's shaped around one already-placed
-    // instance (per-instance config, live secret-store reads) — there's no
-    // clean per-catalog-item answer to reuse without restructuring that
-    // component. Left as an empty list rather than half-migrating it — the
-    // "needs key" tag is simply unreachable until a future task does that
-    // restructuring.
-    needsSetup: [],
-  }), [installedTiles, installedViz, index, catalogRemoved]);
-
   const indexByKey = useMemo(() => {
     const m = new Map<string, IndexBundle>();
     for (const b of index) {
@@ -198,6 +182,45 @@ export function ContentLibrary({
     }
     return m;
   }, [index]);
+
+  // Real "needs setup" answer, scoped to declared SECRETS only. Config is
+  // per-placed-instance (TileCredentialPanel.tsx), so there is no single
+  // catalog-level answer for it without making this component instance-aware
+  // — out of scope here (see the doc comment on MergeCatalogArgs.needsSetup
+  // in state/catalog.ts). Secrets, unlike config, are namespaced per BUNDLE
+  // (bundleSecretKey(bundleId, key) — no instanceId), so they DO have a clean
+  // catalog-level answer: an installed bundle "needs setup" when the index
+  // says it declares a `secret:` permission and that secret has never been
+  // stored.
+  //
+  // Deliberately keyed on installedTiles/installedViz/indexByKey — NOT on
+  // `items` — even though `items` carries `permissions` too: `items` is
+  // itself built from this hook's result (see the `items` memo below), so
+  // depending on `items` here would make every run of this effect produce a
+  // new `items` array next render, re-triggering the effect forever.
+  const [needsSetupKeys, setNeedsSetupKeys] = useState<string[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const candidates = secretSetupCandidates(installedTiles, installedViz, indexByKey);
+      const results = await Promise.all(candidates.map(async (c) => {
+        const values = await Promise.all(c.secretKeys.map((k) => getSecret(bundleSecretKey(c.bundleId, k))));
+        return values.some((v) => v == null) ? c.key : null;
+      }));
+      if (!cancelled) setNeedsSetupKeys(results.filter((k): k is string => k != null));
+    })();
+    return () => { cancelled = true; };
+  }, [installedTiles, installedViz, indexByKey]);
+
+  const items = useMemo<CatalogItem[]>(() => mergeCatalog({
+    tileMeta: TILE_META,
+    vizStyles: BUILTIN_VIZ_STYLES,
+    installedTiles,
+    installedViz,
+    index,
+    removed: catalogRemoved,
+    needsSetup: needsSetupKeys,
+  }), [installedTiles, installedViz, index, catalogRemoved, needsSetupKeys]);
 
   const rail = useMemo(() => buildRail(items), [items]);
   // rail[0] is always the 'all' row (buildRail always pushes it) — a safe
@@ -293,6 +316,31 @@ export function ContentLibrary({
     if (type != null) onAddTileInstance(type);
   };
 
+  // Critical 2's per-item recovery path — the "Removed" rail row's Restore
+  // button. `restoreItem` (state/removedContent.ts) is the pure decision:
+  // drop just this key from the tombstone list, then re-sync seeds against
+  // that narrowed list so a bundle whose folder was actually deleted comes
+  // back, without touching any other tombstone. Works offline for every
+  // seeded item — no `indexByKey` lookup, unlike `handleInstall` — which is
+  // also what closes Important 5 (offline single-item reinstall).
+  const handleRestore = async (item: CatalogItem) => {
+    setBusy(item.key, true);
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      await restoreItem(item.key, {
+        removed: catalogRemoved,
+        setRemoved: setCatalogRemoved,
+        seedSync: (removed) => invoke<string[]>('seed_sync', { removed }),
+      });
+      await refreshInstalled();
+      flash(`Restored ${item.name}`);
+    } catch (e) {
+      flash(String(e));
+    } finally {
+      setBusy(item.key, false);
+    }
+  };
+
   // The empty state's recovery path. The actual clear-before-sync ordering
   // decision lives in the pure, tested `restoreDefaults` (state/catalog.ts)
   // — this is just the real closures it's injected with, plus the busy flag
@@ -356,7 +404,11 @@ export function ContentLibrary({
           <div style={{ width: 8, height: 8, background: accent, borderRadius: 2 }} />
           <span style={{ fontSize: 13, fontWeight: 600, color: '#fff' }}>Content Library</span>
           <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.45)', fontFamily: MONO }}>
-            · {items.length} total
+            {/* rail[0] is always the 'all' row, whose count excludes removed
+                items (see catalogRail.ts) — items.length would double-count
+                by including every tombstoned item mergeCatalog now keeps
+                around for the "Removed" row. */}
+            · {rail[0]?.count ?? items.length} total
           </span>
           <div style={{ flex: 1 }} />
           <div style={{ position: 'relative', width: 190 }}>
@@ -464,10 +516,42 @@ export function ContentLibrary({
               </div>
             )}
 
+            {/* Bulk escape hatch, moved out of the (practically unreachable)
+                empty-catalog branch below and into the "Removed" row itself —
+                Critical 2's fix. Each card here already has its own Restore
+                action; this is for "just put everything back" instead of one
+                at a time. */}
+            {active.id === 'removed' && (
+              <div style={{
+                display: 'flex', alignItems: 'center', gap: 10,
+                padding: '8px 12px', marginBottom: 12, borderRadius: 8,
+                background: 'rgba(255,255,255,0.045)', border: '1px solid rgba(255,255,255,0.09)',
+              }}>
+                <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.6)', flex: 1 }}>
+                  {catalogRemoved.length} removed from the catalog — restore one at a time below, or bring everything back at once.
+                </span>
+                <button
+                  onClick={() => void handleRestoreDefaults()}
+                  disabled={restoring}
+                  style={{
+                    padding: '3px 10px', fontSize: 10.5, fontWeight: 600, borderRadius: 5,
+                    background: 'transparent', color: 'rgba(255,255,255,0.7)',
+                    border: '1px solid rgba(255,255,255,0.15)',
+                    cursor: restoring ? 'not-allowed' : 'pointer',
+                    opacity: restoring ? 0.55 : 1,
+                  }}
+                >{restoring ? 'Restoring…' : 'Restore all defaults'}</button>
+              </div>
+            )}
+
             {items.length === 0 ? (
-              // Nothing in the catalog at all — every removal list, both
-              // backings. Distinct from "search found nothing": there is no
-              // slice to widen into, only defaults to restore.
+              // Defensive fallback, not a reachable state in practice since
+              // Critical 2's fix: mergeCatalog now keeps every removed item
+              // (flagged, see catalog.ts pass 4) rather than dropping most of
+              // them, so `items` only shrinks to nothing if TILE_META and
+              // BUILTIN_VIZ_STYLES were both empty. Left in place rather than
+              // deleted — a still-correct answer for a case that shouldn't
+              // occur is cheaper than a component that assumes it can't.
               <div style={{
                 display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 10,
                 padding: '28px 4px', maxWidth: 360,
@@ -545,6 +629,7 @@ export function ContentLibrary({
                       onInstall={() => handleInstall(item)}
                       onRemove={() => void handleRemove(item)}
                       onAdd={item.kind === 'tile' && item.installed ? () => handleAdd(item) : undefined}
+                      onRestore={() => void handleRestore(item)}
                     />
                   ))}
                 </div>

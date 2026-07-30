@@ -343,7 +343,7 @@ function migrateTweaks(loaded: Record<string, unknown>): Record<string, unknown>
 }
 
 export default function App() {
-  const [t, setTweak, replaceTweaks] = useTweaks<TweakState>(TWEAK_DEFAULTS, { migrate: migrateTweaks });
+  const [t, setTweak, replaceTweaks, tweaksHydrated] = useTweaks<TweakState>(TWEAK_DEFAULTS, { migrate: migrateTweaks });
   useEffect(() => {
     if (t.profiles.length > 0 && t.activeProfileId) return;
     const seeded: Profile[] = [
@@ -372,7 +372,7 @@ export default function App() {
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [showGallery, setShowGallery] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
-  const [showTileLibrary, setShowTileLibrary] = useState(false);
+  const [showContentLibrary, setShowContentLibrary] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [selectedInstanceId, setSelectedInstanceId] = useState<string>('');
   // Transient "theme synced" toast: holds the track title being announced, or
@@ -432,6 +432,38 @@ export default function App() {
       } catch { /* browser dev — no tauri */ }
     })();
   }, [t.closeToTray]);
+
+  // Boot seeding (Critical 1 of the whole-branch review — see spec §5).
+  // `seed_sync` installs every seed bundle shipped in resources that isn't
+  // already installed and isn't tombstoned, so the base catalog is actually
+  // present on a fresh/offline install instead of showing 15 "Install"
+  // buttons for content the spec calls pre-installed. It runs exactly once
+  // per process, guarded by `ranRef`, and only after `tweaksHydrated`: the
+  // hook starts from TWEAK_DEFAULTS (catalogRemoved: []) and hydrates from
+  // disk asynchronously, so firing before hydration would hand seed_sync an
+  // empty removal list and resurrect content the user deliberately removed —
+  // the exact bug the tombstone list exists to prevent.
+  //
+  // Never blocks the window (fire-and-forget inside an effect, after first
+  // paint) and never throws (caught and logged) — a seed failure must not
+  // stop the app from booting. The catalog and V-cycle pick up whatever
+  // seed_sync installs on their own: `useTileCatalog`/`useVizStyles` already
+  // listen for the Rust-side `tiles:changed`/`visualizers:changed` watcher
+  // events (tiles.rs/visualizers.rs poll every 2s), which fire the moment
+  // seed_sync writes a folder — no extra refresh call needed here.
+  const seedSyncRanRef = useRef(false);
+  useEffect(() => {
+    if (!tweaksHydrated || seedSyncRanRef.current) return;
+    seedSyncRanRef.current = true;
+    void (async () => {
+      try {
+        const { invoke } = await import('@tauri-apps/api/core');
+        await invoke('seed_sync', { removed: t.catalogRemoved });
+      } catch (err) {
+        console.warn('seed_sync failed at startup:', err);
+      }
+    })();
+  }, [tweaksHydrated, t.catalogRemoved]);
 
   // Feed perf-mode + viz-mode into the debug context so spike snapshots include
   // them; cheap unconditional call, the module ignores when not enabled.
@@ -498,7 +530,7 @@ export default function App() {
       }
       else if (e.key === 'Escape') {
         if (showShortcuts) setShowShortcuts(false);
-        else if (showTileLibrary) setShowTileLibrary(false);
+        else if (showContentLibrary) setShowContentLibrary(false);
         else if (showSettings) setShowSettings(false);
         else if (showGallery) setShowGallery(false);
         else if (showSwitcher) setShowSwitcher(false);
@@ -511,7 +543,7 @@ export default function App() {
         if (showShortcuts) {
           e.preventDefault();
           setShowShortcuts(false);
-        } else if (!showTileLibrary && !showSettings && !showGallery && !showSwitcher && !showOnboarding) {
+        } else if (!showContentLibrary && !showSettings && !showGallery && !showSwitcher && !showOnboarding) {
           e.preventDefault();
           setShowShortcuts(true);
         }
@@ -524,13 +556,17 @@ export default function App() {
         // cycling a no-op until the catalog is known rather than guessing.
         if (!vizStylesLoaded) return;
         const ids = vizStyles.map((s) => s.id);
+        // Every style removed: (i+1) % 0 is NaN, and the old '??' bars'
+        // fallback could reactivate a style the user tombstoned on purpose.
+        // Nothing to cycle to, so leave vizMode exactly where it is.
+        if (ids.length === 0) return;
         const i = ids.indexOf(t.vizMode);
-        setTweak('vizMode', ids[(i + 1) % ids.length] ?? 'bars');
+        setTweak('vizMode', ids[(i + 1) % ids.length] ?? ids[0] ?? t.vizMode);
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [showSwitcher, editMode, showOnboarding, showGallery, showSettings, showTileLibrary, showShortcuts, t.vizMode, t.profiles, setTweak, vizStyles, vizStylesLoaded]);
+  }, [showSwitcher, editMode, showOnboarding, showGallery, showSettings, showContentLibrary, showShortcuts, t.vizMode, t.profiles, setTweak, vizStyles, vizStylesLoaded]);
 
   const orientation = useOrientation();
   const canvas = useCanvas();
@@ -656,7 +692,7 @@ export default function App() {
             onToggleVideo={() => setTweak('videoEnabled', !t.videoEnabled)}
             onNavigate={(url) => setTweak('videoCurrentUrl', url)}
             onExit={() => setTweak('videoEnabled', false)}
-            overlaysOpen={showGallery || editMode || showTileLibrary}
+            overlaysOpen={showGallery || editMode || showContentLibrary}
             paused={(t.videoEnabled && t.videoBookmarks.length > 0) || showGallery || (t.perfMode !== 'uncapped' && livePlayback?.playing !== true)}
             onConfigure={() => setShowGallery(true)}
             audioDebug={t.audioDebug}
@@ -853,7 +889,7 @@ export default function App() {
               bundleId={bundleIdOf(instance.type) ?? instance.type}
               density={t.density}
               accent={accent}
-              onOpenLibrary={() => setShowTileLibrary(true)}
+              onOpenLibrary={() => setShowContentLibrary(true)}
             />
           );
         }
@@ -924,7 +960,7 @@ export default function App() {
             onRemove={(instanceId) => updateActiveOrientation({
               tiles: removeInstance(activeOrientation.tiles, instanceId),
             })}
-            onOpenLibrary={() => setShowTileLibrary(true)}
+            onOpenLibrary={() => setShowContentLibrary(true)}
             tiles={activeOrientation.tiles}
             setTiles={(next) => updateActiveOrientation({ tiles: next })}
             selectedInstanceId={selectedInstanceId}
@@ -992,7 +1028,7 @@ export default function App() {
             />
           </Suspense>
         )}
-        {showTileLibrary && (
+        {showContentLibrary && (
           <ContentLibrary
             accent={accent}
             catalogRemoved={t.catalogRemoved}
@@ -1004,7 +1040,7 @@ export default function App() {
             })))}
             onAddTileInstance={addTileInstance}
             onVisualizerRemoved={onVisualizerRemoved}
-            onClose={() => setShowTileLibrary(false)}
+            onClose={() => setShowContentLibrary(false)}
           />
         )}
       </div>
@@ -1020,7 +1056,7 @@ export default function App() {
           accent2={accent2}
           accentLinked={accentLinked}
           trackTitle={track.title}
-          onOpenTileLibrary={() => { setShowSettings(false); setShowTileLibrary(true); }}
+          onOpenContentLibrary={() => { setShowSettings(false); setShowContentLibrary(true); }}
           onReplayOnboarding={() => { setShowSettings(false); setShowOnboarding(true); }}
           onResetLayout={resetLayout}
           onExportSettings={async () => {

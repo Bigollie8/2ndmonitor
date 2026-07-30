@@ -100,7 +100,7 @@ interface PaneDef {
 
 export function SettingsWindow({
   values: v, set, accent, accent2, accentLinked, trackTitle,
-  onOpenTileLibrary, onReplayOnboarding, onResetLayout, onExportSettings, onImportSettings, onClose,
+  onOpenContentLibrary, onReplayOnboarding, onResetLayout, onExportSettings, onImportSettings, onClose,
 }: {
   values: SettingsValues;
   set: SettingsSetter;
@@ -109,7 +109,7 @@ export function SettingsWindow({
   accentLinked: boolean;
   trackTitle: string;
   /** Closes Settings and opens the content library (App owns both). */
-  onOpenTileLibrary?: () => void;
+  onOpenContentLibrary?: () => void;
   onReplayOnboarding: () => void;
   onResetLayout: () => void;
   onExportSettings?: () => void;
@@ -238,9 +238,9 @@ export function SettingsWindow({
       id: 'tiles', icon: '⊞', title: 'Tiles',
       rows: [
         {
-          id: 'tiles-library', label: 'Content library',
+          id: 'content-library', label: 'Content library',
           hint: 'Add and remove tiles and visualizers for the active profile from one place — search, categories, and explicit per-item controls.',
-          control: <SettingsButton label="Open content library →" onClick={() => onOpenTileLibrary?.()} accent={accent} />,
+          control: <SettingsButton label="Open content library →" onClick={() => onOpenContentLibrary?.()} accent={accent} />,
         },
       ],
     },

@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mergeCatalog, catalogKey, planRemoval, restoreDefaults, type MergeCatalogArgs } from './catalog';
+import {
+  mergeCatalog, catalogKey, planRemoval, restoreDefaults, secretSetupCandidates,
+  type MergeCatalogArgs, type IndexBundle,
+} from './catalog';
 import { TILE_META } from './tileMeta';
 import { BUILTIN_VIZ_STYLES } from '../components/viz-styles';
 import type { InstalledTileFolder } from '../tiles/tileRegistry';
@@ -86,10 +89,27 @@ test('mergeCatalog: a malformed available version never flags an update (fails c
   assert.equal(out.find((i) => i.key === 'visualizer:aurora')?.updateAvailable, false);
 });
 
-test('mergeCatalog: a removed key is dropped entirely', () => {
+test('mergeCatalog: a removed key stays in the output, flagged removed — not dropped', () => {
+  // Critical 2 (whole-branch review): dropping a removed item entirely left
+  // it with no name/category to render in a "Removed" recovery view — the
+  // only survivors were the ~15 published bundles (see the next test). Every
+  // OTHER removed item (most first-party tiles, every not-yet-migrated
+  // built-in visualizer style) simply vanished with no way back.
   const out = mergeCatalog(base({ removed: ['tile:mixer', 'visualizer:bars'] }));
-  assert.equal(out.some((i) => i.key === 'tile:mixer'), false);
-  assert.equal(out.some((i) => i.key === 'visualizer:bars'), false);
+  const mixer = out.find((i) => i.key === 'tile:mixer');
+  const bars = out.find((i) => i.key === 'visualizer:bars');
+  assert.ok(mixer, 'stays in the output so the Removed rail row has a name to show');
+  assert.ok(bars);
+  assert.equal(mixer.removed, true);
+  assert.equal(bars.removed, true);
+  assert.equal(mixer.installed, false);
+  assert.equal(mixer.installedVersion, null);
+  assert.equal(mixer.updateAvailable, false);
+});
+
+test('mergeCatalog: a non-removed item is flagged removed: false', () => {
+  const out = mergeCatalog(base());
+  assert.equal(out.find((i) => i.key === 'tile:mixer')?.removed, false);
 });
 
 test('mergeCatalog: a removed key still listed in the index is available again', () => {
@@ -97,6 +117,7 @@ test('mergeCatalog: a removed key still listed in the index is available again',
   const a = out.find((i) => i.key === 'visualizer:aurora');
   assert.ok(a, 'removed content stays browsable so it can be reinstalled');
   assert.equal(a.installed, false);
+  assert.equal(a.removed, true);
 });
 
 test('mergeCatalog: a migrated tile collapses to one item, bundle wins', () => {
@@ -233,4 +254,55 @@ test('restoreDefaults: a throwing seedSync still leaves clearRemoved having run,
     'the error must propagate so the caller can surface it',
   );
   assert.equal(cleared, true, 'clearRemoved already ran and is not rolled back on a sync failure');
+});
+
+// secretSetupCandidates — the pure half of Important 4's fix (ContentLibrary's
+// needsSetup effect). Scoped to secrets only; see the doc comment in catalog.ts.
+
+const indexMap = (bundles: IndexBundle[]): Map<string, IndexBundle> => {
+  const m = new Map<string, IndexBundle>();
+  for (const b of bundles) m.set(catalogKey(b.kind === 'preset' ? 'tile' : b.kind, b.id), b);
+  return m;
+};
+
+test('secretSetupCandidates: an installed bundle declaring a secret permission is a candidate', () => {
+  const out = secretSetupCandidates(
+    [tileFolder({ id: 'github-prs' })], [],
+    indexMap([idx({ id: 'github-prs', kind: 'tile', permissions: ['secret:github_pat'] })]),
+  );
+  assert.equal(out.length, 1);
+  assert.equal(out[0]?.key, 'tile:github-prs');
+  assert.equal(out[0]?.bundleId, 'github-prs');
+  assert.deepEqual(out[0]?.secretKeys, ['github_pat']);
+});
+
+test('secretSetupCandidates: net/tauri permissions are not secrets and produce no candidate', () => {
+  const out = secretSetupCandidates(
+    [tileFolder({ id: 'weather-radar' })], [],
+    indexMap([idx({ id: 'weather-radar', kind: 'tile', permissions: ['net:api.example.com'] })]),
+  );
+  assert.deepEqual(out, []);
+});
+
+test('secretSetupCandidates: not in the index (offline or unlisted) is not a candidate', () => {
+  const out = secretSetupCandidates([tileFolder({ id: 'github-prs' })], [], indexMap([]));
+  assert.deepEqual(out, [], 'no permissions data available without an index entry');
+});
+
+test('secretSetupCandidates: a local draft folder is never a candidate', () => {
+  const out = secretSetupCandidates(
+    [], [vizFolder({ id: 'draft', source: 'local' })],
+    indexMap([idx({ id: 'draft', kind: 'visualizer', permissions: ['secret:api_key'] })]),
+  );
+  assert.deepEqual(out, []);
+});
+
+test('secretSetupCandidates: a visualizer folder resolves against the visualizer index entry', () => {
+  const out = secretSetupCandidates(
+    [], [vizFolder({ id: 'aurora' })],
+    indexMap([idx({ id: 'aurora', kind: 'visualizer', permissions: ['secret:weather_key'] })]),
+  );
+  assert.equal(out.length, 1);
+  assert.equal(out[0]?.key, 'visualizer:aurora');
+  assert.deepEqual(out[0]?.secretKeys, ['weather_key']);
 });

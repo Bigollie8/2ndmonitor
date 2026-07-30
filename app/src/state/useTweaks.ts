@@ -43,7 +43,7 @@ async function tauriSave(value: unknown): Promise<void> {
 export function useTweaks<T extends Record<string, unknown>>(
   defaults: T,
   opts?: { migrate?: (loaded: Record<string, unknown>) => Record<string, unknown> },
-): [T, <K extends keyof T>(key: K, value: T[K]) => void, (raw: Record<string, unknown>) => void] {
+): [T, <K extends keyof T>(key: K, value: T[K]) => void, (raw: Record<string, unknown>) => void, boolean] {
   // Synchronous initial state from localStorage (browser dev + first-paint hint).
   const [values, setValues] = useState<T>(() => {
     try {
@@ -56,6 +56,14 @@ export function useTweaks<T extends Record<string, unknown>>(
     } catch { /* fall through */ }
     return defaults;
   });
+
+  // True once the async Tauri hydrate below has settled (loaded, migrated-from-
+  // localStorage, or failed) — whichever path ran, `values` reflects everything
+  // this hook is ever going to load from disk. Consumers that must not act on
+  // the pre-hydrate default (e.g. a boot-time seed sync reading `catalogRemoved`,
+  // which starts `[]` in TWEAK_DEFAULTS) gate on this instead of guessing with a
+  // timeout — see App.tsx's seed_sync effect.
+  const [hydrated, setHydrated] = useState(false);
 
   // Async hydrate from Tauri file (single-shot on mount).
   useEffect(() => {
@@ -80,6 +88,8 @@ export function useTweaks<T extends Record<string, unknown>>(
         }
       } catch (err) {
         console.warn('tweaks_load failed, using localStorage:', err);
+      } finally {
+        if (!cancelled) setHydrated(true);
       }
     })();
     return () => { cancelled = true; };
@@ -122,5 +132,5 @@ export function useTweaks<T extends Record<string, unknown>>(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  return [values, setTweak, replaceAll];
+  return [values, setTweak, replaceAll, hydrated];
 }

@@ -18,6 +18,7 @@ import type { InstalledTileFolder } from '../tiles/tileRegistry';
 import { bundleTileId } from '../tiles/tileRegistry';
 import type { InstalledVizFolder } from './contentRegistry';
 import { isFirstParty } from './firstParty';
+import { parsePermission } from '../sandbox/manifest';
 
 export type CatalogKind = 'tile' | 'visualizer';
 export type CatalogSource = 'first-party' | 'bundle';
@@ -54,6 +55,12 @@ export interface CatalogItem {
   needsSetup: boolean;
   downloads: number | null;
   brokenReason: string | null;
+  /** True when `key` is in the caller's removal list. A removed item still
+   *  appears in `mergeCatalog`'s output — flagged, not dropped — so the
+   *  catalog UI can render a "Removed" rail row with a per-item Restore
+   *  action (see catalogRail.ts and ContentLibrary.tsx). Every OTHER rail
+   *  row and the default grid must exclude items with `removed: true`. */
+  removed: boolean;
 }
 
 export interface MergeCatalogArgs {
@@ -65,7 +72,13 @@ export interface MergeCatalogArgs {
   index: IndexBundle[];
   /** Keys the user removed. Persisted; see state/removedContent.ts. */
   removed: string[];
-  /** Keys whose declared secrets/config are still unset. */
+  /** Keys of installed bundles that declare at least one `secret:` permission
+   *  and have at least one of those secrets still unset (see
+   *  ContentLibrary.tsx's needs-setup effect and state/secrets.ts). Scoped to
+   *  secrets only, not the full "secrets/config" the original design sketch
+   *  named: a declared `config` value is per placed instance (see
+   *  TileCredentialPanel.tsx), so there is no single catalog-level answer for
+   *  it without restructuring that component to be instance-aware here too. */
   needsSetup: string[];
 }
 
@@ -102,6 +115,7 @@ export function mergeCatalog(args: MergeCatalogArgs): CatalogItem[] {
       source: isFirstParty('tile', id) ? 'first-party' : 'bundle',
       installed: true, installedVersion: null, availableVersion: null, updateAvailable: false,
       permissions: [], needsSetup: needsSetup.has(key), downloads: null, brokenReason: null,
+      removed: false,
     });
   }
   for (const s of args.vizStyles) {
@@ -112,6 +126,7 @@ export function mergeCatalog(args: MergeCatalogArgs): CatalogItem[] {
       source: isFirstParty('visualizer', s.id) ? 'first-party' : 'bundle',
       installed: true, installedVersion: null, availableVersion: null, updateAvailable: false,
       permissions: [], needsSetup: needsSetup.has(key), downloads: null, brokenReason: null,
+      removed: false,
     });
   }
 
@@ -141,6 +156,7 @@ export function mergeCatalog(args: MergeCatalogArgs): CatalogItem[] {
       needsSetup: needsSetup.has(key),
       downloads: prev?.downloads ?? null,
       brokenReason: f.manifest_error,
+      removed: false,
     });
   };
   for (const f of args.installedTiles) installedFolder('tile', f, 'integrations');
@@ -172,17 +188,28 @@ export function mergeCatalog(args: MergeCatalogArgs): CatalogItem[] {
       needsSetup: needsSetup.has(key),
       downloads: b.downloads,
       brokenReason: prev?.brokenReason ?? null,
+      removed: false,
     });
   }
 
-  // 4. Removal. Applied last so an item the user removed is dropped when it is
-  //    only local, but stays browsable (uninstalled) when the index offers it.
+  // 4. Removal. Applied last. A removed item is FLAGGED, not dropped — every
+  //    id this function ever learns about (every compile-time table entry, at
+  //    minimum) stays in the output so the catalog UI has a name and category
+  //    to render a "Removed" rail row with a per-item Restore action (see
+  //    catalogRail.ts, CatalogCard.tsx, ContentLibrary.tsx). Previously a
+  //    removed item was kept only `if (item.availableVersion != null)` — i.e.
+  //    only the ~15 published bundles — and every other removed item (most
+  //    first-party tiles, every not-yet-migrated built-in visualizer style)
+  //    vanished from the catalog with no way back short of "Restore defaults".
+  //    Callers that want the ordinary browsable set (every rail row except
+  //    "Removed") must filter on `!item.removed` themselves — see
+  //    catalogRail.ts's `visible` helper.
   const out: CatalogItem[] = [];
   for (const item of items.values()) {
     if (!removed.has(item.key)) { out.push(item); continue; }
-    if (item.availableVersion != null) {
-      out.push({ ...item, installed: false, installedVersion: null, updateAvailable: false });
-    }
+    out.push({
+      ...item, installed: false, installedVersion: null, updateAvailable: false, removed: true,
+    });
   }
   return out.sort((a, b) => a.name.localeCompare(b.name));
 }
@@ -278,4 +305,60 @@ export async function restoreDefaults(deps: {
 }): Promise<string[]> {
   deps.clearRemoved();
   return deps.seedSync([]);
+}
+
+export interface SecretSetupCandidate {
+  /** The catalog key this candidate resolves to if it needs setup. */
+  key: string;
+  /** Bundle id — secrets are namespaced per bundle (`bundleSecretKey`), not
+   *  per placed instance, so this alone is enough to check the store. */
+  bundleId: string;
+  /** Declared secret keys (bare, not namespaced) this bundle needs. */
+  secretKeys: string[];
+}
+
+/** Installed bundles that declare at least one `secret:` permission in the
+ *  signed index — the pure half of ContentLibrary's `needsSetup` wiring
+ *  (Important 4 of the whole-branch review). The impure half (checking each
+ *  declared secret against the store via `getSecret`) has to stay in the
+ *  component, but which bundles are even candidates, and which of their
+ *  permissions name a secret, does not — extracted so that part is covered
+ *  by a fast, deterministic test instead of only by an async effect that
+ *  needs a live Tauri secret store to exercise at all.
+ *
+ *  Scoped to secrets, not the full "secrets/config" the original design
+ *  sketch named: `config` is per PLACED INSTANCE (TileCredentialPanel.tsx —
+ *  `tile.config.<bundleId>.<instanceId>`), so a catalog item (which has no
+ *  instance) has no single correct "is config set" answer without making
+ *  this component instance-aware, which is out of scope for this fix. A
+ *  secret, unlike config, is namespaced per bundle only
+ *  (`bundleSecretKey(bundleId, key)`, no instanceId) — so it DOES have one
+ *  correct catalog-level answer, which is what this computes.
+ *
+ *  Only considers items the signed index describes: an installed folder
+ *  alone (mergeCatalog's pass 2) carries no `permissions` of its own — only
+ *  the index does (pass 3) — so a bundle unreachable in the index right now
+ *  (offline, or simply not currently listed) cannot be flagged. This mirrors
+ *  every other index-sourced fact already on `CatalogItem` (`downloads`, the
+ *  "new" tag, the permissions shown in the install-confirm dialog), not a
+ *  new limitation this function introduces. */
+export function secretSetupCandidates(
+  installedTiles: InstalledTileFolder[],
+  installedViz: InstalledVizFolder[],
+  indexByKey: Map<string, IndexBundle>,
+): SecretSetupCandidate[] {
+  const out: SecretSetupCandidate[] = [];
+  const add = (kind: CatalogKind, id: string) => {
+    const bundle = indexByKey.get(catalogKey(kind, id));
+    if (!bundle || bundle.permissions.length === 0) return;
+    const secretKeys: string[] = [];
+    for (const p of bundle.permissions) {
+      const parsed = parsePermission(p);
+      if (parsed.ok && parsed.perm.kind === 'secret') secretKeys.push(parsed.perm.key);
+    }
+    if (secretKeys.length > 0) out.push({ key: catalogKey(kind, id), bundleId: id, secretKeys });
+  };
+  for (const f of installedTiles) if (f.source === 'marketplace') add('tile', f.id);
+  for (const f of installedViz) if (f.source === 'marketplace') add('visualizer', f.id);
+  return out;
 }

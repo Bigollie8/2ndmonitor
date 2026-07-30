@@ -36,7 +36,36 @@ export function withRemoval(removed: string[], key: string): string[] {
 }
 
 /** Drops a key. Called on install, so reinstalling clears the tombstone and
- *  the next seed sync stops skipping it. */
+ *  the next seed sync stops skipping it. Idempotent in the same sense
+ *  `withRemoval` is — dropping a key that was never there is a no-op that
+ *  returns the SAME array reference, not a new one. `Array.prototype.filter`
+ *  always allocates, so without this check every install (even a re-install
+ *  of something that was never removed) rewrote `catalog.removed` in the
+ *  tweaks store for no reason. */
 export function withoutRemoval(removed: string[], key: string): string[] {
-  return removed.filter((k) => k !== key);
+  return removed.includes(key) ? removed.filter((k) => k !== key) : removed;
+}
+
+/** Pure decision for a per-item Restore action (ContentLibrary.tsx's
+ *  handleRestore) — the catalog-empty-state escape hatch's `restoreDefaults`
+ *  (state/catalog.ts) scoped to one key instead of all of them. Drops just
+ *  `key` from the removal list, then re-runs `seedSync` with that SAME
+ *  narrowed list — not `[]` — so every other tombstone stays honored and
+ *  `seed_sync` only reinstalls the one bundle the user asked to bring back.
+ *
+ *  Works for both backings without the caller needing to know which one it
+ *  is: for a first-party item (no folder ever), dropping the tombstone alone
+ *  is enough — `mergeCatalog`'s compile-time-table pass already re-includes
+ *  it, and `seedSync` is a harmless no-op (no seed zip matches its id). For a
+ *  bundle whose folder was actually deleted on removal, `seedSync` reinstalls
+ *  it from the local seed copy — no network required, so this is also what
+ *  makes "remove Bars on a plane and want it back" work offline (spec §5). */
+export async function restoreItem(key: string, deps: {
+  removed: string[];
+  setRemoved: (next: string[]) => void;
+  seedSync: (removed: string[]) => Promise<string[]>;
+}): Promise<string[]> {
+  const next = withoutRemoval(deps.removed, key);
+  deps.setRemoved(next);
+  return deps.seedSync(next);
 }

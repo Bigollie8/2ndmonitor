@@ -6,7 +6,8 @@ import type { CatalogItem } from '../state/catalog';
 const item = (o: Partial<CatalogItem> = {}): CatalogItem => ({
   key: 'tile:x', kind: 'tile', id: 'x', name: 'X', description: '', category: 'weather',
   source: 'bundle', installed: false, installedVersion: null, availableVersion: '1.0.0',
-  updateAvailable: false, permissions: [], needsSetup: false, downloads: 0, brokenReason: null, ...o,
+  updateAvailable: false, permissions: [], needsSetup: false, downloads: 0, brokenReason: null,
+  removed: false, ...o,
 });
 
 test('catalogCardTags: broken beats every other condition', () => {
@@ -61,4 +62,12 @@ test('catalogCardTags: clean installed first-party item with no issues shows onl
 test('catalogCardTags: nothing matches → empty', () => {
   const tags = catalogCardTags(item({ installed: true, downloads: 5 }));
   assert.deepEqual(tags, []);
+});
+
+test('catalogCardTags: removed outranks every other condition', () => {
+  const tags = catalogCardTags(item({
+    removed: true, brokenReason: 'x', updateAvailable: true, installed: true,
+    needsSetup: true, source: 'first-party',
+  }));
+  assert.deepEqual(tags.map((t) => t.text), ['removed'], 'removed is the only tag shown');
 });
