@@ -9,6 +9,7 @@ import type { InstalledTileFolder } from '../tiles/tileRegistry';
 import type { InstalledVizFolder } from '../state/contentRegistry';
 import type { TileType } from '../state/layout';
 import { buildRail } from './catalogRail';
+import { searchItems } from './catalogSearch';
 import { CatalogCard } from './CatalogCard';
 import { parsePermission } from '../sandbox/manifest';
 
@@ -40,8 +41,9 @@ function describePermission(p: string): string {
  *  with real install/remove actions for both backings (compile-time
  *  built-ins and marketplace bundles). Same modal-frame visual language as
  *  TileLibrary: dark translucent panel, hairline borders, JetBrains Mono
- *  metadata, accent passed in as a prop. Search and error-state UI (a failed
- *  index fetch fails soft to an empty index today) are Task 10. */
+ *  metadata, accent passed in as a prop. Search (catalogSearch.ts), the
+ *  offline notice, the "search all content" widen affordance and the
+ *  restore-defaults empty state are Task 10. */
 export function ContentLibrary({
   accent, catalogRemoved, setCatalogRemoved, onRemoveTileInstances, onAddTileInstance,
   onVisualizerRemoved, onClose,
@@ -79,9 +81,19 @@ export function ContentLibrary({
   const [installedViz, setInstalledViz] = useState<InstalledVizFolder[]>([]);
   const [index, setIndex] = useState<IndexBundle[]>([]);
   const [activeId, setActiveId] = useState('all');
+  const [query, setQuery] = useState('');
   const [busyKeys, setBusyKeys] = useState<Set<string>>(new Set());
   const [confirming, setConfirming] = useState<{ item: CatalogItem; bundle: IndexBundle } | null>(null);
   const [notice, setNotice] = useState('');
+  // Set when the last index fetch (initial load or Retry) failed. Never a red
+  // error — mergeCatalog already renders a complete catalog from tables plus
+  // installed folders when `index` is `[]` (see state/catalog.ts), so this is
+  // informational, not a failure of the catalog itself. Fixes the real
+  // 2026-07-30 cold-boot incident: a timed-out index fetch showed a red error
+  // banner over an empty grid even though every local item was fine.
+  const [indexUnreachable, setIndexUnreachable] = useState(false);
+  const [retryingIndex, setRetryingIndex] = useState(false);
+  const [restoring, setRestoring] = useState(false);
 
   const setBusy = (key: string, busy: boolean) => {
     setBusyKeys((prev) => {
@@ -120,22 +132,55 @@ export function ContentLibrary({
     if (viz.status === 'fulfilled') setInstalledViz(viz.value);
   }, []);
 
+  // Fetches the index only — never touches installedTiles/installedViz. This
+  // is deliberately the exact thing the offline notice's Retry button reruns:
+  // a marketplace timeout is a network problem, not a "re-scan disk" problem,
+  // and re-scanning disk on every retry would be wasted work plus a flash of
+  // stale counts in the rail. Returns bundles on success, null on any failure
+  // — it does NOT touch state itself, so callers decide when (or whether) to
+  // apply the result. That split matters under React 18 StrictMode: an effect
+  // that gates a *shared* "am I still mounted" ref would see that ref
+  // flipped false by the dev-only extra mount/cleanup/mount pass before the
+  // fetch resolves, and never recover it — the real, lasting mount's fetch
+  // would silently never apply. A plain per-invocation `cancelled` local (see
+  // the mount effect below) doesn't have that failure mode, because each
+  // effect invocation gets its own fresh closure.
+  const fetchIndex = useCallback(async (): Promise<IndexBundle[] | null> => {
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      const idx = await invoke<{ bundles: IndexBundle[] }>('marketplace_fetch_index', {
+        url: cfgUrl(), pubkey: cfgPubkey(),
+      });
+      return idx.bundles ?? [];
+    } catch {
+      return null;
+    }
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
-    const load = async () => {
+    void (async () => {
       await refreshInstalled();
       if (cancelled) return;
-      try {
-        const { invoke } = await import('@tauri-apps/api/core');
-        const idx = await invoke<{ bundles: IndexBundle[] }>('marketplace_fetch_index', {
-          url: cfgUrl(), pubkey: cfgPubkey(),
-        });
-        if (!cancelled) setIndex(idx.bundles ?? []);
-      } catch { /* fail soft — Task 10 adds an inline notice + retry */ }
-    };
-    void load();
+      const bundles = await fetchIndex();
+      if (cancelled) return;
+      if (bundles) { setIndex(bundles); setIndexUnreachable(false); }
+      else setIndexUnreachable(true);
+    })();
     return () => { cancelled = true; };
-  }, [refreshInstalled]);
+  }, [refreshInstalled, fetchIndex]);
+
+  // No mount guard here, unlike the effect above — a modal-closed-mid-fetch
+  // race just discards the result into an unmounted component (a dev-only
+  // warning, not a crash), the same tolerance every other mutation in this
+  // file (install/remove/restore) already has.
+  const handleRetryIndex = useCallback(async () => {
+    setRetryingIndex(true);
+    const bundles = await fetchIndex();
+    if (bundles) { setIndex(bundles); setIndexUnreachable(false); }
+    else setIndexUnreachable(true);
+    setRetryingIndex(false);
+  }, [fetchIndex]);
 
   const items = useMemo<CatalogItem[]>(() => mergeCatalog({
     tileMeta: TILE_META,
@@ -168,6 +213,16 @@ export function ContentLibrary({
   // fallback if the active row's count dropped to zero and it disappeared.
   const active = rail.find((r) => r.id === activeId && !r.heading) ?? rail[0];
   const filtered = useMemo(() => items.filter(active.match), [items, active]);
+  // Search is scoped to the active rail slice on purpose — a result surfacing
+  // from a category the user didn't select would be confusing. The "search
+  // all content" button below (setActiveId('all')) is the explicit, opt-in
+  // way to widen it — query state is untouched by that switch, so the search
+  // carries over.
+  const searched = useMemo(() => searchItems(filtered, query), [filtered, query]);
+  // Only offer to widen when there's an actually wider slice to search —
+  // 'all' already is that slice, so a still-empty result there is a genuine
+  // "no matches", not something a wider search could fix.
+  const canWiden = query.trim() !== '' && searched.length === 0 && active.id !== 'all';
 
   const runInstall = useCallback(async (item: CatalogItem, bundle: IndexBundle) => {
     setConfirming(null);
@@ -241,6 +296,28 @@ export function ContentLibrary({
     if (type != null) onAddTileInstance(type);
   };
 
+  // The empty state's recovery path: clears the removal list, then re-runs
+  // seed_sync so every seed bundle not already installed comes back. Order
+  // matters — seed_sync reads `removed` itself, so it must see it already
+  // cleared. It's passed `[]` directly (not `catalogRemoved`) rather than
+  // relying on the setCatalogRemoved write above having landed by the time
+  // this runs: that's a React state update, not synchronous, so reading the
+  // prop back here could still see the pre-clear list.
+  const handleRestoreDefaults = useCallback(async () => {
+    setCatalogRemoved([]);
+    setRestoring(true);
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      await invoke<string[]>('seed_sync', { removed: [] });
+      await refreshInstalled();
+      flash('Restored defaults');
+    } catch (e) {
+      flash(String(e));
+    } finally {
+      setRestoring(false);
+    }
+  }, [setCatalogRemoved, refreshInstalled, flash]);
+
   // Esc closes the whole modal (capture + stopPropagation so App's cascade
   // doesn't also fire) — same convention as TileLibrary. There is no separate
   // Esc handler for the confirm dialog below: it has no keydown listener of
@@ -286,6 +363,33 @@ export function ContentLibrary({
             · {items.length} total
           </span>
           <div style={{ flex: 1 }} />
+          <div style={{ position: 'relative', width: 190 }}>
+            <input
+              type="text"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search…"
+              aria-label="Search catalog"
+              style={{
+                width: '100%', boxSizing: 'border-box', padding: '5px 24px 5px 9px',
+                fontSize: 11.5, fontFamily: 'inherit',
+                background: 'rgba(255,255,255,0.05)', color: 'rgba(255,255,255,0.85)',
+                border: '1px solid rgba(255,255,255,0.12)', borderRadius: 6,
+              }}
+            />
+            {query && (
+              <button
+                onClick={() => setQuery('')}
+                title="Clear search"
+                style={{
+                  position: 'absolute', right: 4, top: '50%', transform: 'translateY(-50%)',
+                  width: 16, height: 16, padding: 0, fontSize: 11, lineHeight: 1,
+                  background: 'transparent', color: 'rgba(255,255,255,0.45)',
+                  border: 'none', cursor: 'pointer',
+                }}
+              >×</button>
+            )}
+          </div>
           {notice && (
             <span style={{ fontSize: 11, color: accent, fontFamily: MONO }}>{notice}</span>
           )}
@@ -335,28 +439,106 @@ export function ContentLibrary({
             )}
           </div>
 
-          {/* Right pane — card grid, filtered by the active rail row. */}
+          {/* Right pane — card grid, filtered by the active rail row and
+              search. The offline notice sits above the grid, not in place of
+              it: mergeCatalog already renders a full catalog from tables plus
+              installed folders when the index fetch fails, so there is
+              always something real to show here. */}
           <div style={{ flex: 1, padding: 18, overflow: 'auto' }}>
-            <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.45)', marginBottom: 10 }}>
-              {filtered.length} {filtered.length === 1 ? 'item' : 'items'}
-            </div>
-            <div style={{
-              display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(210px, 1fr))',
-              gap: 10, alignContent: 'start',
-            }}>
-              {filtered.map((item) => (
-                <CatalogCard
-                  key={item.key}
-                  item={item}
-                  accent={accent}
-                  busy={busyKeys.has(item.key)}
-                  disabled={busyKeys.size > 0}
-                  onInstall={() => handleInstall(item)}
-                  onRemove={() => void handleRemove(item)}
-                  onAdd={item.kind === 'tile' && item.installed ? () => handleAdd(item) : undefined}
-                />
-              ))}
-            </div>
+            {indexUnreachable && (
+              <div style={{
+                display: 'flex', alignItems: 'center', gap: 10,
+                padding: '8px 12px', marginBottom: 12, borderRadius: 8,
+                background: 'rgba(255,255,255,0.045)', border: '1px solid rgba(255,255,255,0.09)',
+              }}>
+                <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.6)', flex: 1 }}>
+                  marketplace unreachable — showing local content
+                </span>
+                <button
+                  onClick={() => void handleRetryIndex()}
+                  disabled={retryingIndex}
+                  style={{
+                    padding: '3px 10px', fontSize: 10.5, fontWeight: 600, borderRadius: 5,
+                    background: 'transparent', color: 'rgba(255,255,255,0.7)',
+                    border: '1px solid rgba(255,255,255,0.15)',
+                    cursor: retryingIndex ? 'not-allowed' : 'pointer',
+                    opacity: retryingIndex ? 0.55 : 1,
+                  }}
+                >{retryingIndex ? 'Retrying…' : 'Retry'}</button>
+              </div>
+            )}
+
+            {items.length === 0 ? (
+              // Nothing in the catalog at all — every removal list, both
+              // backings. Distinct from "search found nothing": there is no
+              // slice to widen into, only defaults to restore.
+              <div style={{
+                display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 10,
+                padding: '28px 4px', maxWidth: 360,
+              }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: 'rgba(255,255,255,0.85)' }}>
+                  Nothing in the catalog
+                </div>
+                <div style={{ fontSize: 11.5, color: 'rgba(255,255,255,0.5)', lineHeight: 1.5 }}>
+                  Everything has been removed. Restore defaults to bring back the built-in
+                  tiles and visualizers.
+                </div>
+                <button
+                  onClick={() => void handleRestoreDefaults()}
+                  disabled={restoring}
+                  style={{
+                    padding: '6px 14px', fontSize: 11.5, fontWeight: 600, borderRadius: 6,
+                    background: accent, color: '#000', border: 'none',
+                    cursor: restoring ? 'not-allowed' : 'pointer',
+                    opacity: restoring ? 0.6 : 1,
+                  }}
+                >{restoring ? 'Restoring…' : 'Restore defaults'}</button>
+              </div>
+            ) : canWiden ? (
+              // Search hit nothing in the selected rail slice, but there's a
+              // wider slice ('all') to try — offer it explicitly rather than
+              // silently widening, which would surface a result from a
+              // category the user didn't pick.
+              <div style={{
+                display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 10,
+                padding: '28px 4px', maxWidth: 360,
+              }}>
+                <div style={{ fontSize: 11.5, color: 'rgba(255,255,255,0.5)' }}>
+                  No matches for "{query.trim()}" in {active.label}.
+                </div>
+                <button
+                  onClick={() => setActiveId('all')}
+                  style={{
+                    padding: '6px 14px', fontSize: 11.5, fontWeight: 600, borderRadius: 6,
+                    background: 'transparent', color: accent,
+                    border: `1px solid ${accent}55`, cursor: 'pointer',
+                  }}
+                >Search all content</button>
+              </div>
+            ) : (
+              <>
+                <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.45)', marginBottom: 10 }}>
+                  {searched.length} {searched.length === 1 ? 'item' : 'items'}
+                </div>
+                <div style={{
+                  display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(210px, 1fr))',
+                  gap: 10, alignContent: 'start',
+                }}>
+                  {searched.map((item) => (
+                    <CatalogCard
+                      key={item.key}
+                      item={item}
+                      accent={accent}
+                      busy={busyKeys.has(item.key)}
+                      disabled={busyKeys.size > 0 || restoring}
+                      onInstall={() => handleInstall(item)}
+                      onRemove={() => void handleRemove(item)}
+                      onAdd={item.kind === 'tile' && item.installed ? () => handleAdd(item) : undefined}
+                    />
+                  ))}
+                </div>
+              </>
+            )}
           </div>
         </div>
 
