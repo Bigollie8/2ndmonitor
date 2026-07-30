@@ -12,6 +12,7 @@ mod nowplaying;
 mod marketplace;
 mod presets;
 mod secrets;
+mod seed;
 mod tiles;
 mod visualizers;
 mod spotify;
@@ -87,6 +88,7 @@ pub fn run() {
             marketplace::marketplace_install,
             marketplace::marketplace_uninstall,
             marketplace::broker_fetch,
+            seed::seed_sync,
             mixer::mixer_set_master_volume,
             mixer::mixer_set_master_mute,
             mixer::mixer_set_session_volume,

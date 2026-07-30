@@ -43,6 +43,7 @@
     "active": true,
     "targets": ["nsis"],
     "icon": ["icons/icon.ico"],
+    "resources": ["resources/seed/**/*"],
     "windows": {
       "webviewInstallMode": { "type": "downloadBootstrapper" }
     }
