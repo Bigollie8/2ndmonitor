@@ -31,13 +31,25 @@ Real response, fetched live 2026-07-30:
 }}}
 ```
 
-Renders with `rows` (no `select` needed — every value is referenced by its
-full path from the response root): `Problem` is
+Renders with `rows` and **`"select": "data"`** — the GraphQL response
+itself wraps its payload in a top-level key that is *also* named `data`
+(`{"data": {"activeDailyCodingChallengeQuestion": {...}}}`), and
+`DeclarativeTile`'s render scope for `rows` is `{ data: selected, config }`.
+With no `select`, `selected` is the raw response, so `scope.data` would be
+`{"data": {...}}` — a wrapper — and every `{{data.activeDailyCodingChallengeQuestion...}}`
+path would need `scope.data.activeDailyCodingChallengeQuestion`, which
+doesn't exist (it's one level deeper, at `scope.data.data...`). `select:
+"data"` unwraps that envelope once so `selected` becomes
+`{activeDailyCodingChallengeQuestion: {...}}` and `scope.data` lines up
+with the row paths below exactly as written: `Problem` is
 `{{data.activeDailyCodingChallengeQuestion.question.title}}`, `Difficulty`
 is `.difficulty`, `Accept rate` is `.acRate` (with a literal `%` appended
 in the template string), `Link` is
 `https://leetcode.com{{data.activeDailyCodingChallengeQuestion.link}}`
 (prefixed with the host, since the API returns a path, not a full URL).
+Confirmed by actually running `resolvePath`/`substitute` against this
+exact JSON with this exact scope shape (not just by inspecting the JSON) —
+see `task-10-report.md`.
 
 **Revision note:** the first draft of this bundle used `list` selecting
 `question.topicTags`, rendering one row per topic tag — which meant the
