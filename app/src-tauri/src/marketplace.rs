@@ -136,8 +136,12 @@ pub fn marketplace_install<R: Runtime>(
     for i in 0..archive.len() {
         let mut f = archive.by_index(i).map_err(|e| format!("zip entry: {e}"))?;
         let name = f.name().to_string();
-        // Allowlist exact entry names — no paths, no traversal.
-        if !matches!(name.as_str(), "manifest.json" | "main.js" | "preset.json") {
+        // Allowlist exact entry names — no paths, no traversal. Deliberately
+        // excludes installed.json: that marker is written by us on install,
+        // never accepted from a downloaded bundle, so a malicious archive
+        // can't self-certify marketplace provenance (see folder_source in
+        // visualizers.rs / tiles.rs).
+        if !matches!(name.as_str(), "manifest.json" | "main.js" | "preset.json" | "view.json") {
             return Err(format!("unexpected file in bundle: {name}"));
         }
         let mut s = String::new();
@@ -146,13 +150,22 @@ pub fn marketplace_install<R: Runtime>(
     }
 
     match kind.as_str() {
-        "visualizer" | "tile" => {
+        "visualizer" => {
             let manifest = entries.get("manifest.json").ok_or("bundle missing manifest.json")?;
             let code = entries.get("main.js").ok_or("bundle missing main.js")?;
             let dir = content_dir(&app, "visualizers")?.join(&id);
             std::fs::create_dir_all(&dir).map_err(|e| format!("create {id}: {e}"))?;
             std::fs::write(dir.join("manifest.json"), manifest).map_err(|e| format!("write manifest: {e}"))?;
             std::fs::write(dir.join("main.js"), code).map_err(|e| format!("write main.js: {e}"))?;
+            write_installed_marker(&dir, &id, &version, &kind)?;
+        }
+        "tile" => {
+            let manifest = entries.get("manifest.json").ok_or("bundle missing manifest.json")?;
+            let view = entries.get("view.json").ok_or("bundle missing view.json")?;
+            let dir = content_dir(&app, "tiles")?.join(&id);
+            std::fs::create_dir_all(&dir).map_err(|e| format!("create {id}: {e}"))?;
+            std::fs::write(dir.join("manifest.json"), manifest).map_err(|e| format!("write manifest: {e}"))?;
+            std::fs::write(dir.join("view.json"), view).map_err(|e| format!("write view.json: {e}"))?;
             write_installed_marker(&dir, &id, &version, &kind)?;
         }
         "preset" => {
@@ -171,8 +184,14 @@ pub fn marketplace_uninstall<R: Runtime>(app: AppHandle<R>, id: String, kind: St
         return Err("invalid bundle id".into());
     }
     match kind.as_str() {
-        "visualizer" | "tile" => {
+        "visualizer" => {
             let dir = content_dir(&app, "visualizers")?.join(&id);
+            if dir.exists() {
+                std::fs::remove_dir_all(&dir).map_err(|e| format!("remove {id}: {e}"))?;
+            }
+        }
+        "tile" => {
+            let dir = content_dir(&app, "tiles")?.join(&id);
             if dir.exists() {
                 std::fs::remove_dir_all(&dir).map_err(|e| format!("remove {id}: {e}"))?;
             }
