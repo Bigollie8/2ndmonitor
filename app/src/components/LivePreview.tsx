@@ -22,15 +22,15 @@ import { previewBudget } from './previewBudget';
 //      error and this card never tries again, even if it scrolls out and
 //      back in.
 //
-// `hub://window-visibility` is Tauri's tray-hide signal (wry never flips
-// `document.visibilityState` on a Win32 parent-window hide — see
-// `state/framePace.ts`'s `isWindowHidden` for the main hero surface's version
-// of this). Rather than duplicating that module-level flag (which would
-// throttle the MAIN surface too — it's a single shared flag), this component
-// listens for the same event directly and flips `SandboxVizSurface`'s own
-// `paused` prop, which already stops the frame feed without tearing the
-// sandbox down — exactly mirroring what the hero surface's `useAnimateGate`
-// does with its `paused` param.
+// Pausing on tray-hide needs no listener here at all: `SandboxVizSurface`
+// already runs its frame pump through `useAnimateGate` (`components/viz.tsx`),
+// whose `shouldDraw()` checks the single app-wide `isWindowHidden()` flag
+// (`state/framePace.ts`, mirrored from Tauri's `hub://window-visibility` by
+// the ONE listener in `App.tsx`) before every frame — hero surface and every
+// mounted preview alike. An earlier version of this component carried its own
+// second `hub://window-visibility` listener per card (up to
+// `PREVIEW_CONCURRENCY` extra IPC subscriptions) to flip a local `paused`
+// prop; that was redundant with the gate above and has been removed.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** Frame-rate ceiling for a card preview — well below the main surface's cap,
@@ -62,7 +62,6 @@ export function LivePreview({
   const [intersecting, setIntersecting] = useState(false);
   const [hasSlot, setHasSlot] = useState(false);
   const [errored, setErrored] = useState(false);
-  const [hidden, setHidden] = useState(false);
   const erroredRef = useRef(false);
   const heldRef = useRef(false);
 
@@ -110,29 +109,6 @@ export function LivePreview({
     }
   }, [key]);
 
-  // hub://window-visibility — pauses the frame feed (not the mount) while
-  // the window is hidden to tray, same as the main hero surface.
-  useEffect(() => {
-    let cancelled = false;
-    let unlisten: (() => void) | undefined;
-    (async () => {
-      try {
-        const { listen } = await import('@tauri-apps/api/event');
-        const un = await listen<boolean>('hub://window-visibility', (e) => {
-          if (!cancelled) setHidden(!e.payload);
-        });
-        if (cancelled) un();
-        else unlisten = un;
-      } catch {
-        /* browser dev — no tauri */
-      }
-    })();
-    return () => {
-      cancelled = true;
-      unlisten?.();
-    };
-  }, []);
-
   const onError = useCallback((error: ScriptError) => {
     // SandboxVizSurface also calls this with `null` on every mount/reload to
     // clear a stale banner — only a real error trips the never-retry gate.
@@ -156,7 +132,6 @@ export function LivePreview({
           accent={accent}
           accent2={accent2}
           spectrumRef={spectrumRef}
-          paused={hidden}
           maxFps={PREVIEW_MAX_FPS}
           suppressErrorBanner
           onError={onError}

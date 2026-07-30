@@ -12,15 +12,19 @@ test('srcdoc pins the no-capability CSP', () => {
   assert.equal(SANDBOX_CSP, "default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval'; style-src 'unsafe-inline'");
 });
 
-// The runtime's 'init' handler runs bundle code via `new Function(msg.code)()`
-// (this file's own isolation-model comment has always documented that as the
-// mechanism) — without 'unsafe-eval', Chromium/WebView2 throws on every such
-// call, so no scripted visualizer's code ever actually executes. Pinned
-// separately from the full-string equality above so a future edit that
-// narrows this back down fails loudly on its own, not just as a diff in the
-// combined string.
-test('CSP grants unsafe-eval — new Function(msg.code)() would be blocked otherwise', () => {
-  assert.ok(SANDBOX_CSP.includes("'unsafe-eval'"), 'script-src must allow unsafe-eval for new Function()');
+// The full-string equality above already pins the exact CSP (so it already
+// fails on a narrowing that would break `new Function(msg.code)()`). This
+// test instead catches the opposite, more dangerous direction: `script-src`
+// silently growing beyond the two documented, no-network-capability tokens —
+// e.g. an accidental `'self'`, a wildcard, or a real URL — while the
+// full-string equality above happens to get updated to match. `default-src
+// 'none'` means script-src is the only meaningful surface here, so this is
+// the one directive worth pinning against widening independently.
+test('CSP script-src grants no source expressions beyond unsafe-inline/unsafe-eval', () => {
+  const scriptSrc = /script-src ([^;]+);/.exec(SANDBOX_CSP)?.[1];
+  assert.ok(scriptSrc, 'SANDBOX_CSP must have a script-src directive');
+  const tokens = scriptSrc!.trim().split(/\s+/);
+  assert.deepEqual(new Set(tokens), new Set(["'unsafe-inline'", "'unsafe-eval'"]));
 });
 
 test('srcdoc references no external origins', () => {
