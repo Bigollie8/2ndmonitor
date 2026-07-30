@@ -9,6 +9,7 @@ use crate::state::AppState;
 use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
 use axum::Json;
+use base64::Engine;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -16,6 +17,30 @@ use std::io::Write;
 
 pub const CODE_MAX: usize = 262_144; // 256 KB
 pub const PRESET_MAX: usize = 1_048_576; // 1 MiB
+pub const PREVIEW_CAP: usize = 262_144; // 256 KiB — mirrors the app's PREVIEW_CAP
+
+/// Same rule as the app's `sniff_image`: accept a preview on its magic
+/// number only, never on a caller-declared content type — there isn't even
+/// a content-type header here, just base64 in a JSON field, and trusting a
+/// submitter's say-so about the bytes' format is exactly the mistake this
+/// exists to avoid. Empty and oversize previews are rejected explicitly so
+/// a bad submission fails with a clear reason instead of silently storing
+/// zero/garbage bytes.
+pub fn validate_preview(bytes: &[u8]) -> Result<(), String> {
+    if bytes.is_empty() {
+        return Err("preview is empty".into());
+    }
+    if bytes.len() > PREVIEW_CAP {
+        return Err(format!("preview too large ({} > {PREVIEW_CAP} bytes)", bytes.len()));
+    }
+    let is_png = bytes.len() >= 8
+        && bytes.starts_with(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]);
+    let is_jpeg = bytes.len() >= 3 && bytes.starts_with(&[0xFF, 0xD8, 0xFF]);
+    if !is_png && !is_jpeg {
+        return Err("preview is not a PNG or JPEG".into());
+    }
+    Ok(())
+}
 
 /// Zip (manifest.json + main.js|preset.json) → (bytes, sha256 hex, size).
 pub fn zip_bundle(manifest: &str, payload_name: &str, payload: &str) -> (Vec<u8>, String, i64) {
@@ -56,6 +81,9 @@ pub struct SubmitBody {
     manifest: String,
     code: Option<String>,
     preset_json: Option<String>,
+    /// Optional catalog thumbnail, base64-encoded. Absent is valid — most
+    /// submissions won't carry one, and the field must not become required.
+    preview: Option<String>,
 }
 
 pub async fn submit(
@@ -122,16 +150,30 @@ pub async fn submit(
         ("pending", None, None, None)
     };
 
+    // Preview images are stored on the row and served by the marketplace —
+    // never bundled into the zip (see submit.rs / installer trust notes on
+    // why the zip's payload set is fixed). No preview is a valid submission.
+    let preview: Option<Vec<u8>> = match &body.preview {
+        Some(b64) => {
+            let bytes = base64::engine::general_purpose::STANDARD
+                .decode(b64)
+                .map_err(|e| (StatusCode::BAD_REQUEST, format!("preview is not valid base64: {e}")))?;
+            validate_preview(&bytes).map_err(|e| (StatusCode::BAD_REQUEST, e))?;
+            Some(bytes)
+        }
+        None => None,
+    };
+
     {
         let db = state.db.lock();
         let inserted = db.execute(
-            "INSERT OR IGNORE INTO bundles (id, version, kind, name, author_id, status, permissions, manifest, code, sha256, size, zip, created_at)
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)",
+            "INSERT OR IGNORE INTO bundles (id, version, kind, name, author_id, status, permissions, manifest, code, sha256, size, zip, created_at, preview)
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14)",
             rusqlite::params![
                 validated.id, validated.version, body.kind, validated.name, author_id,
                 status, perms_json, body.manifest,
                 if body.kind == "preset" { None::<String> } else { Some(payload.clone()) },
-                sha, size, zip, now()
+                sha, size, zip, now(), preview
             ],
         ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
         if inserted == 0 {
@@ -145,6 +187,20 @@ pub async fn submit(
     }
 
     Ok(Json(json!({ "id": validated.id, "version": validated.version, "status": status })))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn preview_validation_accepts_png_rejects_oversize_and_non_image() {
+        let png = [vec![0x89u8, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A], vec![0u8; 32]].concat();
+        assert!(validate_preview(&png).is_ok());
+        assert!(validate_preview(b"<html>not an image").is_err());
+        assert!(validate_preview(&vec![0x89u8; PREVIEW_CAP + 1]).is_err());
+        assert!(validate_preview(&[]).is_err());
+    }
 }
 
 pub async fn mine(
