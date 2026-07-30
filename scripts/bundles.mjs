@@ -2,6 +2,8 @@
 // Validate, zip and publish bundles in bundles/<id>/ to the marketplace.
 //   node scripts/bundles.mjs build            # validate + zip all
 //   node scripts/bundles.mjs publish [id...]  # build, then submit
+//   node scripts/bundles.mjs seed             # validate + zip all into
+//                                              # app/src-tauri/resources/seed/<kind>/
 //
 // NOTE ON THE REAL SERVER ROUTE (verified against server/src/*.rs — the
 // server is the source of truth, not any plan doc):
@@ -29,7 +31,7 @@
 // after a fix requires a version bump. This script skips ids/versions already
 // present in the live (approved) index rather than failing the run, but a
 // prior *pending* submission of the same id@version will still 409 here.
-import { readdirSync, readFileSync, mkdirSync, existsSync } from 'node:fs';
+import { readdirSync, readFileSync, mkdirSync, existsSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
@@ -37,6 +39,9 @@ import { execFileSync } from 'node:child_process';
 const ROOT = join(fileURLToPath(new URL('.', import.meta.url)), '..');
 const BUNDLES = join(ROOT, 'bundles');
 const DIST = join(BUNDLES, 'dist');
+// Where seed zips land for Tauri to bundle as resources. Layout mirrors what
+// seed.rs (app/src-tauri/src/seed.rs) reads: resources/seed/<kind>/<id>-<version>.zip.
+const SEED_ROOT = join(ROOT, 'app', 'src-tauri', 'resources', 'seed');
 const SERVER = process.env.MARKET_URL ?? 'https://market.basedsecurity.net';
 
 const ID_RE = /^[a-z0-9-]{1,64}$/;
@@ -90,9 +95,9 @@ function validate(id) {
   return { m, kind, codeFile };
 }
 
-function zip(id, version, codeFile) {
-  mkdirSync(DIST, { recursive: true });
-  const out = join(DIST, `${id}-${version}.zip`);
+function zip(id, version, codeFile, outDir = DIST) {
+  mkdirSync(outDir, { recursive: true });
+  const out = join(outDir, `${id}-${version}.zip`);
   // PowerShell's Compress-Archive ships with Windows; no npm dependency needed.
   // This is a local build artifact for inspection/distribution outside the
   // marketplace flow — the live `/submissions` route does not consume it (see
@@ -111,6 +116,30 @@ function zip(id, version, codeFile) {
     `Compress-Archive -Path '${manifestPath}','${codePath}' -DestinationPath '${out}' -Force`,
   ], { stdio: 'inherit' });
   return out;
+}
+
+/** Extracts the id portion of a `<id>-<version>.zip` filename by splitting on
+ *  the LAST hyphen — mirrors `parse_seed_path`'s `rsplit_once('-')` in
+ *  seed.rs, so an id containing a hyphen (`tile-quote`) is not confused with
+ *  a different, longer id that merely shares its prefix. */
+function stemIdOf(filename) {
+  const stem = filename.replace(/\.zip$/i, '');
+  const idx = stem.lastIndexOf('-');
+  return idx === -1 ? null : stem.slice(0, idx);
+}
+
+/** Removes any other `<id>-*.zip` in `dir` so a version bump doesn't leave
+ *  the old version's zip sitting alongside the new one — seed_sync (Rust)
+ *  walks the whole directory and would otherwise see two versions of one id. */
+function cleanStaleSeedZips(dir, id, keepVersion) {
+  if (!existsSync(dir)) return;
+  const keep = `${id}-${keepVersion}.zip`;
+  for (const f of readdirSync(dir)) {
+    if (f.toLowerCase().endsWith('.zip') && f !== keep && stemIdOf(f) === id) {
+      unlinkSync(join(dir, f));
+      console.log(`  - removed stale ${f}`);
+    }
+  }
 }
 
 async function liveIndex() {
@@ -137,7 +166,16 @@ const failed = [];
 for (const id of ids) {
   try {
     const { m, kind, codeFile } = validate(id);
-    const path = cmd === 'build' || cmd === 'publish' ? zip(id, m.version, codeFile) : null;
+    let path = null;
+    if (cmd === 'build' || cmd === 'publish') {
+      path = zip(id, m.version, codeFile);
+    } else if (cmd === 'seed') {
+      // `kind` here is only ever "tile" or "visualizer" (validate()/bundleKind()
+      // throws for anything else), matching the two subdirectories seed.rs walks.
+      const outDir = join(SEED_ROOT, kind);
+      cleanStaleSeedZips(outDir, id, m.version);
+      path = zip(id, m.version, codeFile, outDir);
+    }
     console.log(`✓ ${id}@${m.version} (${kind})${path ? ` → ${path}` : ''}`);
     built.push({ id, version: m.version, kind, codeFile, path });
   } catch (e) {
@@ -176,8 +214,8 @@ if (cmd === 'publish') {
   }
 }
 
-if (cmd !== 'build' && cmd !== 'publish') {
-  console.error('usage: node scripts/bundles.mjs build|publish [id...]');
+if (cmd !== 'build' && cmd !== 'publish' && cmd !== 'seed') {
+  console.error('usage: node scripts/bundles.mjs build|publish|seed [id...]');
   process.exit(1);
 }
 

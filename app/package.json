@@ -12,7 +12,8 @@
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build",
     "bundles:build": "node ../scripts/bundles.mjs build",
-    "bundles:publish": "node ../scripts/bundles.mjs publish"
+    "bundles:publish": "node ../scripts/bundles.mjs publish",
+    "bundles:seed": "node ../scripts/bundles.mjs seed"
   },
   "dependencies": {
     "@codemirror/lang-javascript": "^6.2.5",
