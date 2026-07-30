@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mergeCatalog, catalogKey, type MergeCatalogArgs } from './catalog';
+import { mergeCatalog, catalogKey, planRemoval, type MergeCatalogArgs } from './catalog';
 import { TILE_META } from './tileMeta';
 import { BUILTIN_VIZ_STYLES } from '../components/viz-styles';
 import type { InstalledTileFolder } from '../tiles/tileRegistry';
@@ -129,4 +129,61 @@ test('mergeCatalog: needsSetup is carried through by key', () => {
 test('catalogKey: composes kind and id', () => {
   assert.equal(catalogKey('tile', 'quote'), 'tile:quote');
   assert.equal(catalogKey('visualizer', 'aurora'), 'visualizer:aurora');
+});
+
+// planRemoval — the previously-untested logic behind handleRemove
+// (ContentLibrary.tsx). `weatherRadar` is a real, camelCase, non-first-party
+// TILE_META key with no installed folder: the exact shape that broke when a
+// prior pass gated `uninstall` on `source === 'bundle'` instead of
+// `installedVersion != null` (see the bug write-up in catalog.ts).
+
+test('planRemoval: a not-yet-migrated built-in (table entry, no folder) skips uninstall', () => {
+  const out = mergeCatalog(base());
+  const item = out.find((i) => i.key === 'tile:weatherRadar');
+  assert.ok(item, 'weatherRadar is a real TILE_META key');
+  assert.equal(item.source, 'bundle', 'not first-party, so mergeCatalog labels it a bundle target');
+  assert.equal(item.installedVersion, null, 'no folder backs it');
+  const plan = planRemoval(item);
+  assert.equal(plan.uninstall, false, 'no folder to uninstall — invoking would send a camelCase id');
+  assert.equal(plan.tombstoneKey, 'tile:weatherRadar');
+  assert.equal(plan.instanceType, 'weatherRadar', 'a built-in tile type has no bundle: prefix');
+});
+
+test('planRemoval: an installed bundle uninstalls and strips its bundle: instance type', () => {
+  // A fresh id with no TILE_META entry — `quote` collides with a built-in
+  // table key too, which exercises the *other* (deliberate) branch of
+  // isBuiltinTileId; see the "a migrated tile collapses" test above and the
+  // ambiguity note on isBuiltinTileId in catalog.ts.
+  const out = mergeCatalog(base({ installedTiles: [tileFolder({ id: 'cool-widget', name: 'Cool widget' })] }));
+  const item = out.find((i) => i.key === 'tile:cool-widget');
+  assert.ok(item);
+  assert.equal(item.installedVersion, '1.0.1');
+  const plan = planRemoval(item);
+  assert.equal(plan.uninstall, true, 'a real folder backs it');
+  assert.equal(plan.tombstoneKey, 'tile:cool-widget');
+  assert.equal(plan.instanceType, 'bundle:cool-widget', 'no compile-time table entry — bundle-prefixed');
+});
+
+test('planRemoval: a first-party item skips uninstall and has no dashboard instance type when a visualizer', () => {
+  const out = mergeCatalog(base());
+  const item = out.find((i) => i.key === 'visualizer:milkdrop');
+  assert.ok(item);
+  assert.equal(item.source, 'first-party');
+  assert.equal(item.installedVersion, null, 'ships in the binary — no folder to uninstall');
+  const plan = planRemoval(item);
+  assert.equal(plan.uninstall, false);
+  assert.equal(plan.tombstoneKey, 'visualizer:milkdrop');
+  assert.equal(plan.instanceType, null, 'visualizers have no dashboard instance to strip');
+});
+
+test('planRemoval: a removed-but-index-listed item is idempotent — still no uninstall, same tombstone key', () => {
+  const out = mergeCatalog(base({ removed: ['visualizer:aurora'], index: [idx()] }));
+  const item = out.find((i) => i.key === 'visualizer:aurora');
+  assert.ok(item, 'stays browsable so it can be reinstalled');
+  assert.equal(item.installed, false);
+  assert.equal(item.installedVersion, null);
+  const plan = planRemoval(item);
+  assert.equal(plan.uninstall, false, 'already removed — nothing on disk to uninstall');
+  assert.equal(plan.tombstoneKey, 'visualizer:aurora', 're-removing is a harmless no-op, not a new key');
+  assert.equal(plan.instanceType, null, 'a visualizer, so no tile instance type either way');
 });

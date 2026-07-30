@@ -10,10 +10,12 @@
 // The catalog SHOWS a broken install with its reason, because the catalog is
 // where a user goes to remove it.
 // ─────────────────────────────────────────────────────────────────────────────
-import type { BuiltinTileType } from './layout';
+import type { BuiltinTileType, TileType } from './layout';
 import type { TileMeta, TileCategory } from './tileMeta';
+import { TILE_META } from './tileMeta';
 import type { VizStyle, VizCategory } from '../components/viz-styles';
 import type { InstalledTileFolder } from '../tiles/tileRegistry';
+import { bundleTileId } from '../tiles/tileRegistry';
 import type { InstalledVizFolder } from './contentRegistry';
 import { isFirstParty } from './firstParty';
 
@@ -183,4 +185,66 @@ export function mergeCatalog(args: MergeCatalogArgs): CatalogItem[] {
     }
   }
   return out.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/** Is `id` one of the compile-time built-in tile types? Narrows so the
+ *  candidate `TileType` for a catalog tile item can be computed without a
+ *  cast — a bundle folder's tile always lives at `bundle:<id>` on the canvas
+ *  (see tileRegistry.ts), a built-in lives at its bare id.
+ *
+ *  A marketplace tile whose bare id happens to collide with a built-in key
+ *  resolves here as the built-in `TileType`, not `bundle:<id>` — mergeCatalog
+ *  already collapses that collision to a single catalog item (the installed
+ *  folder overwrites the compile-time entry of the same id), so there is no
+ *  live case where the two disagree today. This ambiguity is deliberate, not
+ *  an oversight: it only matters if a bundle and a built-in ever shared an id
+ *  space without one winning in mergeCatalog, which nothing produces today. */
+function isBuiltinTileId(id: string): id is BuiltinTileType {
+  return Object.prototype.hasOwnProperty.call(TILE_META, id);
+}
+
+/** The dashboard `TileType` a tile catalog item resolves to — `null` for a
+ *  visualizer, which has no dashboard instance of its own. Shared by
+ *  `planRemoval` (strips placed instances of a removed tile) and
+ *  ContentLibrary's "+ Add" action (places a new instance of an installed
+ *  one) — both need the exact same built-in-vs-bundle resolution. */
+export function tileInstanceType(item: CatalogItem): TileType | null {
+  if (item.kind !== 'tile') return null;
+  return isBuiltinTileId(item.id) ? item.id : bundleTileId(item.id);
+}
+
+export interface RemovalPlan {
+  /** Whether to invoke `marketplace_uninstall`. True only when a real
+   *  installed folder backs this item — `installedVersion` is set exclusively
+   *  by mergeCatalog's installed-folder pass, so it is the honest "does a
+   *  folder actually exist on disk" signal. `item.source === 'bundle'` is
+   *  NOT a safe substitute: mergeCatalog labels every not-yet-migrated
+   *  built-in (a compile-time table entry with no folder) `source: 'bundle'`
+   *  too, and its id (e.g. "weatherRadar") can be camelCase — the Rust
+   *  `is_safe_id` validator (`[a-z0-9-]` only) rejects that outright, so
+   *  gating on `source` alone silently no-ops the removal instead of
+   *  skipping the invoke it never needed to make. See task-9-report.md. */
+  uninstall: boolean;
+  /** The key to add to the removal tombstone list (state/removedContent.ts). */
+  tombstoneKey: string;
+  /** For a tile item, the dashboard `TileType` whose placed instances must be
+   *  stripped so a removed tile's fixed `renderTile` case doesn't keep
+   *  drawing it. Null for a visualizer — a visualizer has no dashboard
+   *  instance of its own; removing the active one is handled by resetting
+   *  `vizMode` instead (see App.tsx). */
+  instanceType: TileType | null;
+}
+
+/** Pure decision for what `handleRemove` (ContentLibrary.tsx) must do for one
+ *  `CatalogItem` — the honest gate, the tombstone key, and (for a tile) the
+ *  dashboard type to strip. Extracted so the one real bug this task
+ *  introduced (gating `uninstall` on `source` instead of `installedVersion`)
+ *  is covered by a fast, deterministic test instead of living only in an
+ *  async component method that only live testing exercised. */
+export function planRemoval(item: CatalogItem): RemovalPlan {
+  return {
+    uninstall: item.installedVersion != null,
+    tombstoneKey: item.key,
+    instanceType: tileInstanceType(item),
+  };
 }

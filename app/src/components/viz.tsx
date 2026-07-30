@@ -7,6 +7,7 @@ import { paceFrame } from '../state/framePace';
 import { BrowserPlayer, type Bookmark } from './browser-player';
 import { bundleIdOf, isBundleMode } from '../state/contentRegistry';
 import { useVizStyles } from './useVizStyles';
+import { catalogKey } from '../state/catalog';
 
 // The "extra" visualizer styles (viz-extra) are lazy-loaded: most sessions
 // run a single style, and eagerly importing all of them bloats the boot
@@ -675,6 +676,18 @@ export function HiFiVizSurface({ mode, accent, accent2, spectrumRef, sensitivity
   return <Suspense fallback={null}>{surface}</Suspense>;
 }
 
+/** The 5 quick-select buttons in VizOverlay's top-left strip. Predates the
+ *  unified catalog — VizOverlay filters this against `catalogRemoved` before
+ *  rendering (see its `modes` computation) so a removed built-in visualizer
+ *  stops being offered here too, the same as the V-cycle and gallery. */
+const QUICK_MODES: { k: VizMode; label: string }[] = [
+  { k: 'bars', label: 'Bars' },
+  { k: 'waveform', label: 'Wave' },
+  { k: 'radial', label: 'Radial' },
+  { k: 'particles', label: 'Particle' },
+  { k: 'ambient', label: 'Ambient' },
+];
+
 const overlayBtn: React.CSSProperties = {
   background: 'rgba(0,0,0,0.4)', backdropFilter: 'blur(20px)',
   border: '1px solid rgba(255,255,255,0.08)',
@@ -734,13 +747,11 @@ export function VizOverlay({
   const positionLabel = havePlayback ? fmtMMSS(position) : '—';
   const durationLabel = havePlayback ? fmtMMSS(duration) : '—';
   const playIcon = playback?.playing ? '⏸' : '⏵';
-  const modes: { k: VizMode; label: string }[] = [
-    { k: 'bars', label: 'Bars' },
-    { k: 'waveform', label: 'Wave' },
-    { k: 'radial', label: 'Radial' },
-    { k: 'particles', label: 'Particle' },
-    { k: 'ambient', label: 'Ambient' },
-  ];
+  // Filtered against catalogRemoved so a removed built-in doesn't stay
+  // offered (and re-selectable) here even after it's gone from the V-cycle
+  // and gallery — this hardcoded strip predates the unified catalog and
+  // didn't consult the removal list until this fix.
+  const modes = QUICK_MODES.filter((m) => !catalogRemoved.includes(catalogKey('visualizer', m.k)));
   const isOriginalMode = modes.some((m) => m.k === mode);
   // The merged catalog (not just BUILTIN_VIZ_STYLES) so an installed
   // `bundle:` style's label still shows in the "● Label" badge.

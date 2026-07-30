@@ -11,6 +11,7 @@ import {
   ALL_TILE_TYPES,
   migrateLayoutHiddenToTiles,
   findInstance,
+  findEmptyRect,
   addInstance,
   removeInstance,
   removeTilesOfType,
@@ -32,7 +33,12 @@ import { VizHero, setVizDprCap, setVizMaxFps, getVizMaxFps } from './components/
 import * as perfDebug from './perf/debug';
 import { PerfDebugHUD } from './perf/PerfDebugHUD';
 import { useVizStyles } from './components/useVizStyles';
-import { remapRetiredVizMode } from './state/contentRegistry';
+import {
+  remapRetiredVizMode,
+  bundleIdOf as vizBundleIdOf,
+  isBundleMode as isVizBundleMode,
+} from './state/contentRegistry';
+import { catalogKey } from './state/catalog';
 import { defaultBookmarks, type Bookmark } from './components/browser-player';
 import {
   SpotifyTile, NotesTile,
@@ -540,6 +546,41 @@ export default function App() {
       }),
     });
   };
+  // Places a new instance of `type` on the active orientation, in the first
+  // empty snap-aligned slot near its default rect — the same placement logic
+  // the old TileLibrary.onAdd used (see App.tsx at 24f6166^: it called
+  // findEmptyRect itself before invoking this same onAdd shape). Unlike
+  // addTileByType above, this allows a second instance of a multi-instance
+  // type rather than no-op'ing — it backs ContentLibrary's "+ Add" button,
+  // the catalog's restored counterpart to placing a tile outside edit mode.
+  const addTileInstance = (type: TileType) => {
+    const defaults = orientation === 'portrait' ? DEFAULT_PORTRAIT_LAYOUT : DEFAULT_LANDSCAPE_LAYOUT;
+    const preferred = isBundleTile(type) ? DEFAULT_BUNDLE_TILE_RECT[orientation] : defaults[type];
+    const rect = findEmptyRect(activeOrientation.tiles.map((inst) => inst.rect), preferred, canvas);
+    updateActiveOrientation({
+      tiles: addInstance(activeOrientation.tiles, { instanceId: newId(), type, rect }),
+    });
+  };
+  // Called by ContentLibrary after a visualizer is actually removed
+  // (uninstall done, tombstone written), with its catalog key
+  // (`visualizer:<id>`). vizMode is the visualizer's equivalent of a placed
+  // tile instance — it names the style currently rendering — and it is
+  // persisted, so if it names the style just removed, HiFiVizSurface's
+  // unconditional built-in `case` would otherwise keep rendering it
+  // (including after a restart) even though the catalog and V-cycle now
+  // exclude it. Resets to the first surviving style in the merged catalog,
+  // falling back to 'bars' if nothing survives (shouldn't happen — bars
+  // itself is only removable like any other built-in, but if a user removed
+  // everything else first this still terminates instead of picking undefined).
+  const onVisualizerRemoved = (key: string) => {
+    const currentId = isVizBundleMode(t.vizMode) ? vizBundleIdOf(t.vizMode) : t.vizMode;
+    if (currentId == null || catalogKey('visualizer', currentId) !== key) return;
+    const survivor = vizStyles.find((s) => {
+      const id = isVizBundleMode(s.id) ? vizBundleIdOf(s.id) : s.id;
+      return id != null && catalogKey('visualizer', id) !== key;
+    });
+    setTweak('vizMode', (survivor?.id ?? 'bars') as VizMode);
+  };
   const resetLayout = () => {
     const defaults = orientation === 'portrait' ? DEFAULT_PORTRAIT_LAYOUT : DEFAULT_LANDSCAPE_LAYOUT;
     updateActiveOrientation({
@@ -942,6 +983,8 @@ export default function App() {
               landscape: { tiles: removeTilesOfType(p.landscape.tiles, type) },
               portrait: { tiles: removeTilesOfType(p.portrait.tiles, type) },
             })))}
+            onAddTileInstance={addTileInstance}
+            onVisualizerRemoved={onVisualizerRemoved}
             onClose={() => setShowTileLibrary(false)}
           />
         )}

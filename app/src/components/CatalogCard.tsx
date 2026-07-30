@@ -38,13 +38,24 @@ export function catalogCardTags(item: CatalogItem): CatalogTag[] {
  *  thumbnails. Visual language matches TileLibrary's TileCard: dark
  *  translucent panel, hairline border, JetBrains Mono metadata. */
 export function CatalogCard({
-  item, accent, busy, onInstall, onRemove,
+  item, accent, busy, disabled, onInstall, onRemove, onAdd,
 }: {
   item: CatalogItem;
   accent: string;
+  /** This card's own mutation is in flight — drives the '…' label. */
   busy: boolean;
+  /** Some mutation (on any card) is in flight — locks every action button so
+   *  a second click can't race the first's write. See ContentLibrary.tsx's
+   *  handleInstall/handleRemove: both compute their next list from state
+   *  captured at click time, so two overlapping writes can silently revert
+   *  each other if only the clicked card were disabled. */
+  disabled: boolean;
   onInstall: () => void;
   onRemove: () => void;
+  /** Places this tile on the dashboard. Passed (and rendered) only for an
+   *  installed tile — a visualizer has no placement action of its own;
+   *  selecting one is what the V-cycle and gallery already do. */
+  onAdd?: () => void;
 }) {
   const tags = catalogCardTags(item);
   const version = item.installed ? item.installedVersion : item.availableVersion;
@@ -90,16 +101,30 @@ export function CatalogCard({
 
       <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
         <div style={{ flex: 1 }} />
+        {onAdd && (
+          <button
+            onClick={onAdd}
+            disabled={disabled}
+            title="Add to dashboard"
+            style={{
+              padding: '3px 10px', fontSize: 10, fontWeight: 600, borderRadius: 5,
+              background: 'transparent', color: `${accent}dd`,
+              border: `1px solid ${accent}33`,
+              cursor: disabled ? 'not-allowed' : 'pointer',
+              opacity: disabled ? 0.55 : 1,
+            }}
+          >+ Add</button>
+        )}
         <button
           onClick={item.installed ? onRemove : onInstall}
-          disabled={busy}
+          disabled={disabled}
           style={{
             padding: '3px 10px', fontSize: 10, fontWeight: 600, borderRadius: 5,
             background: item.installed ? 'rgba(255,255,255,0.04)' : `${accent}22`,
             color: item.installed ? 'rgba(255,255,255,0.65)' : accent,
             border: item.installed ? '1px solid rgba(255,255,255,0.12)' : `1px solid ${accent}44`,
-            cursor: busy ? 'not-allowed' : 'pointer',
-            opacity: busy ? 0.55 : 1,
+            cursor: disabled ? 'not-allowed' : 'pointer',
+            opacity: disabled ? 0.55 : 1,
           }}
         >{busy ? '…' : item.installed ? 'Remove' : 'Install'}</button>
       </div>

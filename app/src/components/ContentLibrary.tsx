@@ -1,12 +1,13 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { mergeCatalog, catalogKey, type CatalogItem, type IndexBundle } from '../state/catalog';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  mergeCatalog, catalogKey, planRemoval, tileInstanceType, type CatalogItem, type IndexBundle,
+} from '../state/catalog';
 import { withRemoval, withoutRemoval } from '../state/removedContent';
 import { TILE_META } from '../state/tileMeta';
 import { BUILTIN_VIZ_STYLES } from './viz-styles';
 import type { InstalledTileFolder } from '../tiles/tileRegistry';
-import { bundleTileId } from '../tiles/tileRegistry';
 import type { InstalledVizFolder } from '../state/contentRegistry';
-import type { TileType, BuiltinTileType } from '../state/layout';
+import type { TileType } from '../state/layout';
 import { buildRail } from './catalogRail';
 import { CatalogCard } from './CatalogCard';
 import { parsePermission } from '../sandbox/manifest';
@@ -34,14 +35,6 @@ function describePermission(p: string): string {
   return `Run the app command "${parsed.perm.command}"`;
 }
 
-/** Is `id` one of the compile-time built-in tile types? Narrows so the
- *  candidate `TileType` for a catalog tile item can be computed without a
- *  cast — a bundle folder's tile always lives at `bundle:<id>` on the canvas
- *  (see tileRegistry.ts), a built-in lives at its bare id. */
-function isBuiltinTileId(id: string): id is BuiltinTileType {
-  return Object.prototype.hasOwnProperty.call(TILE_META, id);
-}
-
 /** The unified content catalog: a fixed-width category rail with live counts
  *  (from `buildRail`, a pure function — see catalogRail.ts) and a card grid
  *  with real install/remove actions for both backings (compile-time
@@ -50,7 +43,8 @@ function isBuiltinTileId(id: string): id is BuiltinTileType {
  *  metadata, accent passed in as a prop. Search and error-state UI (a failed
  *  index fetch fails soft to an empty index today) are Task 10. */
 export function ContentLibrary({
-  accent, catalogRemoved, setCatalogRemoved, onRemoveTileInstances, onClose,
+  accent, catalogRemoved, setCatalogRemoved, onRemoveTileInstances, onAddTileInstance,
+  onVisualizerRemoved, onClose,
 }: {
   accent: string;
   /** The catalog removal list — see state/removedContent.ts. */
@@ -65,6 +59,20 @@ export function ContentLibrary({
    *  the catalog's removed list alone only keeps it out of pickers, not off
    *  an already-placed canvas. */
   onRemoveTileInstances: (type: TileType) => void;
+  /** Places a new instance of `type` on the active profile's active
+   *  orientation, at the first free rect near its default position — the
+   *  same placement logic the old TileLibrary.onAdd used (see App.tsx at
+   *  24f6166^). The catalog's "+ Add" button is the only surviving way to
+   *  place a tile outside edit mode now that the catalog replaced the Tile
+   *  Library's browse-and-add grid. */
+  onAddTileInstance: (type: TileType) => void;
+  /** Called after a visualizer item is actually removed (uninstall done,
+   *  tombstone written), with its catalog key. If the currently active
+   *  `vizMode` names the just-removed style, App resets it to the first
+   *  surviving one — vizMode is the visualizer's equivalent of a placed tile
+   *  instance, and it is persisted, so leaving it pointed at a removed style
+   *  would keep rendering it (and keep rendering it after a restart). */
+  onVisualizerRemoved: (key: string) => void;
   onClose: () => void;
 }) {
   const [installedTiles, setInstalledTiles] = useState<InstalledTileFolder[]>([]);
@@ -83,10 +91,19 @@ export function ContentLibrary({
     });
   };
 
-  const flash = (msg: string) => {
+  // Auto-clears after 3s. The timer id lives in a ref (not state) so a second
+  // flash while one is already pending clears the first timer instead of
+  // stacking two — without this an older flash's timeout could blank a
+  // newer notice out from under it. Also cleared on unmount.
+  const flashTimer = useRef<ReturnType<typeof setTimeout>>();
+  const flash = useCallback((msg: string) => {
+    if (flashTimer.current !== undefined) clearTimeout(flashTimer.current);
     setNotice(msg);
-    setTimeout(() => setNotice(''), 3000);
-  };
+    flashTimer.current = setTimeout(() => setNotice(''), 3000);
+  }, []);
+  useEffect(() => () => {
+    if (flashTimer.current !== undefined) clearTimeout(flashTimer.current);
+  }, []);
 
   // Re-runnable independently of the index fetch: install/uninstall mutate
   // folders on disk, and this is the only way ContentLibrary learns about
@@ -182,30 +199,29 @@ export function ContentLibrary({
     else void runInstall(item, bundle);
   };
 
+  // planRemoval (state/catalog.ts) is the pure, tested decision for what
+  // follows — the honest uninstall gate (installedVersion, not source), the
+  // tombstone key, and the dashboard TileType to strip. See its doc comment
+  // for the "weatherRadar" bug this guards against.
   const handleRemove = async (item: CatalogItem) => {
+    const plan = planRemoval(item);
     setBusy(item.key, true);
     try {
-      // Only a genuine installed FOLDER needs uninstalling — `installedVersion`
-      // is set exclusively by mergeCatalog's installed-folder pass, so it is
-      // the honest signal, not `source === 'bundle'`. Per catalog.ts: "A
-      // built-in that is not first-party is a bundle target" — i.e. every
-      // not-yet-migrated built-in tile/viz (weatherRadar, dailyChallenge, …)
-      // is `source: 'bundle'` too, with `installedVersion: null` and no
-      // folder on disk. Gating on source alone sent `marketplace_uninstall`
-      // an id like "weatherRadar" for those — camelCase, so the Rust side's
-      // `is_safe_id` (lowercase+digits+hyphen only) rejects it outright and
-      // the whole remove silently no-ops before the tombstone is ever
-      // written. Gating on installedVersion instead skips the invoke for
-      // exactly the items that have nothing to uninstall, first-party or not.
-      if (item.installedVersion != null) {
+      if (plan.uninstall) {
         const { invoke } = await import('@tauri-apps/api/core');
         await invoke('marketplace_uninstall', { id: item.id, kind: item.kind });
       }
-      setCatalogRemoved(withRemoval(catalogRemoved, item.key));
-      if (item.kind === 'tile') {
-        const type: TileType = isBuiltinTileId(item.id) ? item.id : bundleTileId(item.id);
-        onRemoveTileInstances(type);
-      }
+      // setCatalogRemoved below computes its next list from the
+      // `catalogRemoved` prop closed over at handleRemove's own call time.
+      // That is safe even when a second removal starts before this one's
+      // `await` above resolves, because every action button is disabled
+      // while `busyKeys.size > 0` (see the `disabled` prop passed to
+      // CatalogCard below) — only one mutation can be in flight at a time,
+      // so there is no longer a window for two overlapping writes to race
+      // and one silently revert the other's tombstone.
+      setCatalogRemoved(withRemoval(catalogRemoved, plan.tombstoneKey));
+      if (plan.instanceType != null) onRemoveTileInstances(plan.instanceType);
+      if (item.kind === 'visualizer') onVisualizerRemoved(plan.tombstoneKey);
       await refreshInstalled();
       flash(`Removed ${item.name}`);
     } catch (e) {
@@ -215,10 +231,22 @@ export function ContentLibrary({
     }
   };
 
-  // Esc closes the modal (capture + stopPropagation so App's cascade doesn't
-  // also fire) — same convention as TileLibrary. Confirm dialog gets its own
-  // Esc via the plain onClick-outside handler below (no separate listener
-  // needed at this scale).
+  // Places a new instance of an installed tile on the dashboard — the
+  // catalog's counterpart to Remove, restoring the "add a tile" affordance
+  // the old TileLibrary offered (see App.tsx's onAddTileInstance for the
+  // placement logic). Visualizers have no dashboard instance, so this is
+  // never wired for a visualizer card.
+  const handleAdd = (item: CatalogItem) => {
+    const type = tileInstanceType(item);
+    if (type != null) onAddTileInstance(type);
+  };
+
+  // Esc closes the whole modal (capture + stopPropagation so App's cascade
+  // doesn't also fire) — same convention as TileLibrary. There is no separate
+  // Esc handler for the confirm dialog below: it has no keydown listener of
+  // its own, only a click-outside handler, so pressing Esc while it's open
+  // falls through to this listener and closes the whole modal (dialog
+  // included), not just the dialog.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') { e.stopPropagation(); onClose(); }
@@ -322,8 +350,10 @@ export function ContentLibrary({
                   item={item}
                   accent={accent}
                   busy={busyKeys.has(item.key)}
+                  disabled={busyKeys.size > 0}
                   onInstall={() => handleInstall(item)}
                   onRemove={() => void handleRemove(item)}
+                  onAdd={item.kind === 'tile' && item.installed ? () => handleAdd(item) : undefined}
                 />
               ))}
             </div>
@@ -362,9 +392,12 @@ export function ContentLibrary({
                 }}>Cancel</button>
                 <button
                   onClick={() => void runInstall(confirming.item, confirming.bundle)}
+                  disabled={busyKeys.has(confirming.item.key)}
                   style={{
-                    padding: '7px 16px', fontSize: 12, fontWeight: 600, cursor: 'pointer', borderRadius: 6,
+                    padding: '7px 16px', fontSize: 12, fontWeight: 600, borderRadius: 6,
                     background: accent, color: '#000', border: 'none',
+                    cursor: busyKeys.has(confirming.item.key) ? 'not-allowed' : 'pointer',
+                    opacity: busyKeys.has(confirming.item.key) ? 0.6 : 1,
                   }}
                 >Install &amp; grant</button>
               </div>
