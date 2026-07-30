@@ -1,4 +1,7 @@
 import type { CatalogItem } from '../state/catalog';
+import { previewSourceFor } from './previewSource';
+import { PreviewImage } from './PreviewImage';
+import { cfgUrl } from '../state/marketplaceConfig';
 
 const MONO = '"JetBrains Mono", ui-monospace, monospace';
 
@@ -41,14 +44,24 @@ export function catalogCardTags(item: CatalogItem): CatalogTag[] {
 /** One `CatalogItem` in the unified catalog grid. Presentational only — all
  *  data loading and the install/remove mutations live in ContentLibrary.tsx,
  *  which owns `busy` (disables the action button mid-mutation) and the two
- *  callbacks. Preview area is a placeholder block until spec C adds real
- *  thumbnails. Visual language matches TileLibrary's TileCard: dark
- *  translucent panel, hairline border, JetBrains Mono metadata. */
+ *  callbacks. Preview area renders one of `previewSource.ts`'s four
+ *  treatments (spec C §6): a published image (`PreviewImage`, task 6), a
+ *  first-party tile's geometric glyph large and centered, a live sandboxed
+ *  render (task 7 — falls back to today's letter block for now), or that
+ *  same letter block for anything with nothing else to show. Visual language
+ *  matches TileLibrary's TileCard: dark translucent panel, hairline border,
+ *  JetBrains Mono metadata. */
 export function CatalogCard({
-  item, accent, busy, disabled, onInstall, onRemove, onAdd, onRestore,
+  item, accent, glyph: tileGlyph, busy, disabled, onInstall, onRemove, onAdd, onRestore,
 }: {
   item: CatalogItem;
   accent: string;
+  /** The item's geometric glyph — `TILE_META[id].icon` for a built-in tile,
+   *  `null` for everything else (a visualizer style has no glyph table, and a
+   *  marketplace-only tile has no compile-time entry to hold one). Passed in
+   *  rather than imported here so this stays presentational; ContentLibrary
+   *  owns the TILE_META lookup. */
+  glyph: string | null;
   /** This card's own mutation is in flight — drives the '…' label. */
   busy: boolean;
   /** Some mutation (on any card) is in flight — locks every action button so
@@ -71,7 +84,22 @@ export function CatalogCard({
 }) {
   const tags = catalogCardTags(item);
   const version = item.installed ? item.installedVersion : item.availableVersion;
-  const glyph = item.name.trim().charAt(0).toUpperCase() || '?';
+  // Deepest fallback — "today's block": the letter this card has always
+  // shown when there is nothing better (no TILE_META glyph, no published
+  // image, no live render). Kept unchanged so a marketplace item with none
+  // of those still gets a legible tile instead of a blank frame.
+  const letterFallback = item.name.trim().charAt(0).toUpperCase() || '?';
+  // What every non-`image` branch renders, and what `PreviewImage` falls
+  // back to if its fetch never resolves or fails. `tileGlyph` is non-null
+  // exactly when `previewSourceFor` would pick the `glyph` branch (see its
+  // doc comment), so this one node correctly serves `glyph`, `placeholder`,
+  // and — until task 7 replaces it with a real sandboxed render — `live` too.
+  const fallbackContent = tileGlyph ? (
+    <span style={{ fontSize: 24, fontWeight: 700, color: `${accent}cc` }}>{tileGlyph}</span>
+  ) : (
+    <span style={{ fontSize: 18, fontWeight: 700, color: `${accent}cc` }}>{letterFallback}</span>
+  );
+  const previewSrc = previewSourceFor(item, tileGlyph);
 
   return (
     <div style={{
@@ -81,14 +109,25 @@ export function CatalogCard({
       border: item.installed ? `1px solid ${accent}33` : '1px solid rgba(255,255,255,0.07)',
       minWidth: 0,
     }}>
-      {/* 46px preview placeholder — replaced by a real thumbnail in spec C. */}
+      {/* 46px preview — a published image (task 6), this item's glyph, or
+          today's letter block. `overflow: hidden` clips PreviewImage's <img>
+          to the frame's rounded corners. */}
       <div style={{
-        height: 46, borderRadius: 6, flexShrink: 0,
+        height: 46, borderRadius: 6, flexShrink: 0, overflow: 'hidden',
         background: `linear-gradient(135deg, ${accent}22, ${accent}08)`,
         border: `1px solid ${accent}2a`,
         display: 'flex', alignItems: 'center', justifyContent: 'center',
-        fontSize: 18, fontWeight: 700, color: `${accent}cc`,
-      }}>{glyph}</div>
+      }}>
+        {previewSrc.kind === 'image' && item.availableVersion != null ? (
+          <PreviewImage
+            id={item.id}
+            version={item.availableVersion}
+            kind={item.kind}
+            url={cfgUrl()}
+            fallback={fallbackContent}
+          />
+        ) : fallbackContent}
+      </div>
 
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, minWidth: 0 }}>
         <span style={{

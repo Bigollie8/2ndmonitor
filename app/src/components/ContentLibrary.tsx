@@ -8,7 +8,7 @@ import { TILE_META } from '../state/tileMeta';
 import { BUILTIN_VIZ_STYLES } from './viz-styles';
 import type { InstalledTileFolder } from '../tiles/tileRegistry';
 import type { InstalledVizFolder } from '../state/contentRegistry';
-import type { TileType } from '../state/layout';
+import type { TileType, BuiltinTileType } from '../state/layout';
 import { buildRail } from './catalogRail';
 import { searchItems } from './catalogSearch';
 import { CatalogCard } from './CatalogCard';
@@ -624,6 +624,9 @@ export function ContentLibrary({
                       key={item.key}
                       item={item}
                       accent={accent}
+                      glyph={item.kind === 'tile' && item.id in TILE_META
+                        ? TILE_META[item.id as BuiltinTileType].icon
+                        : null}
                       busy={busyKeys.has(item.key)}
                       disabled={busyKeys.size > 0 || restoring}
                       onInstall={() => handleInstall(item)}
