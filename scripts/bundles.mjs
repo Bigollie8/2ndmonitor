@@ -261,9 +261,12 @@ if (cmd === 'publish') {
     const code = readFileSync(join(BUNDLES, b.id, b.codeFile), 'utf8');
 
     // bundles/<id>/preview.png never enters the zip (the installer's entry
-    // allowlist would reject it) — it travels only as this JSON field. Fail
-    // the whole run rather than submit a bundle whose preview the server
-    // will reject; readPreview() already applied the server's exact rules.
+    // allowlist would reject it) — it travels only as this JSON field. Skip
+    // just this bundle rather than submit one whose preview the server will
+    // reject; readPreview() already applied the server's exact rules. One
+    // bad preview must not block unrelated bundles later in the batch — same
+    // isolation principle as the validate/zip loop's failed[] above and the
+    // submission-failure handling three lines below.
     let preview;
     try {
       const buf = readPreview(b.id);
@@ -276,7 +279,8 @@ if (cmd === 'publish') {
       if (buf) preview = buf.toString('base64');
     } catch (e) {
       console.error(`✗ ${b.id}: ${e.message}`);
-      process.exit(1);
+      process.exitCode = 1;
+      continue;
     }
 
     const res = await fetch(`${SERVER}/submissions`, {
