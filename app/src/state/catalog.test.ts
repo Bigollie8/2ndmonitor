@@ -63,6 +63,29 @@ test('mergeCatalog: equal versions do not flag an update', () => {
   assert.equal(out.find((i) => i.key === 'visualizer:aurora')?.updateAvailable, false);
 });
 
+test('mergeCatalog: a table-only built-in that also has an index entry stays installed, no update', () => {
+  // `bars` is a built-in with no installed folder — it ships and works today
+  // even if the marketplace also lists it. It must not flip to "Install".
+  const out = mergeCatalog(base({ index: [idx({ id: 'bars', kind: 'visualizer', version: '1.1.0' })] }));
+  const bars = out.find((i) => i.key === 'visualizer:bars');
+  assert.ok(bars);
+  assert.equal(bars.installed, true);
+  assert.equal(bars.updateAvailable, false, 'no installedVersion to compare against, so no update badge');
+});
+
+test('mergeCatalog: an index-only item (no table entry, no folder) is installed: false', () => {
+  const out = mergeCatalog(base({ index: [idx({ id: 'liquid', name: 'Liquid' })] }));
+  assert.equal(out.find((i) => i.key === 'visualizer:liquid')?.installed, false);
+});
+
+test('mergeCatalog: a malformed available version never flags an update (fails closed)', () => {
+  const out = mergeCatalog(base({
+    installedViz: [vizFolder({ version: '1.0.0' })],
+    index: [idx({ version: '1.x.0' })],
+  }));
+  assert.equal(out.find((i) => i.key === 'visualizer:aurora')?.updateAvailable, false);
+});
+
 test('mergeCatalog: a removed key is dropped entirely', () => {
   const out = mergeCatalog(base({ removed: ['tile:mixer', 'visualizer:bars'] }));
   assert.equal(out.some((i) => i.key === 'tile:mixer'), false);

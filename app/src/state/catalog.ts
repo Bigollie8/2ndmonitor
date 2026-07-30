@@ -151,7 +151,11 @@ export function mergeCatalog(args: MergeCatalogArgs): CatalogItem[] {
     const kind: CatalogKind = b.kind;
     const key = catalogKey(kind, b.id);
     const prev = items.get(key);
-    const installed = prev?.installedVersion != null;
+    // Preserve prior installed state rather than deriving it from
+    // installedVersion alone: a table-only built-in (pass 1) is `installed:
+    // true` with no installedVersion, and it still ships and works even if
+    // the index also lists it — offering "Install" for it would be wrong.
+    const installed = prev?.installed ?? false;
     put({
       key, kind, id: b.id,
       name: b.name || prev?.name || b.id,
@@ -161,7 +165,7 @@ export function mergeCatalog(args: MergeCatalogArgs): CatalogItem[] {
       installed,
       installedVersion: prev?.installedVersion ?? null,
       availableVersion: b.version,
-      updateAvailable: installed && isNewer(b.version, prev!.installedVersion!),
+      updateAvailable: prev?.installedVersion != null && isNewer(b.version, prev.installedVersion),
       permissions: b.permissions,
       needsSetup: needsSetup.has(key),
       downloads: b.downloads,
