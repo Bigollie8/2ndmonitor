@@ -93,7 +93,16 @@ fn is_safe_id(id: &str) -> bool {
 /// to distinguish deliberately-installed content from a hand-authored draft.
 /// Written on every successful install so it survives a restart; deleted
 /// along with the rest of the folder on uninstall.
-fn write_installed_marker(dir: &std::path::Path, id: &str, version: &str, kind: &str) -> Result<(), String> {
+///
+/// `origin` ("seed" or "marketplace") comes from the caller, never from the
+/// zip — see `install_bundle_zip`.
+fn write_installed_marker(
+    dir: &std::path::Path,
+    id: &str,
+    version: &str,
+    kind: &str,
+    origin: &str,
+) -> Result<(), String> {
     let installed_at = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
@@ -103,9 +112,99 @@ fn write_installed_marker(dir: &std::path::Path, id: &str, version: &str, kind: 
         "version": version,
         "kind": kind,
         "installed_at": installed_at,
+        "origin": origin,
     });
     std::fs::write(dir.join("installed.json"), marker.to_string())
         .map_err(|e| format!("write installed.json: {e}"))
+}
+
+/// Whether `kind`/`id` is already installed: its install directory exists and
+/// contains the `installed.json` marker written by `write_installed_marker`.
+/// Used by the seed installer (Task 5) to skip a bundle already on disk.
+///
+/// Presets have no per-id directory and no marker (see `install_bundle_zip`),
+/// so there is nothing meaningful to check for that kind — always false.
+pub fn is_installed<R: Runtime>(app: &AppHandle<R>, kind: &str, id: &str) -> bool {
+    let sub = match kind {
+        "visualizer" => "visualizers",
+        "tile" => "tiles",
+        _ => return false,
+    };
+    match content_dir(app, sub) {
+        Ok(dir) => dir.join(id).join("installed.json").is_file(),
+        Err(_) => false,
+    }
+}
+
+/// Reads a zip archive and returns its entries as `name -> raw bytes`.
+///
+/// Allowlist is exact entry names — no paths, no traversal. Deliberately
+/// excludes `installed.json`: that marker is written by us on install, never
+/// accepted from a downloaded (or seeded) bundle, so a malicious archive
+/// can't self-certify marketplace provenance (see `folder_source` in
+/// visualizers.rs / tiles.rs).
+fn entries_of(zip: &[u8]) -> Result<std::collections::HashMap<String, Vec<u8>>, String> {
+    let mut archive =
+        zip::ZipArchive::new(std::io::Cursor::new(zip)).map_err(|e| format!("bad zip: {e}"))?;
+    let mut entries: std::collections::HashMap<String, Vec<u8>> = std::collections::HashMap::new();
+    for i in 0..archive.len() {
+        let mut f = archive.by_index(i).map_err(|e| format!("zip entry: {e}"))?;
+        let name = f.name().to_string();
+        if !matches!(name.as_str(), "manifest.json" | "main.js" | "preset.json" | "view.json") {
+            return Err(format!("unexpected file in bundle: {name}"));
+        }
+        let mut buf = Vec::new();
+        f.read_to_end(&mut buf).map_err(|e| format!("read {name}: {e}"))?;
+        entries.insert(name, buf);
+    }
+    Ok(entries)
+}
+
+/// Extracts a verified bundle zip into the install directory.
+///
+/// The ONLY path that writes bundle content to disk. Seeded and downloaded
+/// bundles both come through here so neither can skip the entry allowlist or
+/// the manifest validation — a hand-copy into %APPDATA% is what shipped
+/// uninstallable tiles at 1.0.0.
+///
+/// `origin` is recorded in installed.json as "seed" or "marketplace".
+pub fn install_bundle_zip<R: Runtime>(
+    app: &AppHandle<R>,
+    kind: &str,
+    id: &str,
+    version: &str,
+    zip: &[u8],
+    origin: &str,
+) -> Result<(), String> {
+    let entries = entries_of(zip)?;
+
+    match kind {
+        "visualizer" => {
+            let manifest = entries.get("manifest.json").ok_or("bundle missing manifest.json")?;
+            let code = entries.get("main.js").ok_or("bundle missing main.js")?;
+            let dir = content_dir(app, "visualizers")?.join(id);
+            std::fs::create_dir_all(&dir).map_err(|e| format!("create {id}: {e}"))?;
+            std::fs::write(dir.join("manifest.json"), manifest).map_err(|e| format!("write manifest: {e}"))?;
+            std::fs::write(dir.join("main.js"), code).map_err(|e| format!("write main.js: {e}"))?;
+            write_installed_marker(&dir, id, version, kind, origin)?;
+        }
+        "tile" => {
+            let manifest = entries.get("manifest.json").ok_or("bundle missing manifest.json")?;
+            let view = entries.get("view.json").ok_or("bundle missing view.json")?;
+            let dir = content_dir(app, "tiles")?.join(id);
+            std::fs::create_dir_all(&dir).map_err(|e| format!("create {id}: {e}"))?;
+            std::fs::write(dir.join("manifest.json"), manifest).map_err(|e| format!("write manifest: {e}"))?;
+            std::fs::write(dir.join("view.json"), view).map_err(|e| format!("write view.json: {e}"))?;
+            write_installed_marker(&dir, id, version, kind, origin)?;
+        }
+        "preset" => {
+            let preset = entries.get("preset.json").ok_or("bundle missing preset.json")?;
+            let dir = content_dir(app, "presets")?;
+            std::fs::write(dir.join(format!("{id}.json")), preset).map_err(|e| format!("write preset: {e}"))?;
+        }
+        other => return Err(format!("unknown kind {other}")),
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -130,52 +229,7 @@ pub fn marketplace_install<R: Runtime>(
         return Err("bundle hash does not match the signed index — refusing to install".into());
     }
 
-    let mut archive = zip::ZipArchive::new(std::io::Cursor::new(zip_bytes))
-        .map_err(|e| format!("bad zip: {e}"))?;
-    let mut entries: std::collections::HashMap<String, String> = std::collections::HashMap::new();
-    for i in 0..archive.len() {
-        let mut f = archive.by_index(i).map_err(|e| format!("zip entry: {e}"))?;
-        let name = f.name().to_string();
-        // Allowlist exact entry names — no paths, no traversal. Deliberately
-        // excludes installed.json: that marker is written by us on install,
-        // never accepted from a downloaded bundle, so a malicious archive
-        // can't self-certify marketplace provenance (see folder_source in
-        // visualizers.rs / tiles.rs).
-        if !matches!(name.as_str(), "manifest.json" | "main.js" | "preset.json" | "view.json") {
-            return Err(format!("unexpected file in bundle: {name}"));
-        }
-        let mut s = String::new();
-        f.read_to_string(&mut s).map_err(|e| format!("read {name}: {e}"))?;
-        entries.insert(name, s);
-    }
-
-    match kind.as_str() {
-        "visualizer" => {
-            let manifest = entries.get("manifest.json").ok_or("bundle missing manifest.json")?;
-            let code = entries.get("main.js").ok_or("bundle missing main.js")?;
-            let dir = content_dir(&app, "visualizers")?.join(&id);
-            std::fs::create_dir_all(&dir).map_err(|e| format!("create {id}: {e}"))?;
-            std::fs::write(dir.join("manifest.json"), manifest).map_err(|e| format!("write manifest: {e}"))?;
-            std::fs::write(dir.join("main.js"), code).map_err(|e| format!("write main.js: {e}"))?;
-            write_installed_marker(&dir, &id, &version, &kind)?;
-        }
-        "tile" => {
-            let manifest = entries.get("manifest.json").ok_or("bundle missing manifest.json")?;
-            let view = entries.get("view.json").ok_or("bundle missing view.json")?;
-            let dir = content_dir(&app, "tiles")?.join(&id);
-            std::fs::create_dir_all(&dir).map_err(|e| format!("create {id}: {e}"))?;
-            std::fs::write(dir.join("manifest.json"), manifest).map_err(|e| format!("write manifest: {e}"))?;
-            std::fs::write(dir.join("view.json"), view).map_err(|e| format!("write view.json: {e}"))?;
-            write_installed_marker(&dir, &id, &version, &kind)?;
-        }
-        "preset" => {
-            let preset = entries.get("preset.json").ok_or("bundle missing preset.json")?;
-            let dir = content_dir(&app, "presets")?;
-            std::fs::write(dir.join(format!("{id}.json")), preset).map_err(|e| format!("write preset: {e}"))?;
-        }
-        other => return Err(format!("unknown kind {other}")),
-    }
-    Ok(())
+    install_bundle_zip(&app, &kind, &id, &version, &zip_bytes, "marketplace")
 }
 
 #[tauri::command]
@@ -358,6 +412,24 @@ mod tests {
         assert!(!is_safe_id("../etc"));
         assert!(!is_safe_id("Up"));
         assert!(!is_safe_id(""));
+    }
+
+    #[test]
+    fn install_rejects_unexpected_zip_entry() {
+        // Build a zip containing an entry that is not in the allowlist.
+        let mut buf = Vec::new();
+        {
+            let mut w = zip::ZipWriter::new(std::io::Cursor::new(&mut buf));
+            let opts = zip::write::SimpleFileOptions::default();
+            w.start_file("manifest.json", opts).unwrap();
+            use std::io::Write;
+            w.write_all(br#"{"id":"x","name":"X","version":"1.0.0","api":1,"permissions":[]}"#).unwrap();
+            w.start_file("installed.json", opts).unwrap();
+            w.write_all(b"{}").unwrap();
+            w.finish().unwrap();
+        }
+        let err = entries_of(&buf).unwrap_err();
+        assert!(err.contains("unexpected file"), "got: {err}");
     }
 
     fn headers(pairs: &[(&str, &str)]) -> std::collections::HashMap<String, String> {
