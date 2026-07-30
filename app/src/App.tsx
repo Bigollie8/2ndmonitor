@@ -1031,6 +1031,8 @@ export default function App() {
         {showContentLibrary && (
           <ContentLibrary
             accent={accent}
+            accent2={accent2}
+            spectrumRef={spectrumRef}
             catalogRemoved={t.catalogRemoved}
             setCatalogRemoved={(next) => setTweak('catalogRemoved', next)}
             onRemoveTileInstances={(type) => setTweak('profiles', t.profiles.map((p) => ({

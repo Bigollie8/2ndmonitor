@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject } from 'react';
 import {
   mergeCatalog, catalogKey, planRemoval, restoreDefaults, tileInstanceType, secretSetupCandidates,
   type CatalogItem, type IndexBundle,
 } from '../state/catalog';
+import type { SpectrumState } from '../state/tauri';
 import { withRemoval, withoutRemoval, restoreItem } from '../state/removedContent';
 import { TILE_META } from '../state/tileMeta';
 import { BUILTIN_VIZ_STYLES } from './viz-styles';
@@ -37,10 +38,18 @@ function describePermission(p: string): string {
  *  offline notice, the "search all content" widen affordance and the
  *  restore-defaults empty state are Task 10. */
 export function ContentLibrary({
-  accent, catalogRemoved, setCatalogRemoved, onRemoveTileInstances, onAddTileInstance,
+  accent, accent2, spectrumRef, catalogRemoved, setCatalogRemoved, onRemoveTileInstances, onAddTileInstance,
   onVisualizerRemoved, onClose,
 }: {
   accent: string;
+  /** Second theme color, threaded to `CatalogCard` for a `live` card's
+   *  sandboxed render — same value App.tsx hands the hero surface. */
+  accent2: string;
+  /** Live audio-spectrum ref — App.tsx's single `useSpectrumRef()` call,
+   *  threaded down (not re-created here) so a `live` card's sandbox reacts to
+   *  the same audio the hero surface does, and so there is only ever one
+   *  `audio:spectrum` Tauri listener alive. */
+  spectrumRef?: MutableRefObject<SpectrumState>;
   /** The catalog removal list — see state/removedContent.ts. */
   catalogRemoved: string[];
   /** Writes the next removal list. Backed by `setTweak('catalogRemoved', …)`
@@ -624,6 +633,8 @@ export function ContentLibrary({
                       key={item.key}
                       item={item}
                       accent={accent}
+                      accent2={accent2}
+                      spectrumRef={spectrumRef}
                       glyph={item.kind === 'tile' && item.id in TILE_META
                         ? TILE_META[item.id as BuiltinTileType].icon
                         : null}

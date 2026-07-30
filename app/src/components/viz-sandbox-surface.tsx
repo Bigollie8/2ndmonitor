@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useAnimateGate, makeSpectrumReader, type VizProps } from './viz';
 import { useWaveformRef } from '../state/waveform';
+import { paceFrame, type PaceState } from '../state/framePace';
 import { buildSandboxHtml, SANDBOX_ATTR } from '../sandbox/sandbox-html';
 import { validateManifest } from '../sandbox/manifest';
 import type { InitMessage, SandboxToHost } from '../sandbox/manifest';
@@ -27,7 +28,7 @@ export type ScriptError = { message: string; line: number | null } | null;
  *  surface's concern. */
 export function SandboxVizSurface({
   bundleId, accent, accent2, spectrumRef, sensitivity = 1, smoothing = 0,
-  paused, track, playback, reloadKey, suppressErrorBanner, onError,
+  paused, track, playback, reloadKey, suppressErrorBanner, onError, maxFps,
 }: VizProps & {
   bundleId: string | null;
   // Deliberately no `chrome` flag: this component renders only the iframe
@@ -46,6 +47,16 @@ export function SandboxVizSurface({
   /** Mirrors this surface's error state to the caller; the authoring editor
    *  needs it for its own inline `liveError` display. */
   onError?: (error: ScriptError) => void;
+  /** Per-instance frame-rate ceiling, independent of the global `vizMaxFps`
+   *  the Performance setting controls (which `useAnimateGate`'s `shouldDraw`
+   *  already applies to every surface, including this one). Undefined means
+   *  "no additional cap" — the hero surface and the Scripted authoring editor
+   *  both omit this, so their behavior is unchanged. Catalog-card live
+   *  previews (`LivePreview.tsx`) pass a low value here: many of these can be
+   *  mounted at once, so each one needs its own reduced budget on top of
+   *  (not instead of) the global cap — a single shared module flag would
+   *  throttle the main hero surface too, which is not the goal. */
+  maxFps?: number;
 }) {
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const hostRef = useRef<HTMLDivElement | null>(null);
@@ -189,12 +200,16 @@ export function SandboxVizSurface({
     const reader = makeSpectrumReader(64, spectrumRef, sensitivity, smoothing);
     let raf = 0;
     let last = performance.now();
+    const paceState: PaceState = { nextDue: 0 };
     const tick = () => {
       raf = requestAnimationFrame(tick);
       const win = iframeRef.current?.contentWindow;
       if (!win || !readyRef.current || !hostRef.current) return;
       if (!gate.shouldDraw()) return;
       const now = performance.now();
+      // Per-instance reduced budget (e.g. card previews), on top of — not
+      // instead of — the global cap `gate.shouldDraw()` already applied.
+      if (maxFps && !paceFrame(now, paceState, 1000 / maxFps)) return;
       const dtMs = now - last;
       last = now;
       reader.read();
@@ -218,7 +233,7 @@ export function SandboxVizSurface({
     // bundleId is a dep so `gate` (whose perf-debug label is derived from it)
     // is re-captured by this closure on every bundle switch, not just at mount.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [spectrumRef, sensitivity, smoothing, bundleId]);
+  }, [spectrumRef, sensitivity, smoothing, bundleId, maxFps]);
 
   return (
     <div ref={hostRef} style={{ position: 'absolute', inset: 0, background: '#000', overflow: 'hidden' }}>

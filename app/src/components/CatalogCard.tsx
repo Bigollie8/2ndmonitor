@@ -1,6 +1,9 @@
+import type { MutableRefObject } from 'react';
 import type { CatalogItem } from '../state/catalog';
+import type { SpectrumState } from '../state/tauri';
 import { previewSourceFor } from './previewSource';
 import { PreviewImage } from './PreviewImage';
+import { LivePreview } from './LivePreview';
 import { cfgUrl } from '../state/marketplaceConfig';
 
 const MONO = '"JetBrains Mono", ui-monospace, monospace';
@@ -47,15 +50,26 @@ export function catalogCardTags(item: CatalogItem): CatalogTag[] {
  *  callbacks. Preview area renders one of `previewSource.ts`'s four
  *  treatments (spec C §6): a published image (`PreviewImage`, task 6), a
  *  first-party tile's geometric glyph large and centered, a live sandboxed
- *  render (task 7 — falls back to today's letter block for now), or that
- *  same letter block for anything with nothing else to show. Visual language
+ *  render (`LivePreview`, task 7 — itself falls back to the glyph/letter
+ *  block below when off-screen, budget-exhausted, or errored), or that same
+ *  letter block for anything with nothing else to show. Visual language
  *  matches TileLibrary's TileCard: dark translucent panel, hairline border,
  *  JetBrains Mono metadata. */
 export function CatalogCard({
-  item, accent, glyph: tileGlyph, busy, disabled, onInstall, onRemove, onAdd, onRestore,
+  item, accent, accent2, spectrumRef, glyph: tileGlyph, busy, disabled, onInstall, onRemove, onAdd, onRestore,
 }: {
   item: CatalogItem;
   accent: string;
+  /** Second theme color for a `live` card's sandboxed render — same value the
+   *  hero surface passes its own `SandboxVizSurface`. Only consumed by the
+   *  `live` branch; every other branch stays single-accent, unchanged. */
+  accent2: string;
+  /** Live audio-spectrum ref, threaded down for the `live` branch's
+   *  `LivePreview` — same ref App.tsx's `useSpectrumRef()` hands the hero
+   *  surface. `undefined` (e.g. before ContentLibrary wires it up) just means
+   *  a `live` card's sandbox falls back to its own synthetic envelope,
+   *  same as the hero surface does with no live audio. */
+  spectrumRef?: MutableRefObject<SpectrumState>;
   /** The item's geometric glyph — `TILE_META[id].icon` for a built-in tile,
    *  `null` for everything else (a visualizer style has no glyph table, and a
    *  marketplace-only tile has no compile-time entry to hold one). Passed in
@@ -89,11 +103,13 @@ export function CatalogCard({
   // image, no live render). Kept unchanged so a marketplace item with none
   // of those still gets a legible tile instead of a blank frame.
   const letterFallback = item.name.trim().charAt(0).toUpperCase() || '?';
-  // What every non-`image` branch renders, and what `PreviewImage` falls
-  // back to if its fetch never resolves or fails. `tileGlyph` is non-null
-  // exactly when `previewSourceFor` would pick the `glyph` branch (see its
-  // doc comment), so this one node correctly serves `glyph`, `placeholder`,
-  // and — until task 7 replaces it with a real sandboxed render — `live` too.
+  // What every non-`image`, non-`live` branch renders, and what both
+  // `PreviewImage` and `LivePreview` fall back to when they have nothing to
+  // show (fetch never resolved/failed; off-screen, budget-exhausted, or
+  // errored). `tileGlyph` is non-null exactly when `previewSourceFor` would
+  // pick the `glyph` branch (see its doc comment), so this one node correctly
+  // serves `glyph` and `placeholder` directly, and is handed to the other two
+  // as their fallback prop.
   const fallbackContent = tileGlyph ? (
     <span style={{ fontSize: 24, fontWeight: 700, color: `${accent}cc` }}>{tileGlyph}</span>
   ) : (
@@ -109,9 +125,10 @@ export function CatalogCard({
       border: item.installed ? `1px solid ${accent}33` : '1px solid rgba(255,255,255,0.07)',
       minWidth: 0,
     }}>
-      {/* 46px preview — a published image (task 6), this item's glyph, or
-          today's letter block. `overflow: hidden` clips PreviewImage's <img>
-          to the frame's rounded corners. */}
+      {/* 46px preview — a published image (task 6), a live sandboxed render
+          (task 7), this item's glyph, or today's letter block. `overflow:
+          hidden` clips PreviewImage's <img> and LivePreview's sandbox to the
+          frame's rounded corners. */}
       <div style={{
         height: 46, borderRadius: 6, flexShrink: 0, overflow: 'hidden',
         background: `linear-gradient(135deg, ${accent}22, ${accent}08)`,
@@ -124,6 +141,14 @@ export function CatalogCard({
             version={item.availableVersion}
             kind={item.kind}
             url={cfgUrl()}
+            fallback={fallbackContent}
+          />
+        ) : previewSrc.kind === 'live' ? (
+          <LivePreview
+            bundleId={previewSrc.bundleId}
+            accent={accent}
+            accent2={accent2}
+            spectrumRef={spectrumRef}
             fallback={fallbackContent}
           />
         ) : fallbackContent}
