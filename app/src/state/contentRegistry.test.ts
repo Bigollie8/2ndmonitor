@@ -16,7 +16,7 @@ const builtin: VizStyle[] = [
 
 const folder = (over: Partial<InstalledVizFolder> = {}): InstalledVizFolder => ({
   id: 'starfield', name: 'Starfield', author: 'official', version: '1.0.0',
-  api: 1, manifest_error: null, ...over,
+  api: 1, manifest_error: null, source: 'marketplace', ...over,
 });
 
 test('bundleModeId / isBundleMode / bundleIdOf round-trip', () => {
@@ -117,4 +117,21 @@ test('remapRetiredVizMode: an unknown mode falls back to bars', () => {
 
 test('RETIRED_BUILTIN_VIZ_MODES: covers exactly the 12 migrated styles', () => {
   assert.equal(RETIRED_BUILTIN_VIZ_MODES.length, 12);
+});
+
+test('mergeVizStyles: a local draft is not published into the catalog', () => {
+  const out = mergeVizStyles(builtin, [folder({ id: 'draft', name: 'My Visualizer', source: 'local' })]);
+  assert.equal(out.some((s) => s.source === 'bundle'), false);
+});
+
+test('mergeVizStyles: a marketplace folder still appears', () => {
+  const out = mergeVizStyles(builtin, [folder({ id: 'sample-bundle', source: 'marketplace' })]);
+  assert.equal(out.some((s) => s.id === 'bundle:sample-bundle'), true);
+});
+
+test('mergeVizStyles: a marketplace folder that failed validation is skipped', () => {
+  const out = mergeVizStyles(builtin, [
+    folder({ id: 'sample-bundle', source: 'marketplace', manifest_error: 'main.js missing' }),
+  ]);
+  assert.equal(out.some((s) => s.source === 'bundle'), false);
 });

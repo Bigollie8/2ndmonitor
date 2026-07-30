@@ -22,6 +22,10 @@ export interface InstalledVizFolder {
   version: string;
   api: number | null;
   manifest_error: string | null;
+  /** "marketplace" when the folder carries an `installed.json` marker written
+   *  by `marketplace_install`; "local" for a hand-authored draft (e.g. the
+   *  "+ New visualizer" template). See the filter in `mergeVizStyles` below. */
+  source: 'marketplace' | 'local';
 }
 
 export interface VizStyleEntry {
@@ -50,7 +54,12 @@ export const bundleIdOf = (mode: string): string | null =>
  *
  *  Folders are skipped when they failed manifest validation or declare an api
  *  this build does not implement — a broken folder must not become a selectable
- *  style that renders nothing. */
+ *  style that renders nothing. They are also skipped when `source !== 'marketplace'`:
+ *  a locally-authored draft (e.g. the template "+ New visualizer" writes) is
+ *  reachable through the Scripted style's own picker, which is the surface
+ *  built for editing it. The public catalog — this dropdown, the gallery, the
+ *  V-cycle — is for content that was installed deliberately, not for a draft
+ *  that merely happens to sit in the same folder tree. */
 export function mergeVizStyles(
   builtin: VizStyle[],
   installed: InstalledVizFolder[],
@@ -65,7 +74,7 @@ export function mergeVizStyles(
   }));
 
   const bundleEntries: VizStyleEntry[] = installed
-    .filter((f) => f.manifest_error === null && f.api === 1 && !builtinIds.has(f.id))
+    .filter((f) => f.source === 'marketplace' && f.manifest_error === null && f.api === 1 && !builtinIds.has(f.id))
     .map((f) => ({
       id: bundleModeId(f.id),
       label: f.name.trim() || f.id,

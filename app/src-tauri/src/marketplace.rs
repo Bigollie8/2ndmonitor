@@ -13,6 +13,7 @@ use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::io::Read;
+use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Manager, Runtime};
 
 const FETCH_CAP: usize = 1_048_576; // 1 MiB
@@ -88,6 +89,25 @@ fn is_safe_id(id: &str) -> bool {
         && id.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
 }
 
+/// Provenance marker read by `visualizers::folder_entry` (via `folder_source`)
+/// to distinguish deliberately-installed content from a hand-authored draft.
+/// Written on every successful install so it survives a restart; deleted
+/// along with the rest of the folder on uninstall.
+fn write_installed_marker(dir: &std::path::Path, id: &str, version: &str, kind: &str) -> Result<(), String> {
+    let installed_at = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let marker = serde_json::json!({
+        "id": id,
+        "version": version,
+        "kind": kind,
+        "installed_at": installed_at,
+    });
+    std::fs::write(dir.join("installed.json"), marker.to_string())
+        .map_err(|e| format!("write installed.json: {e}"))
+}
+
 #[tauri::command]
 pub fn marketplace_install<R: Runtime>(
     app: AppHandle<R>,
@@ -133,6 +153,7 @@ pub fn marketplace_install<R: Runtime>(
             std::fs::create_dir_all(&dir).map_err(|e| format!("create {id}: {e}"))?;
             std::fs::write(dir.join("manifest.json"), manifest).map_err(|e| format!("write manifest: {e}"))?;
             std::fs::write(dir.join("main.js"), code).map_err(|e| format!("write main.js: {e}"))?;
+            write_installed_marker(&dir, &id, &version, &kind)?;
         }
         "preset" => {
             let preset = entries.get("preset.json").ok_or("bundle missing preset.json")?;
