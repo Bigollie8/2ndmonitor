@@ -1,0 +1,36 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { buildRail } from './catalogRail';
+import type { CatalogItem } from '../state/catalog';
+
+const item = (o: Partial<CatalogItem> = {}): CatalogItem => ({
+  key: 'tile:x', kind: 'tile', id: 'x', name: 'X', description: '', category: 'weather',
+  source: 'bundle', installed: false, installedVersion: null, availableVersion: '1.0.0',
+  updateAvailable: false, permissions: [], needsSetup: false, downloads: 0, brokenReason: null, ...o,
+});
+
+test('buildRail: All counts every item', () => {
+  const rail = buildRail([item(), item({ key: 'tile:y', id: 'y' })]);
+  assert.equal(rail.find((r) => r.id === 'all')?.count, 2);
+});
+
+test('buildRail: Installed and Updates count only what qualifies', () => {
+  const rail = buildRail([
+    item({ installed: true }),
+    item({ key: 'tile:y', id: 'y', installed: true, updateAvailable: true }),
+    item({ key: 'tile:z', id: 'z' }),
+  ]);
+  assert.equal(rail.find((r) => r.id === 'installed')?.count, 2);
+  assert.equal(rail.find((r) => r.id === 'updates')?.count, 1);
+});
+
+test('buildRail: category rows appear per kind and omit empty categories', () => {
+  const rail = buildRail([item({ category: 'weather' })]);
+  assert.ok(rail.some((r) => r.id === 'tile:weather' && r.count === 1));
+  assert.equal(rail.some((r) => r.id === 'tile:system'), false);
+});
+
+test('buildRail: needsSetup row counts items awaiting a credential', () => {
+  const rail = buildRail([item({ installed: true, needsSetup: true })]);
+  assert.equal(rail.find((r) => r.id === 'needs-setup')?.count, 1);
+});
