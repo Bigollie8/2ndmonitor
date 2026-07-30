@@ -16,8 +16,15 @@ use std::io::Read;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Manager, Runtime};
 
-const FETCH_CAP: usize = 1_048_576; // 1 MiB
-const ZIP_CAP: usize = 4_194_304; // 4 MiB per bundle
+const FETCH_CAP: usize = 1_048_576; // 1 MiB — enforced ceiling for the index fetch, via get_capped.
+// 4 MiB per bundle — enforced ceiling for a bundle download, via get_capped
+// (see marketplace_install). Until get_capped grew a caller-supplied cap
+// (see its doc comment), this constant was checked AFTER a fetch that had
+// already hard-capped at FETCH_CAP internally, making the check below dead:
+// no bundle could ever arrive bigger than 1 MiB, so it could never trip.
+// `caps_are_ordered_and_pinned_to_their_exact_values` (in tests) pins
+// FETCH_CAP < ZIP_CAP so a future edit can't silently re-shrink this.
+const ZIP_CAP: usize = 4_194_304;
 // A preview is a catalog thumbnail, not a bundle — it must not be able to
 // consume the same 4 MiB a bundle may. Must stay smaller than ZIP_CAP; see
 // `preview_cap_is_smaller_than_the_bundle_cap` below, which pins that.
@@ -45,10 +52,17 @@ fn extract_bundles_str(raw: &str) -> Option<&str> {
 }
 
 /// Size-capped HTTPS fetch shared by the index, bundle, and preview fetches.
-/// `cap` is caller-supplied rather than a single constant because the three
-/// callers have different legitimate sizes (index ~KB, bundle up to
-/// `ZIP_CAP`, preview up to `PREVIEW_CAP`) — a single shared cap would have
-/// to be the largest of the three, which defeats the point of a per-kind cap.
+///
+/// `cap` is the CALLER's to choose, not a constant hardcoded in here — every
+/// call site names its own module-level constant: `marketplace_fetch_index`
+/// passes `FETCH_CAP`, `marketplace_install` passes `ZIP_CAP`,
+/// `marketplace_fetch_preview` passes `PREVIEW_CAP`. Do not reintroduce a
+/// hardcoded cap here: this function previously enforced `FETCH_CAP`
+/// unconditionally regardless of what the caller intended, which silently
+/// capped every bundle download at 1 MiB and made `marketplace_install`'s
+/// `ZIP_CAP` (4 MiB) check unreachable dead code — any bundle over 1 MiB
+/// would have failed here first, with a misleading "response too large"
+/// rather than the intended 4 MiB ceiling.
 fn get_capped(url: &str, cap: usize) -> Result<Vec<u8>, String> {
     if !url.starts_with("https://") {
         return Err("only https URLs are allowed".into());
@@ -701,6 +715,21 @@ mod tests {
         // bundle may. Pinning the relationship stops a later edit widening it.
         assert!(PREVIEW_CAP < ZIP_CAP);
         assert_eq!(PREVIEW_CAP, 262_144);
+    }
+
+    #[test]
+    fn caps_are_ordered_and_pinned_to_their_exact_values() {
+        // get_capped takes its cap from the caller, not a hardcoded internal
+        // constant — see its doc comment for the bug that shipped when it
+        // didn't. Nothing else in this file stops a future edit from
+        // re-hardcoding a cap inside get_capped, or swapping which constant
+        // a call site passes (e.g. marketplace_install passing FETCH_CAP
+        // again, silently re-introducing the 1 MiB bundle ceiling this same
+        // change fixed). Pinning the exact values, and their strict order,
+        // makes either regression a failing test instead of a silent revert.
+        assert!(FETCH_CAP < ZIP_CAP);
+        assert_eq!(FETCH_CAP, 1_048_576);
+        assert_eq!(ZIP_CAP, 4_194_304);
     }
 
     #[test]
