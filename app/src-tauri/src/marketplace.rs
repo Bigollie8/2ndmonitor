@@ -155,6 +155,13 @@ fn entries_of(zip: &[u8]) -> Result<std::collections::HashMap<String, Vec<u8>>, 
         }
         let mut buf = Vec::new();
         f.read_to_end(&mut buf).map_err(|e| format!("read {name}: {e}"))?;
+        // Pre-refactor this read as a String, which rejected non-UTF-8 content
+        // and aborted the install with nothing written. Keep that same
+        // atomic-reject behavior even though entries are now bytes: a bundle
+        // that fails here writes no directory, no files, no marker, rather
+        // than installing and failing forever at load time as "marketplace"
+        // content the user must uninstall.
+        std::str::from_utf8(&buf).map_err(|e| format!("read {name}: {e}"))?;
         entries.insert(name, buf);
     }
     Ok(entries)
@@ -163,9 +170,16 @@ fn entries_of(zip: &[u8]) -> Result<std::collections::HashMap<String, Vec<u8>>, 
 /// Extracts a verified bundle zip into the install directory.
 ///
 /// The ONLY path that writes bundle content to disk. Seeded and downloaded
-/// bundles both come through here so neither can skip the entry allowlist or
-/// the manifest validation — a hand-copy into %APPDATA% is what shipped
-/// uninstallable tiles at 1.0.0.
+/// bundles both come through here so neither can skip the zip-entry allowlist
+/// or the required-file presence check (a manifest.json/view.json/main.js
+/// entry must exist for the given kind) — a hand-copy into %APPDATA% is what
+/// shipped uninstallable tiles at 1.0.0. This does NOT validate manifest
+/// *content*; that happens later, at read time, via `validate_folder` in
+/// visualizers.rs / tiles.rs.
+///
+/// `id` is validated here (not caller-trusted) because it is joined directly
+/// onto the install directory below — an unchecked `id` would be a path-
+/// traversal primitive.
 ///
 /// `origin` is recorded in installed.json as "seed" or "marketplace".
 pub fn install_bundle_zip<R: Runtime>(
@@ -176,6 +190,9 @@ pub fn install_bundle_zip<R: Runtime>(
     zip: &[u8],
     origin: &str,
 ) -> Result<(), String> {
+    if !is_safe_id(id) {
+        return Err("invalid bundle id".into());
+    }
     let entries = entries_of(zip)?;
 
     match kind {
@@ -430,6 +447,39 @@ mod tests {
         }
         let err = entries_of(&buf).unwrap_err();
         assert!(err.contains("unexpected file"), "got: {err}");
+    }
+
+    #[test]
+    fn entries_of_matches_entry_names_exactly_not_by_suffix_or_basename() {
+        // The allowlist is exact-string matching against the full entry
+        // name — not a suffix or basename match. These are exactly the
+        // shapes a `ends_with("view.json")` or "last path segment" check
+        // would wrongly accept, and traversal/nesting depends on staying
+        // exact here.
+        fn file_zip(name: &str) -> Vec<u8> {
+            let mut buf = Vec::new();
+            let mut w = zip::ZipWriter::new(std::io::Cursor::new(&mut buf));
+            let opts = zip::write::SimpleFileOptions::default();
+            w.start_file(name, opts).unwrap();
+            use std::io::Write;
+            w.write_all(b"{}").unwrap();
+            w.finish().unwrap();
+            buf
+        }
+        for name in ["../view.json", "./view.json", "sub/view.json"] {
+            let err = entries_of(&file_zip(name)).unwrap_err();
+            assert!(err.contains("unexpected file"), "{name}: got {err}");
+        }
+
+        // A directory entry (zip's add_directory stores it as "view.json/")
+        // must not be mistaken for the file "view.json".
+        let mut buf = Vec::new();
+        let mut w = zip::ZipWriter::new(std::io::Cursor::new(&mut buf));
+        let opts = zip::write::SimpleFileOptions::default();
+        w.add_directory("view.json", opts).unwrap();
+        w.finish().unwrap();
+        let err = entries_of(&buf).unwrap_err();
+        assert!(err.contains("unexpected file"), "directory entry: got {err}");
     }
 
     fn headers(pairs: &[(&str, &str)]) -> std::collections::HashMap<String, String> {
