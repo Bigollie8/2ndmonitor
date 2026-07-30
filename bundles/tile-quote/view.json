@@ -1,0 +1,15 @@
+{
+  "source": {
+    "kind": "http",
+    "url": "https://zenquotes.io/api/today",
+    "intervalMs": 3600000
+  },
+  "view": {
+    "type": "list",
+    "row": {
+      "title": "{{item.q}}",
+      "right": "{{item.a}}"
+    },
+    "emptyText": "No quote available."
+  }
+}

@@ -7,6 +7,7 @@ import { validateManifest } from './manifest';
 import { resampleBins, clampBinCount } from './bins';
 import { RETIRED_BUILTIN_VIZ_MODES } from '../state/contentRegistry';
 import { BUILTIN_VIZ_STYLES } from '../components/viz-styles';
+import { validateViewSpec } from '../tiles/viewSpec';
 
 // ─────────────────────────────────────────────────────────────────────────
 // What this harness proves, and what it does not.
@@ -24,6 +25,17 @@ import { BUILTIN_VIZ_STYLES } from '../components/viz-styles';
 // diff here, and there isn't meant to be one. Visual fidelity is established
 // only by the human side-by-side comparison against the built-in style
 // (Tasks 7-8, Step 3) — a green run of this suite is not evidence of that.
+//
+// A folder is one of two bundle kinds, told apart by which file it carries:
+//   - `main.js`   → a scripted visualizer bundle (asserted as above).
+//   - `view.json` → a declarative tile bundle. For these the harness proves
+//     the manifest and view spec both validate, and — since a wrong
+//     `{{path}}` root renders silently empty rather than erroring (see
+//     task-10-brief.md) — that every placeholder in `view` names a root the
+//     render scope actually provides (`item`/`data`/`config`/`location`/
+//     `units`), and never `secret` (which validateViewSpec already rejects
+//     inside `view`, but a typo'd root like `{{itme.x}}` would sail through
+//     that check and just render blank forever).
 // ─────────────────────────────────────────────────────────────────────────
 
 // `import.meta.dirname` needs Node 20.11+; fileURLToPath works everywhere and
@@ -138,7 +150,60 @@ test('RETIRED_BUILTIN_VIZ_MODES: none collide with a live built-in style', () =>
   }
 });
 
+/** A placeholder's root is the first dot-path segment: `{{data.q}}` → `data`.
+ *  Mirrors template.ts's PLACEHOLDER regex (same identifier grammar) but only
+ *  needs to capture the leading segment, not resolve the whole path. */
+const PLACEHOLDER_ROOT = /\{\{\s*([A-Za-z_][A-Za-z0-9_]*)/g;
+const ALLOWED_ROOTS = new Set(['item', 'data', 'config', 'location', 'units']);
+
+/** Deep-walks a validated `view` object collecting every placeholder root
+ *  found in any string field. */
+function collectPlaceholderRoots(v: unknown, out: Set<string>): void {
+  if (typeof v === 'string') {
+    for (const m of v.matchAll(PLACEHOLDER_ROOT)) out.add(m[1]!);
+  } else if (Array.isArray(v)) {
+    for (const item of v) collectPlaceholderRoots(item, out);
+  } else if (v !== null && typeof v === 'object') {
+    for (const value of Object.values(v)) collectPlaceholderRoots(value, out);
+  }
+}
+
 for (const id of ids) {
+  const isTile = existsSync(join(BUNDLES, id, 'view.json'));
+
+  if (isTile) {
+    test(`tile ${id}: manifest is valid and matches its folder name`, () => {
+      const raw = JSON.parse(readFileSync(join(BUNDLES, id, 'manifest.json'), 'utf8'));
+      const v = validateManifest(raw, { allowPermissions: true });
+      assert.equal(v.ok, true, v.ok ? '' : v.error);
+      assert.equal(v.ok && v.manifest.id, id);
+    });
+
+    test(`tile ${id}: view.json is a valid view spec`, () => {
+      const raw = JSON.parse(readFileSync(join(BUNDLES, id, 'view.json'), 'utf8'));
+      const v = validateViewSpec(raw);
+      assert.equal(v.ok, true, v.ok ? '' : v.error);
+    });
+
+    test(`tile ${id}: every {{path}} placeholder in view names an allowed root, never secret`, () => {
+      const raw = JSON.parse(readFileSync(join(BUNDLES, id, 'view.json'), 'utf8'));
+      const v = validateViewSpec(raw);
+      assert.equal(v.ok, true, v.ok ? '' : v.error);
+      if (!v.ok) return;
+      const roots = new Set<string>();
+      collectPlaceholderRoots(v.spec.view, roots);
+      assert.ok(roots.size > 0, 'view has no {{path}} placeholders at all — nothing to render');
+      for (const root of roots) {
+        assert.ok(
+          ALLOWED_ROOTS.has(root),
+          `placeholder root "${root}" in ${id}'s view is not one of item/data/config/location/units`
+            + (root === 'secret' ? ' (secret must never appear in view)' : ''),
+        );
+      }
+    });
+    continue;
+  }
+
   test(`bundle ${id}: manifest is valid and matches its folder name`, () => {
     const raw = JSON.parse(readFileSync(join(BUNDLES, id, 'manifest.json'), 'utf8'));
     const v = validateManifest(raw, { allowPermissions: true });
