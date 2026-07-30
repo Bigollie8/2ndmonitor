@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import type { TileType, TileInstance, Rect, Orientation } from '../state/layout';
+import type { TileType, BuiltinTileType, TileInstance, Rect, Orientation } from '../state/layout';
 import {
   ALL_TILE_TYPES,
   DEFAULT_LANDSCAPE_LAYOUT,
@@ -49,7 +49,11 @@ export function TileLibrary({
 
   const defaults = orientation === 'portrait' ? DEFAULT_PORTRAIT_LAYOUT : DEFAULT_LANDSCAPE_LAYOUT;
 
-  const handleAdd = (type: TileType) => {
+  // Built-in only: this library still lists `ALL_TILE_TYPES` (see `searchMatches`
+  // below). Rendering installed bundle tiles here is a later task — this
+  // function's `defaults` lookup would need `DEFAULT_BUNDLE_TILE_RECT` (see
+  // `../state/layout.ts`) once it does.
+  const handleAdd = (type: BuiltinTileType) => {
     const preferred = defaults[type];
     const rect = findEmptyRect(tiles.map((t) => t.rect), preferred, canvas);
     onAdd(type, rect);
@@ -225,7 +229,7 @@ function CategoryChip({ label, count, active, onClick, accent }: {
 }
 
 function TileCard({ id, count, accent, onAdd, onRemove }: {
-  id: TileType;
+  id: BuiltinTileType;
   count: number;
   accent: string;
   onAdd: () => void;

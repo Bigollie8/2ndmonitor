@@ -3,6 +3,7 @@ import type { TileType, Layout, TileInstance, OrientationLayout, Rect } from './
 import {
   DEFAULT_LANDSCAPE_LAYOUT,
   DEFAULT_PORTRAIT_LAYOUT,
+  DEFAULT_BUNDLE_TILE_RECT,
   migrateLegacyProfileToOrientations,
   useCanvas,
   useOrientation,
@@ -14,6 +15,7 @@ import {
   removeInstance,
   updateInstance,
 } from './state/layout';
+import { isBundleTile } from './tiles/tileRegistry';
 import type { Track, Profile, AccentTheme, VizMode, Density, Todo, WeatherLocation } from './types';
 import {
   DEFAULT_POMODORO_STATE,
@@ -518,9 +520,12 @@ export default function App() {
   const addTileByType = (type: TileType) => {
     if (findInstance(activeOrientation.tiles, type)) return;
     const defaults = orientation === 'portrait' ? DEFAULT_PORTRAIT_LAYOUT : DEFAULT_LANDSCAPE_LAYOUT;
+    // A bundle tile (`bundle:<id>`) has no compile-time entry in the default
+    // layout maps — fall back to the shared bundle default rect.
+    const rect = isBundleTile(type) ? DEFAULT_BUNDLE_TILE_RECT[orientation] : defaults[type];
     updateActiveOrientation({
       tiles: addInstance(activeOrientation.tiles, {
-        instanceId: newId(), type, rect: defaults[type],
+        instanceId: newId(), type, rect,
       }),
     });
   };
@@ -754,6 +759,12 @@ export default function App() {
             })}
           />
         );
+      default:
+        // Bundle tiles (`bundle:<id>`) are a real TileType as of the tile-
+        // registry work, but nothing yet creates a TileInstance of one —
+        // rendering its view.json payload is a later task in the
+        // marketplace-tiles plan. Render nothing rather than throw.
+        return null;
     }
   };
 

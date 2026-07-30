@@ -9,7 +9,8 @@ export function newId(): string {
     : `id_${Date.now()}_${Math.random().toString(36).slice(2)}`;
 }
 
-export type TileType =
+/** Tile kinds compiled into the binary. */
+export type BuiltinTileType =
   | 'discord' | 'spotify' | 'claude' | 'notes' | 'mixer' | 'sysmon' | 'clock' | 'viz'
   | 'streamDeck' | 'weatherRadar' | 'pomodoro' | 'sun' | 'aurora'
   | 'airQuality' | 'stocks' | 'tides' | 'githubPrs' | 'streamChat'
@@ -18,9 +19,17 @@ export type TileType =
   | 'iss' | 'launches' | 'dailyChallenge' | 'pollen' | 'birds'
   | 'solarFlare' | 'lightning' | 'aircraft' | 'activeWindow' | 'docker' | 'energy';
 
+/** A tile that can be placed on a dashboard: a built-in, or an installed
+ *  marketplace bundle. Bundle ids are namespaced so they can never collide
+ *  with a built-in — same convention as `VizMode` in `../types.ts`. See
+ *  `../tiles/tileRegistry.ts` for the merge of built-ins with installed
+ *  bundles into a single catalog. */
+export type TileType = BuiltinTileType | `bundle:${string}`;
+
 /** Canonical render order for tile types. Used by tile-picker, layers panel,
- *  and the legacy → tiles-array migration. */
-export const ALL_TILE_TYPES: TileType[] = [
+ *  and the legacy → tiles-array migration. Built-ins only — installed bundles
+ *  have no compile-time position in this order; `tileRegistry.ts` appends them. */
+export const ALL_TILE_TYPES: BuiltinTileType[] = [
   'viz', 'spotify', 'discord', 'claude', 'mixer', 'notes', 'sysmon', 'clock',
   'streamDeck', 'weatherRadar', 'pomodoro', 'sun', 'aurora',
   'airQuality', 'stocks', 'tides', 'githubPrs', 'streamChat',
@@ -76,7 +85,7 @@ const GAP = 14;
 
 const RAIL_W = 560;
 
-const RAIL_ROWS: { id: TileType; weight: number }[] = [
+const RAIL_ROWS: { id: BuiltinTileType; weight: number }[] = [
   { id: 'discord', weight: 1.1 },
   { id: 'spotify', weight: 1.0 },
   { id: 'claude',  weight: 1.4 },
@@ -86,7 +95,7 @@ const RAIL_ROWS: { id: TileType; weight: number }[] = [
 
 const STRIP_H = 360;
 
-const STRIP_COLS: { id: TileType; weight: number }[] = [
+const STRIP_COLS: { id: BuiltinTileType; weight: number }[] = [
   { id: 'sysmon', weight: 1.4 },
   { id: 'clock',  weight: 2.0 },
 ];
@@ -142,9 +151,9 @@ function stripRectsFrac(): Record<string, Rect> {
   return out;
 }
 
-export const DEFAULT_LANDSCAPE_LAYOUT: Record<TileType, Rect> = {
-  ...(railRectsFrac() as Record<TileType, Rect>),
-  ...(stripRectsFrac() as Record<TileType, Rect>),
+export const DEFAULT_LANDSCAPE_LAYOUT: Record<BuiltinTileType, Rect> = {
+  ...(railRectsFrac() as Record<BuiltinTileType, Rect>),
+  ...(stripRectsFrac() as Record<BuiltinTileType, Rect>),
   viz: VIZ_RECT_F,
   streamDeck: { x: 0.40, y: 0.55, w: 0.30, h: 0.18 },
   weatherRadar: { x: 0.42, y: 0.05, w: 0.30, h: 0.30 },
@@ -216,7 +225,7 @@ py += P_2UP2_H + P_GAP;
 
 const P_NOTES: Rect = { x: P_LEFT, y: py, w: P_FULL_W, h: P_NOTES_H };
 
-export const DEFAULT_PORTRAIT_LAYOUT: Record<TileType, Rect> = {
+export const DEFAULT_PORTRAIT_LAYOUT: Record<BuiltinTileType, Rect> = {
   viz: P_VIZ,
   spotify: P_SPOTIFY,
   discord: P_DISCORD,
@@ -253,6 +262,16 @@ export const DEFAULT_PORTRAIT_LAYOUT: Record<TileType, Rect> = {
   activeWindow: { x: 0.05, y: 0.30, w: 0.90, h: 0.18 },
   docker: { x: 0.05, y: 0.30, w: 0.90, h: 0.18 },
   energy: { x: 0.05, y: 0.30, w: 0.90, h: 0.14 },
+};
+
+/** An installed bundle tile has no compile-time entry in the default-layout
+ *  maps above (they're keyed by `BuiltinTileType`). This is the rect used
+ *  when one is placed on the canvas for the first time — a mid-size default,
+ *  same footprint class as `weatherRadar`/`stocks`/`docker`. The caller runs
+ *  it through `findEmptyRect` so it won't land on top of an existing tile. */
+export const DEFAULT_BUNDLE_TILE_RECT: Record<Orientation, Rect> = {
+  landscape: { x: 0.40, y: 0.55, w: 0.30, h: 0.18 },
+  portrait: { x: 0.05, y: 0.30, w: 0.90, h: 0.18 },
 };
 
 /** Clamp a fractional rect against a live canvas size in CSS pixels. Enforces
@@ -347,7 +366,7 @@ export function migrateLegacyProfileToOrientations<T extends {
 } {
   const slotToTiles = (
     slot: { layout?: Layout; hidden?: Partial<Record<TileType, boolean>>; tiles?: TileInstance[] } | undefined,
-    defaults: Record<TileType, Rect>,
+    defaults: Record<BuiltinTileType, Rect>,
   ): TileInstance[] => {
     if (slot?.tiles) return slot.tiles;
     const layout = slot?.layout ?? {};
@@ -461,7 +480,7 @@ export function updateInstance(
 export function migrateLayoutHiddenToTiles(
   layout: Layout,
   hidden: Partial<Record<TileType, boolean>>,
-  defaults: Record<TileType, Rect>,
+  defaults: Record<BuiltinTileType, Rect>,
 ): TileInstance[] {
   const out: TileInstance[] = [];
   for (const type of ALL_TILE_TYPES) {

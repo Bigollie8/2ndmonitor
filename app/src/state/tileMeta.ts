@@ -1,10 +1,13 @@
-import type { TileType } from './layout';
+import type { BuiltinTileType } from './layout';
 
-/** Single source of truth for tile presentation metadata. Consumed by the
- *  Tile Library, the edit-mode layers/properties panels, and Settings.
- *  `Record<TileType, ...>` makes the compiler refuse a new TileType until it
- *  has an entry here — this table plus the default rects in layout.ts and a
- *  `renderTile` case are ALL a new tile needs.
+/** Single source of truth for tile presentation metadata, for built-in tiles
+ *  only — an installed bundle's `TileMeta` is synthesized at runtime by
+ *  `../tiles/tileRegistry.ts` (`mergeTileCatalog`), which is also the place
+ *  to look for the catalog that includes both. Consumed by the Tile Library,
+ *  the edit-mode layers/properties panels, and Settings.
+ *  `Record<BuiltinTileType, ...>` makes the compiler refuse a new built-in
+ *  TileType until it has an entry here — this table plus the default rects
+ *  in layout.ts and a `renderTile` case are ALL a new built-in tile needs.
  *
  *  Icons are geometric glyphs only (no emoji): emoji render differently per
  *  Windows version and clash with the mono/glass aesthetic. */
@@ -32,7 +35,7 @@ export interface TileMeta {
   account?: boolean;
 }
 
-export const TILE_META: Record<TileType, TileMeta> = {
+export const TILE_META: Record<BuiltinTileType, TileMeta> = {
   viz:     { icon: '◢', label: 'Audio visualizer',  description: '27 styles reactive to system audio',  multiInstance: false, category: 'media' },
   spotify: { icon: '♪', label: 'Now playing',       description: 'Track, lyrics, queue, volume',         multiInstance: false, category: 'media' },
   discord: { icon: '◇', label: 'Discord voice',     description: 'Voice channel members + speaking',     multiInstance: false, category: 'integrations', account: true },

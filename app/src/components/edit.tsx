@@ -4,6 +4,7 @@ import {
   ALL_TILE_TYPES,
   DEFAULT_LANDSCAPE_LAYOUT,
   DEFAULT_PORTRAIT_LAYOUT,
+  DEFAULT_BUNDLE_TILE_RECT,
   clampRectFrac,
   useCanvas,
   useOrientation,
@@ -12,6 +13,7 @@ import {
   updateInstance,
 } from '../state/layout';
 import { TILE_META } from '../state/tileMeta';
+import { isBundleTile, BUNDLE_TILE_ICON } from '../tiles/tileRegistry';
 import { TileLibrary } from './TileLibrary';
 
 export function EditModeOverlay({
@@ -61,7 +63,10 @@ export function EditModeOverlay({
   const resetRect = (instanceId: string) => {
     const inst = getInstance(tiles, instanceId);
     if (!inst) return;
-    setTiles(updateInstance(tiles, instanceId, { rect: defaults[inst.type] }));
+    // A bundle tile (`bundle:<id>`) has no compile-time entry in `defaults` —
+    // fall back to the shared bundle default rect for this orientation.
+    const rect = isBundleTile(inst.type) ? DEFAULT_BUNDLE_TILE_RECT[orientation] : defaults[inst.type];
+    setTiles(updateInstance(tiles, instanceId, { rect }));
   };
 
   return (
@@ -373,7 +378,9 @@ function LayersPanel({ accent, selectedInstanceId, setSelectedInstanceId, tiles,
   canvas: { w: number; h: number };
   labels: Record<TileType, string>;
 }) {
-  const kindIcon = (type: TileType): string => TILE_META[type].icon;
+  // A bundle tile (`bundle:<id>`) has no entry in TILE_META — it shares the
+  // same fallback glyph the tile registry synthesizes for it.
+  const kindIcon = (type: TileType): string => (isBundleTile(type) ? BUNDLE_TILE_ICON : TILE_META[type].icon);
   return (
     <div style={{
       position: 'absolute', bottom: 16, left: 16, width: 240,
