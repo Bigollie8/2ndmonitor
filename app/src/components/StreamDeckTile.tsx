@@ -20,6 +20,8 @@ export interface StreamDeckTileProps {
   setVizMode: (m: VizMode) => void;
   profiles: Profile[];
   setActiveProfileId: (id: string) => void;
+  /** The catalog removal list — see state/removedContent.ts. */
+  catalogRemoved: string[];
 }
 
 type PickerState =
@@ -29,10 +31,10 @@ type PickerState =
 
 export function StreamDeckTile({
   config, setConfig, editing, density, accent,
-  vizMode, setVizMode, profiles, setActiveProfileId,
+  vizMode, setVizMode, profiles, setActiveProfileId, catalogRemoved,
 }: StreamDeckTileProps) {
   const [pickerState, setPickerState] = useState<PickerState>({ open: false });
-  const { styles: vizStyles, loaded: vizStylesLoaded } = useVizStyles();
+  const { styles: vizStyles, loaded: vizStylesLoaded } = useVizStyles(catalogRemoved);
 
   const ctx: ActionContext = {
     vizMode, setVizMode, setActiveProfileId,

@@ -1,9 +1,10 @@
 // NOTE: .ts, no JSX in this file — see viz-styles.ts's module comment for why
 // the plain style table stays React-free. This hook is the React-aware layer
 // on top of it.
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { BUILTIN_VIZ_STYLES } from './viz-styles';
 import { mergeVizStyles, type InstalledVizFolder, type VizStyleEntry } from '../state/contentRegistry';
+import { applyRemovals } from '../state/removedContent';
 
 export interface VizStylesResult {
   styles: VizStyleEntry[];
@@ -21,8 +22,12 @@ export interface VizStylesResult {
  *  `installed` starts as `null`, not `[]`: an empty array is indistinguishable
  *  from "no bundles installed" from "the invoke hasn't resolved yet", and a
  *  consumer that can't tell those apart will misjudge a genuinely-installed
- *  bundle style as absent on every cold start (see `loaded` above). */
-export function useVizStyles(): VizStylesResult {
+ *  bundle style as absent on every cold start (see `loaded` above).
+ *
+ *  `removed` is a parameter, not read from the tweaks store here: useTweaks is
+ *  instantiated exactly once (App.tsx) and threaded down as props, so every
+ *  caller passes `t.catalogRemoved` through. See state/removedContent.ts. */
+export function useVizStyles(removed: string[]): VizStylesResult {
   const [installed, setInstalled] = useState<InstalledVizFolder[] | null>(null);
 
   useEffect(() => {
@@ -45,8 +50,10 @@ export function useVizStyles(): VizStylesResult {
     return () => { cancelled = true; unlisten?.(); };
   }, []);
 
-  return {
-    styles: mergeVizStyles(BUILTIN_VIZ_STYLES, installed ?? []),
-    loaded: installed !== null,
-  };
+  const styles = useMemo(
+    () => applyRemovals(removed, mergeVizStyles(BUILTIN_VIZ_STYLES, installed ?? []), 'visualizer'),
+    [removed, installed],
+  );
+
+  return { styles, loaded: installed !== null };
 }

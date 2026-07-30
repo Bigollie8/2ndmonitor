@@ -22,6 +22,7 @@ export function EditModeOverlay({
   selectedInstanceId, setSelectedInstanceId,
   snap, setSnap,
   profileName,
+  catalogRemoved,
 }: {
   accent: string;
   accent2: string;
@@ -35,6 +36,8 @@ export function EditModeOverlay({
   snap: boolean;
   setSnap: (enabled: boolean) => void;
   profileName: string;
+  /** The catalog removal list — see state/removedContent.ts. */
+  catalogRemoved: string[];
 }) {
   const [showGuides, setShowGuides] = useState(true);
   const [showGrid, setShowGrid] = useState(true);
@@ -48,7 +51,7 @@ export function EditModeOverlay({
   // compiler complaint. `labelFor` instead resolves a bundle tile against the
   // live catalog, falling back to the bundle id (never `undefined`) if the
   // catalog hasn't loaded yet or the bundle was uninstalled.
-  const { entries: tileCatalog } = useTileCatalog();
+  const { entries: tileCatalog } = useTileCatalog(catalogRemoved);
   const labelFor = (type: TileType): string => {
     if (isBundleTile(type)) {
       const entry = tileCatalog.find((e) => e.type === type);
@@ -130,6 +133,7 @@ export function EditModeOverlay({
             onAdd={(type, rect) => onAdd(type, rect)}
             onRemove={(instanceId) => onRemove && onRemove(instanceId)}
             onClose={() => setPickerOpen(false)}
+            catalogRemoved={catalogRemoved}
           />
         </div>
       )}

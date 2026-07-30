@@ -11,7 +11,7 @@ const SandboxVizSurface = lazy(() =>
 
 export function VizGallery({
   accent, accent2, spectrumRef, currentMode, onPick, onClose,
-  sensitivity = 1, smoothing = 0,
+  sensitivity = 1, smoothing = 0, catalogRemoved,
 }: {
   accent: string; accent2: string;
   spectrumRef?: MutableRefObject<SpectrumState>;
@@ -20,8 +20,10 @@ export function VizGallery({
   onClose: () => void;
   sensitivity?: number;
   smoothing?: number;
+  /** The catalog removal list — see state/removedContent.ts. */
+  catalogRemoved: string[];
 }) {
-  const { styles: vizStyles } = useVizStyles();
+  const { styles: vizStyles } = useVizStyles(catalogRemoved);
   const [size, setSize] = useState<'compact' | 'regular' | 'large'>('regular');
   const cols = size === 'compact' ? 4 : size === 'regular' ? 3 : 2;
   const [focused, setFocused] = useState<VizMode | null>(null);
@@ -117,6 +119,7 @@ export function VizGallery({
               surfaceMounted={i < mountedCount || s.id === currentMode}
               onPick={() => { onPick(s.id); onClose(); }}
               onFocus={() => setFocused(s.id)}
+              catalogRemoved={catalogRemoved}
             />
           ))}
         </div>
@@ -161,7 +164,8 @@ export function VizGallery({
               </Suspense>
             ) : (
               <HiFiVizSurface mode={focusedStyle.id} accent={accent} accent2={accent2}
-                spectrumRef={spectrumRef} sensitivity={sensitivity} smoothing={smoothing} />
+                spectrumRef={spectrumRef} sensitivity={sensitivity} smoothing={smoothing}
+                catalogRemoved={catalogRemoved} />
             )}
           </div>
         </div>
@@ -172,7 +176,7 @@ export function VizGallery({
 
 function GalleryCard({
   style, index, accent, accent2, spectrumRef, active, sensitivity, smoothing,
-  surfaceMounted, onPick, onFocus,
+  surfaceMounted, onPick, onFocus, catalogRemoved,
 }: {
   style: VizStyleEntry;
   index: number;
@@ -183,6 +187,8 @@ function GalleryCard({
   surfaceMounted: boolean;
   onPick: () => void;
   onFocus: () => void;
+  /** The catalog removal list — see state/removedContent.ts. */
+  catalogRemoved: string[];
 }) {
   const [hovered, setHovered] = useState(false);
   // Only the active card and the hovered card animate. Previously every card
@@ -232,7 +238,7 @@ function GalleryCard({
         ) : surfaceMounted && (
           <HiFiVizSurface mode={style.id} accent={accent} accent2={accent2}
             spectrumRef={spectrumRef} sensitivity={sensitivity} smoothing={smoothing}
-            paused={paused} preview />
+            paused={paused} preview catalogRemoved={catalogRemoved} />
         )}
         <div style={{
           position: 'absolute', top: 12, left: 12,

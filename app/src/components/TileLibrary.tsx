@@ -21,7 +21,7 @@ const CATEGORY_ORDER = Object.keys(TILE_CATEGORY_LABELS) as TileCategory[];
  *  edit-mode picker gallery so edit mode and App can drop it in. */
 export function TileLibrary({
   orientation, canvas, tiles, profileName, accent,
-  onAdd, onRemove, onClose, startOnMarket,
+  onAdd, onRemove, onClose, startOnMarket, catalogRemoved,
 }: {
   orientation: Orientation;
   canvas: { w: number; h: number };
@@ -36,11 +36,13 @@ export function TileLibrary({
    *  component is only ever mounted while the library is open), not synced
    *  on change. */
   startOnMarket?: boolean;
+  /** The catalog removal list — see state/removedContent.ts. */
+  catalogRemoved: string[];
 }) {
   const [query, setQuery] = useState('');
   const [activeCategory, setActiveCategory] = useState<TileCategory | 'all'>('all');
   const [showMarket, setShowMarket] = useState(() => startOnMarket ?? false);
-  const { entries: catalog } = useTileCatalog();
+  const { entries: catalog } = useTileCatalog(catalogRemoved);
 
   // Esc closes the modal (capture + stopPropagation so App's cascade doesn't
   // also fire).

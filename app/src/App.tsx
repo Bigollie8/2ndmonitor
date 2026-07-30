@@ -141,6 +141,11 @@ interface TweakState extends Record<string, unknown> {
   profiles: Profile[];
   activeProfileId: string;
   onboardingDone: boolean;
+  /** The catalog removal list — see state/removedContent.ts. Keys of the form
+   *  `${kind}:${id}`. A bundle's key stays here after its folder is deleted,
+   *  which is the tombstone that stops a later seed sync from reinstalling
+   *  it. Travels with settings export/import like any other tweak. */
+  catalogRemoved: string[];
 }
 
 const TWEAK_DEFAULTS: TweakState = {
@@ -168,6 +173,7 @@ const TWEAK_DEFAULTS: TweakState = {
   profiles: [],
   activeProfileId: '',
   onboardingDone: false,
+  catalogRemoved: [],
 };
 
 const PROFILE_DEFAULT_COLORS = ['#a78bfa', '#f59e0b', '#22d3ee', '#22c55e', '#f472b6', '#60a5fa', '#facc15', '#f97316'];
@@ -342,8 +348,8 @@ export default function App() {
   // null when hidden. Set by the effect below when accent is track-linked and
   // the title changes; auto-cleared after 2s.
   const [themeToast, setThemeToast] = useState<string | null>(null);
-  const { styles: vizStyles, loaded: vizStylesLoaded } = useVizStyles();
-  const { entries: tileCatalog, loaded: tileCatalogLoaded } = useTileCatalog();
+  const { styles: vizStyles, loaded: vizStylesLoaded } = useVizStyles(t.catalogRemoved);
+  const { entries: tileCatalog, loaded: tileCatalogLoaded } = useTileCatalog(t.catalogRemoved);
   const spectrumRef = useSpectrumRef();
   const { track: livePlaying, playback: livePlayback, sourceAppId: liveSourceAppId } = useNowPlaying();
   // Real GSMTC track wins when it's available; otherwise the user's manual
@@ -588,6 +594,7 @@ export default function App() {
             paused={(t.videoEnabled && t.videoBookmarks.length > 0) || showGallery || (t.perfMode !== 'uncapped' && livePlayback?.playing !== true)}
             onConfigure={() => setShowGallery(true)}
             audioDebug={t.audioDebug}
+            catalogRemoved={t.catalogRemoved}
           />
         );
       case 'streamDeck':
@@ -604,6 +611,7 @@ export default function App() {
             setVizMode={(m) => setTweak('vizMode', m)}
             profiles={t.profiles}
             setActiveProfileId={(id) => setTweak('activeProfileId', id)}
+            catalogRemoved={t.catalogRemoved}
           />
         );
       case 'weatherRadar':
@@ -868,6 +876,7 @@ export default function App() {
             snap={snapEnabled}
             setSnap={setSnapEnabled}
             profileName={activeProfile.name}
+            catalogRemoved={t.catalogRemoved}
           />
         )}
         {showSwitcher && (
@@ -923,6 +932,7 @@ export default function App() {
               smoothing={t.vizSmoothing}
               onPick={(m) => setTweak('vizMode', m)}
               onClose={() => setShowGallery(false)}
+              catalogRemoved={t.catalogRemoved}
             />
           </Suspense>
         )}
@@ -943,6 +953,7 @@ export default function App() {
             })}
             onClose={() => { setShowTileLibrary(false); setTileLibraryStartOnMarket(false); }}
             startOnMarket={tileLibraryStartOnMarket}
+            catalogRemoved={t.catalogRemoved}
           />
         )}
       </div>

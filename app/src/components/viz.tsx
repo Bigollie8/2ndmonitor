@@ -606,17 +606,16 @@ export function HiFiVizAmbient({ accent, accent2, spectrumRef, sensitivity = 1, 
   );
 }
 
-export function HiFiVizSurface({ mode, accent, accent2, spectrumRef, sensitivity, smoothing, paused, track, playback }: { mode: VizMode } & VizProps) {
+export function HiFiVizSurface({ mode, accent, accent2, spectrumRef, sensitivity, smoothing, paused, track, playback, catalogRemoved }: { mode: VizMode; catalogRemoved: string[] } & VizProps) {
   // Register the active viz mode as the mounted surface; the HUD displays it
   // and spike snapshots include it under `vizMode`.
   useRegisterSurface(`viz:${mode}${paused ? ':paused' : ''}`);
   // Needed only for the `bundle:` fallback below (is this id actually
   // installed?), but this component already hosts a hook (useRegisterSurface
-  // above), so it's the natural place for the check — same pattern every
-  // other consumer of the merged catalog (App.tsx, settings, gallery,
-  // Stream Deck) already uses: call useVizStyles() locally rather than
-  // threading the list down through props.
-  const { styles: vizStyles, loaded: vizStylesLoaded } = useVizStyles();
+  // above), so it's the natural place for the check. `catalogRemoved` is a
+  // prop, not read from the tweaks store here — useTweaks is instantiated
+  // exactly once (App.tsx) and threaded down as props.
+  const { styles: vizStyles, loaded: vizStylesLoaded } = useVizStyles(catalogRemoved);
   const props = { accent, accent2, spectrumRef, sensitivity, smoothing, paused, track, playback };
   // The core styles (bars/waveform/radial/particles/ambient) are eager and
   // never suspend. The "extra" styles are lazy-loaded chunks (see the `lazy()`
@@ -708,7 +707,7 @@ function useLivePos(playback: Playback | null): number {
 
 export function VizOverlay({
   track, mode, setMode, accent, accent2, playback, onConfigure, onToggleImmersive, immersive = false,
-  videoEnabled = false, videoAvailable = false, onToggleVideo,
+  videoEnabled = false, videoAvailable = false, onToggleVideo, catalogRemoved,
 }: {
   track: Track;
   mode: VizMode;
@@ -725,6 +724,8 @@ export function VizOverlay({
   videoAvailable?: boolean;
   /** Called when the user clicks 📺 to flip video on/off. */
   onToggleVideo?: () => void;
+  /** The catalog removal list — see state/removedContent.ts. */
+  catalogRemoved: string[];
 }) {
   const position = useLivePos(playback ?? null);
   const duration = playback?.duration ?? 0;
@@ -743,7 +744,7 @@ export function VizOverlay({
   const isOriginalMode = modes.some((m) => m.k === mode);
   // The merged catalog (not just BUILTIN_VIZ_STYLES) so an installed
   // `bundle:` style's label still shows in the "● Label" badge.
-  const { styles: vizStyles, loaded: vizStylesLoaded } = useVizStyles();
+  const { styles: vizStyles, loaded: vizStylesLoaded } = useVizStyles(catalogRemoved);
   // Same tri-state reasoning as HiFiVizSurface's dispatch gate above:
   // `vizStyles` holds builtins only until the installed-bundle list
   // resolves, so an active `bundle:` style's badge would otherwise flash
@@ -937,7 +938,7 @@ export function VizHero({
   showArtBg = false, sensitivity = 1, smoothing = 0, lyricsOverlayEnabled = true,
   videoEnabled = false, videoCurrentUrl = null, videoBookmarks = [],
   videoAvailable = false, onToggleVideo, onNavigate, onExit, overlaysOpen = false,
-  paused = false, onConfigure, audioDebug = false,
+  paused = false, onConfigure, audioDebug = false, catalogRemoved,
 }: {
   mode: VizMode;
   setMode: (m: VizMode) => void;
@@ -974,6 +975,8 @@ export function VizHero({
   /** When true, overlay the live audio-pipeline HUD (live/fps/level/bands)
    *  on the viz. Useful for diagnosing why a viz isn't reacting. */
   audioDebug?: boolean;
+  /** The catalog removal list — see state/removedContent.ts. */
+  catalogRemoved: string[];
 }) {
   const [immersive, setImmersive] = useState(false);
   useEffect(() => {
@@ -1021,7 +1024,7 @@ export function VizHero({
             suppress={overlaysOpen}
           />
         ) : (
-          <HiFiVizSurface mode={mode} accent={accent} accent2={accent2} spectrumRef={spectrumRef} sensitivity={sensitivity} smoothing={smoothing} paused={paused} track={track} playback={playback} />
+          <HiFiVizSurface mode={mode} accent={accent} accent2={accent2} spectrumRef={spectrumRef} sensitivity={sensitivity} smoothing={smoothing} paused={paused} track={track} playback={playback} catalogRemoved={catalogRemoved} />
         )}
       </div>
       {!showVideo && (
@@ -1050,6 +1053,7 @@ export function VizHero({
             videoEnabled={videoEnabled}
             videoAvailable={videoAvailable}
             onToggleVideo={onToggleVideo}
+            catalogRemoved={catalogRemoved}
           />
         </div>
       )}

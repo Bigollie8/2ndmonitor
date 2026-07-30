@@ -36,6 +36,9 @@ export interface SettingsValues {
   videoEnabled: boolean;
   videoBookmarks: Bookmark[];
   closeToTray: boolean;
+  /** The catalog removal list — see state/removedContent.ts. Needed here
+   *  because the Visualizer pane's style dropdown is a picker. */
+  catalogRemoved: string[];
 }
 
 export type SettingsSetter = <K extends keyof SettingsValues>(key: K, value: SettingsValues[K]) => void;
@@ -112,7 +115,7 @@ export function SettingsWindow({
 }) {
   const [activePane, setActivePane] = useState('visualizer');
   const [query, setQuery] = useState('');
-  const { styles: vizStyles } = useVizStyles();
+  const { styles: vizStyles } = useVizStyles(v.catalogRemoved);
 
   const panes: PaneDef[] = [
     {
