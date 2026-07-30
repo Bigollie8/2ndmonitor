@@ -44,6 +44,38 @@ const DIST = join(BUNDLES, 'dist');
 const SEED_ROOT = join(ROOT, 'app', 'src-tauri', 'resources', 'seed');
 const SERVER = process.env.MARKET_URL ?? 'https://market.basedsecurity.net';
 
+// Mirrors server/src/submit.rs's `sniff_image` + `validate_preview` exactly —
+// same magic numbers, same cap — so a preview this script accepts is never
+// rejected server-side, and one it rejects would have been rejected there too.
+const PREVIEW_CAP = 262_144; // 256 KiB
+const PNG_MAGIC = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+const JPEG_MAGIC = [0xff, 0xd8, 0xff];
+
+function startsWithMagic(buf, magic) {
+  return buf.length >= magic.length && magic.every((b, i) => buf[i] === b);
+}
+
+/** Reads bundles/<id>/preview.png if present and validates it against the
+ *  server's exact rules (PNG or JPEG magic number, non-empty, <= 256 KiB of
+ *  decoded bytes). Throws (fails the run loudly) rather than returning a
+ *  preview the server would reject — matching the seed verb's precedent of
+ *  refusing to emit an artifact the consumer would silently choke on.
+ *  Returns null when there is no preview.png at all (a bundle without one
+ *  publishes exactly as it does today). */
+function readPreview(id) {
+  const p = join(BUNDLES, id, 'preview.png');
+  if (!existsSync(p)) return null;
+  const buf = readFileSync(p);
+  if (buf.length === 0) throw new Error(`${id}: preview.png is empty`);
+  if (buf.length > PREVIEW_CAP) {
+    throw new Error(`${id}: preview.png too large (${buf.length} > ${PREVIEW_CAP} bytes)`);
+  }
+  if (!startsWithMagic(buf, PNG_MAGIC) && !startsWithMagic(buf, JPEG_MAGIC)) {
+    throw new Error(`${id}: preview.png is not a PNG or JPEG (bad magic number)`);
+  }
+  return buf;
+}
+
 const ID_RE = /^[a-z0-9-]{1,64}$/;
 // m.version is interpolated straight into a PowerShell -Command string in
 // zip() below. Only reachable by someone who can already edit the repo, but
@@ -227,10 +259,30 @@ if (cmd === 'publish') {
     }
     const manifest = readFileSync(join(BUNDLES, b.id, 'manifest.json'), 'utf8');
     const code = readFileSync(join(BUNDLES, b.id, b.codeFile), 'utf8');
+
+    // bundles/<id>/preview.png never enters the zip (the installer's entry
+    // allowlist would reject it) — it travels only as this JSON field. Fail
+    // the whole run rather than submit a bundle whose preview the server
+    // will reject; readPreview() already applied the server's exact rules.
+    let preview;
+    try {
+      const buf = readPreview(b.id);
+      // Contract with server/src/submit.rs's `SubmitBody.preview`: base64,
+      // standard alphabet, WITH padding — i.e. exactly what Node's
+      // `Buffer.from(bytes).toString('base64')` (used here) produces. The
+      // server decodes with `base64::engine::general_purpose::STANDARD`,
+      // which expects the same. A different alphabet or stripped padding
+      // decodes to garbage or fails outright.
+      if (buf) preview = buf.toString('base64');
+    } catch (e) {
+      console.error(`✗ ${b.id}: ${e.message}`);
+      process.exit(1);
+    }
+
     const res = await fetch(`${SERVER}/submissions`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ kind: b.kind, manifest, code }),
+      body: JSON.stringify({ kind: b.kind, manifest, code, ...(preview ? { preview } : {}) }),
     });
     if (!res.ok) {
       console.error(`✗ ${b.id}: ${res.status} ${await res.text()}`);
