@@ -1,9 +1,13 @@
-import { useEffect, useState, type MutableRefObject } from 'react';
+import { lazy, Suspense, useEffect, useState, type MutableRefObject } from 'react';
 import type { SpectrumState } from '../state/tauri';
 import type { VizMode } from '../types';
 import { HiFiVizSurface } from './viz';
 import { useVizStyles } from './useVizStyles';
-import type { VizStyleEntry } from '../state/contentRegistry';
+import { bundleIdOf, type VizStyleEntry } from '../state/contentRegistry';
+
+const SandboxVizSurface = lazy(() =>
+  import('./viz-sandbox-surface').then((m) => ({ default: m.SandboxVizSurface })),
+);
 
 export function VizGallery({
   accent, accent2, spectrumRef, currentMode, onPick, onClose,
@@ -147,7 +151,14 @@ export function VizGallery({
             boxShadow: `0 30px 80px -20px ${accent}66`,
           }}>
             {focusedStyle.source === 'bundle' ? (
-              <BundleCard style={focusedStyle} accent={accent} accent2={accent2} />
+              // One sandbox for one fullscreen preview — the concurrency
+              // argument that keeps grid cards static does not apply here.
+              <Suspense fallback={<BundleCard style={focusedStyle} accent={accent} accent2={accent2} />}>
+                <SandboxVizSurface
+                  bundleId={bundleIdOf(focusedStyle.id)}
+                  accent={accent} accent2={accent2}
+                  spectrumRef={spectrumRef} sensitivity={sensitivity} smoothing={smoothing} />
+              </Suspense>
             ) : (
               <HiFiVizSurface mode={focusedStyle.id} accent={accent} accent2={accent2}
                 spectrumRef={spectrumRef} sensitivity={sensitivity} smoothing={smoothing} />
@@ -202,11 +213,22 @@ function GalleryCard({
     onClick={onPick}>
       <div style={{ position: 'relative', width: '100%', aspectRatio: '16/9', background: '#06070a' }}>
         {isBundle ? (
-          // Bundle entries get a static card, not a live sandboxed preview —
-          // rendering N installed bundles' sandboxes concurrently in the
-          // gallery overlay isn't worth the cost, and `preview` has no
-          // meaning for a bundle-hosted visualizer.
-          <BundleCard style={style} accent={accent} accent2={accent2} />
+          // Bundle entries preview live too, but only while active or hovered.
+          // Mounting a sandbox per installed bundle up front is what we were
+          // avoiding; one or two at a time is the same budget the builtin
+          // cards already run under (see `paused` above). Idle cards keep the
+          // static card, which doubles as the Suspense fallback.
+          (active || hovered) && surfaceMounted ? (
+            <Suspense fallback={<BundleCard style={style} accent={accent} accent2={accent2} />}>
+              <SandboxVizSurface
+                bundleId={bundleIdOf(style.id)}
+                accent={accent} accent2={accent2}
+                spectrumRef={spectrumRef} sensitivity={sensitivity} smoothing={smoothing}
+                paused={paused} suppressErrorBanner />
+            </Suspense>
+          ) : (
+            <BundleCard style={style} accent={accent} accent2={accent2} />
+          )
         ) : surfaceMounted && (
           <HiFiVizSurface mode={style.id} accent={accent} accent2={accent2}
             spectrumRef={spectrumRef} sensitivity={sensitivity} smoothing={smoothing}
