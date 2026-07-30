@@ -18,6 +18,10 @@ use tauri::{AppHandle, Manager, Runtime};
 
 const FETCH_CAP: usize = 1_048_576; // 1 MiB
 const ZIP_CAP: usize = 4_194_304; // 4 MiB per bundle
+// A preview is a catalog thumbnail, not a bundle — it must not be able to
+// consume the same 4 MiB a bundle may. Must stay smaller than ZIP_CAP; see
+// `preview_cap_is_smaller_than_the_bundle_cap` below, which pins that.
+const PREVIEW_CAP: usize = 262_144; // 256 KiB
 
 /// Mirror of the server's `keys::verify_index` — the signature covers the exact
 /// serialized `bundles` array substring, verified verbatim.
@@ -40,7 +44,12 @@ fn extract_bundles_str(raw: &str) -> Option<&str> {
     Some(&rest[..end])
 }
 
-fn get_capped(url: &str) -> Result<Vec<u8>, String> {
+/// Size-capped HTTPS fetch shared by the index, bundle, and preview fetches.
+/// `cap` is caller-supplied rather than a single constant because the three
+/// callers have different legitimate sizes (index ~KB, bundle up to
+/// `ZIP_CAP`, preview up to `PREVIEW_CAP`) — a single shared cap would have
+/// to be the largest of the three, which defeats the point of a per-kind cap.
+fn get_capped(url: &str, cap: usize) -> Result<Vec<u8>, String> {
     if !url.starts_with("https://") {
         return Err("only https URLs are allowed".into());
     }
@@ -50,10 +59,10 @@ fn get_capped(url: &str) -> Result<Vec<u8>, String> {
         .map_err(|e| format!("request failed: {e}"))?;
     let mut buf = Vec::new();
     resp.into_reader()
-        .take((FETCH_CAP + 1) as u64)
+        .take((cap + 1) as u64)
         .read_to_end(&mut buf)
         .map_err(|e| format!("read failed: {e}"))?;
-    if buf.len() > FETCH_CAP {
+    if buf.len() > cap {
         return Err("response too large".into());
     }
     Ok(buf)
@@ -62,7 +71,7 @@ fn get_capped(url: &str) -> Result<Vec<u8>, String> {
 #[tauri::command]
 pub fn marketplace_fetch_index(url: String, pubkey: String) -> Result<serde_json::Value, String> {
     let base = url.trim_end_matches('/');
-    let body_bytes = get_capped(&format!("{base}/index.json"))?;
+    let body_bytes = get_capped(&format!("{base}/index.json"), FETCH_CAP)?;
     let body = String::from_utf8(body_bytes).map_err(|_| "index not UTF-8".to_string())?;
     let v: serde_json::Value = serde_json::from_str(&body).map_err(|e| format!("index not JSON: {e}"))?;
     let sig = v.get("sig").and_then(|s| s.as_str()).ok_or("index missing sig")?;
@@ -281,9 +290,10 @@ pub fn marketplace_install<R: Runtime>(
     // check below exactly like a download; verification is not relaxed for
     // seeds, so a corrupted or tampered seed zip fails the same way a
     // corrupted download would.
-    let zip_bytes = resolve_zip_bytes(get_capped(&format!("{base}/bundle/{id}/{version}")), || {
-        crate::seed::seed_zip_for(&app, &kind, &id, &version)
-    })?;
+    let zip_bytes = resolve_zip_bytes(
+        get_capped(&format!("{base}/bundle/{id}/{version}"), ZIP_CAP),
+        || crate::seed::seed_zip_for(&app, &kind, &id, &version),
+    )?;
     if zip_bytes.len() > ZIP_CAP {
         return Err("bundle too large".into());
     }
@@ -322,6 +332,61 @@ pub fn marketplace_uninstall<R: Runtime>(app: AppHandle<R>, id: String, kind: St
         other => return Err(format!("unknown kind {other}")),
     }
     Ok(())
+}
+
+/// Identifies an image by its magic number, never by a declared content
+/// type — a hostile server controls the `Content-Type` header but not the
+/// meaning of the bytes it sends, so trusting the header would let it label
+/// arbitrary bytes (e.g. an SVG carrying script, or plain HTML) as an image
+/// and have them decoded/rendered as one downstream.
+pub fn sniff_image(bytes: &[u8]) -> Option<&'static str> {
+    if bytes.len() >= 8 && bytes.starts_with(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]) {
+        return Some("image/png");
+    }
+    if bytes.len() >= 3 && bytes.starts_with(&[0xFF, 0xD8, 0xFF]) {
+        return Some("image/jpeg");
+    }
+    None
+}
+
+/// Fetches a bundle's preview image and hands it to the frontend as an inert
+/// `data:` URL.
+///
+/// The page's CSP has no `img-src` for the marketplace host, and
+/// deliberately so: granting one would let ANY page-level image reference
+/// (not just a vetted `<img>` this command controls) reach the network. This
+/// command routes the fetch through the same `get_capped` client used for
+/// the index and bundles instead, so the renderer never makes its own
+/// request — the bytes cross into the page already decoded into a data URL,
+/// never as a live URL the page could be tricked into re-requesting.
+///
+/// `id` and `kind` are validated before any URL is built, same as
+/// `marketplace_install`. `version` is validated too, via `seed::
+/// is_safe_version` — reused rather than a fourth id/version charset
+/// variant in this file — because it is interpolated straight into the
+/// request path below; an unvalidated version is exactly the kind of
+/// "trusted" string that turns into a request-path or header-injection
+/// primitive the moment a hostile index entry supplies it.
+#[tauri::command]
+pub fn marketplace_fetch_preview(url: String, id: String, version: String, kind: String) -> Result<String, String> {
+    if !is_safe_id(&id) {
+        return Err("invalid bundle id".into());
+    }
+    if kind != "tile" && kind != "visualizer" {
+        return Err("invalid kind".into());
+    }
+    if !crate::seed::is_safe_version(&version) {
+        return Err("invalid bundle version".into());
+    }
+    let base = url.trim_end_matches('/');
+    if !base.starts_with("https://") {
+        return Err("marketplace url must be https".into());
+    }
+    let endpoint = format!("{base}/bundle/{id}/{version}/preview");
+    let bytes = get_capped(&endpoint, PREVIEW_CAP)?;
+    let mime = sniff_image(&bytes).ok_or("preview is not a PNG or JPEG")?;
+    use base64::{engine::general_purpose::STANDARD, Engine as _};
+    Ok(format!("data:{mime};base64,{}", STANDARD.encode(&bytes)))
 }
 
 #[derive(Serialize)]
@@ -615,6 +680,27 @@ mod tests {
         assert!(is_redirect_status(399));
         assert!(!is_redirect_status(400));
         assert!(!is_redirect_status(200));
+    }
+
+    #[test]
+    fn sniff_image_accepts_png_and_jpeg_by_magic_number() {
+        assert_eq!(sniff_image(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A, 0, 0]), Some("image/png"));
+        assert_eq!(sniff_image(&[0xFF, 0xD8, 0xFF, 0xE0, 0, 0]), Some("image/jpeg"));
+    }
+
+    #[test]
+    fn sniff_image_rejects_non_images_and_short_input() {
+        assert_eq!(sniff_image(b"<html><body>nope"), None);
+        assert_eq!(sniff_image(&[0x89, b'P']), None);
+        assert_eq!(sniff_image(&[]), None);
+    }
+
+    #[test]
+    fn preview_cap_is_smaller_than_the_bundle_cap() {
+        // A preview is a thumbnail; it must not be able to consume the 4 MiB a
+        // bundle may. Pinning the relationship stops a later edit widening it.
+        assert!(PREVIEW_CAP < ZIP_CAP);
+        assert_eq!(PREVIEW_CAP, 262_144);
     }
 
     #[test]

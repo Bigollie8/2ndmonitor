@@ -56,7 +56,14 @@ fn is_safe_id(id: &str) -> bool {
 /// function, and this function's job is to make its own name true so the
 /// next call site that uses `version` on its own doesn't have to re-derive
 /// that reasoning from scratch.
-fn is_safe_version(version: &str) -> bool {
+///
+/// `pub(crate)` so `marketplace::marketplace_fetch_preview` can reuse this
+/// exact charset for its own `version` path segment instead of a fourth
+/// hand-rolled variant (the others being `is_safe_id` here and in
+/// marketplace.rs, and the header-name/value checks in marketplace.rs) —
+/// one canonical "is this safe to put in a path/URL segment" answer for
+/// version strings, not one per call site that happens to need it.
+pub(crate) fn is_safe_version(version: &str) -> bool {
     !version.is_empty()
         && version.len() <= 32
         && version != ".."
