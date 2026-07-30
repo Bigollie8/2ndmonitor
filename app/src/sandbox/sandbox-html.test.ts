@@ -9,7 +9,18 @@ test('sandbox attribute grants scripts only', () => {
 test('srcdoc pins the no-capability CSP', () => {
   const html = buildSandboxHtml();
   assert.ok(html.includes(`<meta http-equiv="Content-Security-Policy" content="${SANDBOX_CSP}">`));
-  assert.equal(SANDBOX_CSP, "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'");
+  assert.equal(SANDBOX_CSP, "default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval'; style-src 'unsafe-inline'");
+});
+
+// The runtime's 'init' handler runs bundle code via `new Function(msg.code)()`
+// (this file's own isolation-model comment has always documented that as the
+// mechanism) — without 'unsafe-eval', Chromium/WebView2 throws on every such
+// call, so no scripted visualizer's code ever actually executes. Pinned
+// separately from the full-string equality above so a future edit that
+// narrows this back down fails loudly on its own, not just as a diff in the
+// combined string.
+test('CSP grants unsafe-eval — new Function(msg.code)() would be blocked otherwise', () => {
+  assert.ok(SANDBOX_CSP.includes("'unsafe-eval'"), 'script-src must allow unsafe-eval for new Function()');
 });
 
 test('srcdoc references no external origins', () => {

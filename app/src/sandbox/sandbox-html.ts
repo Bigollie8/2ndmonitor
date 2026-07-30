@@ -14,7 +14,20 @@
 import { BINS_SHIM_SRC, CLAMP_SHIM_SRC } from './bins';
 
 export const SANDBOX_ATTR = 'allow-scripts';
-export const SANDBOX_CSP = "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'";
+// 'unsafe-eval' is required for the `new Function(msg.code)()` call below that
+// runs the bundle's own top-level code — see the isolation-model comment
+// above, which already documented "user code via new Function" as the
+// intended mechanism. Without it, Chromium/WebView2 throws an EvalError on
+// EVERY `new Function`/`eval` call, so no scripted visualizer (marketplace
+// bundle OR the Scripted authoring surface) ever actually draws anything —
+// found 2026-07-30 verifying task 7 (live catalog-card previews): a fresh
+// mount silently sat on the canvas's plain `#000` CSS background forever,
+// indistinguishable from "drawing something very dark" until the sandbox's
+// own error banner was inspected. `allow-scripts` (no `allow-same-origin`)
+// already gives the frame an opaque origin — no cookies, storage, or Tauri
+// bridge — so this does not widen that isolation boundary; it only lets the
+// already-documented, already-intended in-sandbox eval actually run.
+export const SANDBOX_CSP = "default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval'; style-src 'unsafe-inline'";
 
 /** The runtime shim. Kept as a plain string (not a bundled module) so the
  *  srcdoc is fully self-contained and inspectable. See manifest.ts for the
