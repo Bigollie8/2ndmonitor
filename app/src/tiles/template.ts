@@ -21,7 +21,14 @@ export interface TemplateScope {
   units?: unknown;
 }
 
-const PLACEHOLDER = /\{\{\s*([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)\s*\}\}/g;
+// Segment grammar mirrors viewSpec.ts's DOT_PATH exactly: an identifier or a
+// literal non-negative integer (no leading zero) — the latter indexes into
+// an array, e.g. `{{data.0.q}}` against `{ data: [{ q: 'x' }] }`. Still
+// substitution-only: no variables, no arithmetic, no negative/relative
+// indices, and resolvePath below is unchanged — arrays already expose
+// numeric-string keys as own properties, so `arr['0']` just works.
+const SEGMENT = '(?:[A-Za-z_][A-Za-z0-9_]*|0|[1-9][0-9]*)';
+const PLACEHOLDER = new RegExp(`\\{\\{\\s*(${SEGMENT}(?:\\.${SEGMENT})*)\\s*\\}\\}`, 'g');
 
 export function resolvePath(scope: unknown, path: string): unknown {
   let cur: unknown = scope;

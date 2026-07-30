@@ -187,7 +187,19 @@ export function DeclarativeTile({ bundleId, instanceId, density, accent, editing
   const secretKeys = secretDecls.map((s) => s.key);
 
   const { values: secretValues, loaded: secretsLoaded } = useSecretValues(secretKeys, secretsVersion);
-  const needsSetup = secretsLoaded && secretDecls.some((d) => !secretValues[d.key]);
+  // A tile can need setup for a missing secret OR a missing config value —
+  // e.g. a config-only tile (no secrets at all, such as a dictionary lookup
+  // parameterized by a `word` config entry) has nothing to inject into
+  // secretValues and would otherwise never trip this flag, leaving no way
+  // to ever open TileCredentialPanel and fill in the config the tile
+  // actually needs to build a working request.
+  const needsSetup = secretsLoaded && (
+    secretDecls.some((d) => !secretValues[d.key])
+    || configDecls.some((d) => {
+      const v = configValues[d.key];
+      return v == null || v === '';
+    })
+  );
 
   const saveConfig = (next: Record<string, unknown>) => {
     writeStoredConfig(bundleId, instanceId, next);
@@ -254,7 +266,7 @@ export function DeclarativeTile({ bundleId, instanceId, density, accent, editing
         {loadState.kind === 'ready' && secretsLoaded && needsSetup && !(editing || setupOpen) && (
           <TileNeedsSetup
             accent={accent}
-            line={setupHintLine(secretDecls)}
+            line={setupHintLine(secretDecls, configDecls)}
             onSetup={() => setSetupOpen(true)}
           />
         )}
@@ -265,7 +277,7 @@ export function DeclarativeTile({ bundleId, instanceId, density, accent, editing
             secrets={secretDecls}
             config={configDecls}
             initialConfig={configValues}
-            introLine={setupHintLine(secretDecls)}
+            introLine={setupHintLine(secretDecls, configDecls)}
             onSaveConfig={saveConfig}
             onSecretsSaved={() => { setSecretsVersion((v) => v + 1); setSetupOpen(false); refresh(); }}
           />
@@ -300,9 +312,13 @@ export function DeclarativeTile({ bundleId, instanceId, density, accent, editing
   );
 }
 
-function setupHintLine(secrets: SecretDecl[]): React.ReactNode {
-  if (secrets.length === 0) return 'This tile needs to be connected.';
-  return `Connect ${secrets.map((s) => s.label).join(', ')} to use this tile.`;
+function setupHintLine(secrets: SecretDecl[], config: ConfigDecl[]): React.ReactNode {
+  const parts: string[] = [];
+  if (secrets.length > 0) parts.push(`connect ${secrets.map((s) => s.label).join(', ')}`);
+  if (config.length > 0) parts.push(`set ${config.map((c) => c.label).join(', ')}`);
+  if (parts.length === 0) return 'This tile needs to be connected.';
+  const [first, ...rest] = parts;
+  return `${first![0]!.toUpperCase()}${first!.slice(1)}${rest.length ? ` and ${rest.join(' and ')}` : ''} to use this tile.`;
 }
 
 // ── View primitives ──────────────────────────────────────────────────────────

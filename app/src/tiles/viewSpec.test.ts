@@ -132,6 +132,18 @@ test('validateViewSpec: select rejects array indexing syntax', () => {
   assert.equal(validateViewSpec({ ...ok, select: '' }).ok, false);
 });
 
+test('validateViewSpec: select accepts a literal integer segment (indexing into a bare array response)', () => {
+  assert.equal(validateViewSpec({ ...ok, select: 'data.0.q' }).ok, true);
+  assert.equal(validateViewSpec({ ...ok, select: 'a.0.b.1.c' }).ok, true);
+});
+
+test('validateViewSpec: select still rejects bracket indexing, negative/decorated integers, and a bare dot', () => {
+  assert.equal(validateViewSpec({ ...ok, select: 'items[0].x' }).ok, false);
+  assert.equal(validateViewSpec({ ...ok, select: 'a.-1.b' }).ok, false);
+  assert.equal(validateViewSpec({ ...ok, select: 'a.01x.b' }).ok, false);
+  assert.equal(validateViewSpec({ ...ok, select: '.' }).ok, false);
+});
+
 test('validateViewSpec: uppercase HTTPS:// is rejected (case-sensitive)', () => {
   const r = validateViewSpec({ ...ok, source: { kind: 'http', url: 'HTTPS://x.com', intervalMs: 60000 } });
   assert.equal(r.ok, false);

@@ -41,7 +41,17 @@ export interface TileViewSpec {
   view: TileView;
 }
 
-const DOT_PATH = /^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$/;
+// A segment is either a plain identifier (`[A-Za-z_][A-Za-z0-9_]*`) or a
+// literal non-negative integer with no leading zero (`0` or `[1-9][0-9]*`) —
+// the latter is how a tile indexes into an array a real API actually
+// returned at that position (a bare top-level array is completely ordinary
+// for a third-party JSON API). This is still not an expression language: no
+// variables, no arithmetic, no negative or relative indices — a literal
+// integer is exactly as static and auditable as any other segment, and
+// `resolvePath` needs no runtime change to support it (arrays already expose
+// numeric-string keys as own properties).
+const SEGMENT = '(?:[A-Za-z_][A-Za-z0-9_]*|0|[1-9][0-9]*)';
+const DOT_PATH = new RegExp(`^${SEGMENT}(\\.${SEGMENT})*$`);
 const SECRET_RE = /\{\{\s*secret\.[^}]*\}\}/;
 
 const fail = (error: string) => ({ ok: false as const, error });

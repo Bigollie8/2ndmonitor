@@ -17,6 +17,17 @@ test('resolvePath: does not walk into prototype chain', () => {
   assert.equal(resolvePath({ a: {} }, 'a.toString'), undefined);
 });
 
+test('resolvePath: a literal integer segment indexes into an array', () => {
+  assert.equal(resolvePath({ data: [{ q: 'x' }] }, 'data.0.q'), 'x');
+  assert.equal(resolvePath(['a', 'b'], '0'), 'a');
+  assert.equal(resolvePath({ a: [{ b: [{ c: 7 }] } ] }, 'a.0.b.0.c'), 7);
+});
+
+test('resolvePath: an integer segment still cannot reach the prototype chain', () => {
+  assert.equal(resolvePath({ list: [{ x: 1 }] }, 'list.0.constructor'), undefined);
+  assert.equal(resolvePath({ list: [{ x: 1 }] }, 'list.0.__proto__'), undefined);
+});
+
 test('substitute: replaces a single placeholder', () => {
   assert.equal(substitute('Hi {{item.name}}', { item: { name: 'Ada' } }), 'Hi Ada');
 });
@@ -50,6 +61,10 @@ test('substitute: an unknown scope root renders empty', () => {
 
 test('substitute: leaves non-placeholder braces alone', () => {
   assert.equal(substitute('{ not a placeholder }', {}), '{ not a placeholder }');
+});
+
+test('substitute: {{data.0.q}} resolves a literal integer segment against a real array response', () => {
+  assert.equal(substitute('{{data.0.q}}', { data: [{ q: 'hello' }] }), 'hello');
 });
 
 test('substitute: a substituted value containing braces is not re-expanded', () => {

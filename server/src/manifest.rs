@@ -145,18 +145,35 @@ fn js_stringify(v: Option<&Value>) -> String {
     }
 }
 
-/// A plain dot-path: `^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$`.
-/// No indexing, no expressions — the guardrail against the view spec growing
-/// into an expression language.
+/// A plain dot-path: each segment is either an identifier
+/// (`[A-Za-z_][A-Za-z0-9_]*`) or a literal non-negative integer with no
+/// leading zero (`0` or `[1-9][0-9]*`). Must match `DOT_PATH` in
+/// `app/src/tiles/viewSpec.ts` exactly — the two sides validate the same
+/// submitted `view.json`, and a mismatch means the client and server
+/// disagree about what's allowed to publish. The integer form is how a tile
+/// indexes into an array a real API returned at that position (a bare
+/// top-level array is completely ordinary for a third-party JSON API); it
+/// is still not an expression language — no variables, no arithmetic, no
+/// negative or relative indices.
 fn is_dot_path(s: &str) -> bool {
     if s.is_empty() {
         return false;
     }
-    s.split('.').all(|seg| {
-        let mut chars = seg.chars();
-        let first_ok = matches!(chars.next(), Some(c) if c.is_ascii_alphabetic() || c == '_');
-        first_ok && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
-    })
+    s.split('.').all(is_dot_segment)
+}
+
+fn is_dot_segment(seg: &str) -> bool {
+    if seg.is_empty() {
+        return false;
+    }
+    let bytes = seg.as_bytes();
+    let is_integer = seg == "0" || (bytes[0] != b'0' && bytes.iter().all(u8::is_ascii_digit));
+    if is_integer {
+        return true;
+    }
+    let mut chars = seg.chars();
+    let first_ok = matches!(chars.next(), Some(c) if c.is_ascii_alphabetic() || c == '_');
+    first_ok && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
 /// Matches `/\{\{\s*secret\.[^}]*\}\}/`: `{{`, optional whitespace, the
@@ -505,6 +522,37 @@ mod tests {
         }"#;
         let err = validate_view_spec(json).unwrap_err();
         assert!(err.contains("dot-path"), "{err}");
+    }
+
+    #[test]
+    fn select_accepts_a_literal_integer_segment() {
+        let one = r#"{
+            "source": {"kind":"http","url":"https://api.example.com/data","intervalMs":30000},
+            "select": "data.0.q",
+            "view": {"type":"stat","value":"x"}
+        }"#;
+        assert!(validate_view_spec(one).is_ok());
+
+        let two = r#"{
+            "source": {"kind":"http","url":"https://api.example.com/data","intervalMs":30000},
+            "select": "a.0.b.1.c",
+            "view": {"type":"stat","value":"x"}
+        }"#;
+        assert!(validate_view_spec(two).is_ok());
+    }
+
+    #[test]
+    fn select_still_rejects_bracket_indexing_negative_and_decorated_integers_and_a_bare_dot() {
+        for bad_select in ["items[0].x", "a.-1.b", "a.01x.b", "."] {
+            let json = format!(
+                r#"{{
+                    "source": {{"kind":"http","url":"https://api.example.com/data","intervalMs":30000}},
+                    "select": {bad_select:?},
+                    "view": {{"type":"stat","value":"x"}}
+                }}"#
+            );
+            assert!(validate_view_spec(&json).is_err(), "{bad_select:?} should be rejected");
+        }
     }
 
     #[test]

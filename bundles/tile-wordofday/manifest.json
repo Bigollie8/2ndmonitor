@@ -1,8 +1,0 @@
-{
-  "id": "tile-wordofday",
-  "name": "Word of the day",
-  "author": "official",
-  "version": "1.0.0",
-  "api": 1,
-  "permissions": ["net:api.dictionaryapi.dev"]
-}

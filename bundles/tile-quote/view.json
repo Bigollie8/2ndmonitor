@@ -5,11 +5,8 @@
     "intervalMs": 3600000
   },
   "view": {
-    "type": "list",
-    "row": {
-      "title": "{{item.q}}",
-      "right": "{{item.a}}"
-    },
-    "emptyText": "No quote available."
+    "type": "text",
+    "body": "{{data.0.q}}",
+    "attribution": "{{data.0.a}}"
   }
 }
