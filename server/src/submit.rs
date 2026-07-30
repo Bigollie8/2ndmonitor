@@ -189,20 +189,6 @@ pub async fn submit(
     Ok(Json(json!({ "id": validated.id, "version": validated.version, "status": status })))
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn preview_validation_accepts_png_rejects_oversize_and_non_image() {
-        let png = [vec![0x89u8, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A], vec![0u8; 32]].concat();
-        assert!(validate_preview(&png).is_ok());
-        assert!(validate_preview(b"<html>not an image").is_err());
-        assert!(validate_preview(&vec![0x89u8; PREVIEW_CAP + 1]).is_err());
-        assert!(validate_preview(&[]).is_err());
-    }
-}
-
 pub async fn mine(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -228,4 +214,18 @@ pub async fn mine(
         .filter_map(Result::ok)
         .collect::<Vec<_>>();
     Ok(Json(json!({ "bundles": rows })))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn preview_validation_accepts_png_rejects_oversize_and_non_image() {
+        let png = [vec![0x89u8, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A], vec![0u8; 32]].concat();
+        assert!(validate_preview(&png).is_ok());
+        assert!(validate_preview(b"<html>not an image").is_err());
+        assert!(validate_preview(&vec![0x89u8; PREVIEW_CAP + 1]).is_err());
+        assert!(validate_preview(&[]).is_err());
+    }
 }

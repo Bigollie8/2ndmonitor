@@ -171,6 +171,60 @@ async fn tile_submission_is_stored_and_zipped_as_view_json() {
     assert_eq!(names, vec!["manifest.json".to_string(), "view.json".to_string()]);
 }
 
+/// End-to-end proof that the /submissions wiring (not just the unit-level
+/// validate_preview) actually decodes, validates, and persists a preview,
+/// and that a non-image is rejected at the HTTP boundary rather than
+/// silently stored.
+#[tokio::test]
+async fn preview_round_trips_through_the_real_endpoint_and_bad_ones_are_rejected() {
+    use base64::Engine;
+    let state = hub_marketplace::test_state();
+    let app = router(state.clone());
+    let t = make_user(&app, "a@b.c").await;
+
+    let png = [vec![0x89u8, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A], vec![0u8; 16]].concat();
+    let preview_b64 = base64::engine::general_purpose::STANDARD.encode(&png);
+
+    let (st, body) = call(&app, "POST", "/submissions", Some(&t), Some(serde_json::json!({
+        "kind": "preset",
+        "manifest": serde_json::json!({"id":"has-preview","name":"P","version":"1.0.0","api":1,"permissions":[]}).to_string(),
+        "preset_json": "{\"baseVals\":{}}",
+        "preview": preview_b64,
+    }))).await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+
+    let stored: Vec<u8> = state
+        .db
+        .lock()
+        .query_row("SELECT preview FROM bundles WHERE id = 'has-preview'", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(stored, png);
+
+    // Fails the magic-number sniff -> rejected before it ever reaches storage.
+    let bogus_b64 = base64::engine::general_purpose::STANDARD.encode(b"<html>not an image");
+    let (st, _) = call(&app, "POST", "/submissions", Some(&t), Some(serde_json::json!({
+        "kind": "preset",
+        "manifest": serde_json::json!({"id":"bad-preview","name":"P","version":"1.0.0","api":1,"permissions":[]}).to_string(),
+        "preset_json": "{\"baseVals\":{}}",
+        "preview": bogus_b64,
+    }))).await;
+    assert_eq!(st, StatusCode::BAD_REQUEST);
+    let count: i64 = state
+        .db
+        .lock()
+        .query_row("SELECT COUNT(*) FROM bundles WHERE id = 'bad-preview'", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(count, 0, "a rejected preview must not leave a row behind");
+
+    // No preview at all stays a valid submission.
+    let (st, body) = call(&app, "POST", "/submissions", Some(&t), Some(serde_json::json!({
+        "kind": "preset",
+        "manifest": serde_json::json!({"id":"no-preview","name":"P","version":"1.0.0","api":1,"permissions":[]}).to_string(),
+        "preset_json": "{\"baseVals\":{}}",
+    }))).await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+}
+
 #[tokio::test]
 async fn unauthenticated_401_and_mine_lists() {
     let app = router(test_state());
