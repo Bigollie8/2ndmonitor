@@ -15,13 +15,22 @@
 // letterboxed on the shorter axis. Reproduced here with
 // `scale = Math.min(w, h) / 100`, centered at (w/2, h/2).
 //
-// Not reproduced: like every other style in this trio, the original ran its
-// own additional per-spoke smoothing (`smoothedRef`) on top of the coarser
-// per-band smoothing the host's frame-pump reader already applies with the
-// user's real sensitivity/smoothing settings — a bundle only ever sees that
-// already-smoothed 64-bin output, not the raw value or the smoothing
-// coefficient, so it can't re-run an independent per-spoke EMA. Same
-// documented simplification as waveform.
+// Not reproduced (smoothing): like every other style in this trio, the
+// original ran its own additional per-spoke smoothing (`smoothedRef`) on top
+// of the coarser per-band smoothing the host's frame-pump reader already
+// applies with the user's real sensitivity/smoothing settings — a bundle
+// only ever sees that already-smoothed 64-bin output, not the raw value or
+// the smoothing coefficient, so it can't re-run an independent per-spoke
+// EMA. Same documented simplification as waveform.
+//
+// Not reproduced (sensitivity, minor): the original computes
+// `raw = bands[bandIdx] * 1.1 + 0.08; scaled = raw * sensitivity` —
+// sensitivity is applied AFTER the +0.08 baseline, so the baseline scales
+// too. `viz.bins()` only pre-applies sensitivity to the band value itself
+// (host-side, before the +0.08 here), and there's no raw `sensitivity`
+// reachable from inside a bundle to reapply to the baseline. Because the
+// `* 1.1` factor commutes with the multiplier this only affects the +0.08
+// term — a small, mostly-invisible divergence, not a rework-worthy one.
 
 const SPOKES = 96;
 const SRC_N = 64;

@@ -69,11 +69,15 @@ viz.on('frame', (f) => {
     ctx.fillRect(x, topY, barW, barH);
     ctx.shadowBlur = 0;
 
-    // Peak-hold line.
+    // Peak-hold line — same glow treatment as the bar itself, matching the
+    // original's `box-shadow: 0 0 8px accent` on the peak marker div.
     const peakY = floorY - peaks[i] * plotH;
     ctx.fillStyle = accent;
     ctx.globalAlpha = 0.85;
+    ctx.shadowColor = accent;
+    ctx.shadowBlur = 8;
     ctx.fillRect(x, peakY - 1, barW, 2);
+    ctx.shadowBlur = 0;
     ctx.globalAlpha = 1;
   }
 });
