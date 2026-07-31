@@ -134,3 +134,21 @@ Data loading, the merge/rail/search pipeline, mutation handlers, and multi-branc
 ### 19. Non-deterministic seed zip
 
 `aurora-1.0.0.zip` differs byte-for-byte on every rebuild from a `Compress-Archive` timestamp, so it shows as modified after any `bundles:seed` run. Pre-existing.
+
+---
+
+## Infrastructure
+
+### 20. `market.basedsecurity.net` HTTPS route destroyed by an NPM ID collision — **live outage**
+
+As of 2026-07-31 the public marketplace URL is unreachable. The server itself is healthy (`{"ok":true}` on `http://192.168.1.145:8787`); only the reverse-proxy route is gone.
+
+Cause: a `crew.basedsecurity.net` proxy host was created in the Nginx Proxy Manager UI at 01:54, and NPM allocated it ID **18** — colliding with the hand-written `/srv/appdata/npm/data/nginx/proxy_host/18.conf` that was the marketplace's route. It overwrote the file **and** re-issued the `npm-18` Let's Encrypt certificate for `crew` only. No conf mentions `market.basedsecurity.net`, and no certificate on the box covers it.
+
+This is the exact failure the original deploy notes warned about: NPM's sqlite db does not know about hand-written conf files, so its UI will reuse their IDs.
+
+**To restore** (needs a human decision — both steps reach outside the repo):
+1. Re-issue a cert: `sudo docker exec nginx_proxy_manager certbot certonly --webroot --webroot-path=/data/letsencrypt-acme-challenge --cert-name <new-name> -d market.basedsecurity.net`. Outward-facing — Let's Encrypt rate limits (5 duplicate certs/week) and public CT logs.
+2. Write a new proxy host at a **high, collision-proof ID** (e.g. `900.conf`) rather than re-taking a low number, forwarding to `172.17.0.1:8787`, force-ssl, `client_max_body_size 32m` for bundle zips, and **not** behind Authentik (the desktop app calls it programmatically and cannot do interactive SSO). Validate with `docker exec nginx_proxy_manager nginx -t` before `nginx -s reload` — that file fronts ~17 subdomains.
+
+Note the app's marketplace client hard-requires `https://`, so there is no LAN-URL workaround for testing.
