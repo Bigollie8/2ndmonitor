@@ -1,10 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert';
-import { mergePresetLibrary, resolvePreset } from './milkdrop-presets';
+import { mergePresetLibrary, resolveLoadSource } from './milkdrop-presets';
 
 test('bundled first (sorted), then user (as given), keys unique', () => {
   const lib = mergePresetLibrary(
-    { 'Zebra': {}, 'Alpha': {} },
+    ['Zebra', 'Alpha'],
     [{ name: 'mine', file: 'mine.json', ext: 'json' }, { name: 'raw', file: 'raw.milk', ext: 'milk' }],
   );
   assert.deepEqual(lib.map((e) => e.label), ['Alpha', 'Zebra', 'mine', 'raw']);
@@ -13,27 +13,44 @@ test('bundled first (sorted), then user (as given), keys unique', () => {
 });
 
 test('user preset colliding with bundled name still gets a unique key', () => {
-  const lib = mergePresetLibrary({ 'Same': {} }, [{ name: 'Same', file: 'Same.json', ext: 'json' }]);
+  const lib = mergePresetLibrary(['Same'], [{ name: 'Same', file: 'Same.json', ext: 'json' }]);
   assert.equal(new Set(lib.map((e) => e.key)).size, 2);
 });
 
-test('resolvePreset: bundled returns the pack object', async () => {
-  const preset = { baseVals: {} };
-  const lib = mergePresetLibrary({ 'One': preset }, []);
-  const got = await resolvePreset(lib[0], { bundled: { 'One': preset }, readUserFile: async () => '' });
-  assert.strictEqual(got, preset);
+test('resolveLoadSource: bundled entries resolve to a by-name reference, no read', async () => {
+  let reads = 0;
+  const src = await resolveLoadSource(
+    { key: 'b:Alpha', label: 'Alpha', source: 'bundled' },
+    async () => { reads++; return ''; },
+  );
+  assert.deepEqual(src, { bundled: 'Alpha' });
+  assert.equal(reads, 0, 'the frame owns bundled presets; the host must not read anything');
 });
 
-test('resolvePreset: user json parses; invalid json throws readable error', async () => {
-  const entry = { key: 'u:a.json', label: 'a', source: 'user' as const, file: 'a.json', ext: 'json' };
-  const deps = { bundled: {}, readUserFile: async () => '{"waves":[]}' };
-  assert.deepEqual(await resolvePreset(entry, deps), { waves: [] });
-  const bad = { bundled: {}, readUserFile: async () => 'not json' };
-  await assert.rejects(() => resolvePreset(entry, bad), /not valid Butterchurn preset JSON/);
+test('resolveLoadSource: user json parses to an inline preset object', async () => {
+  const src = await resolveLoadSource(
+    { key: 'u:a.json', label: 'a', source: 'user', file: 'a.json', ext: 'json' },
+    async () => '{"baseVals":{}}',
+  );
+  assert.deepEqual(src, { preset: { baseVals: {} } });
 });
 
-test('resolvePreset: .milk reports conversion unavailable', async () => {
-  const entry = { key: 'u:x.milk', label: 'x', source: 'user' as const, file: 'x.milk', ext: 'milk' };
-  const deps = { bundled: {}, readUserFile: async () => '[preset00]' };
-  await assert.rejects(() => resolvePreset(entry, deps), /\.milk conversion unavailable/);
+test('resolveLoadSource: user json that is not an object is a readable error', async () => {
+  await assert.rejects(
+    resolveLoadSource(
+      { key: 'u:a.json', label: 'a', source: 'user', file: 'a.json', ext: 'json' },
+      async () => '[1,2]',
+    ),
+    /not valid Butterchurn preset JSON/,
+  );
+});
+
+test('resolveLoadSource: .milk still reports the conversion gap', async () => {
+  await assert.rejects(
+    resolveLoadSource(
+      { key: 'u:a.milk', label: 'a', source: 'user', file: 'a.milk', ext: 'milk' },
+      async () => 'per_frame_1=',
+    ),
+    /\.milk conversion unavailable/,
+  );
 });
