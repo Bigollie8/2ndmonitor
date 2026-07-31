@@ -1,6 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { mergePresetLibrary, resolveLoadSource } from './milkdrop-presets';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
 test('bundled first (sorted), then user (as given), keys unique', () => {
   const lib = mergePresetLibrary(
@@ -53,4 +58,40 @@ test('resolveLoadSource: .milk still reports the conversion gap', async () => {
     ),
     /\.milk conversion unavailable/,
   );
+});
+
+const readComponent = () =>
+  readFileSync(join(__dirname, '..', 'components', 'viz-milkdrop.tsx'), 'utf8');
+
+test('milkdrop host: renders through the sandbox surface, not a direct butterchurn import', () => {
+  const tsx = readComponent();
+  assert.ok(!tsx.includes("import('butterchurn')"), 'butterchurn must not load in the app document (CSP)');
+  assert.ok(tsx.includes('<SandboxVizSurface'), 'rendering goes through the sandbox surface');
+  assert.ok(tsx.includes('localSource={MILKDROP_LOCAL_SOURCE}'), 'frame code passed as a stable module constant');
+  assert.ok(/const MILKDROP_LOCAL_SOURCE = \{ code: MILKDROP_FRAME_CODE \}/.test(tsx),
+    'localSource identity must be module-scope stable or the surface re-inits every render');
+});
+
+test('milkdrop host: every pending load resolves — result, timeout, or not-ready', () => {
+  const tsx = readComponent();
+  assert.ok(tsx.includes("kind: 'milkdrop:load'"), 'loads travel the data channel');
+  assert.ok(tsx.includes('no response from visualizer frame'), 'a dead frame times out instead of hanging the walk-forward');
+  assert.ok(tsx.includes('visualizer not ready'), 'posting before ready fails fast');
+  assert.ok(tsx.includes("kind === 'milkdrop:load:result'"), 'results resolve by seq');
+});
+
+test('milkdrop host: names arrival rebuilds the library and restores the saved preset', () => {
+  const tsx = readComponent();
+  assert.ok(tsx.includes("kind === 'milkdrop:names'"));
+  assert.ok(tsx.includes('mergePresetLibrary('));
+  assert.ok(tsx.includes('LS_PRESET'), 'saved-preset restore survives the rewrite');
+});
+
+test('milkdrop host: hover chrome works over an iframe (pointer shield)', () => {
+  const tsx = readComponent();
+  // Mouse events over an iframe go to ITS document, never the parent's —
+  // without a shield above the frame, onMouseEnter never fires and the chips
+  // are unreachable. The visualizer needs no pointer input, so a full-cover
+  // div above the iframe costs nothing.
+  assert.ok(tsx.includes('data-pointer-shield'), 'a full-cover div must sit above the iframe');
 });

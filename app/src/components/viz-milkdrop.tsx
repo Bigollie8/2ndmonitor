@@ -1,19 +1,23 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { useAnimateGate, getVizDpr, type VizProps } from './viz';
-import { useWaveformRef } from '../state/waveform';
-import { makeButterchurnLevels } from '../state/waveform-levels';
+import { type VizProps } from './viz';
+import { SandboxVizSurface } from './viz-sandbox-surface';
+import { MILKDROP_FRAME_CODE } from './milkdrop-code';
 import {
-  mergePresetLibrary, resolvePreset, type PresetEntry, type PresetDeps,
+  mergePresetLibrary, resolveLoadSource,
+  type PresetEntry, type MilkdropLoadSource, type MilkdropHostToFrame, type MilkdropFrameToHost,
 } from '../state/milkdrop-presets';
-import type { BCVisualizer } from 'butterchurn';
 
-/** MilkDrop 2 presets via Butterchurn (WebGL2). Fed by `audio:waveform` raw
- *  samples from Rust — no Web Audio graph involved. In `preview` mode
- *  (gallery grid) renders a cheap 2D placeholder instead: the gallery mounts
- *  all surfaces simultaneously and Chromium caps live WebGL contexts (~16). */
+/** MilkDrop 2 presets via Butterchurn (WebGL2), run inside the no-capability
+ *  viz sandbox iframe — butterchurn compiles preset equations with
+ *  `new Function`, which the app document's packaged CSP (script-src 'self')
+ *  forbids. The frame ships butterchurn + the bundled preset pack as raw
+ *  code (see milkdrop-code.ts); this host only talks to it over the sandbox
+ *  data channel. In `preview` mode (gallery grid) renders a cheap 2D
+ *  placeholder instead: the gallery mounts all surfaces simultaneously and
+ *  Chromium caps live WebGL contexts (~16). */
 export function VizMilkdrop({ accent, accent2, spectrumRef, paused, preview }: VizProps) {
   if (preview) return <MilkdropPreviewCard accent={accent} accent2={accent2} />;
-  return <MilkdropSurface accent={accent} spectrumRef={spectrumRef} paused={paused} />;
+  return <MilkdropSurface accent={accent} accent2={accent2} spectrumRef={spectrumRef} paused={paused} />;
 }
 
 const AUTO_ADVANCE_MS = 30_000;
@@ -21,21 +25,26 @@ const BLEND_SECONDS = 2.7;
 const LS_PRESET = 'milkdrop.preset';
 const LS_AUTO = 'milkdrop.autoAdvance';
 
-function MilkdropSurface({ accent, paused }: Pick<VizProps, 'accent' | 'spectrumRef' | 'paused'>) {
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const hostRef = useRef<HTMLDivElement | null>(null);
-  const waveRef = useWaveformRef();
-  const gate = useAnimateGate(paused, 'milkdrop');
+/** Stable identity is load-bearing: SandboxVizSurface documents localSource
+ *  as a module-scope constant; an inline literal would re-init per render. */
+const MILKDROP_LOCAL_SOURCE = { code: MILKDROP_FRAME_CODE };
+/** Distinct from any installable marketplace id ('builtin-' prefix) so the
+ *  settings key and perf-HUD bucket can never collide with a shop bundle. */
+const MILKDROP_BUNDLE_ID = 'builtin-milkdrop';
+const LOAD_TIMEOUT_MS = 5000;
 
-  const vizRef = useRef<BCVisualizer | null>(null);
-  const depsRef = useRef<PresetDeps | null>(null);
+function MilkdropSurface({ accent, accent2, spectrumRef, paused }: Pick<VizProps, 'accent' | 'accent2' | 'spectrumRef' | 'paused'>) {
   const libraryRef = useRef<PresetEntry[]>([]);
   const indexRef = useRef(0);
   /** key → resolution error message, shown as ⚠ in the picker. */
   const failuresRef = useRef(new Map<string, string>());
+  const userRef = useRef<{ name: string; file: string; ext: string }[] | null>(null);
+
+  const seqRef = useRef(0);
+  const pendingRef = useRef(new Map<number, (r: { ok: boolean; error?: string }) => void>());
+  const dataSenderRef = useRef<((payload: unknown) => boolean) | null>(null);
 
   const [presetLabel, setPresetLabel] = useState('');
-  const [fatal, setFatal] = useState('');
   const [toast, setToast] = useState('');
   const [hovered, setHovered] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -48,20 +57,46 @@ function MilkdropSurface({ accent, paused }: Pick<VizProps, 'accent' | 'spectrum
     if (toastTimer.current) clearTimeout(toastTimer.current);
     toastTimer.current = setTimeout(() => setToast(''), 4000);
   }, []);
+  useEffect(() => () => { if (toastTimer.current) clearTimeout(toastTimer.current); }, []);
+
+  const readUserFile = useCallback(async (file: string) => {
+    const { invoke } = await import('@tauri-apps/api/core');
+    return invoke<string>('presets_read', { file });
+  }, []);
+
+  /** Post one load into the frame; resolves on the frame's seq-matched
+   *  result, a timeout (dead frame), or immediately when the frame is not
+   *  ready — never hangs the caller's walk-forward loop. */
+  const sendLoad = useCallback((source: MilkdropLoadSource, blend: number) => {
+    return new Promise<{ ok: boolean; error?: string }>((resolve) => {
+      const seq = ++seqRef.current;
+      const timer = setTimeout(() => {
+        pendingRef.current.delete(seq);
+        resolve({ ok: false, error: 'no response from visualizer frame' });
+      }, LOAD_TIMEOUT_MS);
+      pendingRef.current.set(seq, (r) => { clearTimeout(timer); resolve(r); });
+      const msg: MilkdropHostToFrame = { kind: 'milkdrop:load', seq, source, blend };
+      if (!dataSenderRef.current?.(msg)) {
+        clearTimeout(timer);
+        pendingRef.current.delete(seq);
+        resolve({ ok: false, error: 'visualizer not ready' });
+      }
+    });
+  }, []);
 
   /** Load library[index]; on failure, record it, toast, and walk forward
-   *  until something loads (at most one full lap). */
+   *  until something loads (at most one full lap). Unchanged shape from the
+   *  in-document era — only the resolve/load seam moved to the frame. */
   const loadAt = useCallback(async (index: number, blend: number) => {
     const lib = libraryRef.current;
-    const viz = vizRef.current;
-    const deps = depsRef.current;
-    if (!lib.length || !viz || !deps) return;
+    if (!lib.length) return;
     for (let attempt = 0; attempt < lib.length; attempt++) {
       const i = (index + attempt + lib.length) % lib.length;
       const entry = lib[i];
       try {
-        const preset = await resolvePreset(entry, deps);
-        viz.loadPreset(preset, blend);
+        const source = await resolveLoadSource(entry, readUserFile);
+        const res = await sendLoad(source, blend);
+        if (!res.ok) throw new Error(res.error ?? 'load failed');
         indexRef.current = i;
         setPresetLabel(entry.label);
         localStorage.setItem(LS_PRESET, entry.key);
@@ -73,7 +108,7 @@ function MilkdropSurface({ accent, paused }: Pick<VizProps, 'accent' | 'spectrum
         showToast(`${entry.label}: ${msg}`);
       }
     }
-  }, [showToast]);
+  }, [readUserFile, sendLoad, showToast]);
 
   const advance = useCallback((how: 'next' | 'prev' | 'random', blend = BLEND_SECONDS) => {
     const lib = libraryRef.current;
@@ -81,94 +116,42 @@ function MilkdropSurface({ accent, paused }: Pick<VizProps, 'accent' | 'spectrum
     let target = indexRef.current;
     if (how === 'next') target = indexRef.current + 1;
     else if (how === 'prev') target = indexRef.current - 1;
-    else {
+    else if (lib.length > 1) {
       // Random ≠ current so the button always visibly does something.
-      if (lib.length > 1) {
-        do { target = Math.floor(Math.random() * lib.length); } while (target === indexRef.current);
-      }
+      do { target = Math.floor(Math.random() * lib.length); } while (target === indexRef.current);
     }
     void loadAt(target, blend);
   }, [loadAt]);
 
-  useEffect(() => {
-    let disposed = false;
-    let raf = 0;
-    let resizeObs: ResizeObserver | null = null;
-    const levels = makeButterchurnLevels();
-
-    (async () => {
+  /** Fires on every 'milkdrop:names' — first init AND hot re-inits. Rebuilds
+   *  the library (frame names + user files) and restores the saved preset;
+   *  after a re-init the frame has a blank visualizer, so always reload. */
+  const onNames = useCallback(async (names: string[]) => {
+    if (userRef.current === null) {
       try {
-        const [{ default: butterchurn }, { default: presetPack }, { invoke }] = await Promise.all([
-          import('butterchurn'),
-          import('butterchurn-presets'),
-          import('@tauri-apps/api/core'),
-        ]);
-        if (disposed || !canvasRef.current || !hostRef.current) return;
-
-        const bundled = presetPack.getPresets();
-        let user: { name: string; file: string; ext: string }[] = [];
-        try {
-          user = await invoke<{ name: string; file: string; ext: string }[]>('presets_list');
-        } catch {
-          // Preset folder unreadable — bundled pack still works.
-        }
-        libraryRef.current = mergePresetLibrary(bundled, user);
-        depsRef.current = {
-          bundled,
-          readUserFile: (file) => invoke<string>('presets_read', { file }),
-        };
-        setLibraryVersion((v) => v + 1);
-
-        const rect = hostRef.current.getBoundingClientRect();
-        const dpr = getVizDpr();
-        const w = Math.max(2, Math.round(rect.width * dpr));
-        const h = Math.max(2, Math.round(rect.height * dpr));
-        canvasRef.current.width = w;
-        canvasRef.current.height = h;
-        vizRef.current = butterchurn.createVisualizer(null, canvasRef.current, { width: w, height: h });
-
-        // Resume the last-viewed preset when it still exists; random otherwise.
-        const lib = libraryRef.current;
-        const savedKey = localStorage.getItem(LS_PRESET);
-        const savedIndex = savedKey ? lib.findIndex((e) => e.key === savedKey) : -1;
-        await loadAt(savedIndex >= 0 ? savedIndex : Math.floor(Math.random() * lib.length), 0);
-
-        resizeObs = new ResizeObserver(() => {
-          const viz = vizRef.current;
-          if (!viz || !hostRef.current || !canvasRef.current) return;
-          const r = hostRef.current.getBoundingClientRect();
-          const d = getVizDpr();
-          const nw = Math.max(2, Math.round(r.width * d));
-          const nh = Math.max(2, Math.round(r.height * d));
-          canvasRef.current.width = nw;
-          canvasRef.current.height = nh;
-          viz.setRendererSize(nw, nh);
-        });
-        resizeObs.observe(hostRef.current);
-
-        const tick = () => {
-          if (disposed) return;
-          if (gate.shouldDraw() && vizRef.current) {
-            levels.update(waveRef.current.mono);
-            vizRef.current.render({ audioLevels: levels.levels });
-          }
-          raf = requestAnimationFrame(tick);
-        };
-        raf = requestAnimationFrame(tick);
-      } catch (e) {
-        if (!disposed) setFatal(String(e));
+        const { invoke } = await import('@tauri-apps/api/core');
+        userRef.current = await invoke<{ name: string; file: string; ext: string }[]>('presets_list');
+      } catch {
+        userRef.current = []; // preset folder unreadable — bundled pack still works
       }
-    })();
+    }
+    libraryRef.current = mergePresetLibrary(names, userRef.current);
+    setLibraryVersion((v) => v + 1);
+    const lib = libraryRef.current;
+    const savedKey = localStorage.getItem(LS_PRESET);
+    const savedIndex = savedKey ? lib.findIndex((e) => e.key === savedKey) : -1;
+    void loadAt(savedIndex >= 0 ? savedIndex : Math.floor(Math.random() * lib.length), 0);
+  }, [loadAt]);
 
-    return () => {
-      disposed = true;
-      cancelAnimationFrame(raf);
-      resizeObs?.disconnect();
-      vizRef.current = null;
-      if (toastTimer.current) clearTimeout(toastTimer.current);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  const handleData = useCallback((payload: unknown) => {
+    const msg = payload as MilkdropFrameToHost;
+    if (msg?.kind === 'milkdrop:load:result') {
+      const pending = pendingRef.current.get(msg.seq);
+      if (pending) { pendingRef.current.delete(msg.seq); pending({ ok: msg.ok, error: msg.error }); }
+    } else if (msg?.kind === 'milkdrop:names') {
+      void onNames(msg.names);
+    }
+  }, [onNames]);
 
   // Auto-advance to a random preset while playing (paused also pauses this).
   useEffect(() => {
@@ -192,16 +175,29 @@ function MilkdropSurface({ accent, paused }: Pick<VizProps, 'accent' | 'spectrum
 
   return (
     <div
-      ref={hostRef}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
       style={{ position: 'absolute', inset: 0, background: '#000', overflow: 'hidden' }}
     >
-      <canvas ref={canvasRef} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }} />
+      <SandboxVizSurface
+        bundleId={MILKDROP_BUNDLE_ID}
+        localSource={MILKDROP_LOCAL_SOURCE}
+        onData={handleData}
+        dataSenderRef={dataSenderRef}
+        accent={accent}
+        accent2={accent2}
+        spectrumRef={spectrumRef}
+        paused={paused}
+      />
+      {/* Mouse events over an iframe are dispatched to ITS document, never the
+          parent's — without this shield the wrapper's onMouseEnter never fires
+          and every chip is unreachable. MilkDrop takes no pointer input, so
+          covering the frame costs nothing. Chrome renders above the shield. */}
+      <div data-pointer-shield style={{ position: 'absolute', inset: 0, zIndex: 1 }} />
 
       {presetLabel && (
         <div style={{
-          position: 'absolute', left: 10, bottom: 8, fontSize: 10,
+          position: 'absolute', left: 10, bottom: 8, fontSize: 10, zIndex: 2,
           color: 'rgba(255,255,255,0.45)', fontFamily: '"JetBrains Mono", ui-monospace, monospace',
           maxWidth: '60%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
           pointerEvents: 'none',
@@ -209,7 +205,7 @@ function MilkdropSurface({ accent, paused }: Pick<VizProps, 'accent' | 'spectrum
       )}
 
       <div style={{
-        position: 'absolute', right: 10, bottom: 8, display: 'flex', gap: 6,
+        position: 'absolute', right: 10, bottom: 8, display: 'flex', gap: 6, zIndex: 2,
         opacity: hovered || pickerOpen ? 1 : 0, transition: 'opacity 160ms ease',
         pointerEvents: hovered || pickerOpen ? 'auto' : 'none',
       }}>
@@ -226,7 +222,7 @@ function MilkdropSurface({ accent, paused }: Pick<VizProps, 'accent' | 'spectrum
 
       {toast && (
         <div style={{
-          position: 'absolute', left: '50%', top: 12, transform: 'translateX(-50%)',
+          position: 'absolute', left: '50%', top: 12, transform: 'translateX(-50%)', zIndex: 2,
           padding: '6px 12px', fontSize: 11, color: 'rgba(255,255,255,0.9)',
           background: 'rgba(0,0,0,0.7)', border: '1px solid rgba(255,255,255,0.15)',
           borderRadius: 8, maxWidth: '85%', pointerEvents: 'none',
@@ -243,15 +239,6 @@ function MilkdropSurface({ accent, paused }: Pick<VizProps, 'accent' | 'spectrum
           onPick={(i) => { void loadAt(i, 1.0); setPickerOpen(false); }}
           onClose={() => setPickerOpen(false)}
         />
-      )}
-
-      {fatal && (
-        <div style={{
-          position: 'absolute', inset: 0, display: 'grid', placeItems: 'center',
-          color: accent, fontSize: 12, padding: 16, textAlign: 'center',
-        }}>
-          MilkDrop failed to start: {fatal}
-        </div>
       )}
     </div>
   );
