@@ -24,6 +24,6 @@ export function parseChangelog(markdown) {
 }
 
 function extractAdded(body) {
-  const m = body.match(/^### Added\s*\n([\s\S]*?)(?=\n### |$)/);
+  const m = body.match(/(?:^|\n)### Added\s*\n([\s\S]*?)(?=\n### |$)/);
   return m ? m[1].trim() : null;
 }

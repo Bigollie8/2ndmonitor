@@ -49,3 +49,20 @@ test('added holds only the Added bullets, null when absent', () => {
 test('empty or heading-free input yields empty array', () => {
   assert.deepEqual(parseChangelog('# Changelog\n\nnothing yet'), []);
 });
+
+test('added captures bullets even when not the first subsection', () => {
+  const changelog = `## [0.5.0] - 2026-05-10
+
+### Changed
+- Layout refactor
+
+### Added
+- Feature one
+- Feature two
+
+### Fixed
+- Bug fix`;
+  const entries = parseChangelog(changelog);
+  assert.equal(entries[0].version, '0.5.0');
+  assert.equal(entries[0].added, '- Feature one\n- Feature two');
+});
