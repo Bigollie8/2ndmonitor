@@ -193,8 +193,10 @@ mod acl_tests {
             .collect()
     }
 
-    /// Every capability file `tauri_build` will parse: the glob it uses is
-    /// `./capabilities/**/*`, minus the generated `schemas` folder
+    /// One entry per **capability**, not per file: `(label, capability object)`.
+    ///
+    /// Covers every capability file `tauri_build` will parse — the glob it uses
+    /// is `./capabilities/**/*`, minus the generated `schemas` folder
     /// (tauri-utils-2.8.3/src/acl/build.rs::parse_capabilities). Read from disk
     /// at test time rather than `include_str!`ed, because the whole point is to
     /// notice a file that did not exist when this test was written.
@@ -223,26 +225,89 @@ mod acl_tests {
                     path.display()
                 );
                 let text = std::fs::read_to_string(&path).expect("read capability");
-                let value = serde_json::from_str(&text)
+                let value: serde_json::Value = serde_json::from_str(&text)
                     .unwrap_or_else(|e| panic!("{} is not valid JSON: {e}", path.display()));
-                out.push((
-                    path.strip_prefix(&root).unwrap_or(&path).display().to_string(),
-                    value,
-                ));
+                let name = path.strip_prefix(&root).unwrap_or(&path).display().to_string();
+                out.extend(normalize_capability_file(&name, value));
             }
         }
         out
+    }
+
+    /// Flattens one capability file into its individual capabilities.
+    ///
+    /// `CapabilityFile` (tauri-utils-2.8.3/src/acl/capability.rs) is an untagged
+    /// enum with THREE accepted shapes, all honoured by `tauri_build`:
+    ///
+    ///   1. a single capability object,
+    ///   2. a bare array of capability objects,
+    ///   3. a named list, `{"capabilities": [...]}`.
+    ///
+    /// Handling only shape 1 is not a cosmetic gap. Indexing a non-object
+    /// `Value` with a string key hits serde_json's `str::index_into`, which
+    /// matches only `Value::Object` and returns `Value::Null` for everything
+    /// else — so an array-shaped file yielded an empty permission list, was
+    /// silently dropped from the `granting` set, and
+    /// `capabilities/second-window.json` written as
+    /// `[{"identifier":"second-window","windows":["main"],
+    ///    "permissions":["allow-app-commands"]}]`
+    /// re-opened the whole hole with both ACL tests still green.
+    ///
+    /// Anything that is not one of the three shapes panics rather than
+    /// returning an empty list: an unrecognised shape must fail this test, not
+    /// quietly exempt a file from it.
+    fn normalize_capability_file(name: &str, value: serde_json::Value) -> Vec<(String, serde_json::Value)> {
+        let list: Vec<serde_json::Value> = match value {
+            serde_json::Value::Array(items) => items,
+            serde_json::Value::Object(map) => match map.get("capabilities") {
+                Some(serde_json::Value::Array(items)) => items.clone(),
+                Some(other) => panic!(
+                    "{name}: `capabilities` must be an array of capabilities, found {other}"
+                ),
+                None => vec![serde_json::Value::Object(map)],
+            },
+            other => panic!(
+                "{name}: not a recognised CapabilityFile shape (single object, array, \
+                 or {{\"capabilities\": [...]}}), found {other}"
+            ),
+        };
+        let single = list.len() == 1;
+        list.into_iter()
+            .enumerate()
+            .map(|(i, cap)| {
+                assert!(
+                    cap.is_object(),
+                    "{name}[{i}]: a capability must be an object, found {cap}"
+                );
+                // Label each entry so a failure names the exact capability, not
+                // just the file it came from.
+                let label = if single {
+                    name.to_string()
+                } else {
+                    format!("{name}[{i}]")
+                };
+                (label, cap)
+            })
+            .collect()
     }
 
     /// The permission identifiers a capability grants. An identifier with no
     /// `prefix:` targets `APP_ACL_KEY`, i.e. this app's own commands
     /// (tauri-utils `Identifier::get_prefix` / `resolved.rs`'s `APP_ACL_KEY`
     /// arm); anything with a prefix is a plugin and not our concern here.
+    ///
+    /// `cap` is guaranteed to be an object by `normalize_capability_file`, so
+    /// the indexing below cannot silently degrade to `Value::Null` the way it
+    /// did when a whole file was passed in.
     fn app_permission_ids(cap: &serde_json::Value) -> Vec<String> {
-        cap["permissions"]
-            .as_array()
-            .map(Vec::as_slice)
-            .unwrap_or_default()
+        let permissions = cap["permissions"].as_array().unwrap_or_else(|| {
+            panic!(
+                "capability {} has no `permissions` array; tauri requires one, and \
+                 treating it as \"grants nothing\" would exempt it from this test",
+                cap["identifier"]
+            )
+        });
+        permissions
             .iter()
             .filter_map(|p| {
                 // A capability entry is either a bare identifier string or an
