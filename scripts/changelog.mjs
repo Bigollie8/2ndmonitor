@@ -66,3 +66,15 @@ export function buildDevEmbed({ title, body, date }) {
     footer: { text: `2ndMonitor Features • ${date}` },
   };
 }
+
+export function parseEnvFile(text) {
+  const env = {};
+  for (const line of text.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+    const eq = trimmed.indexOf('=');
+    if (eq === -1) continue;
+    env[trimmed.slice(0, eq).trim()] = trimmed.slice(eq + 1).trim();
+  }
+  return env;
+}

@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   parseChangelog,
+  parseEnvFile,
   buildReleaseEmbed,
   buildSpotlightEmbed,
   buildDevEmbed,
@@ -112,4 +113,9 @@ test('truncateDescription caps at 4096 and links the changelog', () => {
   const out = truncateDescription(long);
   assert.ok(out.length <= 4096);
   assert.ok(out.endsWith(`…[full changelog](${CHANGELOG_URL})`));
+});
+
+test('parseEnvFile reads KEY=value, skips comments/blanks, keeps = in values', () => {
+  const env = parseEnvFile('# secrets\n\nA=1\nB=https://x/y?a=b=c\n');
+  assert.deepEqual(env, { A: '1', B: 'https://x/y?a=b=c' });
 });
