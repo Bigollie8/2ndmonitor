@@ -5,7 +5,7 @@ import { useLyrics, currentLineIndex } from '../state/lyrics';
 import { recordDraw, useRegisterSurface } from '../perf/debug';
 import { paceFrame, isWindowHidden } from '../state/framePace';
 import { BrowserPlayer, type Bookmark } from './browser-player';
-import { bundleIdOf, isBundleMode, resolveVizSurface } from '../state/contentRegistry';
+import { bundleIdOf, isBundleMode, resolveVizSurface, resolvedVizModeLabel } from '../state/contentRegistry';
 import { useVizStyles } from './useVizStyles';
 
 // Every style except the two engines is now a marketplace bundle rendered by
@@ -200,15 +200,17 @@ export function useAnimateGate(paused?: boolean, name?: string): { shouldDraw():
 }
 
 export function HiFiVizSurface({ mode, accent, accent2, spectrumRef, sensitivity, smoothing, paused, track, playback, preview, catalogRemoved }: { mode: VizMode; catalogRemoved: string[] } & VizProps) {
-  // Register the active viz mode as the mounted surface; the HUD displays it
-  // and spike snapshots include it under `vizMode`.
-  useRegisterSurface(`viz:${mode}${paused ? ':paused' : ''}`);
-  // Needed for the resolution below (is this id actually installed?), but this
-  // component already hosts a hook (useRegisterSurface above), so it's the
-  // natural place for the check. `catalogRemoved` is a prop, not read from the
-  // tweaks store here — useTweaks is instantiated exactly once (App.tsx) and
-  // threaded down as props.
+  // `catalogRemoved` is a prop, not read from the tweaks store here — useTweaks
+  // is instantiated exactly once (App.tsx) and threaded down as props.
   const { styles: vizStyles, loaded: vizStylesLoaded } = useVizStyles(catalogRemoved);
+  const target = resolveVizSurface(mode, vizStyles, vizStylesLoaded);
+  // Register what is actually MOUNTED as the surface — the resolved target,
+  // not `mode`. The HUD displays it and spike snapshots include it under
+  // `vizMode`; naming the requested style while the fallback is the thing
+  // holding the GPU is worse than not instrumenting it at all. Must come after
+  // the resolution above, hence after useVizStyles — both are unconditional,
+  // so hook order is stable.
+  useRegisterSurface(`viz:${resolvedVizModeLabel(target, mode)}${paused ? ':paused' : ''}`);
   // `preview` is forwarded: viz-gallery passes it for grid cards and
   // VizMilkdrop swaps its WebGL surface for a cheap placeholder when set
   // (Chromium caps live WebGL contexts around 16). It was accepted by the type
@@ -216,24 +218,25 @@ export function HiFiVizSurface({ mode, accent, accent2, spectrumRef, sensitivity
   // real context; with only two built-in cards left that is now MilkDrop's
   // card and Scripted's, and the placeholder is the whole point of the flag.
   const props = { accent, accent2, spectrumRef, sensitivity, smoothing, paused, track, playback, preview };
-  // Which style to actually mount. `resolveVizSurface` (state/contentRegistry.ts)
-  // owns the decision and is node-tested; it never returns a hardcoded id, only
-  // something present in `vizStyles` — or 'pending'/'empty'. Everything below
-  // is rendering, no policy.
+  // `target` (resolved above) is the whole decision. `resolveVizSurface`
+  // (state/contentRegistry.ts) owns it and is node-tested; it never returns a
+  // hardcoded id, only something present in `vizStyles` — or 'pending'/'empty'.
+  // Everything below is rendering, no policy.
   //
   // The three-state gate lives inside it and is load-bearing: `vizStylesLoaded`
-  // separates "the visualizers_list invoke hasn't resolved yet" from "it
-  // resolved and this id isn't in it". `vizMode` can already be a `bundle:`
-  // mode on the very first render (useTweaks's synchronous localStorage load
-  // runs before that effect fires), and guessing either way in that window
-  // shows a wrong-style flash: guess "absent" and an installed bundle flashes
-  // the fallback before snapping to its sandbox; guess "present" and a
-  // genuinely-uninstalled id flashes the sandbox's error banner.
+  // separates "the catalog isn't knowable yet" from "it is, and this id isn't
+  // in it". `vizMode` can already be a `bundle:` mode on the very first render
+  // (useTweaks's synchronous localStorage load runs before that effect fires),
+  // and guessing either way in that window shows a wrong-style flash: guess
+  // "absent" and an installed bundle flashes the fallback before snapping to
+  // its sandbox; guess "present" and a genuinely-uninstalled id flashes the
+  // sandbox's error banner. Note `loaded` now also waits on boot seeding, so
+  // an upgrading user's not-yet-seeded `bundle:` selection sits at 'pending'
+  // rather than mounting MilkDrop for a moment — see state/seedStatus.ts.
   //
   // `fallback={null}` renders a blank frame while a lazy chunk fetches rather
   // than unmounting anything outside this component (the VizOverlay chrome in
   // VizHero is a sibling, not a Suspense descendant, so it stays mounted).
-  const target = resolveVizSurface(mode, vizStyles, vizStylesLoaded);
   const surface = (() => {
     if (target.kind === 'pending') return null; // not yet known — render nothing, not a guess
     if (target.kind === 'empty') return <VizEmptyState accent={accent} />;

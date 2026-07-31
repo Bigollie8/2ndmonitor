@@ -37,9 +37,12 @@ import { PerfDebugHUD } from './perf/PerfDebugHUD';
 import { useVizStyles } from './components/useVizStyles';
 import {
   remapRetiredVizMode,
+  resolveVizSurface,
+  resolvedVizModeLabel,
   bundleIdOf as vizBundleIdOf,
   isBundleMode as isVizBundleMode,
 } from './state/contentRegistry';
+import { markSeedSettled } from './state/seedStatus';
 import { catalogKey } from './state/catalog';
 import { defaultBookmarks, type Bookmark } from './components/browser-player';
 import {
@@ -153,6 +156,13 @@ interface TweakState extends Record<string, unknown> {
    *  it. Travels with settings export/import like any other tweak. */
   catalogRemoved: string[];
 }
+
+/** How long the viz surface will wait for boot seeding before giving up and
+ *  resolving against whatever is installed so far. Only reached if `seed_sync`
+ *  never settles at all — the normal success and failure paths both latch
+ *  immediately. Generous enough that a slow disk unzipping ~30 seed bundles
+ *  finishes first, short enough that a hung invoke is a blink, not a session. */
+const SEED_SETTLE_WATCHDOG_MS = 8_000;
 
 const TWEAK_DEFAULTS: TweakState = {
   // Bars is a bundle now, not a built-in — this names the seed zip that
@@ -463,25 +473,55 @@ export default function App() {
   // listen for the Rust-side `tiles:changed`/`visualizers:changed` watcher
   // events (tiles.rs/visualizers.rs poll every 2s), which fire the moment
   // seed_sync writes a folder — no extra refresh call needed here.
+  //
+  // `markSeedSettled()` in the `finally` is what lets the viz surface stop
+  // guessing. Until it fires, `useVizStyles` reports `loaded: false` and
+  // HiFiVizSurface holds at `pending` (a blank frame) instead of concluding
+  // that a bundle the seeder is about to write is missing — see
+  // state/seedStatus.ts for why that window exists on every launch, not just
+  // a fresh install. It must fire on the failure path too: a seed sync that
+  // errored is still an answer, and leaving the latch unset would blank the
+  // surface for the rest of the process.
   const seedSyncRanRef = useRef(false);
   useEffect(() => {
     if (!tweaksHydrated || seedSyncRanRef.current) return;
     seedSyncRanRef.current = true;
+    // Watchdog. The `finally` below covers every way the invoke can settle,
+    // but not one that never settles at all — and the cost of that is a
+    // permanently blank visualizer, which is the exact failure this whole
+    // wave exists to prevent. Falling back to a possibly-incomplete catalog
+    // after a few seconds is strictly better than showing nothing forever.
+    // Idempotent with the `finally` (markSeedSettled latches once).
+    const watchdog = setTimeout(markSeedSettled, SEED_SETTLE_WATCHDOG_MS);
     void (async () => {
       try {
         const { invoke } = await import('@tauri-apps/api/core');
         await invoke('seed_sync', { removed: t.catalogRemoved });
       } catch (err) {
         console.warn('seed_sync failed at startup:', err);
+      } finally {
+        clearTimeout(watchdog);
+        markSeedSettled();
       }
     })();
   }, [tweaksHydrated, t.catalogRemoved]);
 
   // Feed perf-mode + viz-mode into the debug context so spike snapshots include
   // them; cheap unconditional call, the module ignores when not enabled.
+  //
+  // Records the RESOLVED mode, not `t.vizMode`. Before the styles were
+  // retired the dispatch always rendered exactly the requested mode, so the
+  // two were the same string by construction. They are not any more: in the
+  // fallback case a snapshot would read `viz:bundle:bars` while MilkDrop is
+  // the thing actually burning the GPU, which is precisely backwards for a
+  // tool whose entire job is attributing a spike to a surface. Same resolver
+  // the surface itself uses, so the two can never disagree.
+  const resolvedVizMode = resolvedVizModeLabel(
+    resolveVizSurface(t.vizMode, vizStyles, vizStylesLoaded), t.vizMode,
+  );
   useEffect(() => {
-    perfDebug.recordContext(t.perfMode, t.vizMode);
-  }, [t.perfMode, t.vizMode]);
+    perfDebug.recordContext(t.perfMode, resolvedVizMode);
+  }, [t.perfMode, resolvedVizMode]);
 
   // wry never flips document.visibilityState when the parent window is
   // hidden to the tray (SetIsVisible(false) isn't called on a Win32 hide), so

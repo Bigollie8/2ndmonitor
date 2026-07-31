@@ -13,6 +13,7 @@
 import type { VizMode } from '../types';
 import type { VizStyle } from '../components/viz-styles';
 import { BUILTIN_VIZ_STYLES } from '../components/viz-styles';
+import { isFirstParty } from './firstParty';
 
 /** A visualizer folder as reported by the `visualizers_list` Tauri command. */
 export interface InstalledVizFolder {
@@ -111,16 +112,43 @@ export const RETIRED_BUILTIN_VIZ_MODES = [
 
 const RETIRED = new Set<string>(RETIRED_BUILTIN_VIZ_MODES);
 
+/** True for the two first-party engines (`milkdrop`, `scripted`) and nothing
+ *  else. Engine-ness is exactly first-party-ness for visualizers, by the rule
+ *  in state/firstParty.ts: an entry is first-party iff it cannot be expressed
+ *  as a bundle, and for visualizers that is precisely the two engines. Derived
+ *  from that list rather than re-listing the ids, so the two can never drift.
+ *
+ *  A `bundle:` mode can never match: `isFirstParty` compares the whole string
+ *  and the prefix is part of it, which is the correct answer — an installed
+ *  bundle is never an engine, whatever it happens to be called. */
+const isEngineVizMode = (mode: VizMode): boolean => isFirstParty('visualizer', mode);
+
 /** The style to land on when the requested one does not exist. Deliberately
  *  NOT a constant: `'bars'` used to be hardcoded here and in App.tsx, and the
  *  moment Bars left the binary every one of those pointed at nothing and the
  *  surface rendered a black void. `'bundle:bars'` is no better — a user who
  *  removed that bundle hits the identical dead end. The only answer that
- *  cannot rot is "the first thing that is actually in the catalog right now",
- *  and `null` when the catalog is genuinely empty, which callers must handle
- *  explicitly rather than substituting a guess. */
+ *  cannot rot is "something that is actually in the catalog right now", and
+ *  `null` when the catalog is genuinely empty, which callers must handle
+ *  explicitly rather than substituting a guess.
+ *
+ *  Prefers the first NON-ENGINE entry. "First entry of the merged list" alone
+ *  would be `milkdrop` essentially always — `mergeVizStyles` orders built-ins
+ *  before bundles and moves only `scripted` to the end — and MilkDrop is the
+ *  most expensive surface in the app: a WebGL2 context, a ~200 kB engine chunk
+ *  and a ~646 kB preset pack. That is a bad thing to mount by accident, on a
+ *  path that by definition fires when something is already not as expected.
+ *  A bundle style is a canvas and a few kB.
+ *
+ *  Falls back to the first entry of any kind when every survivor is an engine
+ *  (no bundles installed) — an engine is a real, working visualizer, so it is
+ *  the right answer there; it just should not win while a cheaper one exists.
+ *  Note this deliberately does NOT reorder the catalog: the V-cycle, Settings
+ *  dropdown, gallery and quick strip all keep their existing order. Only the
+ *  fallback choice changes. */
 export function firstAvailableVizMode(available: readonly { id: VizMode }[]): VizMode | null {
-  return available[0]?.id ?? null;
+  const style = available.find((s) => !isEngineVizMode(s.id));
+  return style?.id ?? available[0]?.id ?? null;
 }
 
 /** Rewrites a persisted `vizMode` at load time.
@@ -172,4 +200,28 @@ export function resolveVizSurface(
   if (!loaded) return { kind: 'pending' };
   const first = firstAvailableVizMode(styles);
   return first === null ? { kind: 'empty' } : { kind: 'style', mode: first };
+}
+
+/** What is ACTUALLY on screen, as a string, for perf attribution — the perf
+ *  HUD's mounted-surface list and a spike snapshot's `vizMode` field.
+ *
+ *  Must be derived from the resolved target, never from the requested mode.
+ *  Before the built-in styles were retired the dispatch always rendered
+ *  exactly what was asked for, so "requested" and "rendering" were the same
+ *  string by construction and the distinction did not exist. Now they diverge
+ *  precisely in the fallback case — and a spike snapshot that says
+ *  `bundle:bars` while MilkDrop is holding the WebGL context sends whoever
+ *  reads it looking at the wrong code. Shared by App.tsx (`recordContext`) and
+ *  HiFiVizSurface (`useRegisterSurface`) so the two can never disagree. */
+export function resolvedVizModeLabel(target: VizSurfaceTarget, requested: string): string {
+  switch (target.kind) {
+    case 'style': return target.mode;
+    // Nothing is mounted, and saying so is the point: a snapshot naming a
+    // style while the empty state is on screen would be a false lead.
+    case 'empty': return 'none';
+    // Keeps the requested mode visible — "we are waiting on the catalog for
+    // this id" is the useful fact — but tagged, so it never reads as "this
+    // style is rendering".
+    case 'pending': return `${requested}:pending`;
+  }
 }

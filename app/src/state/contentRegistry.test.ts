@@ -3,9 +3,10 @@ import assert from 'node:assert/strict';
 import {
   mergeVizStyles, bundleModeId, isBundleMode, bundleIdOf,
   remapRetiredVizMode, RETIRED_BUILTIN_VIZ_MODES,
-  firstAvailableVizMode, resolveVizSurface,
+  firstAvailableVizMode, resolveVizSurface, resolvedVizModeLabel,
   type InstalledVizFolder,
 } from './contentRegistry';
+import { FIRST_PARTY_VIZ } from './firstParty';
 import type { VizStyle } from '../components/viz-styles';
 import { BUILTIN_VIZ_STYLES } from '../components/viz-styles';
 
@@ -146,9 +147,52 @@ test('remapRetiredVizMode: an empty catalog yields null, never an invented id', 
   assert.equal(remapRetiredVizMode('bars', []), 'bundle:bars');
 });
 
-test('firstAvailableVizMode: the head of the list, or null when empty', () => {
-  assert.equal(firstAvailableVizMode([{ id: 'scripted' }, { id: 'milkdrop' }]), 'scripted');
+test('firstAvailableVizMode: null when there is nothing at all', () => {
   assert.equal(firstAvailableVizMode([]), null);
+});
+
+// The fallback must not be MilkDrop whenever anything cheaper exists.
+// mergeVizStyles orders built-ins before bundles, so "first entry" alone would
+// be `milkdrop` essentially always — a WebGL2 context plus a ~646 kB preset
+// pack, mounted on a path that fires when something is already wrong.
+test('firstAvailableVizMode: prefers a non-engine style over an engine', () => {
+  assert.equal(
+    firstAvailableVizMode([{ id: 'milkdrop' }, { id: 'bundle:aurora' }, { id: 'scripted' }]),
+    'bundle:aurora',
+    'must skip past milkdrop even though it is first in the merged order',
+  );
+});
+
+test('firstAvailableVizMode: keeps catalog order among non-engine styles', () => {
+  assert.equal(
+    firstAvailableVizMode([{ id: 'milkdrop' }, { id: 'bundle:zeta' }, { id: 'bundle:alpha' }]),
+    'bundle:zeta',
+    'preference skips engines; it does not re-sort what is left',
+  );
+});
+
+test('firstAvailableVizMode: falls back to an engine when every survivor is one', () => {
+  assert.equal(firstAvailableVizMode([{ id: 'milkdrop' }, { id: 'scripted' }]), 'milkdrop');
+  assert.equal(firstAvailableVizMode([{ id: 'scripted' }]), 'scripted');
+});
+
+// Both engines are first-party; nothing else is, and a `bundle:` id never can
+// be. Pinned so the preference can't silently start skipping real styles.
+test('firstAvailableVizMode: engine-ness is exactly the first-party viz list', () => {
+  assert.deepEqual([...FIRST_PARTY_VIZ], ['milkdrop', 'scripted']);
+  assert.equal(
+    firstAvailableVizMode([{ id: 'bundle:milkdrop' }, { id: 'milkdrop' }]),
+    'bundle:milkdrop',
+    'a bundle merely named like an engine is still a style',
+  );
+});
+
+test('resolveVizSurface: the fallback it picks is the non-engine preference', () => {
+  const styles = [{ id: 'milkdrop' as const }, { id: 'bundle:aurora' as const }];
+  assert.deepEqual(
+    resolveVizSurface('bundle:uninstalled', styles, true),
+    { kind: 'style', mode: 'bundle:aurora' },
+  );
 });
 
 test('resolveVizSurface: a mode present in the catalog renders itself', () => {
@@ -176,6 +220,25 @@ test('resolveVizSurface: an empty catalog is an explicit empty state, not a blac
   assert.deepEqual(resolveVizSurface('milkdrop', [], true), { kind: 'empty' });
   // Still pending before the list resolves, even with nothing to show.
   assert.deepEqual(resolveVizSurface('bundle:bars', [], false), { kind: 'pending' });
+});
+
+// Perf attribution must name what is MOUNTED, not what was asked for. Before
+// the styles were retired those were the same string by construction; in the
+// fallback case they now diverge, and a spike snapshot reading `bundle:bars`
+// while MilkDrop holds the WebGL context points at the wrong code.
+test('resolvedVizModeLabel: reports the resolved style, not the requested one', () => {
+  const styles = [{ id: 'milkdrop' as const }, { id: 'bundle:aurora' as const }];
+  const target = resolveVizSurface('bundle:uninstalled', styles, true);
+  assert.equal(resolvedVizModeLabel(target, 'bundle:uninstalled'), 'bundle:aurora');
+});
+
+test('resolvedVizModeLabel: an unremarkable resolution is just the mode', () => {
+  assert.equal(resolvedVizModeLabel({ kind: 'style', mode: 'milkdrop' }, 'milkdrop'), 'milkdrop');
+});
+
+test('resolvedVizModeLabel: pending and empty are distinguishable, never a style name', () => {
+  assert.equal(resolvedVizModeLabel({ kind: 'pending' }, 'bundle:bars'), 'bundle:bars:pending');
+  assert.equal(resolvedVizModeLabel({ kind: 'empty' }, 'bundle:bars'), 'none');
 });
 
 test('RETIRED_BUILTIN_VIZ_MODES: covers all 27 migrated styles, with no duplicates', () => {
