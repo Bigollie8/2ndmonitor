@@ -88,6 +88,15 @@ export function buildFeatureEmbed({ title, body, date }) {
   };
 }
 
+export function buildInfoEmbed({ title, body, date }) {
+  return {
+    title: `📘 ${title}`,
+    description: truncateDescription(body),
+    color: 0x5bc0de,
+    footer: { text: `2ndMonitor Info • ${date}` },
+  };
+}
+
 export function parseEnvFile(text) {
   const env = {};
   for (const line of text.split(/\r?\n/)) {

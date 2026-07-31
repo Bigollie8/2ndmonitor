@@ -11,6 +11,7 @@ import {
   buildDevEmbed,
   buildProgressEmbed,
   buildFeatureEmbed,
+  buildInfoEmbed,
 } from './changelog.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -23,6 +24,7 @@ const { values: args } = parseArgs({
     dev: { type: 'boolean', default: false },
     progress: { type: 'boolean', default: false },
     feature: { type: 'boolean', default: false },
+    info: { type: 'boolean', default: false },
     title: { type: 'string' },
     body: { type: 'string' },
     'dry-run': { type: 'boolean', default: false },
@@ -44,6 +46,7 @@ function loadEnv() {
     releases: process.env.DISCORD_RELEASES_WEBHOOK_URL ?? fromFile.DISCORD_RELEASES_WEBHOOK_URL,
     features: process.env.DISCORD_FEATURES_WEBHOOK_URL ?? fromFile.DISCORD_FEATURES_WEBHOOK_URL,
     progress: process.env.DISCORD_PROGRESS_WEBHOOK_URL ?? fromFile.DISCORD_PROGRESS_WEBHOOK_URL,
+    info: process.env.DISCORD_INFO_WEBHOOK_URL ?? fromFile.DISCORD_INFO_WEBHOOK_URL,
   };
 }
 
@@ -64,22 +67,27 @@ async function post(webhookUrl, embed, label) {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-const modes = [args.version, args.all, args.dev, args.progress, args.feature].filter(Boolean).length;
-if (modes !== 1) fail('use exactly one of --version X.Y.Z, --all, --dev, --progress, or --feature');
+// Ad-hoc post modes: flag -> embed builder + destination channel.
+const TITLE_BODY_MODES = {
+  dev: { build: buildDevEmbed, channel: 'features' },
+  progress: { build: buildProgressEmbed, channel: 'progress' },
+  feature: { build: buildFeatureEmbed, channel: 'features' },
+  info: { build: buildInfoEmbed, channel: 'info' },
+};
 
-const { releases, features, progress } = loadEnv();
+const adHocModes = Object.keys(TITLE_BODY_MODES).filter((m) => args[m]);
+const modes = [args.version, args.all].filter(Boolean).length + adHocModes.length;
+if (modes !== 1) fail('use exactly one of --version X.Y.Z, --all, --dev, --progress, --feature, or --info');
 
-if (args.dev || args.progress || args.feature) {
-  const mode = args.dev ? 'dev' : args.progress ? 'progress' : 'feature';
+const webhooks = loadEnv();
+const { releases, features } = webhooks;
+
+if (adHocModes.length === 1) {
+  const mode = adHocModes[0];
   if (!args.title || !args.body) fail(`--${mode} requires --title and --body`);
   const date = new Date().toISOString().slice(0, 10);
-  const embed = args.dev
-    ? buildDevEmbed({ title: args.title, body: args.body, date })
-    : args.progress
-      ? buildProgressEmbed({ title: args.title, body: args.body, date })
-      : buildFeatureEmbed({ title: args.title, body: args.body, date });
-  const target = args.progress ? progress : features;
-  await post(target, embed, `${mode} post "${args.title}"`);
+  const { build, channel } = TITLE_BODY_MODES[mode];
+  await post(webhooks[channel], build({ title: args.title, body: args.body, date }), `${mode} post "${args.title}"`);
 } else {
   const entries = parseChangelog(readFileSync(join(ROOT, 'CHANGELOG.md'), 'utf8'));
   if (args.all) {

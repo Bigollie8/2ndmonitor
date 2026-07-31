@@ -9,6 +9,7 @@ import {
   buildDevEmbed,
   buildProgressEmbed,
   buildFeatureEmbed,
+  buildInfoEmbed,
   truncateDescription,
   CHANGELOG_URL,
 } from './changelog.mjs';
@@ -151,4 +152,12 @@ test('feature embed frames detailed showcases for the features channel', () => {
   assert.equal(e.description, 'Long-form detail.');
   assert.equal(e.color, 0x57f287);
   assert.equal(e.footer.text, '2ndMonitor Features • 2026-07-31');
+});
+
+test('info embed frames evergreen posts for the info channel', () => {
+  const e = buildInfoEmbed({ title: 'Roadmap', body: 'Where we are headed.', date: '2026-07-31' });
+  assert.equal(e.title, '📘 Roadmap');
+  assert.equal(e.description, 'Where we are headed.');
+  assert.equal(e.color, 0x5bc0de);
+  assert.equal(e.footer.text, '2ndMonitor Info • 2026-07-31');
 });
