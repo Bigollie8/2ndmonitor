@@ -193,6 +193,68 @@ mod acl_tests {
             .collect()
     }
 
+    /// Every capability file `tauri_build` will parse: the glob it uses is
+    /// `./capabilities/**/*`, minus the generated `schemas` folder
+    /// (tauri-utils-2.8.3/src/acl/build.rs::parse_capabilities). Read from disk
+    /// at test time rather than `include_str!`ed, because the whole point is to
+    /// notice a file that did not exist when this test was written.
+    fn capability_files() -> Vec<(String, serde_json::Value)> {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("capabilities");
+        let mut stack = vec![root.clone()];
+        let mut out = Vec::new();
+        while let Some(dir) = stack.pop() {
+            for entry in std::fs::read_dir(&dir).expect("capabilities dir is readable") {
+                let path = entry.expect("dir entry").path();
+                if path.is_dir() {
+                    // tauri-build skips this one; it holds generated schemas.
+                    if path.file_name().and_then(|n| n.to_str()) != Some("schemas") {
+                        stack.push(path);
+                    }
+                    continue;
+                }
+                let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+                // tauri also accepts `json5`/`toml` capabilities. serde_json
+                // cannot read those, so fail loudly rather than skip one and
+                // report a false all-clear.
+                assert!(
+                    ext == "json",
+                    "capability {} is not JSON; this test would silently ignore it — \
+                     convert it or teach capability_files() to parse it",
+                    path.display()
+                );
+                let text = std::fs::read_to_string(&path).expect("read capability");
+                let value = serde_json::from_str(&text)
+                    .unwrap_or_else(|e| panic!("{} is not valid JSON: {e}", path.display()));
+                out.push((
+                    path.strip_prefix(&root).unwrap_or(&path).display().to_string(),
+                    value,
+                ));
+            }
+        }
+        out
+    }
+
+    /// The permission identifiers a capability grants. An identifier with no
+    /// `prefix:` targets `APP_ACL_KEY`, i.e. this app's own commands
+    /// (tauri-utils `Identifier::get_prefix` / `resolved.rs`'s `APP_ACL_KEY`
+    /// arm); anything with a prefix is a plugin and not our concern here.
+    fn app_permission_ids(cap: &serde_json::Value) -> Vec<String> {
+        cap["permissions"]
+            .as_array()
+            .map(Vec::as_slice)
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|p| {
+                // A capability entry is either a bare identifier string or an
+                // object that extends the scope of one.
+                p.as_str()
+                    .or_else(|| p.get("identifier").and_then(|i| i.as_str()))
+            })
+            .filter(|id| !id.contains(':'))
+            .map(str::to_string)
+            .collect()
+    }
+
     #[test]
     fn every_registered_command_is_in_the_app_acl_manifest() {
         let registered = registered_commands();
@@ -202,6 +264,15 @@ mod acl_tests {
             registered.len()
         );
         let allowed = allowlisted_commands();
+        // Same sanity check on the other side. `split_once(']')` truncates on
+        // the first `]` in the array — a future inline comment containing one
+        // would silently shorten this list, and a truncated list passes the
+        // `missing` assert below before it fails the `stale` one.
+        assert!(
+            allowed.len() > 40,
+            "TOML extraction is broken, not the handler list: parsed only {} commands",
+            allowed.len()
+        );
 
         let missing: Vec<_> = registered
             .iter()
@@ -230,20 +301,55 @@ mod acl_tests {
         // `webviews` (not `windows`, which `resolve_access` treats as an OR and
         // which would re-admit every webview of the main window) plus a local-
         // only execution context (no `remote` block).
-        let cap: serde_json::Value =
-            serde_json::from_str(include_str!("../capabilities/app-commands.json"))
-                .expect("capability file is valid JSON");
-        assert_eq!(cap["webviews"], serde_json::json!(["main"]), "must be webview-scoped");
+        //
+        // Checking `capabilities/app-commands.json` alone is NOT enough, which
+        // is why this walks the whole directory. `resolve_access` UNIONS the
+        // resolved commands across every capability
+        // (tauri-utils `Resolved::resolve` pushes one `ResolvedCommand` per
+        // capability into the same `allowed_commands` entry, and
+        // `resolve_access` returns a match if *any* of them matches). So a
+        // future `capabilities/second-window.json` that copies `default.json`'s
+        // `{"windows": ["main"], "permissions": ["allow-app-commands"]}` shape
+        // re-opens exactly the hole this whole change closed, while a test that
+        // only reads app-commands.json still passes.
+        let caps = capability_files();
+        assert!(
+            !caps.is_empty(),
+            "extraction is broken, not the capabilities: found no capability files"
+        );
+
+        let granting: Vec<_> = caps
+            .iter()
+            .filter(|(_, cap)| !app_permission_ids(cap).is_empty())
+            .collect();
+        let names: Vec<&str> = granting.iter().map(|(n, _)| n.as_str()).collect();
+        assert_eq!(
+            granting.len(),
+            1,
+            "app commands must be granted by exactly ONE capability so this test can \
+             reason about the whole grant; found {names:?}"
+        );
+
+        let (name, cap) = granting[0];
+        assert_eq!(
+            app_permission_ids(cap),
+            vec!["allow-app-commands".to_string()],
+            "{name} grants an app permission other than the one the manifest defines"
+        );
+        assert_eq!(
+            cap["webviews"],
+            serde_json::json!(["main"]),
+            "{name} must be webview-scoped"
+        );
         assert!(
             cap.get("windows").is_none(),
-            "a `windows` entry would also match the browser-tile child webview, \
+            "{name}: a `windows` entry would also match the browser-tile child webview, \
              because resolve_access matches windows OR webviews"
         );
-        assert_eq!(cap["local"], serde_json::json!(true));
+        assert_eq!(cap["local"], serde_json::json!(true), "{name}");
         assert!(
             cap.get("remote").is_none(),
-            "granting a remote origin would undo the whole fix"
+            "{name}: granting a remote origin would undo the whole fix"
         );
-        assert_eq!(cap["permissions"], serde_json::json!(["allow-app-commands"]));
     }
 }

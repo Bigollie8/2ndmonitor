@@ -38,6 +38,49 @@ test('CSP script-src grants no source expressions beyond unsafe-inline/unsafe-ev
   assert.deepEqual(new Set(tokens), new Set(["'unsafe-inline'", "'unsafe-eval'"]));
 });
 
+// ── the directive that keeps the sandbox frame off the Tauri command surface ─
+// This is NOT just about the frame reaching the network. Read the whole thing
+// before relaxing it.
+//
+// The app ACL grants the sandbox frame everything. It is served from
+// http://vizsandbox.localhost, which `is_local_url` (tauri-2.10.3
+// src/webview/mod.rs, the Windows custom-protocol arm) classifies as
+// Origin::Local, and it lives inside webview label `main` — so it satisfies
+// capabilities/app-commands.json exactly. Nothing in the ACL stands between
+// `new Function(userCode)()` and all 59 app commands, `secret_get` included.
+//
+// What actually stops it is this CSP, in this order:
+//
+//   1. Tauri's PRIMARY IPC transport on Windows is not chrome.webview — it is
+//      a fetch: tauri-2.10.3/scripts/ipc-protocol.js sets
+//      `canUseCustomProtocol = osName !== 'android'` and does
+//      `fetch('http://ipc.localhost/<cmd>')`. wry registers that filter with
+//      SOURCE_KINDS_ALL when ICoreWebView2_22 is present
+//      (wry-0.54.4 src/webview2/mod.rs:941-947) — which it is, or this frame
+//      could not load from a custom scheme at all. Sub-frame IPC requests are
+//      therefore intercepted and WOULD reach Rust.
+//   2. They do not, because `default-src 'none'` with no `connect-src` kills
+//      the fetch at the policy layer before it is ever issued.
+//   3. Only then does the shim fall back to window.ipc.postMessage, and only
+//      then does WebView2's main-frame-only WebMessageReceived act as backstop.
+//
+// So adding `connect-src` here — e.g. a reasonable-sounding "let bundles fetch
+// their own assets" feature — does not merely widen the frame's network reach.
+// It re-enables step 1 and hands an untrusted `new Function` realm the app's
+// entire command surface. If bundles need network, that is what the broker
+// (`viz.net.fetch` → host-side `brokerDecide` → `broker_fetch`) is for.
+test('SANDBOX_CSP grants no connect-src, which is what keeps the frame off the IPC path', () => {
+  assert.ok(SANDBOX_CSP.startsWith("default-src 'none'"),
+    "default-src 'none' is the fallback every fetch-capable directive inherits");
+  assert.ok(!/connect-src/.test(SANDBOX_CSP),
+    'a connect-src here would re-enable Tauri\'s fetch-based IPC transport from inside the sandbox frame, which the ACL already grants — see the comment above this test');
+  // default-src is the fallback for connect-src, so it must not itself name a
+  // source: `default-src https:` would be the same hole by another route.
+  const defaultSrc = /default-src ([^;]+)/.exec(SANDBOX_CSP)?.[1].trim();
+  assert.equal(defaultSrc, "'none'");
+  // The Rust copy is byte-pinned to this one above, so both move together.
+});
+
 test('sandbox document references no external origins', () => {
   const html = buildSandboxHtml();
   assert.ok(!/https?:\/\//.test(html), 'sandbox document must not reference http(s) URLs');
@@ -162,6 +205,15 @@ test('a token that never arrives surfaces a banner instead of a black frame', ()
   assert.ok(tsx.includes('++unprovenReadyRef.current === READY_TOKEN_GRACE_PINGS'),
     'the banner must fire exactly once, on the counter reaching the grace');
   assert.ok(tsx.includes('unprovenReadyRef.current = 0;'), 'the counter must reset on a fresh load');
+  // ...and a token that lands late must take the banner back down, or the
+  // visualizer animates behind a stale "handshake failed" forever: the only
+  // other clear is in the [bundleId, reloadKey] effect, which has already run.
+  assert.ok(tsx.includes('if (unprovenReadyRef.current >= READY_TOKEN_GRACE_PINGS) setScriptError(null);'),
+    'a late-arriving token must clear the handshake banner');
+  assert.ok(
+    tsx.indexOf('if (unprovenReadyRef.current >= READY_TOKEN_GRACE_PINGS) setScriptError(null);')
+      > tsx.indexOf('readyRef.current = true;'),
+    'the clear belongs on the success path, alongside readyRef');
 });
 
 // The handshake must not depend on one edge being caught by a listener that

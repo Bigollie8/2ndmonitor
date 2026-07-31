@@ -301,6 +301,16 @@ export function SandboxVizSurface({
           return;
         }
         readyRef.current = true;
+        // A token that lands AFTER the grace window has already painted the
+        // handshake banner, and the only other `setScriptError(null)` lives in
+        // the [bundleId, reloadKey] effect, which ran long ago — so without
+        // this the visualizer animates behind a stale "handshake failed".
+        // Guarded on the counter rather than clearing unconditionally: a
+        // genuine script error can only arrive after `init`, but the frame may
+        // still have one ping in flight at that point, and a bare clear here
+        // would wipe it.
+        if (unprovenReadyRef.current >= READY_TOKEN_GRACE_PINGS) setScriptError(null);
+        unprovenReadyRef.current = 0;
         sendInit();
         return;
       }
