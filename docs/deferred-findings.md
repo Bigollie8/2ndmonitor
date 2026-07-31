@@ -152,3 +152,11 @@ This is the exact failure the original deploy notes warned about: NPM's sqlite d
 2. Write a new proxy host at a **high, collision-proof ID** (e.g. `900.conf`) rather than re-taking a low number, forwarding to `172.17.0.1:8787`, force-ssl, `client_max_body_size 32m` for bundle zips, and **not** behind Authentik (the desktop app calls it programmatically and cannot do interactive SSO). Validate with `docker exec nginx_proxy_manager nginx -t` before `nginx -s reload` — that file fronts ~17 subdomains.
 
 Note the app's marketplace client hard-requires `https://`, so there is no LAN-URL workaround for testing.
+
+### 21. E4's visual comparison was never done
+
+`bundles/neonbars` (the first DOM-surface bundle) validates, zips with exactly `manifest.json` + `main.js`, and passes the bundle smoke suite — but the **side-by-side comparison against the built-in `VizNeonBars` in a packaged build was not performed**. The task was cut off by an account spend limit partway through.
+
+The built-in is deliberately untouched, so both remain selectable and the comparison is still available. Earlier canvas ports had known, accepted deltas (see the MilkDrop project notes), so expect differences and judge them rather than assuming identity.
+
+Everything the smoke suite proves is that the bundle *runs and builds elements* — `fakeElement` records `scaleY(NaN)` as cleanly as a real value.
