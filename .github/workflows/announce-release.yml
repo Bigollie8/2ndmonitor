@@ -1,0 +1,19 @@
+name: Announce release
+
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  announce:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Post changelog to Discord
+        run: node scripts/discord-announce.mjs --version "${GITHUB_REF_NAME#v}"
+        env:
+          DISCORD_RELEASES_WEBHOOK_URL: ${{ secrets.DISCORD_RELEASES_WEBHOOK_URL }}
+          DISCORD_FEATURES_WEBHOOK_URL: ${{ secrets.DISCORD_FEATURES_WEBHOOK_URL }}
