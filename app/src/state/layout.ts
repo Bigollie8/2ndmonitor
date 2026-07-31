@@ -13,10 +13,10 @@ export function newId(): string {
 export type BuiltinTileType =
   | 'discord' | 'spotify' | 'claude' | 'notes' | 'mixer' | 'sysmon' | 'clock' | 'viz'
   | 'streamDeck' | 'weatherRadar' | 'pomodoro' | 'sun' | 'aurora'
-  | 'airQuality' | 'stocks' | 'tides' | 'githubPrs' | 'streamChat'
-  | 'phoneNotifs' | 'homeAssistant'
-  | 'scratchpad' | 'onThisDay' | 'randomWiki'
-  | 'iss' | 'launches' | 'pollen' | 'birds'
+  | 'airQuality' | 'stocks' | 'tides' | 'streamChat'
+  | 'homeAssistant'
+  | 'scratchpad' | 'onThisDay'
+  | 'iss' | 'pollen'
   | 'solarFlare' | 'lightning' | 'aircraft' | 'activeWindow' | 'docker' | 'energy';
 
 /** A tile that can be placed on a dashboard: a built-in, or an installed
@@ -32,10 +32,10 @@ export type TileType = BuiltinTileType | `bundle:${string}`;
 export const ALL_TILE_TYPES: BuiltinTileType[] = [
   'viz', 'spotify', 'discord', 'claude', 'mixer', 'notes', 'sysmon', 'clock',
   'streamDeck', 'weatherRadar', 'pomodoro', 'sun', 'aurora',
-  'airQuality', 'stocks', 'tides', 'githubPrs', 'streamChat',
-  'phoneNotifs', 'homeAssistant',
-  'scratchpad', 'onThisDay', 'randomWiki',
-  'iss', 'launches', 'pollen', 'birds',
+  'airQuality', 'stocks', 'tides', 'streamChat',
+  'homeAssistant',
+  'scratchpad', 'onThisDay',
+  'iss', 'pollen',
   'solarFlare', 'lightning', 'aircraft', 'activeWindow', 'docker', 'energy',
 ];
 
@@ -163,17 +163,12 @@ export const DEFAULT_LANDSCAPE_LAYOUT: Record<BuiltinTileType, Rect> = {
   airQuality: { x: 0.05, y: 0.74, w: 0.20, h: 0.18 },
   stocks: { x: 0.40, y: 0.74, w: 0.30, h: 0.18 },
   tides: { x: 0.05, y: 0.36, w: 0.20, h: 0.18 },
-  githubPrs: { x: 0.27, y: 0.36, w: 0.13, h: 0.18 },
   streamChat: { x: 0.72, y: 0.55, w: 0.20, h: 0.30 },
-  phoneNotifs: { x: 0.72, y: 0.36, w: 0.20, h: 0.18 },
   homeAssistant: { x: 0.72, y: 0.05, w: 0.20, h: 0.30 },
   scratchpad: { x: 0.05, y: 0.55, w: 0.20, h: 0.18 },
   onThisDay: { x: 0.40, y: 0.05, w: 0.30, h: 0.18 },
-  randomWiki: { x: 0.27, y: 0.16, w: 0.13, h: 0.18 },
   iss: { x: 0.05, y: 0.05, w: 0.20, h: 0.18 },
-  launches: { x: 0.40, y: 0.36, w: 0.30, h: 0.18 },
   pollen: { x: 0.27, y: 0.55, w: 0.13, h: 0.18 },
-  birds: { x: 0.40, y: 0.55, w: 0.30, h: 0.18 },
   solarFlare: { x: 0.72, y: 0.55, w: 0.20, h: 0.30 },
   lightning: { x: 0.72, y: 0.05, w: 0.20, h: 0.30 },
   aircraft: { x: 0.05, y: 0.05, w: 0.20, h: 0.30 },
@@ -239,17 +234,12 @@ export const DEFAULT_PORTRAIT_LAYOUT: Record<BuiltinTileType, Rect> = {
   airQuality: { x: 0.05, y: 0.52, w: 0.43, h: 0.08 },
   stocks: { x: 0.50, y: 0.52, w: 0.45, h: 0.08 },
   tides: { x: 0.05, y: 0.30, w: 0.90, h: 0.10 },
-  githubPrs: { x: 0.05, y: 0.42, w: 0.90, h: 0.10 },
   streamChat: { x: 0.05, y: 0.42, w: 0.90, h: 0.18 },
-  phoneNotifs: { x: 0.05, y: 0.42, w: 0.90, h: 0.10 },
   homeAssistant: { x: 0.05, y: 0.42, w: 0.90, h: 0.18 },
   scratchpad: { x: 0.05, y: 0.30, w: 0.90, h: 0.18 },
   onThisDay: { x: 0.05, y: 0.30, w: 0.90, h: 0.18 },
-  randomWiki: { x: 0.05, y: 0.30, w: 0.90, h: 0.14 },
   iss: { x: 0.05, y: 0.30, w: 0.90, h: 0.18 },
-  launches: { x: 0.05, y: 0.30, w: 0.90, h: 0.20 },
   pollen: { x: 0.05, y: 0.30, w: 0.90, h: 0.14 },
-  birds: { x: 0.05, y: 0.30, w: 0.90, h: 0.18 },
   solarFlare: { x: 0.05, y: 0.30, w: 0.90, h: 0.30 },
   lightning: { x: 0.05, y: 0.30, w: 0.90, h: 0.30 },
   aircraft: { x: 0.05, y: 0.30, w: 0.90, h: 0.30 },
@@ -443,6 +433,11 @@ const RETIRED_TILE_TYPES: Record<string, string> = {
   quote: 'bundle:tile-quote',
   wordOfDay: 'bundle:tile-dictionary',
   dailyChallenge: 'bundle:tile-dailychallenge',
+  randomWiki: 'bundle:tile-randomwiki',
+  launches: 'bundle:tile-launches',
+  githubPrs: 'bundle:tile-githubprs',
+  phoneNotifs: 'bundle:tile-phonenotifs',
+  birds: 'bundle:tile-birds',
 };
 
 export function remapRetiredTileType(type: string): string {

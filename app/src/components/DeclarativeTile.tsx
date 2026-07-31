@@ -141,6 +141,23 @@ function safeExternalUrl(raw: string | undefined): string | undefined {
   }
 }
 
+/** Parses a `broker_fetch` response body. An empty 200 body is not malformed
+ *  JSON — it's the absence of data (e.g. an ntfy topic with no new messages,
+ *  the majority state for `tile-phonenotifs`) — so it is treated as `null`
+ *  rather than a parse failure. `data == null` already renders `TileEmpty`
+ *  for free (see `ViewRenderer` below); before this fix an empty body threw
+ *  "response body was not valid JSON" and surfaced as a raw `TileError`
+ *  instead. Whitespace-only bodies (e.g. a lone newline some servers emit
+ *  for an empty 200) are treated the same way. */
+export function parseResponseBody(body: string): unknown {
+  if (body.trim() === '') return null;
+  try {
+    return JSON.parse(body);
+  } catch {
+    throw new Error('response body was not valid JSON');
+  }
+}
+
 /** Redacts every known secret VALUE from an error message before it's ever
  *  rendered — `TileError` shows `error` verbatim. `broker_fetch` (marketplace.
  *  rs) surfaces `format!("request failed: {e}")` on any HTTP failure, and
@@ -290,11 +307,7 @@ export function DeclarativeTile({ bundleId, instanceId, density, accent, editing
       if (res.status < 200 || res.status >= 300) {
         throw new Error(`request failed: HTTP ${res.status}`);
       }
-      try {
-        return JSON.parse(res.body);
-      } catch {
-        throw new Error('response body was not valid JSON');
-      }
+      return parseResponseBody(res.body);
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       throw new Error(redactSecrets(message, secretValues));

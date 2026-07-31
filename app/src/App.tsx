@@ -76,17 +76,12 @@ const AuroraTile = lazy(() => import('./components/AuroraTile').then((m) => ({ d
 const AirQualityTile = lazy(() => import('./components/AirQualityTile').then((m) => ({ default: m.AirQualityTile })));
 const StocksTile = lazy(() => import('./components/StocksTile').then((m) => ({ default: m.StocksTile })));
 const TidesTile = lazy(() => import('./components/TidesTile').then((m) => ({ default: m.TidesTile })));
-const GithubPrsTile = lazy(() => import('./components/GithubPrsTile').then((m) => ({ default: m.GithubPrsTile })));
 const StreamChatTile = lazy(() => import('./components/StreamChatTile').then((m) => ({ default: m.StreamChatTile })));
-const PhoneNotifsTile = lazy(() => import('./components/PhoneNotifsTile').then((m) => ({ default: m.PhoneNotifsTile })));
 const HomeAssistantTile = lazy(() => import('./components/HomeAssistantTile').then((m) => ({ default: m.HomeAssistantTile })));
 const ScratchpadTile = lazy(() => import('./components/ScratchpadTile').then((m) => ({ default: m.ScratchpadTile })));
 const OnThisDayTile = lazy(() => import('./components/OnThisDayTile').then((m) => ({ default: m.OnThisDayTile })));
-const RandomWikiTile = lazy(() => import('./components/RandomWikiTile').then((m) => ({ default: m.RandomWikiTile })));
 const IssTile = lazy(() => import('./components/IssTile').then((m) => ({ default: m.IssTile })));
-const LaunchesTile = lazy(() => import('./components/LaunchesTile').then((m) => ({ default: m.LaunchesTile })));
 const PollenTile = lazy(() => import('./components/PollenTile').then((m) => ({ default: m.PollenTile })));
-const BirdsTile = lazy(() => import('./components/BirdsTile').then((m) => ({ default: m.BirdsTile })));
 const SolarFlareTile = lazy(() => import('./components/SolarFlareTile').then((m) => ({ default: m.SolarFlareTile })));
 const LightningTile = lazy(() => import('./components/LightningTile').then((m) => ({ default: m.LightningTile })));
 const AircraftTile = lazy(() => import('./components/AircraftTile').then((m) => ({ default: m.AircraftTile })));
@@ -869,14 +864,6 @@ export default function App() {
             })}
           />
         );
-      case 'githubPrs':
-        return (
-          <GithubPrsTile
-            density={t.density}
-            accent={accent}
-            editing={editMode}
-          />
-        );
       case 'streamChat':
         return (
           <StreamChatTile
@@ -888,14 +875,6 @@ export default function App() {
             setConfig={(next) => updateActiveOrientation({
               tiles: updateInstance(activeOrientation.tiles, instance.instanceId, { config: next }),
             })}
-          />
-        );
-      case 'phoneNotifs':
-        return (
-          <PhoneNotifsTile
-            density={t.density}
-            accent={accent}
-            editing={editMode}
           />
         );
       case 'homeAssistant':
@@ -916,23 +895,10 @@ export default function App() {
         );
       case 'onThisDay':
         return <OnThisDayTile density={t.density} accent={accent} />;
-      case 'randomWiki':
-        return <RandomWikiTile density={t.density} accent={accent} />;
       case 'iss':
         return <IssTile density={t.density} accent={accent} location={t.weatherLocation} />;
-      case 'launches':
-        return <LaunchesTile density={t.density} accent={accent} />;
       case 'pollen':
         return <PollenTile density={t.density} accent={accent} editing={editMode} location={t.weatherLocation} />;
-      case 'birds':
-        return (
-          <BirdsTile
-            density={t.density}
-            accent={accent}
-            editing={editMode}
-            location={t.weatherLocation}
-          />
-        );
       case 'solarFlare':
         return <SolarFlareTile density={t.density} accent={accent} />;
       case 'lightning':

@@ -154,10 +154,10 @@ test('DEFAULT_PORTRAIT_LAYOUT contains all tile types', () => {
   // Note: JS default sort is codepoint-based, so capital Q < lowercase i
   // (airQuality precedes aircraft, etc.).
   assert.deepEqual(ids, [
-    'activeWindow', 'airQuality', 'aircraft', 'aurora', 'birds', 'claude',
-    'clock', 'discord', 'docker', 'energy', 'githubPrs',
-    'homeAssistant', 'iss', 'launches', 'lightning', 'mixer', 'notes',
-    'onThisDay', 'phoneNotifs', 'pollen', 'pomodoro', 'randomWiki',
+    'activeWindow', 'airQuality', 'aircraft', 'aurora', 'claude',
+    'clock', 'discord', 'docker', 'energy',
+    'homeAssistant', 'iss', 'lightning', 'mixer', 'notes',
+    'onThisDay', 'pollen', 'pomodoro',
     'scratchpad', 'solarFlare', 'spotify', 'stocks', 'streamChat',
     'streamDeck', 'sun', 'sysmon', 'tides', 'viz', 'weatherRadar',
   ]);
@@ -305,10 +305,20 @@ test('remapRetiredTileType: retired built-ins point at their bundle ids', () => 
   assert.equal(remapRetiredTileType('quote'), 'bundle:tile-quote');
   assert.equal(remapRetiredTileType('wordOfDay'), 'bundle:tile-dictionary');
   assert.equal(remapRetiredTileType('dailyChallenge'), 'bundle:tile-dailychallenge');
+  assert.equal(remapRetiredTileType('randomWiki'), 'bundle:tile-randomwiki');
+  assert.equal(remapRetiredTileType('launches'), 'bundle:tile-launches');
+  assert.equal(remapRetiredTileType('githubPrs'), 'bundle:tile-githubprs');
+  assert.equal(remapRetiredTileType('phoneNotifs'), 'bundle:tile-phonenotifs');
+  assert.equal(remapRetiredTileType('birds'), 'bundle:tile-birds');
 });
 
 test('remapRetiredTileType: a live built-in is unchanged', () => {
   assert.equal(remapRetiredTileType('mixer'), 'mixer');
+});
+
+test('remapRetiredTileType: onThisDay and stocks stay built-in (additional listings, not replacements)', () => {
+  assert.equal(remapRetiredTileType('onThisDay'), 'onThisDay');
+  assert.equal(remapRetiredTileType('stocks'), 'stocks');
 });
 
 test('remapRetiredTileType: an already-bundle type is unchanged', () => {

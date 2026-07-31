@@ -259,7 +259,7 @@ export function SettingsWindow({
       rows: [
         {
           id: 'weather-location', label: 'Location', stacked: true,
-          hint: 'Used by weather, radar, sun, air quality, pollen, birds and other location-aware tiles',
+          hint: 'Used by weather, radar, sun, air quality, pollen and other location-aware tiles',
           control: (
             <SettingsWeatherSearch
               current={v.weatherLocation}

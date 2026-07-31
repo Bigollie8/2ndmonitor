@@ -5,8 +5,9 @@ import { bundleSecretKey, setSecret } from '../state/secrets';
 /** Host-owned credential + config entry for an installed declarative tile.
  *  The bundle never sees these values — this panel writes secrets straight
  *  into the encrypted secret store and hands config back to the caller to
- *  persist (per-instance, in localStorage). Visually mirrors GithubPrsTile's
- *  ConnectPanel: one column of labelled inputs and a single primary action. */
+ *  persist (per-instance, in localStorage). Visually mirrors the built-in
+ *  credentialed tiles' connect panels: one column of labelled inputs and a
+ *  single primary action. */
 export interface TileCredentialPanelProps {
   /** Owning bundle's id — secrets are namespaced under it in the store
    *  (bundleSecretKey) so a bundle can never name a built-in tile's
