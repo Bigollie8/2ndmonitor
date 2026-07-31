@@ -1045,3 +1045,13 @@ Verified by screen capture:
 - MilkDrop style active, live preset rendering (not black, no CSP violation, no error banner). First preset: `$$$ Royal - Mashup (431)`, restored via LS_PRESET.
 - After the 30s auto-advance interval, a second, different preset rendered with the label updated — repeated `milkdrop:load` over the data channel works. The preset that landed was `_Aderrasi - Wanderer in Curved Space - mash0000 - ...` — the exact preset that threw the CSP eval error in the bug report screenshot.
 NOT manually exercised (covered by unit tests only): picker click-through, user `.json` drop, garbage-json walk-forward, other bundle styles (require pointer interaction a WebView2 window doesn't expose to automation).
+
+## Deferred findings (final-review triage: all fine to defer)
+
+- `builtin-` id prefix is asserted collision-free in viz-milkdrop.tsx but not reserved in validateManifest — reserve it or soften the comment.
+- A malicious downloaded preset can spoof `milkdrop:names`/`milkdrop:load:result` to confuse host chrome (labels/picker/LS only; no capability reach — file paths come solely from Rust's presets_list). By-design containment; note only.
+- `makeButterchurnLevels` (state/waveform-levels.ts) is dead production code — the glue mirrors it; delete with its tests at leisure.
+- CHANGELOG's recreated "22 extra visualizer styles now lazy-load" line goes stale once spec F retires the builtins.
+- sendLoad would strand a pending entry for 5s if the data sender ever threw (unreachable today).
+- Cosmetic: onData branch type assertion; localSource test slice span (both brief-authored).
+- Parked (ruling upheld by final review): sequential re-init could interleave an in-flight loadAt walk — unreachable post-singleton; transient label mismatch at worst.
