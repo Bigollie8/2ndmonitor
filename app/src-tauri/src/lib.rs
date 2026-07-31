@@ -110,6 +110,7 @@ pub fn run() {
             secrets::secret_set,
             secrets::secret_delete,
             tray::set_close_to_tray,
+            sandbox::sandbox_token,
         ])
         .setup(|app| {
             sysmon::spawn(app.handle().clone());

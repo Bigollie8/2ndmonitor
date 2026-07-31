@@ -210,7 +210,7 @@ export function validateManifest(
 //   { type: 'init', code, settings, size, theme }
 //   { type: 'frame', spectrum, waveform, bands, onset, level, dt, size, theme, track, playback }
 // Sandbox → host:
-//   { type: 'ready' }
+//   { type: 'ready', token }   (repeated until an 'init' arrives)
 //   { type: 'error', message, line }
 //   { type: 'settings:set', key, value }
 
@@ -265,7 +265,11 @@ export interface FrameMessage {
   playback: VizPlayback | null;
 }
 
-export interface ReadyMessage { type: typeof MSG_READY }
+/** Re-posted on a short interval until the host answers with `init`, so the
+ *  handshake does not depend on a single edge being caught. `token` is the
+ *  per-process value the Rust protocol handler stamped into the served
+ *  document; the host refuses to init a frame that cannot echo it. */
+export interface ReadyMessage { type: typeof MSG_READY; token: string }
 export interface ErrorMessage { type: typeof MSG_ERROR; message: string; line: number | null }
 export interface SettingsSetMessage { type: typeof MSG_SETTINGS_SET; key: string; value: unknown }
 

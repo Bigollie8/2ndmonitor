@@ -38,8 +38,10 @@
 //! (`tauri-2.10.3/src/protocol/tauri.rs`, from `asset.csp_header`) - so what
 //! is set below is exactly what the frame receives.
 
+use std::sync::OnceLock;
+
 use tauri::http::{Request, Response};
-use tauri::{Runtime, UriSchemeContext};
+use tauri::{AppHandle, Runtime, UriSchemeContext};
 
 /// Must match `SANDBOX_SCHEME` in `app/src/sandbox/sandbox-html.ts`.
 pub const SCHEME: &str = "vizsandbox";
@@ -57,27 +59,119 @@ const SANDBOX_HTML: &str = include_str!("../sandbox.html");
 /// and its `new Function(userCode)()` need and nothing else - no `'self'`, no
 /// host source, so there is no URL the frame may load script from.
 ///
-/// Deliberately no `frame-ancestors`: it does not fall back to `default-src`,
-/// and `'self'` would refer to this scheme's origin, which is *not* the
-/// embedder's - setting it would block the app from framing its own sandbox.
+/// `frame-ancestors` is appended per-response by [`csp_with_ancestors`] rather
+/// than baked in here, because the embedder's origin differs between a
+/// packaged build and `tauri dev`.
 const SANDBOX_CSP: &str =
     "default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval'; style-src 'unsafe-inline'";
 
-/// The document is static for every instance and every visualizer: the
-/// bundle's code arrives afterwards over `postMessage` `init`, never baked
-/// into the HTML. So every path under the scheme serves the same bytes, and
-/// the request is not consulted at all.
-pub fn handle<R: Runtime>(_ctx: UriSchemeContext<'_, R>, _req: Request<Vec<u8>>) -> Response<Vec<u8>> {
-    build_response()
+/// The one document allowed to frame the sandbox in a packaged build: the app
+/// itself. Tauri serves the frontend from `http://tauri.localhost` on Windows
+/// (`use_https_scheme` is not set; observed live in the release exe).
+const EMBEDDER_ORIGIN: &str = "http://tauri.localhost";
+
+/// `frame-ancestors` does NOT fall back to `default-src`, so without this
+/// directive *anything* may frame the sandbox - and something can: `webtiles`
+/// mounts arbitrary user-configured web pages as child webviews
+/// (`WebviewUrl::External`), which go through the same
+/// `prepare_pending_webview` path and therefore get this scheme registered on
+/// them too, while the app's own `frame-src` does not apply to them at all
+/// (Tauri injects CSP only into its own asset responses; a remote page gets
+/// whatever its server sends). A page in a webtile could otherwise frame this
+/// document *without* the `sandbox` attribute and drive the runtime as its
+/// parent - the shim's `ev.source === parent` check passes, because the
+/// attacker *is* the parent - running attacker JS through `new Function` at
+/// this scheme's origin, which `is_local_url()` classifies as `Origin::Local`.
+///
+/// `'self'` would be wrong here: it names *this* scheme's origin, not the
+/// embedder's. The embedder is named explicitly instead.
+fn csp_with_ancestors(dev_origin: Option<&str>) -> String {
+    let mut csp = format!("{SANDBOX_CSP}; frame-ancestors {EMBEDDER_ORIGIN}");
+    if let Some(origin) = dev_origin {
+        csp.push(' ');
+        csp.push_str(origin);
+    }
+    csp
+}
+
+/// The dev server's origin, and only in a debug build. `tauri dev` loads the
+/// frontend from `build.devUrl`, so that document - not `tauri.localhost` - is
+/// the embedder there. Gated on `debug_assertions` so a release binary can
+/// never be framed by a dev server origin even though the value stays in the
+/// embedded config.
+fn dev_origin<R: Runtime>(app: &AppHandle<R>) -> Option<String> {
+    if !cfg!(debug_assertions) {
+        return None;
+    }
+    app.config()
+        .build
+        .dev_url
+        .as_ref()
+        .map(|u| u.origin().ascii_serialization())
+}
+
+/// Substituted with [`token()`] on the way out. See that function.
+const TOKEN_PLACEHOLDER: &str = "__SANDBOX_TOKEN__";
+
+/// A per-process random value the served document echoes back in its `ready`
+/// message, so the host can tell a document *this handler served* from one
+/// that merely arrived at the same URL.
+///
+/// That is not hypothetical. wry only intercepts sub-frame requests for custom
+/// protocols when `ICoreWebView2_22` is available; without it
+/// (`wry-0.54.4/src/webview2/mod.rs:941-950`) it falls back to
+/// `AddWebResourceRequestedFilter`, which defaults to the DOCUMENT source kind
+/// and never sees the iframe's request. The load then fails *open*, not
+/// closed: Chromium resolves any `*.localhost` name to loopback, so the frame
+/// issues a real `GET http://127.0.0.1:80/index.html`, and whatever is
+/// listening there answers. That response would pass both host-side checks -
+/// it is still the real `iframe.contentWindow`, and still opaque-origin
+/// (`e.origin === "null"`) because the `sandbox` attribute is the iframe's, not
+/// the document's - while carrying no `default-src 'none'`, so it would have
+/// full network, could make the host post it an installed bundle's source, and
+/// could write attacker-chosen keys into `scripted.settings.<id>`.
+///
+/// A local server cannot know this value: it is generated in-process, is never
+/// written to disk, and is handed to the frontend only over IPC from the main
+/// webview (see [`sandbox_token`]).
+pub fn token() -> &'static str {
+    static TOKEN: OnceLock<String> = OnceLock::new();
+    TOKEN.get_or_init(|| hex::encode(rand::random::<[u8; 16]>()))
+}
+
+/// Hands the frontend the value it must see echoed in `ready` before it will
+/// init a frame.
+///
+/// Restricted to the main webview. App-defined commands are not ACL-gated
+/// unless the app ships an ACL manifest (`tauri-2.10.3/src/webview/mod.rs`:
+/// *"we only check ACL on plugin commands or if the app defined its ACL
+/// manifest"*), so without this check any remote page mounted as a webtile
+/// could read the token over IPC.
+#[tauri::command]
+pub fn sandbox_token<R: Runtime>(webview: tauri::Webview<R>) -> Result<String, String> {
+    if webview.label() != "main" {
+        return Err("sandbox_token is only available to the main webview".into());
+    }
+    Ok(token().to_string())
+}
+
+/// The document is the same for every instance and every visualizer - the
+/// bundle's code arrives afterwards over `postMessage` `init`, never baked into
+/// the HTML - so every path under the scheme serves the same bytes and the
+/// request is not consulted at all. Only the per-process token and the
+/// embedder origin are substituted in.
+pub fn handle<R: Runtime>(ctx: UriSchemeContext<'_, R>, _req: Request<Vec<u8>>) -> Response<Vec<u8>> {
+    build_response(dev_origin(ctx.app_handle()).as_deref())
 }
 
 /// The entire body of [`handle`], split out only so tests can drive the real
 /// response builder rather than re-asserting the constants it reads.
-fn build_response() -> Response<Vec<u8>> {
+fn build_response(dev_origin: Option<&str>) -> Response<Vec<u8>> {
+    let body = SANDBOX_HTML.replace(TOKEN_PLACEHOLDER, token());
     Response::builder()
         .status(200)
         .header("Content-Type", "text/html; charset=utf-8")
-        .header("Content-Security-Policy", SANDBOX_CSP)
+        .header("Content-Security-Policy", csp_with_ancestors(dev_origin))
         // The whole point of this module: without nosniff a response body is
         // still only interpreted per Content-Type, but pinning it costs
         // nothing and keeps the frame from ever being treated as anything
@@ -86,8 +180,9 @@ fn build_response() -> Response<Vec<u8>> {
         // The generated document changes only across builds, but a cached
         // copy surviving a rebuild would resurrect exactly the class of
         // "the artifact does not match the source" bug this module fixes.
+        // It also keeps the token out of any on-disk cache.
         .header("Cache-Control", "no-store")
-        .body(SANDBOX_HTML.as_bytes().to_vec())
+        .body(body.into_bytes())
         .expect("static sandbox response is always well-formed")
 }
 
@@ -113,13 +208,13 @@ mod tests {
     fn served_response_carries_the_csp_header() {
         // Drive the real builder: a header that is only asserted as a
         // constant proves nothing about what the frame actually receives.
-        let res = build_response();
+        let res = build_response(None);
         assert_eq!(res.status(), 200);
         assert_eq!(
             res.headers()
                 .get("Content-Security-Policy")
                 .and_then(|v| v.to_str().ok()),
-            Some(SANDBOX_CSP),
+            Some(csp_with_ancestors(None).as_str()),
             "the frame's policy must arrive as a real header, not only as <meta>"
         );
         assert_eq!(
@@ -133,11 +228,61 @@ mod tests {
     }
 
     #[test]
+    fn frame_ancestors_names_the_embedder_and_nothing_else() {
+        // Without this directive any document may frame the sandbox, including
+        // an arbitrary remote page mounted as a webtile - see the doc comment
+        // on csp_with_ancestors.
+        let packaged = csp_with_ancestors(None);
+        assert!(packaged.starts_with(SANDBOX_CSP), "base policy must be unchanged");
+        assert_eq!(
+            packaged
+                .split(';')
+                .map(str::trim)
+                .find(|d| d.starts_with("frame-ancestors")),
+            Some("frame-ancestors http://tauri.localhost"),
+            "a packaged build must be framable only by the app document"
+        );
+        assert!(!packaged.contains('*'), "no wildcard ancestor");
+        assert!(!packaged.contains("'self'"), "'self' would name this scheme, not the embedder");
+
+        // Dev appends the dev-server origin, and only that.
+        let dev = csp_with_ancestors(Some("http://localhost:1420"));
+        assert!(dev.ends_with("frame-ancestors http://tauri.localhost http://localhost:1420"));
+    }
+
+    #[test]
+    fn served_document_carries_a_fresh_token_and_leaks_no_placeholder() {
+        // The placeholder must exist exactly once in the committed artifact,
+        // or the substitution silently does nothing and every `ready` is
+        // rejected (fail-closed, but invisibly).
+        assert_eq!(
+            SANDBOX_HTML.matches(TOKEN_PLACEHOLDER).count(),
+            1,
+            "sandbox.html must carry exactly one token placeholder"
+        );
+        let body = String::from_utf8(build_response(None).body().clone()).unwrap();
+        assert!(!body.contains(TOKEN_PLACEHOLDER), "placeholder must be substituted");
+        assert!(body.contains(token()), "served document must carry the live token");
+    }
+
+    #[test]
+    fn token_is_stable_random_hex() {
+        let t = token();
+        assert_eq!(t.len(), 32, "128 bits, hex");
+        assert!(t.chars().all(|c| c.is_ascii_hexdigit()));
+        assert_eq!(t, token(), "must be stable for the life of the process");
+    }
+
+    #[test]
     fn served_document_contains_the_runtime() {
         let html = SANDBOX_HTML;
         assert!(html.contains("addEventListener('message'"), "runtime shim present");
         assert!(html.contains("new Function(msg.code)"), "eval path present");
-        assert!(html.contains("ev.source !== parent"), "embedder-only guard present");
+        assert!(
+            html.contains("parent === window || ev.source !== parent"),
+            "embedder-only guard present, and not degenerate at top level"
+        );
+        assert!(html.contains("type: 'ready', token:"), "ready echoes the token");
         // The document must not reach for anything off-origin.
         assert!(!html.contains("http://"), "no absolute http URLs in the document");
         assert!(!html.contains("https://"), "no absolute https URLs in the document");

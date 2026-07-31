@@ -480,14 +480,21 @@ export default function App() {
   // sandboxed catalog-card preview, via `SandboxVizSurface`) reads through
   // `framePace.ts`'s `isWindowHidden()`.
   useEffect(() => {
+    // `cancelled` is load-bearing, not boilerplate: `listen()` is async, and
+    // under StrictMode the first effect's promise resolves AFTER its cleanup
+    // has already run — so without this the first listener is never released
+    // and every visibility event is handled twice for the life of the app.
+    let cancelled = false;
     let un: (() => void) | undefined;
     (async () => {
       try {
         const { listen } = await import('@tauri-apps/api/event');
-        un = await listen<boolean>('hub://window-visibility', (e) => setWindowHidden(!e.payload));
+        const off = await listen<boolean>('hub://window-visibility', (e) => setWindowHidden(!e.payload));
+        if (cancelled) { off(); return; }
+        un = off;
       } catch { /* browser dev — no tauri */ }
     })();
-    return () => { un?.(); };
+    return () => { cancelled = true; un?.(); };
   }, []);
 
   useEffect(() => {

@@ -73,6 +73,13 @@ export const SANDBOX_SRC = `${SANDBOX_ORIGIN}/index.html`;
 // already gives the frame an opaque origin — no cookies, storage, or Tauri
 // bridge — so this does not widen that isolation boundary; it only lets the
 // already-documented, already-intended in-sandbox eval actually run.
+//
+// This is the BASE policy. The Rust handler appends `frame-ancestors` naming
+// the embedder (src-tauri/src/sandbox.rs::csp_with_ancestors) — it can't live
+// here because the embedder's origin differs between `tauri dev` and a
+// packaged build, and because `frame-ancestors` is ignored in a <meta> tag
+// anyway. Without it anything may frame the sandbox, including an arbitrary
+// remote page mounted as a webtile child webview.
 export const SANDBOX_CSP = "default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval'; style-src 'unsafe-inline'";
 
 /** The runtime shim. Kept as a plain string (not a bundled module) so the
@@ -80,28 +87,56 @@ export const SANDBOX_CSP = "default-src 'none'; script-src 'unsafe-inline' 'unsa
  *  for the message shapes. */
 const RUNTIME = String.raw`
 'use strict';
-// Drop the WebView2 host-message transport before any bundle code can see it.
+// Proof that this document came from the Rust protocol handler. The handler
+// substitutes a per-process random value for the placeholder below on every
+// response, and the host refuses to init a frame whose 'ready' does not echo
+// the value it fetched over IPC (sandbox_token).
+//
+// The threat is not theoretical. wry can only intercept a SUB-FRAME request
+// for a custom protocol when ICoreWebView2_22 is available; without it
+// (wry-0.54.4 src/webview2/mod.rs:941-950) it falls back to
+// AddWebResourceRequestedFilter, which defaults to the DOCUMENT source kind
+// and never sees this iframe's request. That fails OPEN, not closed:
+// Chromium resolves any *.localhost name to loopback, so the frame issues a
+// real GET to 127.0.0.1 on port 80 and whatever is listening there answers.
+// Such a document passes both host-side checks - it is the real
+// iframe.contentWindow, and it is still opaque-origin ("null") because the
+// sandbox attribute belongs to the iframe, not the document - while carrying
+// no default-src 'none'. Without this token it would get an installed
+// bundle's source code posted to it and could write arbitrary
+// scripted.settings.<id> keys. A local server cannot know this value.
+//
+// Captured into a local before any bundle code runs. Bundle code sharing the
+// frame can read it, which is fine: it is already inside the frame the token
+// identifies, so it gains nothing.
+var __sbToken = '__SANDBOX_TOKEN__';
+// Cosmetic tidy-up, NOT a boundary - do not read it as one.
 //
 // WebView2 has no per-frame option for AddScriptToExecuteOnDocumentCreated
 // (wry-0.54.4 src/webview2/mod.rs), so Tauri's initialization scripts run in
 // EVERY frame regardless of the for_main_frame_only flag it sets. This frame
 // therefore starts with window.__TAURI_INTERNALS__, window.isTauri and
-// window.chrome.webview defined. Those are all non-configurable except
-// chrome.webview, which is the one that actually matters: it is the transport
-// __TAURI_INTERNALS__.invoke posts through. Deleting it makes invoke throw.
+// window.chrome.webview defined; chrome.webview is the transport
+// __TAURI_INTERNALS__.invoke posts through, and it is the only one of the
+// three that is configurable.
 //
-// This is defence in depth, not the boundary. Two facts, both verified in the
-// packaged build (task-7b): (1) ICoreWebView2::WebMessageReceived fires only
-// for the main frame, so a sub-frame's postMessage never reaches Rust at all
-// - a secret_set invoked from here left the store untouched while the same
-// call from the main frame wrote it; (2) if that ever changed, Tauri's
-// is_local_url (tauri-2.10.3 src/webview/mod.rs) classifies ANY registered
-// custom-scheme URL as Origin::Local on Windows, including this frame's - so
-// the ACL would grant it the main window's full command surface. (1) is an
-// implementation detail of the current WebView2; this delete is what stops
-// (2) from becoming reachable if (1) ever stops holding. It is not airtight:
-// a nested about:blank iframe would get a fresh chrome.webview, so treat the
-// opaque origin and the empty BROKER_COMMANDS as the real boundary.
+// It is bypassed in five lines, and NOT across an origin boundary: a nested
+// about:srcdoc frame performs no fetch, so frame-src (<- default-src 'none')
+// never applies to it; it inherits this document's script-src
+// 'unsafe-inline', receives its own fresh chrome.webview from the same wry
+// injection, can issue the IPC call itself and relay the result back here by
+// postMessage. So this deletes a convenience, not a capability.
+//
+// What actually holds the line today is that
+// ICoreWebView2::WebMessageReceived fires only for the main frame, so a
+// sub-frame's IPC never reaches Rust at all (verified in the packaged build:
+// secret_set from here left the store untouched while the same call from the
+// main frame wrote it) - plus the opaque origin and the empty
+// BROKER_COMMANDS. If that WebView2 behaviour ever changed, Tauri's
+// is_local_url (tauri-2.10.3 src/webview/mod.rs) would classify this frame's
+// custom-scheme URL as Origin::Local and hand it the main window's full
+// command surface; this line would not stop that. Fixing it properly is
+// upstream.
 try { if (window.chrome) { delete window.chrome.webview; } } catch (e) { /* already gone */ }
 ` + BINS_SHIM_SRC + CLAMP_SHIM_SRC + String.raw`
 var frameCbs = [];
@@ -187,7 +222,12 @@ window.addEventListener('message', function (ev) {
   // the host origin differs between dev (the Vite dev server) and a packaged
   // build (the tauri asset origin) - a static document cannot hardcode it.
   // parent is exactly one window and is not forgeable from script elsewhere.
-  if (ev.source !== parent) return;
+  //
+  // The parent === window arm is not redundant: at top level parent IS
+  // window, so the source check alone would be degenerate and a self-post
+  // (window.postMessage from anything running in this document) would satisfy
+  // it. This document is only ever meant to run framed.
+  if (parent === window || ev.source !== parent) return;
   var msg = ev.data || {};
   if (msg.type === 'rpc:result') {
     var pending = rpcPending[msg.rpcId];
@@ -197,6 +237,7 @@ window.addEventListener('message', function (ev) {
       else pending.reject(new Error(msg.error || 'rpc denied'));
     }
   } else if (msg.type === 'init') {
+    stopReadyPings();
     frameCbs = [];
     settingsCache = msg.settings || {};
     applySize(msg.size);
@@ -233,7 +274,34 @@ window.addEventListener('message', function (ev) {
   }
 });
 
-parent.postMessage({ type: 'ready' }, '*');
+// Announce readiness LEVEL-triggered, not edge-triggered: keep re-posting
+// until the host answers with an 'init'.
+//
+// A single 'ready' has to be caught by exactly one listener attached at
+// exactly the right moment. It is not: React StrictMode double-invokes
+// effects, the host's listener is torn down and re-attached across renders,
+// and the host also needs an async round trip (invoke('sandbox_token'), and
+// invoke('visualizers_read') for the code itself) before it can act on
+// 'ready' at all - so the message can perfectly well arrive before the host
+// is able to use it. Re-posting makes the handshake immune to that ordering
+// instead of relying on it, which is the whole reason a scripted visualizer
+// never came up under 'tauri dev'.
+//
+// The host ignores repeats (its 'ready' branch is idempotent), and the pings
+// stop on the first 'init'. The attempt cap only stops a frame that the host
+// has abandoned - e.g. its code load failed - from pinging forever; by then
+// the host has long since recorded readiness, so a later reload still works.
+var readyTimer = 0;
+var readyTries = 0;
+function postReady() { parent.postMessage({ type: 'ready', token: __sbToken }, '*'); }
+function stopReadyPings() {
+  if (readyTimer) { clearInterval(readyTimer); readyTimer = 0; }
+}
+postReady();
+readyTimer = setInterval(function () {
+  postReady();
+  if (++readyTries >= 60) stopReadyPings();
+}, 250);
 `;
 
 /** The sandbox document. Fully static — the bundle's code arrives later over
@@ -249,7 +317,11 @@ parent.postMessage({ type: 'ready' }, '*');
  *  actually matters now (meta in a srcdoc frame was the thing that never
  *  worked), but two identical policies intersect to the same policy, so it
  *  costs nothing and keeps the document self-describing if it is ever read
- *  outside the protocol handler. */
+ *  outside the protocol handler. It carries only the base policy — the
+ *  header's `frame-ancestors` has no effect in a `<meta>` tag by spec.
+ *
+ *  `__SANDBOX_TOKEN__` is a placeholder the Rust handler substitutes per
+ *  response; the committed artifact keeps it verbatim. */
 export function buildSandboxHtml(): string {
   return [
     '<!doctype html>',

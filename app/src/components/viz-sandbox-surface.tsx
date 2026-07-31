@@ -10,6 +10,38 @@ import { makeBrokerHandler, permissionsOf, type RpcRequest } from '../sandbox/br
 
 const settingsKey = (id: string) => `scripted.settings.${id}`;
 
+// ── sandbox proof token ─────────────────────────────────────────────────────
+// The Rust protocol handler stamps a per-process random token into every copy
+// of the sandbox document it serves; the frame echoes it in `ready`. Until it
+// matches, we do NOT init the frame — i.e. we do not post it a bundle's source
+// code and we do not accept `settings:set` writes driven by it.
+//
+// It closes a fail-OPEN case in the delivery path: wry only intercepts
+// sub-frame custom-protocol requests when ICoreWebView2_22 is present
+// (wry-0.54.4 src/webview2/mod.rs:941-950). Without it the request escapes to
+// the network, Chromium resolves *.localhost to loopback, and any server on
+// 127.0.0.1:80 answers with a document that passes both the contentWindow
+// identity check and the opaque-origin check while carrying none of the
+// sandbox CSP. A local server cannot know the token.
+//
+// Process-wide, not per component: one IPC round trip serves every surface,
+// including the six-ish catalog previews that mount at once.
+let sandboxToken: string | null = null;
+let sandboxTokenLoad: Promise<void> | null = null;
+function loadSandboxToken(): Promise<void> {
+  if (!sandboxTokenLoad) {
+    sandboxTokenLoad = (async () => {
+      const { invoke } = await import('@tauri-apps/api/core');
+      sandboxToken = await invoke<string>('sandbox_token');
+    })().catch(() => {
+      // Fail closed: no token, no init. Clear the memo so a later mount can
+      // retry rather than pinning the failure for the life of the process.
+      sandboxTokenLoad = null;
+    });
+  }
+  return sandboxTokenLoad;
+}
+
 export type ScriptError = { message: string; line: number | null } | null;
 
 /** The no-capability iframe runtime shared by every sandboxed visualizer:
@@ -116,6 +148,10 @@ export function SandboxVizSurface({
   useEffect(() => {
     if (!bundleId) return;
     let cancelled = false;
+    // Start the token round trip in parallel with the frame's own document
+    // load; `ready` is re-posted until we can act on it, so whichever wins is
+    // fine. Memoised process-wide, so N mounted surfaces cost one invoke.
+    void loadSandboxToken();
     setScriptError(null); // clear any stale banner immediately on switch/reload
     // Clear stale code/broker BEFORE the async read below. The iframe remounts
     // (key={bundleId}) and its inline script posts `ready` almost immediately —
@@ -214,6 +250,12 @@ export function SandboxVizSurface({
         return;
       }
       if (msg?.type === 'ready') {
+        // Prove the document in the frame is the one our protocol handler
+        // served, not something else that answered at the same URL (see the
+        // token block at the top of this file). The frame re-posts `ready`
+        // until it is initialised, so losing this race while the token is
+        // still in flight costs a few hundred milliseconds, not the surface.
+        if (!sandboxToken || (msg as { token?: unknown }).token !== sandboxToken) return;
         readyRef.current = true;
         sendInit();
       } else if (msg?.type === 'error') {
