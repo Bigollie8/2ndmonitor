@@ -26,6 +26,25 @@ Reachable via `app/src/state/browserWebview.ts:88-94`. Also exposes `secret_set`
 
 `app/src/components/viz-sandbox-surface.tsx:241-269`. The `rpc` and `settings:set` branches run before the token check at `:258`. In the fail-open scenario the token exists to close (a foreign document answering at `http://vizsandbox.localhost`), that document can still write `localStorage['scripted.settings.<bundleId>']` — later fed to the real bundle as `init.settings` — and reach the broker, since `brokerRef` is populated independently of `readyRef`. `tauri.invoke` stays dead (`BROKER_COMMANDS` empty); `net.fetch` to manifest-allowlisted hosts is live. Two comments claim a protection the code does not provide.
 
+### 2a. The sandbox iframe is granted everything by the ACL — only the CSP stops it
+
+**This is the highest-value thing in this file to remember before touching `SANDBOX_CSP`.**
+
+`vizsandbox.localhost` is a registered URI scheme, so `webview/mod.rs:1707-1717` classifies it `Origin::Local`, inside webview label `main` — which satisfies the new `app-commands` capability exactly. The ACL contributes **nothing** to stopping the sandbox frame.
+
+What actually stops it, in order:
+1. `SANDBOX_CSP` has no `connect-src`, and on Windows Tauri's *primary* IPC transport is `fetch('http://ipc.localhost/<cmd>')` (`tauri-2.10.3/scripts/ipc-protocol.js`, `canUseCustomProtocol = osName !== 'android'`). `wry-0.54.4/src/webview2/mod.rs:941-947` registers that filter with `SOURCE_KINDS_ALL` when `ICoreWebView2_22` is present — it is — so sub-frame requests *are* intercepted and *would* reach Rust. The fetch dies at the policy layer instead.
+2. Only then the fallback `window.ipc.postMessage`, broken by the shim's `delete window.chrome.webview` (cosmetic, trivially bypassed).
+3. Only then main-frame-only `add_WebMessageReceived` as backstop.
+
+So adding `connect-src https:` to `SANDBOX_CSP` — a plausible "let bundles fetch their own assets" feature — hands untrusted bundle code all 59 app commands. A test now pins this; do not delete it without understanding the above.
+
+*(An earlier note in this file credited only `WebMessageReceived`. That was wrong and is corrected here.)*
+
+### 2b. The browser tile's URL is an unvalidated bookmark string
+
+`app/src/components/browser-player.tsx:9` accepts a bookmark with no scheme check, unlike `webtiles.rs:26-30`, which validates http(s) before mounting. Nothing exploitable is served there today and the ACL now blocks app commands from that webview, but the foot-gun shape is live.
+
 ### 3. `EMBEDDER_ORIGIN` is hardcoded
 
 `app/src-tauri/src/sandbox.rs:71`. Derived from the current config by hand rather than read from it. Enabling `useHttpsScheme` would break the sandbox — fails closed, so safe, but silently. Same for the Windows-only `http://<scheme>.localhost` form, which assumes nsis is the only target.
