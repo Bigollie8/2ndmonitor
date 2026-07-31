@@ -36,6 +36,17 @@ test('glue: announces its preset names on every init', () => {
   assert.ok(MILKDROP_GLUE.includes("viz.post({ kind: 'milkdrop:names', names: Object.keys(presets) })"));
 });
 
+test('glue: reuses a window-level visualizer singleton across re-inits, no fresh WebGL context per init', () => {
+  // The sandbox canvas is not remounted on a re-init (hot reload, or a second
+  // 'ready' racing the first) — a fresh BC.createVisualizer on that same
+  // canvas every time would leak the previous run's WebGL context.
+  assert.ok(MILKDROP_GLUE.includes('window.__mdViz'), 'visualizer is cached on window, surviving IIFE re-execution');
+  assert.ok(/if\s*\(!visualizer\)\s*{\s*visualizer = BC\.createVisualizer/.test(MILKDROP_GLUE),
+    'createVisualizer only runs when no cached instance exists yet');
+  assert.ok(MILKDROP_GLUE.includes('visualizer.setRendererSize(lastW, lastH)'),
+    'a reused visualizer still picks up the current init size');
+});
+
 test('milkdrop-code assembles butterchurn + pack + glue via ?raw (source scan — module not importable under node)', () => {
   const src = readApp('components', 'milkdrop-code.ts');
   assert.ok(src.includes("butterchurn/lib/butterchurn.min.js?raw"));

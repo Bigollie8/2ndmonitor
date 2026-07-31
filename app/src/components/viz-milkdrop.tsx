@@ -38,7 +38,19 @@ function MilkdropSurface({ accent, accent2, spectrumRef, paused }: Pick<VizProps
   const indexRef = useRef(0);
   /** key → resolution error message, shown as ⚠ in the picker. */
   const failuresRef = useRef(new Map<string, string>());
-  const userRef = useRef<{ name: string; file: string; ext: string }[] | null>(null);
+  /** Cache the PROMISE, not the resolved list: 'milkdrop:names' can arrive
+   *  twice in quick succession (the frame re-posts it on every proven-ready
+   *  init, and a >250ms main-thread stall — plausible while the ~846KB
+   *  milkdrop chunk lands — makes a second 'ready' race the first's init
+   *  before readyRef settles). Caching only the result left a window where
+   *  both arrivals saw `null` and both fired invoke('presets_list'). */
+  const userPromiseRef = useRef<Promise<{ name: string; file: string; ext: string }[]> | null>(null);
+  /** Bumped on every onNames call; an onNames whose generation is stale by
+   *  the time its (now-deduped) user-list promise resolves abandons its walk
+   *  instead of writing host state (library/index/label/LS_PRESET) that a
+   *  newer, still-in-flight onNames is about to overwrite anyway. */
+  const namesGenRef = useRef(0);
+  const mountedRef = useRef(true);
 
   const seqRef = useRef(0);
   const pendingRef = useRef(new Map<number, (r: { ok: boolean; error?: string }) => void>());
@@ -57,7 +69,10 @@ function MilkdropSurface({ accent, accent2, spectrumRef, paused }: Pick<VizProps
     if (toastTimer.current) clearTimeout(toastTimer.current);
     toastTimer.current = setTimeout(() => setToast(''), 4000);
   }, []);
-  useEffect(() => () => { if (toastTimer.current) clearTimeout(toastTimer.current); }, []);
+  useEffect(() => () => {
+    mountedRef.current = false;
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+  }, []);
 
   const readUserFile = useCallback(async (file: string) => {
     const { invoke } = await import('@tauri-apps/api/core');
@@ -72,6 +87,14 @@ function MilkdropSurface({ accent, accent2, spectrumRef, paused }: Pick<VizProps
       const seq = ++seqRef.current;
       const timer = setTimeout(() => {
         pendingRef.current.delete(seq);
+        // Unmounted while this load was in flight: let the promise hang
+        // instead of resolving it. Resolving would resume loadAt's await,
+        // whose catch schedules a fresh (now-orphaned) toast timer and walks
+        // the ENTIRE remaining library — every iteration resolving instantly
+        // via the not-ready branch below since dataSenderRef is torn down,
+        // including a real invoke('presets_read') per user entry — all of it
+        // pointless work against a component nothing can see anymore.
+        if (!mountedRef.current) return;
         resolve({ ok: false, error: 'no response from visualizer frame' });
       }, LOAD_TIMEOUT_MS);
       pendingRef.current.set(seq, (r) => { clearTimeout(timer); resolve(r); });
@@ -91,6 +114,11 @@ function MilkdropSurface({ accent, accent2, spectrumRef, paused }: Pick<VizProps
     const lib = libraryRef.current;
     if (!lib.length) return;
     for (let attempt = 0; attempt < lib.length; attempt++) {
+      // Unmount can land between iterations (e.g. a genuine load failure's
+      // catch ran, then the component unmounted before the next attempt) —
+      // the old canvas-based component was implicitly guarded here because
+      // vizRef.current went null; this is the equivalent stop sign.
+      if (!mountedRef.current) return;
       const i = (index + attempt + lib.length) % lib.length;
       const entry = lib[i];
       try {
@@ -123,25 +151,44 @@ function MilkdropSurface({ accent, accent2, spectrumRef, paused }: Pick<VizProps
     void loadAt(target, blend);
   }, [loadAt]);
 
+  /** invoke('presets_list') is memoized on the PROMISE (not its result) so
+   *  two onNames calls arriving before the first invoke resolves share one
+   *  in-flight request instead of both firing it. */
+  const getUserFiles = useCallback(() => {
+    if (!userPromiseRef.current) {
+      userPromiseRef.current = (async () => {
+        try {
+          const { invoke } = await import('@tauri-apps/api/core');
+          return await invoke<{ name: string; file: string; ext: string }[]>('presets_list');
+        } catch {
+          return []; // preset folder unreadable — bundled pack still works
+        }
+      })();
+    }
+    return userPromiseRef.current;
+  }, []);
+
   /** Fires on every 'milkdrop:names' — first init AND hot re-inits. Rebuilds
    *  the library (frame names + user files) and restores the saved preset;
-   *  after a re-init the frame has a blank visualizer, so always reload. */
+   *  after a re-init the frame has a blank visualizer, so always reload.
+   *
+   *  Two arrivals close together (the frame re-posts names on every proven
+   *  'ready', and a >250ms main-thread stall — plausible while the ~846KB
+   *  milkdrop chunk lands — can make a second 'ready' race the first's init)
+   *  must not both start a walk: whichever ends up older abandons before
+   *  touching host state, or indexRef/presetLabel/LS_PRESET can end up
+   *  describing a preset the frame never actually settled on. */
   const onNames = useCallback(async (names: string[]) => {
-    if (userRef.current === null) {
-      try {
-        const { invoke } = await import('@tauri-apps/api/core');
-        userRef.current = await invoke<{ name: string; file: string; ext: string }[]>('presets_list');
-      } catch {
-        userRef.current = []; // preset folder unreadable — bundled pack still works
-      }
-    }
-    libraryRef.current = mergePresetLibrary(names, userRef.current);
+    const gen = ++namesGenRef.current;
+    const user = await getUserFiles();
+    if (gen !== namesGenRef.current) return; // superseded by a newer onNames while we awaited
+    libraryRef.current = mergePresetLibrary(names, user);
     setLibraryVersion((v) => v + 1);
     const lib = libraryRef.current;
     const savedKey = localStorage.getItem(LS_PRESET);
     const savedIndex = savedKey ? lib.findIndex((e) => e.key === savedKey) : -1;
     void loadAt(savedIndex >= 0 ? savedIndex : Math.floor(Math.random() * lib.length), 0);
-  }, [loadAt]);
+  }, [loadAt, getUserFiles]);
 
   const handleData = useCallback((payload: unknown) => {
     const msg = payload as MilkdropFrameToHost;

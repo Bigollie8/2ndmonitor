@@ -34,7 +34,26 @@ export const MILKDROP_GLUE = String.raw`
   var canvas = viz.canvas;
   var lastW = Math.max(2, canvas.width);
   var lastH = Math.max(2, canvas.height);
-  var visualizer = BC.createVisualizer(null, canvas, { width: lastW, height: lastH });
+
+  // Window-level singleton: the sandbox iframe (and its <canvas id="c">) is
+  // NOT remounted across a re-init — 'init' fires again on hot-reload and on
+  // any 'ready' ping that races the first before readyRef settles, and both
+  // re-run this whole IIFE against the SAME canvas. A fresh
+  // BC.createVisualizer per init would leave the previous run's WebGL
+  // context attached with nothing left to release it; Chromium caps live
+  // contexts (~16) and this frame is one of several surfaces that can be
+  // mounted at once. Reuse the existing visualizer instead — only its
+  // frame/data callbacks (registered below via viz.on) need to be fresh,
+  // and the runtime already clears frameCbs/dataCbs before re-running this
+  // code (sandbox-html.ts's 'init' handler), so re-registering them here is
+  // enough on its own.
+  var visualizer = window.__mdViz;
+  if (!visualizer) {
+    visualizer = BC.createVisualizer(null, canvas, { width: lastW, height: lastH });
+    window.__mdViz = visualizer;
+  } else {
+    visualizer.setRendererSize(lastW, lastH);
+  }
 
   viz.on('data', function (msg) {
     if (!msg || msg.kind !== 'milkdrop:load') return;
