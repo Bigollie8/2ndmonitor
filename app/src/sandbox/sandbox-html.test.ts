@@ -305,3 +305,25 @@ test('srcdoc runtime script is syntactically valid JS', () => {
   // Throws SyntaxError if the shim doesn't parse.
   new Function(m![1]);
 });
+
+// ── DOM surface (I11): a mount point beside the canvas ──────────────────────
+// Grants no new capability — bundle code already runs inside this document via
+// `new Function`, so document.body/createElement were always reachable. This
+// only advertises a sized, stable mount point and makes the frame honour the
+// manifest's declared `surface`.
+
+test('the sandbox document has both a canvas and a DOM root', () => {
+  const html = buildSandboxHtml();
+  assert.match(html, /<canvas id="c">/);
+  assert.match(html, /<div id="root">/);
+});
+
+test('the runtime exposes root alongside canvas', () => {
+  assert.match(buildSandboxHtml(), /root:\s*root/);
+});
+
+test('CSP is unchanged by the DOM surface — no connect-src, no img-src', () => {
+  assert.equal(/connect-src/.test(SANDBOX_CSP), false);
+  assert.equal(/img-src/.test(SANDBOX_CSP), false);
+  assert.equal(SANDBOX_CSP.match(/default-src ([^;]+)/)?.[1], "'none'");
+});

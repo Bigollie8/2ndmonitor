@@ -143,6 +143,7 @@ var frameCbs = [];
 var settingsCache = {};
 var lastErrorAt = 0;
 var canvas = document.getElementById('c');
+var root = document.getElementById('root');
 var ctx2d = null;
 var userGotContext = false;
 var lastSpectrum = null;
@@ -168,6 +169,7 @@ function rpc(payload) {
 // across hot reloads by monkey-patching.
 var viz = Object.freeze({
   canvas: canvas,
+  root: root,
   bins: function (n) {
     var count = __clampBinCount(n);
     if (!binCache[count]) binCache[count] = new Float32Array(count);
@@ -241,6 +243,15 @@ window.addEventListener('message', function (ev) {
     frameCbs = [];
     settingsCache = msg.settings || {};
     applySize(msg.size);
+    // Surface selection (I11): the host sends msg.surface (Task 3). Absent
+    // means 'canvas', so every existing bundle is unaffected. Clearing root
+    // stops a hot reload from stacking two renders on top of each other; it
+    // does NOT fix the wider realm-contamination issue (deferred-findings.md
+    // item 10) — stray timers/rAFs from the previous load still survive.
+    var useDom = msg.surface === 'dom';
+    canvas.hidden = useDom;
+    root.hidden = !useDom;
+    root.textContent = '';
     try {
       new Function(msg.code)();
     } catch (e) {
@@ -327,9 +338,10 @@ export function buildSandboxHtml(): string {
     '<!doctype html>',
     '<html><head>',
     `<meta http-equiv="Content-Security-Policy" content="${SANDBOX_CSP}">`,
-    '<style>html,body{margin:0;padding:0;background:#000;overflow:hidden;width:100%;height:100%}canvas{display:block;width:100%;height:100%}</style>',
+    '<style>html,body{margin:0;padding:0;background:#000;overflow:hidden;width:100%;height:100%}\ncanvas,#root{display:block;width:100%;height:100%}\n#root{position:absolute;inset:0}\ncanvas[hidden],#root[hidden]{display:none}</style>',
     '</head><body>',
     '<canvas id="c"></canvas>',
+    '<div id="root"></div>',
     `<script>${RUNTIME}</script>`,
     '</body></html>',
   ].join('\n');

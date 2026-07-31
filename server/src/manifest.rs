@@ -104,12 +104,6 @@ pub fn validate(kind: &str, manifest_json: &str) -> Result<Validated, String> {
     // 'canvas' — mirrors `app/src/sandbox/manifest.ts`'s `validateManifest`,
     // so a typo'd `surface` fails at submission instead of publishing and
     // rendering a blank frame the author can't diagnose.
-    // Render surface the bundle draws into (I11). Additive to api 1: absent
-    // means 'canvas', matching the app's default for an older manifest. An
-    // unknown value is rejected here rather than silently coerced to
-    // 'canvas' — mirrors `app/src/sandbox/manifest.ts`'s `validateManifest`,
-    // so a typo'd `surface` fails at submission instead of publishing and
-    // rendering a blank frame the author can't diagnose.
     if let Some(surface_val) = obj.get("surface") {
         let ok = matches!(surface_val, Value::String(s) if s == "canvas" || s == "dom");
         if !ok {
