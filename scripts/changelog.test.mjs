@@ -7,6 +7,8 @@ import {
   buildReleaseEmbed,
   buildSpotlightEmbed,
   buildDevEmbed,
+  buildProgressEmbed,
+  buildFeatureEmbed,
   truncateDescription,
   CHANGELOG_URL,
 } from './changelog.mjs';
@@ -133,4 +135,20 @@ test('truncateDescription caps at 4096 and links the changelog', () => {
 test('parseEnvFile reads KEY=value, skips comments/blanks, keeps = in values', () => {
   const env = parseEnvFile('# secrets\n\nA=1\nB=https://x/y?a=b=c\n');
   assert.deepEqual(env, { A: '1', B: 'https://x/y?a=b=c' });
+});
+
+test('progress embed frames work-in-progress with dev-log footer', () => {
+  const e = buildProgressEmbed({ title: 'Marketplace uplevel', body: 'Catalog shipped.', date: '2026-07-31' });
+  assert.equal(e.title, '🚧 In progress — Marketplace uplevel');
+  assert.equal(e.description, 'Catalog shipped.');
+  assert.equal(e.color, 0xeb459e);
+  assert.equal(e.footer.text, 'Dev Log • 2026-07-31');
+});
+
+test('feature embed frames detailed showcases for the features channel', () => {
+  const e = buildFeatureEmbed({ title: 'Dashboard & tiles', body: 'Long-form detail.', date: '2026-07-31' });
+  assert.equal(e.title, '✨ Dashboard & tiles');
+  assert.equal(e.description, 'Long-form detail.');
+  assert.equal(e.color, 0x57f287);
+  assert.equal(e.footer.text, '2ndMonitor Features • 2026-07-31');
 });

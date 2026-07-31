@@ -9,6 +9,8 @@ import {
   buildReleaseEmbed,
   buildSpotlightEmbed,
   buildDevEmbed,
+  buildProgressEmbed,
+  buildFeatureEmbed,
 } from './changelog.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -19,6 +21,8 @@ const { values: args } = parseArgs({
     version: { type: 'string' },
     all: { type: 'boolean', default: false },
     dev: { type: 'boolean', default: false },
+    progress: { type: 'boolean', default: false },
+    feature: { type: 'boolean', default: false },
     title: { type: 'string' },
     body: { type: 'string' },
     'dry-run': { type: 'boolean', default: false },
@@ -39,6 +43,7 @@ function loadEnv() {
   return {
     releases: process.env.DISCORD_RELEASES_WEBHOOK_URL ?? fromFile.DISCORD_RELEASES_WEBHOOK_URL,
     features: process.env.DISCORD_FEATURES_WEBHOOK_URL ?? fromFile.DISCORD_FEATURES_WEBHOOK_URL,
+    progress: process.env.DISCORD_PROGRESS_WEBHOOK_URL ?? fromFile.DISCORD_PROGRESS_WEBHOOK_URL,
   };
 }
 
@@ -59,15 +64,22 @@ async function post(webhookUrl, embed, label) {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-const modes = [args.version, args.all, args.dev].filter(Boolean).length;
-if (modes !== 1) fail('use exactly one of --version X.Y.Z, --all, or --dev');
+const modes = [args.version, args.all, args.dev, args.progress, args.feature].filter(Boolean).length;
+if (modes !== 1) fail('use exactly one of --version X.Y.Z, --all, --dev, --progress, or --feature');
 
-const { releases, features } = loadEnv();
+const { releases, features, progress } = loadEnv();
 
-if (args.dev) {
-  if (!args.title || !args.body) fail('--dev requires --title and --body');
+if (args.dev || args.progress || args.feature) {
+  const mode = args.dev ? 'dev' : args.progress ? 'progress' : 'feature';
+  if (!args.title || !args.body) fail(`--${mode} requires --title and --body`);
   const date = new Date().toISOString().slice(0, 10);
-  await post(features, buildDevEmbed({ title: args.title, body: args.body, date }), `dev post "${args.title}"`);
+  const embed = args.dev
+    ? buildDevEmbed({ title: args.title, body: args.body, date })
+    : args.progress
+      ? buildProgressEmbed({ title: args.title, body: args.body, date })
+      : buildFeatureEmbed({ title: args.title, body: args.body, date });
+  const target = args.progress ? progress : features;
+  await post(target, embed, `${mode} post "${args.title}"`);
 } else {
   const entries = parseChangelog(readFileSync(join(ROOT, 'CHANGELOG.md'), 'utf8'));
   if (args.all) {

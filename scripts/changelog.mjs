@@ -70,6 +70,24 @@ export function buildDevEmbed({ title, body, date }) {
   };
 }
 
+export function buildProgressEmbed({ title, body, date }) {
+  return {
+    title: `🚧 In progress — ${title}`,
+    description: truncateDescription(body),
+    color: 0xeb459e,
+    footer: { text: `Dev Log • ${date}` },
+  };
+}
+
+export function buildFeatureEmbed({ title, body, date }) {
+  return {
+    title: `✨ ${title}`,
+    description: truncateDescription(body),
+    color: 0x57f287,
+    footer: { text: `2ndMonitor Features • ${date}` },
+  };
+}
+
 export function parseEnvFile(text) {
   const env = {};
   for (const line of text.split(/\r?\n/)) {
