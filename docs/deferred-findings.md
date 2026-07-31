@@ -197,3 +197,24 @@ Related: the Settings → Style select shows "MilkDrop" during that window even 
 **Decision taken:** expose location as a **declared permission**, delivered on the tile's data context the way `theme` reaches visualizers. Declaring it makes the install dialog state that the tile can see the user's location — handing precise coordinates to every marketplace bundle silently would be the wrong default, and the permission model exists precisely to surface that.
 
 Per-instance state remains an open design question for the last three.
+
+### 26. `net:<host>` cannot express a user-supplied host — blocks `homeAssistant` and `energy`
+
+Both built-ins read the Home Assistant base URL from user input (`state/homeAssistant.ts`'s `getStoredUrl()`, plain localStorage; `EnergyTile.tsx` reuses it). A bundle cannot express that:
+
+- `manifest.ts`'s `HOST_LABEL_RE` accepts only `[a-z0-9-]` per label, so `net:{{config.host}}` fails `parsePermission` outright — it cannot even be authored.
+- `broker.ts`'s `brokerDecide` does an exact, case-insensitive match between the resolved request hostname and a literal `net:<host>`, on every fetch.
+
+So a config-supplied host can substitute into the URL but can never satisfy a permission declared at review time. A wildcard was deliberately **not** invented — widening the grammar would weaken the permission model for every bundle. These two stay built-in until the model can express "a host the user names at install time, shown to them at install time."
+
+### 27. The `location` template scope is declared but never populated — the 11 location-blocked tiles are cheaper than they look
+
+Found while porting `tile-birds`, which had to fall back to manual `config.lat`/`config.lon`. `DeclarativeTile.tsx` already declares a `location` root in `TemplateScope` and `ALLOWED_ROOTS` — it is simply never filled in.
+
+That means the capability decided in item 25 (expose the saved location as a **declared permission**) is mostly plumbing that already exists, not a new scope root. Populating it behind a `location` permission would unblock `airQuality`, `aurora`, `clock`, `pollen`, `sun`, `tides`, `weatherRadar`, `lightning`, `aircraft`, `iss`, `solarFlare` — and let `tile-birds` drop its manual lat/lon config.
+
+### 28. A declarative tile errors instead of emptying on an empty 200 body
+
+`tile-phonenotifs` surfaces a raw parse error when its ntfy topic has no messages — which for a notification tile is the *majority* state. Cause: `DeclarativeTile.tsx` throws on an empty body rather than treating it as `null` data, and the existing `data == null → TileEmpty` path would already handle it correctly for free.
+
+Host-side fix, low risk: treat an empty 200 body as `null` rather than a parse failure. Worth doing before `tile-phonenotifs` is presented as a replacement for the built-in.
