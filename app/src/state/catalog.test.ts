@@ -34,10 +34,20 @@ test('mergeCatalog: built-ins appear as first-party or bundle-target items', () 
   assert.equal(mixer.source, 'first-party');
   assert.equal(mixer.installed, true);
 
-  const bars = out.find((i) => i.key === 'visualizer:bars');
-  assert.ok(bars);
-  assert.equal(bars.source, 'bundle');
-  assert.equal(bars.installed, true, 'a not-yet-migrated built-in still reads as installed');
+  // `weatherRadar` is a tile-side bundle target: a compile-time entry that
+  // ships and works today, which a migration wave later replaces with a folder.
+  const radar = out.find((i) => i.key === 'tile:weatherRadar');
+  assert.ok(radar);
+  assert.equal(radar.source, 'bundle');
+  assert.equal(radar.installed, true, 'a not-yet-migrated built-in still reads as installed');
+
+  // Every built-in visualizer style is now first-party: the fifteen that were
+  // bundle targets migrated out of BUILTIN_VIZ_STYLES entirely, leaving only
+  // the two engines.
+  const milkdrop = out.find((i) => i.key === 'visualizer:milkdrop');
+  assert.ok(milkdrop);
+  assert.equal(milkdrop.source, 'first-party');
+  assert.equal(milkdrop.installed, true);
 });
 
 test('mergeCatalog: an index entry not installed is available, not installed', () => {
@@ -67,13 +77,13 @@ test('mergeCatalog: equal versions do not flag an update', () => {
 });
 
 test('mergeCatalog: a table-only built-in that also has an index entry stays installed, no update', () => {
-  // `bars` is a built-in with no installed folder — it ships and works today
-  // even if the marketplace also lists it. It must not flip to "Install".
-  const out = mergeCatalog(base({ index: [idx({ id: 'bars', kind: 'visualizer', version: '1.1.0' })] }));
-  const bars = out.find((i) => i.key === 'visualizer:bars');
-  assert.ok(bars);
-  assert.equal(bars.installed, true);
-  assert.equal(bars.updateAvailable, false, 'no installedVersion to compare against, so no update badge');
+  // `milkdrop` is a built-in with no installed folder — it ships and works
+  // today even if the marketplace also lists it. It must not flip to "Install".
+  const out = mergeCatalog(base({ index: [idx({ id: 'milkdrop', kind: 'visualizer', version: '1.1.0' })] }));
+  const milkdrop = out.find((i) => i.key === 'visualizer:milkdrop');
+  assert.ok(milkdrop);
+  assert.equal(milkdrop.installed, true);
+  assert.equal(milkdrop.updateAvailable, false, 'no installedVersion to compare against, so no update badge');
 });
 
 test('mergeCatalog: an index-only item (no table entry, no folder) is installed: false', () => {
@@ -95,13 +105,13 @@ test('mergeCatalog: a removed key stays in the output, flagged removed — not d
   // only survivors were the ~15 published bundles (see the next test). Every
   // OTHER removed item (most first-party tiles, every not-yet-migrated
   // built-in visualizer style) simply vanished with no way back.
-  const out = mergeCatalog(base({ removed: ['tile:mixer', 'visualizer:bars'] }));
+  const out = mergeCatalog(base({ removed: ['tile:mixer', 'visualizer:milkdrop'] }));
   const mixer = out.find((i) => i.key === 'tile:mixer');
-  const bars = out.find((i) => i.key === 'visualizer:bars');
+  const milkdrop = out.find((i) => i.key === 'visualizer:milkdrop');
   assert.ok(mixer, 'stays in the output so the Removed rail row has a name to show');
-  assert.ok(bars);
+  assert.ok(milkdrop);
   assert.equal(mixer.removed, true);
-  assert.equal(bars.removed, true);
+  assert.equal(milkdrop.removed, true);
   assert.equal(mixer.installed, false);
   assert.equal(mixer.installedVersion, null);
   assert.equal(mixer.updateAvailable, false);

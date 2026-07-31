@@ -9,22 +9,19 @@ export type VizCategory = 'spectrum' | 'wave' | 'ambient' | 'scene' | 'engine';
 
 export interface VizStyle { id: VizMode; label: string; desc: string; category: VizCategory }
 
+/** The styles compiled into the binary. Only the two engines remain: every
+ *  other style now ships as a marketplace bundle in `bundles/<id>/`, seeded
+ *  into app resources and installed on first run (see
+ *  `RETIRED_BUILTIN_VIZ_MODES` in state/contentRegistry.ts for the remap that
+ *  carries an existing user's saved selection across).
+ *
+ *  `milkdrop` and `scripted` are first-party forever (state/firstParty.ts):
+ *  one hosts a bundled preset library, the other IS the sandbox surface that
+ *  runs bundles. Neither can be expressed as a bundle. The remaining
+ *  `VizCategory` values ('spectrum' | 'wave' | 'ambient' | 'scene') stay in
+ *  the type — installed bundles and index entries are still filed under them
+ *  in the content library's category rail. */
 export const BUILTIN_VIZ_STYLES: VizStyle[] = [
-  { id: 'bars',         label: 'Bars',           desc: 'Classic spectrum analyzer',      category: 'spectrum' },
-  { id: 'waveform',     label: 'Waveform',       desc: 'Smooth oscilloscope',            category: 'wave' },
-  { id: 'radial',       label: 'Radial',         desc: 'Circular spectrum',              category: 'spectrum' },
-  { id: 'particles',    label: 'Particles',      desc: 'Drifting points',                category: 'ambient' },
-  { id: 'ambient',      label: 'Ambient',        desc: 'Slow morphing blobs',            category: 'ambient' },
-  { id: 'neonbars',     label: 'Neon bars',      desc: 'Glowing solid bars',             category: 'spectrum' },
-  { id: 'splitmirror',  label: 'Split mirror',   desc: 'Mirrored bars on a horizon',     category: 'spectrum' },
-  { id: 'circular',     label: 'Circular pulse', desc: 'Radial w/ bass disc',            category: 'spectrum' },
-  { id: 'tunnel',       label: 'Wave tunnel',    desc: 'Layered depth waveforms',        category: 'wave' },
-  { id: 'pixelled',     label: 'Pixel LED',      desc: 'Retro LED matrix · heatmap',     category: 'spectrum' },
-  { id: 'ribbon',       label: 'Ribbon',         desc: 'Filled symmetric flow',          category: 'wave' },
-  { id: 'vinyl',        label: 'Vinyl',          desc: 'Spinning record',                category: 'scene' },
-  { id: 'kaleidoscope', label: 'Kaleidoscope',   desc: 'Symmetric petals',               category: 'scene' },
-  { id: 'freqgrid',     label: 'Freq grid',      desc: 'Time × frequency cells',         category: 'spectrum' },
-  { id: 'minimal',      label: 'Minimal dots',   desc: 'Bass / Mid / Treble pulse',      category: 'ambient' },
   { id: 'milkdrop',     label: 'MilkDrop',       desc: 'Butterchurn · MilkDrop 2 presets', category: 'engine' },
   { id: 'scripted',     label: 'Scripted',       desc: 'Your JS visualizers · sandboxed', category: 'engine' },
 ];

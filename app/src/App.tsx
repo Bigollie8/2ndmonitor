@@ -155,7 +155,13 @@ interface TweakState extends Record<string, unknown> {
 }
 
 const TWEAK_DEFAULTS: TweakState = {
-  vizMode: 'bars',
+  // Bars is a bundle now, not a built-in — this names the seed zip that
+  // `seed_sync` installs on first run, so an out-of-the-box install still
+  // opens on the classic spectrum analyzer rather than the MilkDrop engine.
+  // It is a *preference*, not a guarantee: if the bundle isn't there (seeding
+  // hasn't finished, or the user removed it) HiFiVizSurface resolves against
+  // the live catalog instead. Nothing downstream may assume this id exists.
+  vizMode: 'bundle:bars',
   accentTheme: 'auto',
   density: 'compact',
   vizArtBg: false,
@@ -191,12 +197,17 @@ function migrateTweaks(loaded: Record<string, unknown>): Record<string, unknown>
   if (loaded.perfMode === 'quality') {
     loaded.perfMode = 'uncapped';
   }
-  // 12 built-in viz styles were retired from the binary and now live in the
-  // shop as `bundle:` ids. A saved selection naming one of them is rewritten
-  // here so it keeps working the moment the user installs its replacement —
-  // and falls back to Bars via HiFiVizSurface's dispatch until they do.
+  // All 27 formerly-built-in viz styles were retired from the binary and now
+  // live in the shop as `bundle:` ids. A saved selection naming one of them is
+  // rewritten here so it keeps working the moment its seed zip installs; until
+  // then HiFiVizSurface renders whatever else is in the catalog.
+  //
+  // `remapRetiredVizMode` returns null only when handed an empty style table,
+  // which the compile-time one never is — keep the saved value in that case
+  // rather than substituting a constant, which is exactly the hardcoded-'bars'
+  // trap this wave removed.
   if (typeof loaded.vizMode === 'string') {
-    loaded.vizMode = remapRetiredVizMode(loaded.vizMode);
+    loaded.vizMode = remapRetiredVizMode(loaded.vizMode) ?? loaded.vizMode;
   }
   const profilesField = loaded.profiles;
   // True first launch: nothing was loaded from disk at all (no profiles, no
@@ -578,13 +589,15 @@ export default function App() {
         // Guard on vizStylesLoaded — same root cause as the Critical fixed in
         // Task 9. Before visualizers_list resolves, a `bundle:` t.vizMode has
         // no match in `ids`, so indexOf is -1 and (−1+1)%len lands on index 0
-        // — silently persisting 'bars' over the user's actual selection. Make
-        // cycling a no-op until the catalog is known rather than guessing.
+        // — silently persisting the catalog's first style over the user's
+        // actual selection. Make cycling a no-op until the catalog is known
+        // rather than guessing.
         if (!vizStylesLoaded) return;
         const ids = vizStyles.map((s) => s.id);
-        // Every style removed: (i+1) % 0 is NaN, and the old '??' bars'
-        // fallback could reactivate a style the user tombstoned on purpose.
-        // Nothing to cycle to, so leave vizMode exactly where it is.
+        // Every style removed: (i+1) % 0 is NaN, and the old `?? 'bars'`
+        // fallback could reactivate a style the user tombstoned on purpose —
+        // and now names one that isn't compiled in at all. Nothing to cycle
+        // to, so leave vizMode exactly where it is.
         if (ids.length === 0) return;
         const i = ids.indexOf(t.vizMode);
         setTweak('vizMode', ids[(i + 1) % ids.length] ?? ids[0] ?? t.vizMode);
@@ -656,13 +669,18 @@ export default function App() {
   // (uninstall done, tombstone written), with its catalog key
   // (`visualizer:<id>`). vizMode is the visualizer's equivalent of a placed
   // tile instance — it names the style currently rendering — and it is
-  // persisted, so if it names the style just removed, HiFiVizSurface's
-  // unconditional built-in `case` would otherwise keep rendering it
-  // (including after a restart) even though the catalog and V-cycle now
-  // exclude it. Resets to the first surviving style in the merged catalog,
-  // falling back to 'bars' if nothing survives (shouldn't happen — bars
-  // itself is only removable like any other built-in, but if a user removed
-  // everything else first this still terminates instead of picking undefined).
+  // persisted, so leaving it pointed at the style just removed would keep it
+  // selected (including after a restart) even though the catalog, the V-cycle
+  // and the quick-select strip now exclude it. Resets to the first surviving
+  // style in the merged catalog.
+  //
+  // If nothing survives — the user removed the last visualizer — vizMode is
+  // left exactly where it is rather than being rewritten to a hardcoded id.
+  // That used to be `?? 'bars'`, which silently reactivated a style the user
+  // had tombstoned on purpose (and, once Bars stopped being compiled in,
+  // pointed at nothing at all). The surface renders its empty state for this
+  // case, and restoring anything from the content library makes the stale
+  // selection resolve again on the next render.
   const onVisualizerRemoved = (key: string) => {
     const currentId = isVizBundleMode(t.vizMode) ? vizBundleIdOf(t.vizMode) : t.vizMode;
     if (currentId == null || catalogKey('visualizer', currentId) !== key) return;
@@ -670,7 +688,7 @@ export default function App() {
       const id = isVizBundleMode(s.id) ? vizBundleIdOf(s.id) : s.id;
       return id != null && catalogKey('visualizer', id) !== key;
     });
-    setTweak('vizMode', (survivor?.id ?? 'bars') as VizMode);
+    if (survivor) setTweak('vizMode', survivor.id);
   };
   const resetLayout = () => {
     const defaults = orientation === 'portrait' ? DEFAULT_PORTRAIT_LAYOUT : DEFAULT_LANDSCAPE_LAYOUT;

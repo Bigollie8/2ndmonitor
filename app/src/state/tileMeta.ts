@@ -36,7 +36,7 @@ export interface TileMeta {
 }
 
 export const TILE_META: Record<BuiltinTileType, TileMeta> = {
-  viz:     { icon: '◢', label: 'Audio visualizer',  description: '27 styles reactive to system audio',  multiInstance: false, category: 'media' },
+  viz:     { icon: '◢', label: 'Audio visualizer',  description: 'Visualizer styles reactive to system audio',  multiInstance: false, category: 'media' },
   spotify: { icon: '♪', label: 'Now playing',       description: 'Track, lyrics, queue, volume',         multiInstance: false, category: 'media' },
   discord: { icon: '◇', label: 'Discord voice',     description: 'Voice channel members + speaking',     multiInstance: false, category: 'integrations', account: true },
   claude:  { icon: '⌘', label: 'Claude Code',       description: 'Active session log',                   multiInstance: false, category: 'productivity' },

@@ -62,11 +62,17 @@ export async function executeAction(action: ActionConfig, ctx: ActionContext): P
     switch (action.kind) {
       case 'cycleViz': {
         const ids = ctx.vizIds;
+        // Every style removed: (i+1) % 0 is NaN and the old `?? 'bars'`
+        // fallback named a style that is not compiled in any more — and,
+        // before that, could reactivate one the user tombstoned on purpose.
+        // Nothing to cycle to, so leave vizMode exactly where it is. Mirrors
+        // the same guard on App.tsx's 'V' shortcut.
+        if (ids.length === 0) return;
         const i = ids.indexOf(ctx.vizMode);
         // vizIds is string[] (it may hold bundle:<id> entries not known to
         // the VizMode union at this module's compile time) — the caller owns
         // building it from the merged catalog, so the values are trusted.
-        ctx.setVizMode((ids[(i + 1) % ids.length] ?? 'bars') as VizMode);
+        ctx.setVizMode((ids[(i + 1) % ids.length] ?? ids[0]) as VizMode);
         return;
       }
       case 'switchProfile':

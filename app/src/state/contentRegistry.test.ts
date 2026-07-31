@@ -3,13 +3,13 @@ import assert from 'node:assert/strict';
 import {
   mergeVizStyles, bundleModeId, isBundleMode, bundleIdOf,
   remapRetiredVizMode, RETIRED_BUILTIN_VIZ_MODES,
+  firstAvailableVizMode, resolveVizSurface,
   type InstalledVizFolder,
 } from './contentRegistry';
 import type { VizStyle } from '../components/viz-styles';
 import { BUILTIN_VIZ_STYLES } from '../components/viz-styles';
 
 const builtin: VizStyle[] = [
-  { id: 'bars', label: 'Bars', desc: 'Classic spectrum analyzer', category: 'spectrum' },
   { id: 'milkdrop', label: 'MilkDrop', desc: 'Butterchurn', category: 'engine' },
   { id: 'scripted', label: 'Scripted', desc: 'Your JS visualizers', category: 'engine' },
 ];
@@ -30,7 +30,7 @@ test('bundleModeId / isBundleMode / bundleIdOf round-trip', () => {
 
 test('mergeVizStyles: no installed content leaves builtins untouched', () => {
   const out = mergeVizStyles(builtin, []);
-  assert.deepEqual(out.map((s) => s.id), ['bars', 'milkdrop', 'scripted']);
+  assert.deepEqual(out.map((s) => s.id), ['milkdrop', 'scripted']);
   assert.equal(out.every((s) => s.source === 'builtin'), true);
 });
 
@@ -68,9 +68,9 @@ test('mergeVizStyles: bundles sort by label among themselves', () => {
 });
 
 test('mergeVizStyles: a bundle id colliding with a builtin does not shadow it', () => {
-  const out = mergeVizStyles(builtin, [folder({ id: 'bars', name: 'Impostor' })]);
+  const out = mergeVizStyles(builtin, [folder({ id: 'milkdrop', name: 'Impostor' })]);
   assert.equal(out.filter((s) => s.label === 'Impostor').length, 0);
-  assert.equal(out.filter((s) => s.id === 'bars').length, 1);
+  assert.equal(out.filter((s) => s.id === 'milkdrop').length, 1);
 });
 
 test('mergeVizStyles: a nameless folder falls back to its id as the label', () => {
@@ -102,21 +102,89 @@ test('remapRetiredVizMode: a retired builtin id maps to its bundle id', () => {
   assert.equal(remapRetiredVizMode('spectrogram'), 'bundle:spectrogram');
 });
 
+// The whole point of the wave: a user whose saved selection is `bars` must
+// land on the Bars BUNDLE, not on a style that no longer exists and not on
+// some unrelated default.
+test('remapRetiredVizMode: every id retired in this wave maps to its bundle', () => {
+  for (const id of ['bars', 'waveform', 'radial', 'particles', 'ambient',
+    'neonbars', 'splitmirror', 'circular', 'tunnel', 'pixelled',
+    'ribbon', 'vinyl', 'kaleidoscope', 'freqgrid', 'minimal'] as const) {
+    assert.equal(remapRetiredVizMode(id), `bundle:${id}`);
+  }
+});
+
 test('remapRetiredVizMode: surviving builtins are untouched', () => {
-  assert.equal(remapRetiredVizMode('bars'), 'bars');
   assert.equal(remapRetiredVizMode('milkdrop'), 'milkdrop');
+  assert.equal(remapRetiredVizMode('scripted'), 'scripted');
 });
 
 test('remapRetiredVizMode: an already-namespaced mode is untouched', () => {
   assert.equal(remapRetiredVizMode('bundle:whatever'), 'bundle:whatever');
 });
 
-test('remapRetiredVizMode: an unknown mode falls back to bars', () => {
-  assert.equal(remapRetiredVizMode('nonsense'), 'bars');
+// Regression: this used to return the literal 'bars', which pointed at a style
+// that stopped being compiled in — a black surface, not an error.
+test('remapRetiredVizMode: an unknown mode resolves to a style that exists', () => {
+  const out = remapRetiredVizMode('nonsense');
+  assert.notEqual(out, 'bars');
+  assert.ok(BUILTIN_VIZ_STYLES.some((s) => s.id === out), `${out} is not a real style`);
 });
 
-test('RETIRED_BUILTIN_VIZ_MODES: covers exactly the 12 migrated styles', () => {
-  assert.equal(RETIRED_BUILTIN_VIZ_MODES.length, 12);
+test('remapRetiredVizMode: an unknown mode resolves against the list it is given', () => {
+  assert.equal(remapRetiredVizMode('nonsense', builtin), 'milkdrop');
+  assert.equal(
+    remapRetiredVizMode('nonsense', [{ id: 'bundle:aurora' }, { id: 'scripted' }]),
+    'bundle:aurora',
+    'the fallback is the first surviving entry, whatever it happens to be',
+  );
+});
+
+test('remapRetiredVizMode: an empty catalog yields null, never an invented id', () => {
+  assert.equal(remapRetiredVizMode('nonsense', []), null);
+  // A recognisable id still resolves — nothing about an empty table makes a
+  // retired id un-remappable, since the bundle it names is not in the table.
+  assert.equal(remapRetiredVizMode('bars', []), 'bundle:bars');
+});
+
+test('firstAvailableVizMode: the head of the list, or null when empty', () => {
+  assert.equal(firstAvailableVizMode([{ id: 'scripted' }, { id: 'milkdrop' }]), 'scripted');
+  assert.equal(firstAvailableVizMode([]), null);
+});
+
+test('resolveVizSurface: a mode present in the catalog renders itself', () => {
+  const styles = [{ id: 'bundle:bars' as const }, { id: 'milkdrop' as const }];
+  assert.deepEqual(resolveVizSurface('milkdrop', styles, true), { kind: 'style', mode: 'milkdrop' });
+});
+
+test('resolveVizSurface: an absent mode falls back to the first entry that exists', () => {
+  const styles = [{ id: 'bundle:aurora' as const }, { id: 'milkdrop' as const }];
+  assert.deepEqual(
+    resolveVizSurface('bundle:uninstalled', styles, true),
+    { kind: 'style', mode: 'bundle:aurora' },
+  );
+  assert.deepEqual(resolveVizSurface('nonsense', styles, true), { kind: 'style', mode: 'bundle:aurora' });
+});
+
+test('resolveVizSurface: an absent mode is "pending", not a guess, until the list loads', () => {
+  assert.deepEqual(resolveVizSurface('bundle:aurora', [{ id: 'milkdrop' }], false), { kind: 'pending' });
+  // A mode already in the catalog does not wait on the installed list.
+  assert.deepEqual(resolveVizSurface('milkdrop', [{ id: 'milkdrop' }], false), { kind: 'style', mode: 'milkdrop' });
+});
+
+test('resolveVizSurface: an empty catalog is an explicit empty state, not a black void', () => {
+  assert.deepEqual(resolveVizSurface('bundle:bars', [], true), { kind: 'empty' });
+  assert.deepEqual(resolveVizSurface('milkdrop', [], true), { kind: 'empty' });
+  // Still pending before the list resolves, even with nothing to show.
+  assert.deepEqual(resolveVizSurface('bundle:bars', [], false), { kind: 'pending' });
+});
+
+test('RETIRED_BUILTIN_VIZ_MODES: covers all 27 migrated styles, with no duplicates', () => {
+  assert.equal(RETIRED_BUILTIN_VIZ_MODES.length, 27);
+  assert.equal(new Set(RETIRED_BUILTIN_VIZ_MODES).size, 27);
+});
+
+test('BUILTIN_VIZ_STYLES: only the two first-party engines are compiled in', () => {
+  assert.deepEqual(BUILTIN_VIZ_STYLES.map((s) => s.id), ['milkdrop', 'scripted']);
 });
 
 test('mergeVizStyles: a local draft is not published into the catalog', () => {

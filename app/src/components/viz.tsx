@@ -5,25 +5,13 @@ import { useLyrics, currentLineIndex } from '../state/lyrics';
 import { recordDraw, useRegisterSurface } from '../perf/debug';
 import { paceFrame, isWindowHidden } from '../state/framePace';
 import { BrowserPlayer, type Bookmark } from './browser-player';
-import { bundleIdOf, isBundleMode } from '../state/contentRegistry';
+import { bundleIdOf, isBundleMode, resolveVizSurface } from '../state/contentRegistry';
 import { useVizStyles } from './useVizStyles';
-import { catalogKey } from '../state/catalog';
 
-// The "extra" visualizer styles (viz-extra) are lazy-loaded: most sessions
-// run a single style, and eagerly importing all of them bloats the boot
-// bundle for code that may never render. Each becomes its own chunk, fetched
-// on first switch to that mode. The core set below (bars/waveform/radial/
-// particles/ambient) stays eager — it's the default/onboarding path.
-const VizNeonBars = lazy(() => import('./viz-extra').then((m) => ({ default: m.VizNeonBars })));
-const VizSplitMirror = lazy(() => import('./viz-extra').then((m) => ({ default: m.VizSplitMirror })));
-const VizCircularPulse = lazy(() => import('./viz-extra').then((m) => ({ default: m.VizCircularPulse })));
-const VizWaveformTunnel = lazy(() => import('./viz-extra').then((m) => ({ default: m.VizWaveformTunnel })));
-const VizPixelLED = lazy(() => import('./viz-extra').then((m) => ({ default: m.VizPixelLED })));
-const VizRibbon = lazy(() => import('./viz-extra').then((m) => ({ default: m.VizRibbon })));
-const VizVinyl = lazy(() => import('./viz-extra').then((m) => ({ default: m.VizVinyl })));
-const VizKaleidoscope = lazy(() => import('./viz-extra').then((m) => ({ default: m.VizKaleidoscope })));
-const VizFreqGrid = lazy(() => import('./viz-extra').then((m) => ({ default: m.VizFreqGrid })));
-const VizMinimalDots = lazy(() => import('./viz-extra').then((m) => ({ default: m.VizMinimalDots })));
+// Every style except the two engines is now a marketplace bundle rendered by
+// SandboxVizSurface — there is no per-style React component left to import.
+// The engines stay lazy for the same reason they always were: MilkDrop pulls
+// in butterchurn + its preset pack, and Scripted pulls in the editor chrome.
 const VizMilkdrop = lazy(() => import('./viz-milkdrop').then((m) => ({ default: m.VizMilkdrop })));
 const VizScripted = lazy(() => import('./viz-scripted').then((m) => ({ default: m.VizScripted })));
 const SandboxVizSurface = lazy(() => import('./viz-sandbox-surface').then((m) => ({ default: m.SandboxVizSurface })));
@@ -211,483 +199,93 @@ export function useAnimateGate(paused?: boolean, name?: string): { shouldDraw():
   };
 }
 
-export function HiFiVizBars({ accent, accent2, spectrumRef, sensitivity = 1, smoothing = 0, paused }: VizProps) {
-  const count = 64;
-  const barsRef = useRef<(HTMLDivElement | null)[]>([]);
-  const peaksRef = useRef<number[]>(new Array(count).fill(0));
-  const smoothedRef = useRef<number[]>(new Array(count).fill(0));
-  const rafRef = useRef(0);
-  const gate = useAnimateGate(paused, 'bars');
-
-  useEffect(() => {
-    let t = 0;
-    const tick = () => {
-      if (gate.shouldDraw()) {
-        t += 0.04;
-        const live = spectrumRef?.current.live === true;
-        const bands = spectrumRef?.current.bands;
-        const sm = Math.max(0, Math.min(0.95, smoothing));
-        for (let i = 0; i < count; i++) {
-          let raw: number;
-          if (live && bands) {
-            raw = bands[i] ?? 0;
-          } else {
-            const x = i / count;
-            const env = Math.pow(1 - x, 1.2) * 0.55 + 0.18;
-            const a = Math.sin(t * 1.6 + i * 0.18) * 0.18;
-            const b = Math.sin(t * 0.7 + i * 0.05) * 0.12;
-            const c = Math.sin(t * 4.2 + i * 1.1) * 0.06;
-            const noise = (Math.sin(i * 1.7 + t) * 0.5 + Math.cos(i * 0.9 + t * 2) * 0.5) * 0.08;
-            raw = env + a + b + c + noise;
-          }
-          const scaled = raw * sensitivity;
-          const prev = smoothedRef.current[i] ?? 0;
-          const sm_v = prev * sm + scaled * (1 - sm);
-          smoothedRef.current[i] = sm_v;
-          const h = Math.max(0.04, Math.min(1, sm_v));
-
-          const bar = barsRef.current[i];
-          if (bar) bar.style.transform = `scaleY(${h})`;
-          if (peaksRef.current[i]! < h) peaksRef.current[i] = h;
-          else peaksRef.current[i] = Math.max(h, peaksRef.current[i]! - 0.008);
-          const peak = barsRef.current[i + count];
-          if (peak) peak.style.transform = `translateY(${-peaksRef.current[i]! * 100}%)`;
-        }
-      }
-      rafRef.current = requestAnimationFrame(tick);
-    };
-    rafRef.current = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(rafRef.current);
-  }, [spectrumRef, sensitivity, smoothing]);
-
-  return (
-    <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'flex-end', justifyContent: 'center', gap: '0.4%', padding: '8% 4% 12%' }}>
-      {Array.from({ length: count }).map((_, i) => (
-        <div key={i} style={{ flex: 1, height: '100%', position: 'relative', display: 'flex', alignItems: 'flex-end' }}>
-          <div ref={(el) => { barsRef.current[i] = el; }} style={{
-            width: '100%', height: '100%', transformOrigin: 'bottom',
-            background: `linear-gradient(180deg, ${accent} 0%, ${accent2} 100%)`,
-            borderRadius: '2px 2px 0 0',
-            filter: `drop-shadow(0 0 8px ${accent}66)`,
-            transform: 'scaleY(0.1)',
-            transition: 'background 0.4s',
-          }} />
-          <div ref={(el) => { barsRef.current[i + count] = el; }} style={{
-            position: 'absolute', left: 0, right: 0, bottom: 0, height: 2,
-            background: accent, borderRadius: 1, opacity: 0.85,
-            boxShadow: `0 0 8px ${accent}`,
-            transition: 'background 0.4s',
-          }} />
-        </div>
-      ))}
-    </div>
-  );
-}
-
-export function HiFiVizWaveform({ accent, accent2, spectrumRef, sensitivity = 1, smoothing = 0, paused }: VizProps) {
-  const ref = useRef<SVGPolylineElement | null>(null);
-  const ref2 = useRef<SVGPolylineElement | null>(null);
-  const smoothedRef = useRef<number[]>(new Array(200).fill(0));
-  const gate = useAnimateGate(paused, 'waveform');
-  useEffect(() => {
-    let t = 0;
-    let raf = 0;
-    const N = 200;
-    const tick = () => {
-      if (gate.shouldDraw()) {
-        t += 0.05;
-        const live = spectrumRef?.current.live === true;
-        const bands = spectrumRef?.current.bands;
-        const level = spectrumRef?.current.level ?? 0;
-        const sm = Math.max(0, Math.min(0.95, smoothing));
-        const pts: string[] = [];
-        for (let i = 0; i < N; i++) {
-          const x = (i / (N - 1)) * 100;
-          let y: number;
-          if (live && bands) {
-            // Sample lower-mid bins (most musical energy lives there); the top
-            // 16 kHz band is usually silent and made the right edge go flat.
-            // Squaring the position skews the mapping toward the energetic end.
-            const t_norm = i / (N - 1);
-            const biased = Math.pow(t_norm, 1.6);
-            const maxBand = Math.floor(bands.length * 0.7);
-            const bandIdx = Math.min(maxBand, Math.floor(biased * maxBand));
-            const bandV = bands[bandIdx] ?? 0;
-            // Blend: spectral detail + overall level + a tiny baseline so the
-            // wave breathes even in very quiet passages.
-            const vRaw = (bandV * 0.55 + level * 0.45 + 0.06) * sensitivity;
-            const prev = smoothedRef.current[i] ?? 0;
-            const v = prev * sm + vRaw * (1 - sm);
-            smoothedRef.current[i] = v;
-            const phase = Math.sin(i * 0.4 + t * 1.3);
-            y = 50 + phase * v * 35;
-          } else {
-            const wave = Math.sin(i * 0.18 + t) * 14
-              + Math.sin(i * 0.07 + t * 0.7) * 8
-              + Math.sin(i * 0.5 + t * 2.1) * 3;
-            const env = Math.sin(i * 0.04 + t * 0.3) * 0.5 + 0.7;
-            const yRaw = (wave * env) * sensitivity;
-            const prev = smoothedRef.current[i] ?? 0;
-            const yS = prev * sm + yRaw * (1 - sm);
-            smoothedRef.current[i] = yS;
-            y = 50 + yS;
-          }
-          pts.push(`${x},${y}`);
-        }
-        const d = pts.join(' ');
-        ref.current?.setAttribute('points', d);
-        ref2.current?.setAttribute('points', d);
-      }
-      raf = requestAnimationFrame(tick);
-    };
-    raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
-  }, [spectrumRef, sensitivity, smoothing]);
-  return (
-    <svg width="100%" height="100%" viewBox="0 0 100 100" preserveAspectRatio="none" style={{ position: 'absolute', inset: 0 }}>
-      <defs>
-        <linearGradient id="wf-grad" x1="0" y1="0" x2="1" y2="0">
-          <stop offset="0" stopColor={accent2} />
-          <stop offset="1" stopColor={accent} />
-        </linearGradient>
-      </defs>
-      <polyline ref={ref2} fill="none" stroke="url(#wf-grad)" strokeWidth="4" vectorEffect="non-scaling-stroke" opacity="0.3" filter="blur(2px)" />
-      <polyline ref={ref} fill="none" stroke="url(#wf-grad)" strokeWidth="1.6" vectorEffect="non-scaling-stroke" />
-    </svg>
-  );
-}
-
-export function HiFiVizRadial({ accent, accent2, spectrumRef, sensitivity = 1, smoothing = 0, paused }: VizProps) {
-  const linesRef = useRef<(SVGLineElement | null)[]>([]);
-  const groupRef = useRef<SVGGElement | null>(null);
-  const N = 96;
-  const smoothedRef = useRef<number[]>(new Array(N).fill(0));
-  const gate = useAnimateGate(paused, 'radial');
-  useEffect(() => {
-    let t = 0;
-    let raf = 0;
-    const tick = () => {
-      if (gate.shouldDraw()) {
-        t += 0.03;
-        const live = spectrumRef?.current.live === true;
-        const bands = spectrumRef?.current.bands;
-        const sm = Math.max(0, Math.min(0.95, smoothing));
-        groupRef.current?.setAttribute('transform', `rotate(${t * 8})`);
-        for (let i = 0; i < N; i++) {
-          const x = i / N;
-          let raw: number;
-          if (live && bands) {
-            // Mirror the spectrum around the circle: first half is bands, second half mirrors.
-            const half = N / 2;
-            const idx = i < half ? i : N - 1 - i;
-            const bandIdx = Math.floor((idx / half) * (bands.length - 1));
-            raw = (bands[bandIdx] ?? 0) * 1.1 + 0.08;
-          } else {
-            const a = Math.sin(t * 1.5 + i * 0.3) * 0.2;
-            const b = Math.sin(t * 0.8 + x * Math.PI * 8) * 0.25;
-            const env = 0.35 + Math.sin(x * Math.PI * 4) * 0.15;
-            raw = env + a + b;
-          }
-          const scaled = raw * sensitivity;
-          const prev = smoothedRef.current[i] ?? 0;
-          const sm_v = prev * sm + scaled * (1 - sm);
-          smoothedRef.current[i] = sm_v;
-          const h = Math.max(0.1, Math.min(1, sm_v));
-          const ln = linesRef.current[i];
-          if (ln) {
-            const ang = (i / N) * Math.PI * 2;
-            const r1 = 14, r2 = 14 + h * 22;
-            ln.setAttribute('x1', String(Math.cos(ang) * r1));
-            ln.setAttribute('y1', String(Math.sin(ang) * r1));
-            ln.setAttribute('x2', String(Math.cos(ang) * r2));
-            ln.setAttribute('y2', String(Math.sin(ang) * r2));
-            ln.setAttribute('opacity', String(0.4 + h * 0.6));
-          }
-        }
-      }
-      raf = requestAnimationFrame(tick);
-    };
-    raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
-  }, [spectrumRef, sensitivity, smoothing]);
-  return (
-    <svg width="100%" height="100%" viewBox="-50 -50 100 100" style={{ position: 'absolute', inset: 0 }}>
-      <defs>
-        <radialGradient id="rd-grad">
-          <stop offset="0" stopColor={accent} stopOpacity="0.2" />
-          <stop offset="1" stopColor={accent} stopOpacity="0" />
-        </radialGradient>
-      </defs>
-      <circle r="14" fill="url(#rd-grad)" />
-      <circle r="13" fill="none" stroke={accent} strokeOpacity="0.25" strokeWidth="0.4" />
-      <g ref={groupRef}>
-        {Array.from({ length: N }).map((_, i) => (
-          <line key={i} ref={(el) => { linesRef.current[i] = el; }}
-            stroke={i % 2 === 0 ? accent : accent2} strokeWidth="0.8" strokeLinecap="round" />
-        ))}
-      </g>
-    </svg>
-  );
-}
-
-export function HiFiVizParticles({ accent, accent2, spectrumRef, sensitivity = 1, smoothing = 0, paused }: VizProps) {
-  const ref = useRef<HTMLCanvasElement | null>(null);
-  const gate = useAnimateGate(paused, 'particles');
-  useEffect(() => {
-    const canvas = ref.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-    const dpr = getVizDpr();
-    const resize = () => {
-      const r = canvas.getBoundingClientRect();
-      canvas.width = r.width * dpr;
-      canvas.height = r.height * dpr;
-    };
-    resize();
-    const ro = new ResizeObserver(resize);
-    ro.observe(canvas);
-
-    const N = 140;
-    const pts = Array.from({ length: N }, () => {
-      const x = Math.random();
-      const y = Math.random();
-      return {
-        x, y,
-        homeX: x, homeY: y, // each particle springs back to its (drifting) home
-        // homes drift slowly across the canvas, bouncing off walls — so the
-        // overall scene is alive even when no beat is hitting.
-        vhomeX: (Math.random() - 0.5) * 0.0010,
-        vhomeY: (Math.random() - 0.5) * 0.0010,
-        vx: 0, vy: 0,
-        r: 0.5 + Math.random() * 1.8,
-        hue: Math.random(),
-      };
-    });
-    let t = 0;
-    let raf = 0;
-    let bassSmoothed = 0;
-    let bassReference = 0;  // slow-tracking baseline; spike = bass - reference
-    const tick = () => {
-      if (gate.shouldDraw()) {
-        t += 0.02;
-        const w = canvas.width, h = canvas.height;
-        ctx.clearRect(0, 0, w, h);
-        const live = spectrumRef?.current.live === true;
-        const bands = spectrumRef?.current.bands;
-        const level = spectrumRef?.current.level ?? 0;
-        const sm = Math.max(0, Math.min(0.95, smoothing));
-        // Bass = energy across the lowest ~8 bands, mixed with overall RMS for
-        // snappier reaction on transient kicks. Falls back to a slow sine.
-        let bassRaw: number;
-        if (live && bands) {
-          let sum = 0;
-          const lowN = Math.min(8, bands.length);
-          for (let i = 0; i < lowN; i++) sum += bands[i] ?? 0;
-          const lowAvg = sum / lowN;
-          bassRaw = (lowAvg * 0.7 + level * 0.6) * 1.6 + 0.08;
-        } else {
-          bassRaw = (Math.sin(t) * 0.5 + 0.5) * 0.5 + 0.3;
-        }
-        const scaled = bassRaw * sensitivity;
-        bassSmoothed = bassSmoothed * sm + scaled * (1 - sm);
-        const bass = Math.min(1.5, bassSmoothed);
-
-        // Spike detection: bass exceeding the slow-tracked reference is "the beat".
-        // The reference catches up slowly so a sustained loud passage still has beats.
-        bassReference = bassReference * 0.92 + bass * 0.08;
-        const spike = Math.max(0, bass - bassReference); // 0..~0.6 typical
-
-        ctx.fillStyle = accent2 + '11';
-        ctx.fillRect(0, 0, w, h);
-
-        // Outward kick on beats — falls off with distance from center, so the
-        // shockwave moves the inner particles more than the edge ones.
-        const kickStrength = spike * 0.012;
-        const springK = 0.018;  // pull-back-to-home force
-        const drag = 0.86;
-
-        for (const p of pts) {
-          // Drift the home position so the scene stays alive between beats.
-          // Bounce off a 5% inner margin so homes never reach the corners.
-          p.homeX += p.vhomeX;
-          p.homeY += p.vhomeY;
-          if (p.homeX < 0.05) { p.homeX = 0.05; p.vhomeX = -p.vhomeX; }
-          else if (p.homeX > 0.95) { p.homeX = 0.95; p.vhomeX = -p.vhomeX; }
-          if (p.homeY < 0.05) { p.homeY = 0.05; p.vhomeY = -p.vhomeY; }
-          else if (p.homeY > 0.95) { p.homeY = 0.95; p.vhomeY = -p.vhomeY; }
-
-          // Spring force toward (drifting) home keeps the particle near it but
-          // free to wander; beat kicks displace it transiently.
-          p.vx += (p.homeX - p.x) * springK;
-          p.vy += (p.homeY - p.y) * springK;
-
-          // Outward kick from center on bass spikes.
-          const dx = p.x - 0.5;
-          const dy = p.y - 0.5;
-          const dist = Math.sqrt(dx * dx + dy * dy) + 0.0001;
-          const inv = 1 / dist;
-          const falloff = 1 / (1 + dist * 5);
-          p.vx += (dx * inv) * kickStrength * falloff;
-          p.vy += (dy * inv) * kickStrength * falloff;
-
-          p.vx *= drag;
-          p.vy *= drag;
-
-          p.x += p.vx;
-          p.y += p.vy;
-
-          const px = p.x * w, py = p.y * h;
-          const r = p.r * dpr * (0.3 + bass * 2.8);
-          const grad = ctx.createRadialGradient(px, py, 0, px, py, r * 4);
-          grad.addColorStop(0, p.hue > 0.5 ? accent : accent2);
-          grad.addColorStop(1, 'transparent');
-          ctx.fillStyle = grad;
-          ctx.beginPath();
-          ctx.arc(px, py, r * 4, 0, Math.PI * 2);
-          ctx.fill();
-        }
-      }
-      raf = requestAnimationFrame(tick);
-    };
-    raf = requestAnimationFrame(tick);
-    return () => { cancelAnimationFrame(raf); ro.disconnect(); };
-  }, [accent, accent2, spectrumRef, sensitivity, smoothing]);
-  return <canvas ref={ref} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }} />;
-}
-
-export function HiFiVizAmbient({ accent, accent2, spectrumRef, sensitivity = 1, smoothing = 0, paused }: VizProps) {
-  const blobsRef = useRef<HTMLDivElement | null>(null);
-  const gate = useAnimateGate(paused, 'ambient');
-  useEffect(() => {
-    const reader = makeSpectrumReader(48, spectrumRef, sensitivity, smoothing);
-    let raf = 0;
-    const tick = () => {
-      if (gate.shouldDraw()) {
-        reader.read();
-        const bass = reader.bands.bass;
-        const mid = reader.bands.mid;
-        const el = blobsRef.current;
-        if (el) {
-          // Bass slowly inflates the blobs; mid gently nudges saturation.
-          const scale = 1 + bass * 0.18;
-          const sat = 1.2 + mid * 0.6;
-          const blur = 2 + (1 - bass) * 4; // softer when quiet, sharper on bass
-          el.style.transform = `scale(${scale})`;
-          el.style.filter = `blur(${blur}px) saturate(${sat})`;
-        }
-      }
-      raf = requestAnimationFrame(tick);
-    };
-    raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
-  }, [spectrumRef, sensitivity, smoothing]);
-  return (
-    <div style={{ position: 'absolute', inset: 0, overflow: 'hidden', background: '#06080d' }}>
-      <div ref={blobsRef} style={{
-        position: 'absolute', inset: '-10%',
-        background: `
-          radial-gradient(ellipse 50% 40% at 25% 35%, ${accent}77, transparent 65%),
-          radial-gradient(ellipse 45% 55% at 75% 60%, ${accent2}77, transparent 65%),
-          radial-gradient(ellipse 35% 30% at 50% 85%, ${accent}55, transparent 70%),
-          radial-gradient(ellipse 60% 45% at 15% 80%, ${accent2}33, transparent 70%)
-        `,
-        filter: 'blur(2px) saturate(1.2)',
-        animation: 'amb-drift 22s ease-in-out infinite alternate',
-        transition: 'transform 120ms ease-out, filter 200ms ease-out',
-        willChange: 'transform, filter',
-      }} />
-      <style>{`
-        @keyframes amb-drift {
-          0% { translate: 0 0; }
-          50% { translate: 3% -2%; }
-          100% { translate: -2% 3%; }
-        }
-      `}</style>
-    </div>
-  );
-}
-
-export function HiFiVizSurface({ mode, accent, accent2, spectrumRef, sensitivity, smoothing, paused, track, playback, catalogRemoved }: { mode: VizMode; catalogRemoved: string[] } & VizProps) {
+export function HiFiVizSurface({ mode, accent, accent2, spectrumRef, sensitivity, smoothing, paused, track, playback, preview, catalogRemoved }: { mode: VizMode; catalogRemoved: string[] } & VizProps) {
   // Register the active viz mode as the mounted surface; the HUD displays it
   // and spike snapshots include it under `vizMode`.
   useRegisterSurface(`viz:${mode}${paused ? ':paused' : ''}`);
-  // Needed only for the `bundle:` fallback below (is this id actually
-  // installed?), but this component already hosts a hook (useRegisterSurface
-  // above), so it's the natural place for the check. `catalogRemoved` is a
-  // prop, not read from the tweaks store here — useTweaks is instantiated
-  // exactly once (App.tsx) and threaded down as props.
+  // Needed for the resolution below (is this id actually installed?), but this
+  // component already hosts a hook (useRegisterSurface above), so it's the
+  // natural place for the check. `catalogRemoved` is a prop, not read from the
+  // tweaks store here — useTweaks is instantiated exactly once (App.tsx) and
+  // threaded down as props.
   const { styles: vizStyles, loaded: vizStylesLoaded } = useVizStyles(catalogRemoved);
-  const props = { accent, accent2, spectrumRef, sensitivity, smoothing, paused, track, playback };
-  // The core styles (bars/waveform/radial/particles/ambient) are eager and
-  // never suspend. The "extra" styles are lazy-loaded chunks (see the `lazy()`
-  // declarations above) — Suspense covers the brief gap while a chunk fetches
-  // on first switch to that style. `fallback={null}` renders a blank frame in
-  // that window rather than unmounting anything outside this component (the
-  // VizOverlay chrome in VizHero is a sibling, not a Suspense descendant, so
-  // it stays mounted throughout).
+  // `preview` is forwarded: viz-gallery passes it for grid cards and
+  // VizMilkdrop swaps its WebGL surface for a cheap placeholder when set
+  // (Chromium caps live WebGL contexts around 16). It was accepted by the type
+  // and silently dropped here before, so MilkDrop's gallery card allocated a
+  // real context; with only two built-in cards left that is now MilkDrop's
+  // card and Scripted's, and the placeholder is the whole point of the flag.
+  const props = { accent, accent2, spectrumRef, sensitivity, smoothing, paused, track, playback, preview };
+  // Which style to actually mount. `resolveVizSurface` (state/contentRegistry.ts)
+  // owns the decision and is node-tested; it never returns a hardcoded id, only
+  // something present in `vizStyles` — or 'pending'/'empty'. Everything below
+  // is rendering, no policy.
+  //
+  // The three-state gate lives inside it and is load-bearing: `vizStylesLoaded`
+  // separates "the visualizers_list invoke hasn't resolved yet" from "it
+  // resolved and this id isn't in it". `vizMode` can already be a `bundle:`
+  // mode on the very first render (useTweaks's synchronous localStorage load
+  // runs before that effect fires), and guessing either way in that window
+  // shows a wrong-style flash: guess "absent" and an installed bundle flashes
+  // the fallback before snapping to its sandbox; guess "present" and a
+  // genuinely-uninstalled id flashes the sandbox's error banner.
+  //
+  // `fallback={null}` renders a blank frame while a lazy chunk fetches rather
+  // than unmounting anything outside this component (the VizOverlay chrome in
+  // VizHero is a sibling, not a Suspense descendant, so it stays mounted).
+  const target = resolveVizSurface(mode, vizStyles, vizStylesLoaded);
   const surface = (() => {
-    switch (mode) {
-      case 'bars':         return <HiFiVizBars {...props} />;
-      case 'waveform':     return <HiFiVizWaveform {...props} />;
-      case 'radial':       return <HiFiVizRadial {...props} />;
-      case 'particles':    return <HiFiVizParticles {...props} />;
-      case 'ambient':      return <HiFiVizAmbient {...props} />;
-      case 'neonbars':     return <VizNeonBars {...props} />;
-      case 'splitmirror':  return <VizSplitMirror {...props} />;
-      case 'circular':     return <VizCircularPulse {...props} />;
-      case 'tunnel':       return <VizWaveformTunnel {...props} />;
-      case 'pixelled':     return <VizPixelLED {...props} />;
-      case 'ribbon':       return <VizRibbon {...props} />;
-      case 'vinyl':        return <VizVinyl {...props} />;
-      case 'kaleidoscope': return <VizKaleidoscope {...props} />;
-      case 'freqgrid':     return <VizFreqGrid {...props} />;
-      case 'minimal':      return <VizMinimalDots {...props} />;
-    case 'milkdrop':      return <VizMilkdrop {...props} />;
-    case 'scripted':      return <VizScripted {...props} />;
-    default: {
-      // Installed marketplace visualizer: same sandbox runtime, no authoring
-      // chrome. An unknown non-bundle mode falls back to Bars rather than
-      // rendering a blank tile — and so does a `bundle:` mode that names a
-      // style not currently installed (e.g. a saved selection for a style
-      // that was just retired from the binary, before the user installs its
-      // shop replacement). Handing an uninstalled id to SandboxVizSurface
-      // would just surface its "visualizers_read" error banner instead.
-      //
-      // This has to be a three-state check, not a boolean. `vizStylesLoaded`
-      // distinguishes "the visualizers_list invoke hasn't resolved yet" from
-      // "it resolved and this id isn't in it" — an empty/builtins-only
-      // catalog looks identical to "genuinely not installed" otherwise, and
-      // t.vizMode can already be a `bundle:` mode on the very first render
-      // (useTweaks's synchronous localStorage load runs before this effect
-      // fires). Guessing either way during that window produces a visible
-      // wrong-style flash: guess "absent" and an installed bundle style
-      // flashes Bars before snapping to the sandbox; guess "present" and a
-      // genuinely-uninstalled id flashes the sandbox's error banner. Do not
-      // collapse this back to `bundleId && vizStyles.some(...)`.
-      const bundleId = bundleIdOf(mode);
-      if (bundleId === null) return <HiFiVizBars {...props} />;
-      if (!vizStylesLoaded) return null; // not yet known — render nothing, not a guess
-      return vizStyles.some((s) => s.id === mode)
-        ? <SandboxVizSurface {...props} bundleId={bundleId} />
-        : <HiFiVizBars {...props} />;
-    }
+    if (target.kind === 'pending') return null; // not yet known — render nothing, not a guess
+    if (target.kind === 'empty') return <VizEmptyState accent={accent} />;
+    switch (target.mode) {
+      case 'milkdrop': return <VizMilkdrop {...props} />;
+      case 'scripted': return <VizScripted {...props} />;
+      default: {
+        // Every remaining style is a marketplace bundle: same sandbox runtime
+        // as Scripted, without the authoring chrome. `resolveVizSurface` only
+        // ever names an entry it found in `vizStyles`, so the folder is
+        // installed and SandboxVizSurface will not hit its "visualizers_read"
+        // error banner.
+        const bundleId = bundleIdOf(target.mode);
+        return bundleId === null ? null : <SandboxVizSurface {...props} bundleId={bundleId} />;
+      }
     }
   })();
   return <Suspense fallback={null}>{surface}</Suspense>;
 }
 
-/** The 5 quick-select buttons in VizOverlay's top-left strip. Predates the
- *  unified catalog — VizOverlay filters this against `catalogRemoved` before
- *  rendering (see its `modes` computation) so a removed built-in visualizer
- *  stops being offered here too, the same as the V-cycle and gallery. */
-const QUICK_MODES: { k: VizMode; label: string }[] = [
-  { k: 'bars', label: 'Bars' },
-  { k: 'waveform', label: 'Wave' },
-  { k: 'radial', label: 'Radial' },
-  { k: 'particles', label: 'Particle' },
-  { k: 'ambient', label: 'Ambient' },
-];
+/** Shown when the merged catalog is genuinely empty — every built-in engine
+ *  tombstoned and no visualizer bundle installed. Reachable now that all
+ *  fifteen styles are removable content: before this wave `bars` was compiled
+ *  in and the surface could always fall back to it. Without this the tile is
+ *  an unexplained black rectangle with no hint that the fix is one click away
+ *  in the content library. */
+function VizEmptyState({ accent }: { accent: string }) {
+  return (
+    <div style={{
+      position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column',
+      alignItems: 'center', justifyContent: 'center', gap: 10, padding: 24,
+      textAlign: 'center', background: '#06070a',
+    }}>
+      <div style={{ fontSize: 26, opacity: 0.5 }}>◢</div>
+      <div style={{ fontSize: 15, fontWeight: 600, color: 'rgba(255,255,255,0.85)' }}>
+        No visualizers installed
+      </div>
+      <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.5)', maxWidth: 420, lineHeight: 1.5 }}>
+        Every visualizer has been removed. Open the content library and install
+        one — or use Restore defaults to bring the originals back.
+      </div>
+      <div style={{
+        marginTop: 4, fontSize: 10, letterSpacing: '.06em', color: accent,
+        fontFamily: '"JetBrains Mono", ui-monospace, monospace',
+      }}>⚙ CONFIGURE → CONTENT LIBRARY</div>
+    </div>
+  );
+}
+
+/** How many entries of the merged catalog VizOverlay's quick-select strip
+ *  offers before "+ More". Matches the width of the old hardcoded five. */
+const QUICK_MODE_COUNT = 5;
 
 const overlayBtn: React.CSSProperties = {
   background: 'rgba(0,0,0,0.4)', backdropFilter: 'blur(20px)',
@@ -748,15 +346,17 @@ export function VizOverlay({
   const positionLabel = havePlayback ? fmtMMSS(position) : '—';
   const durationLabel = havePlayback ? fmtMMSS(duration) : '—';
   const playIcon = playback?.playing ? '⏸' : '⏵';
-  // Filtered against catalogRemoved so a removed built-in doesn't stay
-  // offered (and re-selectable) here even after it's gone from the V-cycle
-  // and gallery — this hardcoded strip predates the unified catalog and
-  // didn't consult the removal list until this fix.
-  const modes = QUICK_MODES.filter((m) => !catalogRemoved.includes(catalogKey('visualizer', m.k)));
-  const isOriginalMode = modes.some((m) => m.k === mode);
   // The merged catalog (not just BUILTIN_VIZ_STYLES) so an installed
   // `bundle:` style's label still shows in the "● Label" badge.
   const { styles: vizStyles, loaded: vizStylesLoaded } = useVizStyles(catalogRemoved);
+  // The quick-select strip used to be a hardcoded five (bars/waveform/radial/
+  // particles/ambient) filtered against catalogRemoved. All five are bundles
+  // now, so a fixed list would offer ids that may not be installed at all.
+  // Take the head of the merged catalog instead: already removal-filtered by
+  // useVizStyles, already in V-cycle order, and it shrinks to nothing rather
+  // than lying when the user has removed everything.
+  const modes = vizStyles.slice(0, QUICK_MODE_COUNT);
+  const isOriginalMode = modes.some((m) => m.id === mode);
   // Same tri-state reasoning as HiFiVizSurface's dispatch gate above:
   // `vizStyles` holds builtins only until the installed-bundle list
   // resolves, so an active `bundle:` style's badge would otherwise flash
@@ -772,12 +372,12 @@ export function VizOverlay({
       <div style={{ padding: 18, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', pointerEvents: 'auto' }}>
         <div style={{ display: 'flex', gap: 4, padding: 4, background: 'rgba(0,0,0,0.4)', backdropFilter: 'blur(20px)', borderRadius: 10, border: '1px solid rgba(255,255,255,0.06)', alignItems: 'center' }}>
           {modes.map((m) => (
-            <button key={m.k} onClick={() => setMode(m.k)} style={{
+            <button key={m.id} onClick={() => setMode(m.id)} style={{
               padding: '6px 12px', fontSize: 11, fontWeight: 600,
-              background: mode === m.k ? accent : 'transparent',
-              color: mode === m.k ? '#000' : 'rgba(255,255,255,0.7)',
+              background: mode === m.id ? accent : 'transparent',
+              color: mode === m.id ? '#000' : 'rgba(255,255,255,0.7)',
               border: 'none', borderRadius: 6, cursor: 'pointer',
-              boxShadow: mode === m.k ? `0 0 12px ${accent}77` : 'none',
+              boxShadow: mode === m.id ? `0 0 12px ${accent}77` : 'none',
               transition: 'all 0.2s',
             }}>{m.label}</button>
           ))}

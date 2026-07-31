@@ -1,11 +1,9 @@
 export type Density = 'compact' | 'regular' | 'spacious';
-/** Styles compiled into the binary. */
-export type BuiltinVizMode =
-  | 'bars' | 'waveform' | 'radial' | 'particles' | 'ambient'
-  | 'neonbars' | 'splitmirror' | 'circular' | 'tunnel' | 'pixelled'
-  | 'ribbon' | 'vinyl' | 'kaleidoscope'
-  | 'freqgrid' | 'minimal'
-  | 'milkdrop' | 'scripted';
+/** Styles compiled into the binary. The fifteen DOM/canvas styles that used to
+ *  be listed here are now marketplace bundles (`bundle:bars` and friends) —
+ *  deliberately dropped from the union rather than kept "just in case", so any
+ *  code still naming one is a compile error instead of a runtime blank frame. */
+export type BuiltinVizMode = 'milkdrop' | 'scripted';
 
 /** A selected style: a built-in, or an installed marketplace bundle. Bundle
  *  ids are namespaced so they can never collide with a built-in. */
