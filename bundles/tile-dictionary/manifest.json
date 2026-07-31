@@ -2,7 +2,7 @@
   "id": "tile-dictionary",
   "name": "Dictionary lookup",
   "author": "official",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "api": 1,
   "permissions": ["net:api.dictionaryapi.dev"],
   "config": [
