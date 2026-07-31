@@ -1,3 +1,4 @@
+// Run: node --test "scripts/**/*.test.mjs"  (bare "node --test scripts/" breaks on Node 24+)
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
@@ -56,6 +57,20 @@ test('added holds only the Added bullets, null when absent', () => {
 
 test('empty or heading-free input yields empty array', () => {
   assert.deepEqual(parseChangelog('# Changelog\n\nnothing yet'), []);
+});
+
+test('added is null when the Added section is empty, even with a following section', () => {
+  const changelog = `## [0.6.0] - 2026-05-12
+
+### Added
+
+### Fixed
+- x`;
+  const entries = parseChangelog(changelog);
+  assert.equal(entries[0].version, '0.6.0');
+  assert.equal(entries[0].added, null);
+  assert.ok(entries[0].body.includes('### Fixed'));
+  assert.ok(entries[0].body.includes('- x'));
 });
 
 test('added captures bullets even when not the first subsection', () => {
