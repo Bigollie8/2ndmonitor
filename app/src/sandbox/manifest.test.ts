@@ -173,3 +173,25 @@ test('validateManifest: 9 config entries fails', () => {
   }, { allowPermissions: true });
   assert.equal(r.ok, false);
 });
+
+// ── surface: 'canvas' | 'dom' ────────────────────────────────────────────────
+
+test('validateManifest: surface defaults to canvas when absent', () => {
+  const r = validateManifest({ id: 'x', name: 'X', version: '1.0.0', api: 1, permissions: [] });
+  assert.equal(r.ok, true);
+  assert.equal(r.ok && r.manifest.surface, 'canvas');
+});
+
+test('validateManifest: surface accepts dom', () => {
+  const r = validateManifest({ id: 'x', name: 'X', version: '1.0.0', api: 1, permissions: [], surface: 'dom' });
+  assert.equal(r.ok && r.manifest.surface, 'dom');
+});
+
+test('validateManifest: an unknown surface is rejected, not silently defaulted', () => {
+  const r = validateManifest({ id: 'x', name: 'X', version: '1.0.0', api: 1, permissions: [], surface: 'webgl' });
+  assert.equal(r.ok, false);
+});
+
+test('validateManifest: surface must be a string', () => {
+  assert.equal(validateManifest({ id: 'x', name: 'X', version: '1.0.0', api: 1, permissions: [], surface: 1 }).ok, false);
+});

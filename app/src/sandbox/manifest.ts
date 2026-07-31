@@ -26,6 +26,14 @@ export interface VizManifest {
    *  no permission is required and a later task stores these in plain
    *  localStorage. */
   config?: ConfigDecl[];
+  /** Render surface the bundle draws into. `'canvas'` (default) exposes a
+   *  single `<canvas>`; `'dom'` gives the bundle a DOM root instead, for
+   *  styles built from CSS transforms rather than canvas draw calls. Additive
+   *  to api 1: an older app reading a newer manifest ignores an absent field
+   *  and defaults to `'canvas'`; the field only ever *declares* which surface
+   *  the frame already exposes — bundle code has always run inside the
+   *  frame's document, so this widens no capability. */
+  surface?: 'canvas' | 'dom';
 }
 
 export interface SecretDecl {
@@ -99,6 +107,16 @@ export function validateManifest(
   }
   if (m.api !== 1) {
     return { ok: false, error: 'api must be 1 (the only published API version)' };
+  }
+  // Reject rather than default an unknown surface: a typo'd value should fail
+  // at submission, not silently fall back to 'canvas' and render a blank
+  // frame the author has no way to diagnose.
+  let surface: 'canvas' | 'dom' = 'canvas';
+  if (m.surface !== undefined) {
+    if (m.surface !== 'canvas' && m.surface !== 'dom') {
+      return { ok: false, error: 'surface must be "canvas" or "dom"' };
+    }
+    surface = m.surface;
   }
   if (!Array.isArray(m.permissions)) {
     return { ok: false, error: 'permissions must be an array' };
@@ -201,6 +219,7 @@ export function validateManifest(
       permissions,
       secrets,
       config,
+      surface,
     },
   };
 }

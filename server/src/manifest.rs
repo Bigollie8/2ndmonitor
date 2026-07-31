@@ -98,6 +98,25 @@ pub fn validate(kind: &str, manifest_json: &str) -> Result<Validated, String> {
         return Err("api must be 1".into());
     }
 
+    // Render surface the bundle draws into (I11). Additive to api 1: absent
+    // means 'canvas', matching the app's default for an older manifest. An
+    // unknown value is rejected here rather than silently coerced to
+    // 'canvas' — mirrors `app/src/sandbox/manifest.ts`'s `validateManifest`,
+    // so a typo'd `surface` fails at submission instead of publishing and
+    // rendering a blank frame the author can't diagnose.
+    // Render surface the bundle draws into (I11). Additive to api 1: absent
+    // means 'canvas', matching the app's default for an older manifest. An
+    // unknown value is rejected here rather than silently coerced to
+    // 'canvas' — mirrors `app/src/sandbox/manifest.ts`'s `validateManifest`,
+    // so a typo'd `surface` fails at submission instead of publishing and
+    // rendering a blank frame the author can't diagnose.
+    if let Some(surface_val) = obj.get("surface") {
+        let ok = matches!(surface_val, Value::String(s) if s == "canvas" || s == "dom");
+        if !ok {
+            return Err("surface must be \"canvas\" or \"dom\"".into());
+        }
+    }
+
     let raw_perms = obj
         .get("permissions")
         .and_then(Value::as_array)
@@ -702,6 +721,37 @@ mod tests {
             .collect();
         let json9 = m_full("[]", &format!(r#","config":[{}]"#, cfg9.join(",")));
         assert!(validate("tile", &json9).is_err());
+    }
+
+    // ── I11: surface: 'canvas' | 'dom' (mirrors
+    // app/src/sandbox/manifest.test.ts's equivalent cases) ──────────────────
+
+    #[test]
+    fn surface_absent_is_accepted() {
+        let json = m_full("[]", "");
+        assert!(validate("visualizer", &json).is_ok());
+    }
+
+    #[test]
+    fn surface_canvas_and_dom_are_accepted() {
+        for s in ["canvas", "dom"] {
+            let json = m_full("[]", &format!(r#","surface":"{s}""#));
+            assert!(validate("visualizer", &json).is_ok(), "{s} should be accepted");
+        }
+    }
+
+    #[test]
+    fn unknown_surface_is_rejected() {
+        let json = m_full("[]", r#","surface":"webgl""#);
+        let err = validate("visualizer", &json).unwrap_err();
+        assert!(err.contains("surface"), "{err}");
+    }
+
+    #[test]
+    fn non_string_surface_is_rejected() {
+        let json = m_full("[]", r#","surface":1"#);
+        let err = validate("visualizer", &json).unwrap_err();
+        assert!(err.contains("surface"), "{err}");
     }
 
     #[test]
