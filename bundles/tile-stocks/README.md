@@ -78,3 +78,13 @@ close as the delta line below.
 
 No secrets. `config`: `symbol` (required before the tile fetches anything —
 starts unconfigured). `net:query1.finance.yahoo.com` only.
+
+## Coexists with the built-in — does not replace it
+
+Per the migration's Task 1 review: `multiInstance: false` for bundle tiles
+this phase means "one symbol via config" caps out at **one ticker
+anywhere on the dashboard**, not a watchlist — that eliminates the
+built-in's up-to-25-ticker feature rather than reducing it. So the
+built-in `StocksTile` is **not** being retired in favor of this bundle.
+Both are available; install this one only if tracking a single ticker is
+genuinely all you need.

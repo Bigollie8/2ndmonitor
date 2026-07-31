@@ -46,7 +46,19 @@ Resolved against the real response: `{{item.year}}` → `2020`,
 `{{item.text}}` → the sentence above, `{{item.pages.0.content_urls.desktop.page}}`
 → `https://en.wikipedia.org/wiki/De_Havilland_Canada_DHC-2_Beaver`. Renders
 with the `list` primitive: year on the left, event text as the row title,
-click-through to the linked article.
+click-through to the linked article, and `row.right` set to
+`"{{config.month}}/{{config.day}}"` on every row, e.g. `07/31`.
+
+### The pinned date is shown on every row — read why
+
+A tile named "On this day" implies currency. Because the date is pinned
+(see above), a tile installed today and never reopened would keep showing
+that day's history indefinitely while looking identical to a live "today"
+feed — a silent staleness bug with no on-screen cue. `row.right` costs
+nothing extra to fetch (`config.month`/`config.day` are already in scope)
+and turns that into a visible fact: every row states which date it's
+showing, so a user looking at this tile a month after installing it sees
+`07/31` printed on the date they'd otherwise mistake for today's.
 
 ## Known limitations
 
@@ -56,7 +68,20 @@ click-through to the linked article.
   row just isn't clickable) — same as the built-in's `it.url` being `null`.
 - `intervalMs` is 21600000 (6h), matching the built-in's `REFRESH_MS`. Well
   above the 15s floor; no adjustment needed.
+- `config.month`/`config.day` have no zero-pad enforcement — the input is
+  freeform `text`, so an unpadded or invalid value 404s. That's a loud
+  `TileError`, not a silent wrong answer, so it's a rough edge rather than
+  a bug worth adding validation for.
 
 No secrets. `config`: `month`, `day` (both required before the tile can
 fetch — it starts unconfigured, same "needs setup" state as any tile with
 unfilled config).
+
+## Coexists with the built-in — does not replace it
+
+Per the migration's Task 1 review: this bundle pins a date instead of
+rolling forward automatically, which is a real behavior change from the
+built-in `OnThisDayTile`, not just an implementation detail — so the
+built-in is **not** being retired in favor of this bundle. Both are
+available; install this one if "history for a date I choose, that stays
+put until I change it" is what you actually want.

@@ -10,6 +10,7 @@
     "row": {
       "left": "{{item.year}}",
       "title": "{{item.text}}",
+      "right": "{{config.month}}/{{config.day}}",
       "openUrl": "{{item.pages.0.content_urls.desktop.page}}"
     },
     "emptyText": "No events for this date."
