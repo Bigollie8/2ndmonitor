@@ -1034,3 +1034,14 @@ Append a dated verification note to this plan file (what was run, what was seen)
 - `PresetPicker`'s "user" group hint text still names the presets folder — unchanged behavior, but confirm the picker overlay's z-index stays above the pointer shield.
 
 **Type consistency check:** `MilkdropLoadSource` produced in Task 4, consumed by glue (plain JS mirror, `msg.source.bundled !== undefined`) and host `sendLoad`; `dataSenderRef` returns `boolean` in Task 3 and is null-checked via `?.()` in Task 6; `mergePresetLibrary(names: string[], user)` matches the Task 6 call `mergePresetLibrary(names, userRef.current)`. `MILKDROP_FRAME_CODE` name identical in Tasks 5 and 6.
+
+---
+
+## Task 8 verification record — 2026-07-31
+
+Packaged build `npm exec tauri build` (release, NSIS) from feat/milkdrop-in-sandbox @ 50ac9ac+docs.
+Ran `src-tauri/target/release/second-monitor-hub.exe` (old 2ndmonitor-milkdrop build stopped first — single-instance refocus).
+Verified by screen capture:
+- MilkDrop style active, live preset rendering (not black, no CSP violation, no error banner). First preset: `$$$ Royal - Mashup (431)`, restored via LS_PRESET.
+- After the 30s auto-advance interval, a second, different preset rendered with the label updated — repeated `milkdrop:load` over the data channel works. The preset that landed was `_Aderrasi - Wanderer in Curved Space - mash0000 - ...` — the exact preset that threw the CSP eval error in the bug report screenshot.
+NOT manually exercised (covered by unit tests only): picker click-through, user `.json` drop, garbage-json walk-forward, other bundle styles (require pointer interaction a WebView2 window doesn't expose to automation).
