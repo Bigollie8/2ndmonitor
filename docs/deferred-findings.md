@@ -218,3 +218,13 @@ That means the capability decided in item 25 (expose the saved location as a **d
 `tile-phonenotifs` surfaces a raw parse error when its ntfy topic has no messages — which for a notification tile is the *majority* state. Cause: `DeclarativeTile.tsx` throws on an empty body rather than treating it as `null` data, and the existing `data == null → TileEmpty` path would already handle it correctly for free.
 
 Host-side fix, low risk: treat an empty 200 body as `null` rather than a parse failure. Worth doing before `tile-phonenotifs` is presented as a replacement for the built-in.
+
+### 29. Verifying an endpoint with `curl` does not verify it through the app's fetch path
+
+`tile-onthisday` shipped broken and was only caught in packaged verification: its live Wikimedia `/onthisday/all/MM/DD` response is ~1.4 MB, and `broker_fetch` caps responses at 1 MiB (`FETCH_CAP`, `marketplace.rs:19` / `:511-518`). The tile renders `TileError "response too large"` — always, deterministically.
+
+It was missed because every prior tile task verified its endpoint with bare `curl`, which has no cap. The paths *did* resolve; the fetch just can't happen in the app.
+
+**Rule for future tile ports:** resolving paths against a live response is necessary but not sufficient. Also check the response **size** against `FETCH_CAP`, and prefer the narrowest endpoint variant. Wikimedia's `/onthisday/events/MM/DD` returns only what this tile uses, where `/all/` also carries `selected`, `births`, `deaths` and `holidays`.
+
+This is the third distinct case on this project where a check that bypassed the real mechanism gave a false pass — the others being `tauri dev` hiding the CSP inheritance failure, and a hand-copy into `%APPDATA%` bypassing `marketplace_install`.
