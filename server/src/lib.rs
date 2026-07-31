@@ -9,6 +9,7 @@ pub mod db;
 pub mod index;
 pub mod keys;
 pub mod manifest;
+pub mod ratings;
 pub mod state;
 pub mod submit;
 
@@ -31,6 +32,7 @@ pub fn router(state: AppState) -> Router {
         .route("/auth/whoami", get(auth::whoami))
         .route("/submissions", post(submit::submit))
         .route("/submissions/mine", get(submit::mine))
+        .route("/ratings", post(ratings::rate).get(ratings::ratings))
         .route("/admin", get(admin::page))
         .route("/admin/queue", get(admin::queue))
         .route("/admin/decide", post(admin::decide))

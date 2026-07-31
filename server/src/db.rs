@@ -3,6 +3,14 @@
 
 use rusqlite::Connection;
 
+/// `CREATE TABLE IF NOT EXISTS` is a no-op — not a schema update — against a
+/// database where the table already exists (see `migrate_add_preview_column`
+/// below for the column-on-an-existing-table case that bites). `ratings` does
+/// not have that problem: the live deployment predates ratings entirely, so
+/// there is no install anywhere with a `ratings` table already present.
+/// `IF NOT EXISTS` therefore runs the full `CREATE TABLE` body on every
+/// database this code has ever touched (fresh test DB or the live one) — a
+/// migration guard would be solving a problem that cannot occur here.
 pub fn init(conn: &Connection) {
     conn.execute_batch(
         r#"
@@ -39,6 +47,16 @@ pub fn init(conn: &Connection) {
             created_at INTEGER NOT NULL,
             preview BLOB,
             PRIMARY KEY (id, version)
+        );
+        CREATE TABLE IF NOT EXISTS ratings (
+            bundle_id TEXT NOT NULL,      -- no version: a rating is of the
+                                           -- bundle as a whole, not a release;
+                                           -- re-publishing a new version must
+                                           -- not reset the star count.
+            user_id   INTEGER NOT NULL,
+            stars     INTEGER NOT NULL,
+            rated_at  INTEGER NOT NULL,
+            PRIMARY KEY (bundle_id, user_id)
         );
         "#,
     )
