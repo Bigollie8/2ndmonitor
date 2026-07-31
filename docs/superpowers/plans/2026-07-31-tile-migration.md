@@ -92,9 +92,9 @@ git commit -m "feat(bundles): port five credentialed tiles"
 
 ---
 
-### Task 3: Retire the nine built-ins
+### Task 3: Retire the seven built-ins
 
-**Files (seven tiles, not nine — see the ruling below):** modify `app/src/state/tileMeta.ts`, `app/src/state/layout.ts`, `app/src/App.tsx` (the `renderTile` dispatch); delete the nine `*Tile.tsx` components.
+**Files (seven tiles, not nine — see the ruling below):** modify `app/src/state/tileMeta.ts`, `app/src/state/layout.ts`, `app/src/App.tsx` (the `renderTile` dispatch); delete the seven `*Tile.tsx` components.
 
 The visualizer wave's equivalent task found **seven** hardcoded references to a retiring id where the plan named two. Search before you delete.
 
@@ -102,7 +102,9 @@ The visualizer wave's equivalent task found **seven** hardcoded references to a 
 
 In `layout.ts`, map each retiring id to its bundle: `onThisDay` → `bundle:tile-onthisday`, and so on. Note the ids differ in shape — built-ins are camelCase, bundles are lowercase-hyphen — so this is a rename, not a prefix.
 
-**RULING FROM TASK 1'S REVIEW — do not retire  or .** Their bundles exist but are *additional* listings, not replacements.  pins a date at install, so it silently shows stale history under a title asserting currency;  is , so a 25-ticker watchlist becomes one ticker anywhere on the dashboard. Both are format limitations, not port errors, and the precedent already set for the 11 location-blocked and 3 state-blocked tiles applies: the built-in stays. **This task retires SEVEN tiles, not nine.**
+**RULING FROM TASK 1'S REVIEW — do not retire `onThisDay` or `stocks`.** Their bundles exist but are *additional* listings, not replacements. `tile-onthisday` pins a date at install and never displays which date, so it silently shows stale history under a title asserting currency. `tile-stocks` is `multiInstance: false`, so a 25-ticker watchlist becomes at most one ticker anywhere on the dashboard — eliminating the feature rather than reducing it. Both are format limitations, not port errors, and the precedent already set for the 11 location-blocked and 3 state-blocked tiles applies: the built-in stays.
+
+**This task therefore retires SEVEN tiles, not nine:** `randomWiki`, `launches`, `githubPrs`, `homeAssistant`, `energy`, `phoneNotifs`, `birds`.
 
 - [ ] **Step 2: Delete the built-ins**
 
@@ -130,8 +132,8 @@ git commit -m "refactor(tiles): retire the nine migrated built-ins"
 `tauri dev` is not acceptable — it serves from Vite with no injected CSP, which is how a completely broken sandbox once shipped on this branch.
 
 - [ ] **Step 1:** `npm run tauri build`, launch the release exe.
-- [ ] **Step 2:** Cold-start seeding — move the installed `tiles/` folder aside, launch, confirm the nine install on boot and appear in the content library.
-- [ ] **Step 3:** Place each of the nine on the dashboard and confirm it renders real data. **Report any that show an error or an empty state, by name.** For credentialed tiles without a credential, the correct result is the needs-setup state, not a blank or an error — confirm which you see.
+- [ ] **Step 2:** Cold-start seeding — move the installed `tiles/` folder aside, launch, confirm all nine install on boot and appear in the content library.
+- [ ] **Step 3:** Place each of the nine on the dashboard (both onThisDay variants coexist — built-in and bundle) and confirm it renders real data. **Report any that show an error or an empty state, by name.** For credentialed tiles without a credential, the correct result is the needs-setup state, not a blank or an error — confirm which you see.
 - [ ] **Step 4:** Upgrade path — hand-edit a saved layout to contain a pre-migration type such as `"onThisDay"`, launch, and confirm it resolves to the bundle or offers to install it, never a blank tile.
 - [ ] **Step 5:** Record deltas honestly against the deleted originals (`git show <commit>^:app/src/components/OnThisDayTile.tsx` etc.).
 
