@@ -1,0 +1,12 @@
+{
+  "source": {
+    "kind": "http",
+    "url": "https://ntfy.sh/{{secret.ntfy_topic}}/json?poll=1&since=latest",
+    "intervalMs": 30000
+  },
+  "view": {
+    "type": "text",
+    "body": "{{data.message}}",
+    "attribution": "{{data.title}}"
+  }
+}
