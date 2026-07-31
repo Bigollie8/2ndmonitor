@@ -345,3 +345,29 @@ test("runtime: 'data' channel — registration, dispatch, post, and init reset",
   assert.ok(resetIdx > initIdx && resetIdx < html.indexOf('new Function(msg.code)'),
     "the 'init' branch must clear dataCbs before running new bundle code");
 });
+
+test('surface: localSource runs first-party code with no broker and no bundle read', () => {
+  const tsx = readApp('src', 'components', 'viz-sandbox-surface.tsx');
+  assert.ok(tsx.includes('localSource?: { code: string'), 'localSource prop must exist');
+  // The local path must never consult the installed-bundle store...
+  const effect = tsx.slice(tsx.indexOf('localSourceRef.current'), tsx.indexOf('sendInit();'));
+  assert.ok(effect.includes('brokerRef.current = null'),
+    'first-party code gets no broker — permissions stay a marketplace-only concept');
+  // ...and the async visualizers_read arm must be skipped entirely.
+  assert.ok(/if \(local\) \{/.test(tsx), 'localSource takes a synchronous early path');
+});
+
+test("surface: 'data' dispatch sits below the ready/token gate", () => {
+  const tsx = readApp('src', 'components', 'viz-sandbox-surface.tsx');
+  const gate = tsx.indexOf('if (!readyRef.current) return;');
+  const dataBranch = tsx.indexOf("msg?.type === 'data'");
+  assert.ok(gate > 0 && dataBranch > gate,
+    'an unproven frame must not reach the onData callback');
+});
+
+test('surface: data sender refuses to post to an unready frame', () => {
+  const tsx = readApp('src', 'components', 'viz-sandbox-surface.tsx');
+  const sender = tsx.slice(tsx.indexOf('dataSenderRef.current = ('), tsx.indexOf('return true;'));
+  assert.ok(sender.includes('if (!win || !readyRef.current) return false;'),
+    'sender must gate on readyRef, mirroring sendInit and the frame pump');
+});

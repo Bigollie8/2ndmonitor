@@ -80,6 +80,7 @@ export type ScriptError = { message: string; line: number | null } | null;
 export function SandboxVizSurface({
   bundleId, accent, accent2, spectrumRef, sensitivity = 1, smoothing = 0,
   paused, track, playback, reloadKey, suppressErrorBanner, onError, maxFps,
+  localSource, onData, dataSenderRef,
 }: VizProps & {
   bundleId: string | null;
   // Deliberately no `chrome` flag: this component renders only the iframe
@@ -108,6 +109,16 @@ export function SandboxVizSurface({
    *  (not instead of) the global cap — a single shared module flag would
    *  throttle the main hero surface too, which is not the goal. */
   maxFps?: number;
+  /** First-party code to run instead of an installed bundle. When set, the
+   *  surface skips visualizers_read and manifest validation entirely and grants
+   *  NO broker permissions. MUST be a module-scope constant (stable identity). */
+  localSource?: { code: string; surface?: 'canvas' | 'dom' };
+  /** Payloads the frame sends via viz.post. Only honoured after the frame has
+   *  proven itself (readyRef) — same gate as every other message. */
+  onData?: (payload: unknown) => void;
+  /** Receives a stable sender for host→frame data payloads. Returns false while
+   *  the frame is not ready. Cleared to null on unmount. */
+  dataSenderRef?: React.MutableRefObject<((payload: unknown) => boolean) | null>;
 }) {
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const hostRef = useRef<HTMLDivElement | null>(null);
@@ -125,6 +136,14 @@ export function SandboxVizSurface({
     setScriptErrorState(e);
     onErrorRef.current?.(e);
   }, []);
+  const onDataRef = useRef(onData);
+  onDataRef.current = onData;
+  // Read via ref inside the [bundleId, reloadKey] effect: localSource is
+  // documented as a module-scope constant, so it never *changes* — the ref
+  // only dodges an exhaustive-deps entry that would re-init on every render
+  // if a caller ignored the stability requirement.
+  const localSourceRef = useRef(localSource);
+  localSourceRef.current = localSource;
 
   const readyRef = useRef(false);
   /** Count of `ready` pings dropped because the frame could not prove itself.
@@ -194,6 +213,16 @@ export function SandboxVizSurface({
     codeRef.current = '';
     brokerRef.current = null;
     surfaceRef.current = 'canvas';
+    const local = localSourceRef.current;
+    if (local) {
+      // First-party code shipped inside the app bundle: nothing to read over
+      // IPC, nothing to validate, and — deliberately — nothing brokered.
+      brokerRef.current = null;
+      surfaceRef.current = local.surface ?? 'canvas';
+      codeRef.current = local.code;
+      sendInit();
+      return () => { cancelled = true; };
+    }
     (async () => {
       try {
         const { invoke } = await import('@tauri-apps/api/core');
@@ -256,6 +285,18 @@ export function SandboxVizSurface({
     win.postMessage(msg, '*');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bundleId]);
+
+  // Host→frame payload channel for first-party surfaces (see localSource).
+  useEffect(() => {
+    if (!dataSenderRef) return;
+    dataSenderRef.current = (payload: unknown) => {
+      const win = iframeRef.current?.contentWindow;
+      if (!win || !readyRef.current) return false;
+      win.postMessage({ type: 'data', payload }, '*');
+      return true;
+    };
+    return () => { dataSenderRef.current = null; };
+  }, [dataSenderRef]);
 
   // Sandbox → host messages.
   useEffect(() => {
@@ -344,6 +385,8 @@ export function SandboxVizSurface({
           cur[msg.key] = msg.value;
           localStorage.setItem(settingsKey(bundleId), JSON.stringify(cur));
         } catch { /* ignore corrupt settings */ }
+      } else if (msg?.type === 'data') {
+        onDataRef.current?.((msg as { payload?: unknown }).payload);
       }
     };
     window.addEventListener('message', onMessage);
