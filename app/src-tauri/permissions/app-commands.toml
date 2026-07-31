@@ -93,10 +93,9 @@ commands.allow = [
   "app_send_hotkey",
 
   # market — outbound HTTP for the built-in data tiles
-  # (src/state/{stocks,tides,github,opensky}.ts).
+  # (src/state/{stocks,tides,opensky}.ts).
   "fetch_stock_quotes",
   "fetch_tide_predictions",
-  "fetch_github_prs",
   "fetch_aircraft_states",
 
   # foreground / docker (src/state/{foreground,docker}.ts).

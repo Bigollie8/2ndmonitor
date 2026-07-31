@@ -80,7 +80,6 @@ pub fn run() {
             actions::app_send_hotkey,
             market::fetch_stock_quotes,
             market::fetch_tide_predictions,
-            market::fetch_github_prs,
             market::fetch_aircraft_states,
             foreground::foreground_get,
             docker_tile::docker_list_containers,
