@@ -94,7 +94,7 @@ git commit -m "feat(bundles): port five credentialed tiles"
 
 ### Task 3: Retire the nine built-ins
 
-**Files:** modify `app/src/state/tileMeta.ts`, `app/src/state/layout.ts`, `app/src/App.tsx` (the `renderTile` dispatch); delete the nine `*Tile.tsx` components.
+**Files (seven tiles, not nine — see the ruling below):** modify `app/src/state/tileMeta.ts`, `app/src/state/layout.ts`, `app/src/App.tsx` (the `renderTile` dispatch); delete the nine `*Tile.tsx` components.
 
 The visualizer wave's equivalent task found **seven** hardcoded references to a retiring id where the plan named two. Search before you delete.
 
@@ -102,9 +102,11 @@ The visualizer wave's equivalent task found **seven** hardcoded references to a 
 
 In `layout.ts`, map each retiring id to its bundle: `onThisDay` → `bundle:tile-onthisday`, and so on. Note the ids differ in shape — built-ins are camelCase, bundles are lowercase-hyphen — so this is a rename, not a prefix.
 
+**RULING FROM TASK 1'S REVIEW — do not retire  or .** Their bundles exist but are *additional* listings, not replacements.  pins a date at install, so it silently shows stale history under a title asserting currency;  is , so a 25-ticker watchlist becomes one ticker anywhere on the dashboard. Both are format limitations, not port errors, and the precedent already set for the 11 location-blocked and 3 state-blocked tiles applies: the built-in stays. **This task retires SEVEN tiles, not nine.**
+
 - [ ] **Step 2: Delete the built-ins**
 
-Remove the nine from `TILE_META`, `ALL_TILE_TYPES`, both default-rect maps and the `renderTile` dispatch, and delete their components. `TILE_META` is `Record<BuiltinTileType, TileMeta>`, so the compiler refuses an incomplete table — let `tsc -b` find every site.
+Remove the seven from `TILE_META`, `ALL_TILE_TYPES`, both default-rect maps and the `renderTile` dispatch, and delete their components. `TILE_META` is `Record<BuiltinTileType, TileMeta>`, so the compiler refuses an incomplete table — let `tsc -b` find every site.
 
 - [ ] **Step 3: Seed**
 
