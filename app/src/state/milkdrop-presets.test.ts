@@ -1,11 +1,19 @@
 import test from 'node:test';
 import assert from 'node:assert';
-import { readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { readFileSync, readdirSync } from 'node:fs';
+import { dirname, join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { mergePresetLibrary, resolveLoadSource } from './milkdrop-presets';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+
+// Static form (`from 'butterchurn'`) as well as the dynamic one, single- or
+// double-quoted. Deliberately does NOT match the sanctioned subpath ?raw
+// specifiers in components/milkdrop-code.ts (e.g.
+// 'butterchurn/lib/butterchurn.min.js?raw') — those aren't bare `butterchurn`
+// or `butterchurn-presets` module specifiers, they're raw-text asset imports.
+const BUTTERCHURN_MODULE_IMPORT =
+  /from\s+['"](butterchurn|butterchurn-presets)['"]|import\s*\(\s*['"](butterchurn|butterchurn-presets)['"]\s*\)/;
 
 test('bundled first (sorted), then user (as given), keys unique', () => {
   const lib = mergePresetLibrary(
@@ -65,7 +73,7 @@ const readComponent = () =>
 
 test('milkdrop host: renders through the sandbox surface, not a direct butterchurn import', () => {
   const tsx = readComponent();
-  assert.ok(!tsx.includes("import('butterchurn')"), 'butterchurn must not load in the app document (CSP)');
+  assert.ok(!BUTTERCHURN_MODULE_IMPORT.test(tsx), 'butterchurn must not load in the app document (CSP)');
   assert.ok(tsx.includes('<SandboxVizSurface'), 'rendering goes through the sandbox surface');
   assert.ok(tsx.includes('localSource={MILKDROP_LOCAL_SOURCE}'), 'frame code passed as a stable module constant');
   assert.ok(/const MILKDROP_LOCAL_SOURCE = \{ code: MILKDROP_FRAME_CODE \}/.test(tsx),
@@ -94,4 +102,36 @@ test('milkdrop host: hover chrome works over an iframe (pointer shield)', () => 
   // are unreachable. The visualizer needs no pointer input, so a full-cover
   // div above the iframe costs nothing.
   assert.ok(tsx.includes('data-pointer-shield'), 'a full-cover div must sit above the iframe');
+});
+
+test('CSP regression sweep: no app-document module imports butterchurn as a module', () => {
+  // The guard above only reads viz-milkdrop.tsx; the bug it catches (loading
+  // butterchurn in the app document, where CSP forbids the new Function()
+  // calls butterchurn's preset compiler needs) could be reintroduced from any
+  // module under src, not just this one. Walk the whole tree instead of
+  // trusting one file to stay the sole offender.
+  const srcRoot = join(__dirname, '..');
+  const offenders: string[] = [];
+  const walk = (dir: string) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const full = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        walk(full);
+        continue;
+      }
+      if (!/\.tsx?$/.test(entry.name)) continue;
+      if (entry.name.endsWith('.test.ts') || entry.name.endsWith('.test.tsx')) continue;
+      // The sanctioned path: raw-text asset imports of butterchurn's built
+      // JS, executed only inside the sandboxed iframe (see that file's own
+      // header comment). Its specifiers are subpaths ending `?raw`, which
+      // BUTTERCHURN_MODULE_IMPORT does not match anyway — skipped here mainly
+      // so a future edit to that file doesn't need to fight this test too.
+      const rel = relative(srcRoot, full).split(sep).join('/');
+      if (rel === 'components/milkdrop-code.ts') continue;
+      const text = readFileSync(full, 'utf8');
+      if (BUTTERCHURN_MODULE_IMPORT.test(text)) offenders.push(rel);
+    }
+  };
+  walk(srcRoot);
+  assert.deepEqual(offenders, [], `butterchurn must not load in the app document (CSP): ${offenders.join(', ')}`);
 });

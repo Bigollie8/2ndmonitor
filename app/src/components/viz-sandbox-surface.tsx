@@ -461,6 +461,10 @@ export function SandboxVizSurface({
           background: 'rgba(40,8,10,0.9)', border: '1px solid rgba(255,80,80,0.4)', borderRadius: 8,
           fontSize: 11, color: 'rgba(255,180,180,0.95)', fontFamily: '"JetBrains Mono", ui-monospace, monospace',
           display: 'flex', gap: 10, alignItems: 'baseline',
+          // Must paint above a first-party host's pointer shield (viz-milkdrop.tsx's
+          // `data-pointer-shield` sits at zIndex 1) or the ✕ below is visible but
+          // unclickable. Milkdrop chrome is 2, the Scripted picker overlay is 5.
+          zIndex: 3,
         }}>
           <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis' }}>
             {scriptError.line != null ? `line ${scriptError.line}: ` : ''}{scriptError.message}
