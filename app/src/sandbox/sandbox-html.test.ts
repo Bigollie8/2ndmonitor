@@ -112,7 +112,7 @@ test('the served document carries a token placeholder the host can check', () =>
   assert.ok(rs.includes('SANDBOX_HTML.replace(TOKEN_PLACEHOLDER, token())'),
     'the handler must substitute the live token into every response');
   assert.ok(rs.includes('webview.label() != "main"'),
-    'sandbox_token must be readable only by the main webview: app commands are not ACL-gated without an app ACL manifest, so a webtile page could otherwise read it');
+    'sandbox_token must be readable only by the main webview — the inner gate, below the app ACL manifest that scopes every app command to the main webview');
 });
 
 test('the host refuses to init a frame that cannot echo the token', () => {

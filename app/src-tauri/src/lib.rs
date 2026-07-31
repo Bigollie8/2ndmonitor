@@ -1,3 +1,13 @@
+//! # Command ACL
+//!
+//! Every command registered in [`run`]'s `invoke_handler` must also appear in
+//! `permissions/app-commands.toml`, which is what makes Tauri's ACL apply to
+//! app-defined commands at all (see the long comment at the top of that file).
+//! A command missing from it is rejected in *every* context with
+//! "Command <name> not allowed by ACL"; a command present in the TOML but no
+//! longer registered is dead weight in the allowlist. The test at the bottom of
+//! this file pins the two lists together so neither can drift silently.
+
 mod actions;
 mod audio;
 mod claude;
@@ -140,4 +150,100 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod acl_tests {
+    /// The `invoke_handler` list, read out of this file's own source. There is
+    /// no runtime accessor for it — `generate_handler!` expands to a closure —
+    /// so the source text is the only place both lists can be compared.
+    fn registered_commands() -> Vec<String> {
+        let src = include_str!("lib.rs");
+        let body = src
+            .split_once("tauri::generate_handler![")
+            .expect("invoke_handler list present")
+            .1
+            .split_once(']')
+            .expect("invoke_handler list is terminated")
+            .0;
+        body.lines()
+            .map(|l| l.trim().trim_end_matches(',').trim())
+            .filter(|l| !l.is_empty() && !l.starts_with("//"))
+            .map(|l| l.rsplit("::").next().unwrap().to_string())
+            .collect()
+    }
+
+    /// The `commands.allow` array of `permissions/app-commands.toml`, likewise
+    /// read as text — the crate has no TOML parser and pulling one in as a
+    /// dev-dependency for six lines of extraction is not worth it.
+    fn allowlisted_commands() -> Vec<String> {
+        let src = include_str!("../permissions/app-commands.toml");
+        let body = src
+            .split_once("commands.allow = [")
+            .expect("commands.allow array present")
+            .1
+            .split_once(']')
+            .expect("commands.allow array is terminated")
+            .0;
+        body.lines()
+            .map(str::trim)
+            .filter(|l| !l.starts_with('#'))
+            .filter_map(|l| l.split('"').nth(1))
+            .map(str::to_string)
+            .collect()
+    }
+
+    #[test]
+    fn every_registered_command_is_in_the_app_acl_manifest() {
+        let registered = registered_commands();
+        assert!(
+            registered.len() > 40,
+            "extraction is broken, not the allowlist: parsed only {} commands",
+            registered.len()
+        );
+        let allowed = allowlisted_commands();
+
+        let missing: Vec<_> = registered
+            .iter()
+            .filter(|c| !allowed.contains(c))
+            .collect();
+        assert!(
+            missing.is_empty(),
+            "registered but not allowlisted in permissions/app-commands.toml — \
+             these would be rejected everywhere as \"not allowed by ACL\": {missing:?}"
+        );
+
+        let stale: Vec<_> = allowed
+            .iter()
+            .filter(|c| !registered.contains(c))
+            .collect();
+        assert!(
+            stale.is_empty(),
+            "allowlisted but no longer registered in invoke_handler: {stale:?}"
+        );
+    }
+
+    #[test]
+    fn the_app_acl_manifest_is_scoped_to_the_main_webview_only() {
+        // The manifest alone only turns enforcement ON. What actually keeps a
+        // remote page in the `browser-tile` child webview out is the capability:
+        // `webviews` (not `windows`, which `resolve_access` treats as an OR and
+        // which would re-admit every webview of the main window) plus a local-
+        // only execution context (no `remote` block).
+        let cap: serde_json::Value =
+            serde_json::from_str(include_str!("../capabilities/app-commands.json"))
+                .expect("capability file is valid JSON");
+        assert_eq!(cap["webviews"], serde_json::json!(["main"]), "must be webview-scoped");
+        assert!(
+            cap.get("windows").is_none(),
+            "a `windows` entry would also match the browser-tile child webview, \
+             because resolve_access matches windows OR webviews"
+        );
+        assert_eq!(cap["local"], serde_json::json!(true));
+        assert!(
+            cap.get("remote").is_none(),
+            "granting a remote origin would undo the whole fix"
+        );
+        assert_eq!(cap["permissions"], serde_json::json!(["allow-app-commands"]));
+    }
 }

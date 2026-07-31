@@ -142,11 +142,14 @@ pub fn token() -> &'static str {
 /// Hands the frontend the value it must see echoed in `ready` before it will
 /// init a frame.
 ///
-/// Restricted to the main webview. App-defined commands are not ACL-gated
-/// unless the app ships an ACL manifest (`tauri-2.10.3/src/webview/mod.rs`:
-/// *"we only check ACL on plugin commands or if the app defined its ACL
-/// manifest"*), so without this check any remote page mounted as a webtile
-/// could read the token over IPC.
+/// Restricted to the main webview, belt and braces. The app now ships an ACL
+/// manifest (`permissions/app-commands.toml`) and every app command is scoped
+/// to `webviews: ["main"]` from a local origin, so a remote page mounted as a
+/// webtile is already refused before it reaches this function. Keep the check
+/// anyway: it is the inner gate, it does not depend on the capability file
+/// staying correct, and it is what held the line before the manifest existed
+/// (`tauri-2.10.3/src/webview/mod.rs`: *"we only check ACL on plugin commands
+/// or if the app defined its ACL manifest"* — the app defined none).
 #[tauri::command]
 pub fn sandbox_token<R: Runtime>(webview: tauri::Webview<R>) -> Result<String, String> {
     if webview.label() != "main" {
