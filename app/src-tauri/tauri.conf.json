@@ -34,7 +34,7 @@
         "connect-src": "'self' ipc: http://ipc.localhost https: wss: ws: http: ",
         "media-src": "'self' https:",
         "object-src": "'none'",
-        "frame-src": "'none'"
+        "frame-src": "http://vizsandbox.localhost"
       },
       "devCsp": null
     }

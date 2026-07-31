@@ -1,0 +1,179 @@
+<!doctype html>
+<html><head>
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval'; style-src 'unsafe-inline'">
+<style>html,body{margin:0;padding:0;background:#000;overflow:hidden;width:100%;height:100%}canvas{display:block;width:100%;height:100%}</style>
+</head><body>
+<canvas id="c"></canvas>
+<script>
+'use strict';
+// Drop the WebView2 host-message transport before any bundle code can see it.
+//
+// WebView2 has no per-frame option for AddScriptToExecuteOnDocumentCreated
+// (wry-0.54.4 src/webview2/mod.rs), so Tauri's initialization scripts run in
+// EVERY frame regardless of the for_main_frame_only flag it sets. This frame
+// therefore starts with window.__TAURI_INTERNALS__, window.isTauri and
+// window.chrome.webview defined. Those are all non-configurable except
+// chrome.webview, which is the one that actually matters: it is the transport
+// __TAURI_INTERNALS__.invoke posts through. Deleting it makes invoke throw.
+//
+// This is defence in depth, not the boundary. Two facts, both verified in the
+// packaged build (task-7b): (1) ICoreWebView2::WebMessageReceived fires only
+// for the main frame, so a sub-frame's postMessage never reaches Rust at all
+// - a secret_set invoked from here left the store untouched while the same
+// call from the main frame wrote it; (2) if that ever changed, Tauri's
+// is_local_url (tauri-2.10.3 src/webview/mod.rs) classifies ANY registered
+// custom-scheme URL as Origin::Local on Windows, including this frame's - so
+// the ACL would grant it the main window's full command surface. (1) is an
+// implementation detail of the current WebView2; this delete is what stops
+// (2) from becoming reachable if (1) ever stops holding. It is not airtight:
+// a nested about:blank iframe would get a fresh chrome.webview, so treat the
+// opaque origin and the empty BROKER_COMMANDS as the real boundary.
+try { if (window.chrome) { delete window.chrome.webview; } } catch (e) { /* already gone */ }
+
+function __resample(src, n, out) {
+  var dst = (out && out.length === n) ? out : new Float32Array(n);
+  var len = src ? src.length : 0;
+  if (!len) { dst.fill(0); return dst; }
+  for (var i = 0; i < n; i++) {
+    var v = src[Math.floor((i / n) * len)];
+    dst[i] = v === undefined ? 0 : v;
+  }
+  return dst;
+}
+
+function __clampBinCount(n) {
+  return Math.max(1, Math.min(4096, n | 0));
+}
+
+var frameCbs = [];
+var settingsCache = {};
+var lastErrorAt = 0;
+var canvas = document.getElementById('c');
+var ctx2d = null;
+var userGotContext = false;
+var lastSpectrum = null;
+var binCache = {};
+
+// Broker RPC: requests go up as {type:'rpc', rpcId, rpc, ...}; the host
+// consults the installed manifest's permissions and answers with
+// {type:'rpc:result', rpcId, ok, value|error}. Undeclared capabilities are
+// denied host-side — nothing here grants anything.
+var rpcSeq = 0;
+var rpcPending = {};
+function rpc(payload) {
+  return new Promise(function (resolve, reject) {
+    var rpcId = ++rpcSeq;
+    rpcPending[rpcId] = { resolve: resolve, reject: reject };
+    payload.type = 'rpc';
+    payload.rpcId = rpcId;
+    parent.postMessage(payload, '*');
+  });
+}
+
+// The API surface user code sees. Frozen so scripts can't confuse each other
+// across hot reloads by monkey-patching.
+var viz = Object.freeze({
+  canvas: canvas,
+  bins: function (n) {
+    var count = __clampBinCount(n);
+    if (!binCache[count]) binCache[count] = new Float32Array(count);
+    return __resample(lastSpectrum, count, binCache[count]);
+  },
+  on: function (name, cb) {
+    if (name === 'frame' && typeof cb === 'function') frameCbs.push(cb);
+  },
+  settings: Object.freeze({
+    get: function (key) { return settingsCache[key]; },
+    set: function (key, value) {
+      settingsCache[key] = value;
+      parent.postMessage({ type: 'settings:set', key: key, value: value }, '*');
+    },
+  }),
+  net: Object.freeze({
+    fetch: function (url) { return rpc({ rpc: 'net.fetch', url: String(url) }); },
+  }),
+  tauri: Object.freeze({
+    invoke: function (command, args) {
+      return rpc({ rpc: 'tauri.invoke', command: String(command), args: args });
+    },
+  }),
+});
+// Expose for user code (new Function scope sees globals only).
+window.viz = viz;
+
+function reportError(e) {
+  var now = Date.now();
+  if (now - lastErrorAt < 1000) return; // throttle per-frame error spam
+  lastErrorAt = now;
+  var line = null;
+  if (e && e.stack) {
+    var m = /<anonymous>:(\d+):/.exec(e.stack);
+    if (m) line = Math.max(1, parseInt(m[1], 10) - 2); // new Function wraps in 2 header lines
+  }
+  parent.postMessage({ type: 'error', message: String(e && e.message ? e.message : e), line: line }, '*');
+}
+
+window.addEventListener('error', function (ev) { reportError(ev.error || ev.message); });
+
+function applySize(size) {
+  if (!size) return;
+  if (canvas.width !== size.width) canvas.width = size.width;
+  if (canvas.height !== size.height) canvas.height = size.height;
+}
+
+window.addEventListener('message', function (ev) {
+  // Only the embedder drives this runtime. Deliberately a SOURCE check, not
+  // an origin check: this document is sandboxed without allow-same-origin,
+  // so nothing that does not already hold a handle to it can reach it, and
+  // the host origin differs between dev (the Vite dev server) and a packaged
+  // build (the tauri asset origin) - a static document cannot hardcode it.
+  // parent is exactly one window and is not forgeable from script elsewhere.
+  if (ev.source !== parent) return;
+  var msg = ev.data || {};
+  if (msg.type === 'rpc:result') {
+    var pending = rpcPending[msg.rpcId];
+    if (pending) {
+      delete rpcPending[msg.rpcId];
+      if (msg.ok) pending.resolve(msg.value);
+      else pending.reject(new Error(msg.error || 'rpc denied'));
+    }
+  } else if (msg.type === 'init') {
+    frameCbs = [];
+    settingsCache = msg.settings || {};
+    applySize(msg.size);
+    try {
+      new Function(msg.code)();
+    } catch (e) {
+      reportError(e);
+    }
+  } else if (msg.type === 'frame') {
+    applySize(msg.size);
+    if (!frameCbs.length) return;
+    // Lazily grab a 2D context unless user code already took webgl/webgl2.
+    if (!ctx2d && !userGotContext) {
+      try { ctx2d = canvas.getContext('2d'); } catch (e) { /* user took webgl */ }
+      userGotContext = true;
+    }
+    lastSpectrum = msg.spectrum;
+    var payload = {
+      ctx: ctx2d,
+      spectrum: msg.spectrum,
+      waveform: msg.waveform,
+      bands: msg.bands,
+      onset: msg.onset,
+      level: msg.level,
+      dt: msg.dt,
+      size: msg.size,
+      theme: msg.theme,
+      track: msg.track,
+      playback: msg.playback || null,
+    };
+    for (var i = 0; i < frameCbs.length; i++) {
+      try { frameCbs[i](payload); } catch (e) { reportError(e); }
+    }
+  }
+});
+
+parent.postMessage({ type: 'ready' }, '*');
+</script>
+</body></html>

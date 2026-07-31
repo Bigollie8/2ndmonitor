@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useAnimateGate, makeSpectrumReader, type VizProps } from './viz';
 import { useWaveformRef } from '../state/waveform';
 import { paceFrame, type PaceState } from '../state/framePace';
-import { buildSandboxHtml, SANDBOX_ATTR } from '../sandbox/sandbox-html';
+import { SANDBOX_ATTR, SANDBOX_SRC } from '../sandbox/sandbox-html';
 import { validateManifest } from '../sandbox/manifest';
 import type { InitMessage, SandboxToHost } from '../sandbox/manifest';
 import { buildFrameMessage, toVizPlayback } from '../sandbox/frame';
@@ -76,6 +76,31 @@ export function SandboxVizSurface({
   }, []);
 
   const readyRef = useRef(false);
+  // MUST be a stable callback, not an inline arrow. An inline arrow is a new
+  // function identity every render, so React detaches it (calls it with null)
+  // and re-attaches it on EVERY re-render — and each of those calls sees
+  // `iframeRef.current !== el` and clears readyRef. The frame pump and
+  // sendInit both bail on `!readyRef.current`, so the surface rendered for
+  // roughly one render cycle after `ready` and then froze, and a `reloadKey`
+  // bump (the manual reload button and the `visualizers:changed` hot-reload
+  // signal) could NEVER re-init: bumping reloadKey re-renders first, which
+  // cleared readyRef before the effect got to call sendInit.
+  //
+  // Pre-existing, not introduced by the srcdoc→src move: verified by running
+  // the pre-change srcdoc build in `tauri dev` and observing the identical
+  // dead pump (zero messages reaching the frame). It bit the Scripted
+  // authoring surface hardest because ScriptedSurface re-renders often
+  // (folder list, picker, editor, error state); `bundle:` styles re-render
+  // rarely, which is why those animated even before this fix.
+  //
+  // A stable callback still resets readyRef on a genuine remount: `key` is
+  // bundleId, so switching bundles mounts a NEW iframe element and React
+  // calls this with null then the new element — `iframeRef.current !== el`
+  // still holds exactly when it should.
+  const attachIframe = useCallback((el: HTMLIFrameElement | null) => {
+    if (iframeRef.current !== el) readyRef.current = false;
+    iframeRef.current = el;
+  }, []);
   const codeRef = useRef<string>('');
   const brokerRef = useRef<ReturnType<typeof makeBrokerHandler> | null>(null);
   const themeRef = useRef({ accent, accent2 });
@@ -165,7 +190,18 @@ export function SandboxVizSurface({
   // Sandbox → host messages.
   useEffect(() => {
     const onMessage = (e: MessageEvent) => {
+      // Identity check against the live frame's own window: strictly stronger
+      // than an origin string comparison, and unaffected by the srcdoc→src
+      // move. Note the frame is still `sandbox="allow-scripts"` with no
+      // allow-same-origin, so it has an opaque origin and `e.origin` is the
+      // literal "null" — NOT the SANDBOX_ORIGIN the document was fetched from
+      // (verified in the packaged build, see task-7b report). The extra
+      // e.origin assertion below therefore doubles as a tripwire: if anyone
+      // ever adds allow-same-origin, the frame gains a real origin, this
+      // check starts rejecting, and the surface fails loudly instead of
+      // quietly running visualizer code with storage and IPC reachable.
       if (e.source !== iframeRef.current?.contentWindow) return;
+      if (e.origin !== 'null') return;
       const msg = e.data as SandboxToHost | { type: 'rpc'; rpcId: number; rpc: RpcRequest['rpc']; url?: string; command?: string; args?: unknown };
       if (msg?.type === 'rpc') {
         // Broker-mediated capability request from an installed bundle.
@@ -240,12 +276,17 @@ export function SandboxVizSurface({
       {bundleId && (
         <iframe
           key={bundleId}
-          ref={(el) => {
-            if (iframeRef.current !== el) readyRef.current = false;
-            iframeRef.current = el;
-          }}
+          ref={attachIframe}
+          // `src`, NOT `srcDoc`: a srcdoc frame inherits the embedder's CSP
+          // policy container and the two policies intersect, so in a packaged
+          // build (where Tauri injects script-src 'self') the sandbox's own
+          // 'unsafe-inline'/'unsafe-eval' were cancelled out and the runtime
+          // shim never ran. A fetched document carries only its own policy.
+          // `sandbox="allow-scripts"` (no allow-same-origin) still applies to
+          // a real URL, so the frame remains an opaque origin. See
+          // src/sandbox/sandbox-html.ts and src-tauri/src/sandbox.rs.
           sandbox={SANDBOX_ATTR}
-          srcDoc={buildSandboxHtml()}
+          src={SANDBOX_SRC}
           title="scripted visualizer"
           style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', border: 0, background: '#000' }}
         />

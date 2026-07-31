@@ -1,5 +1,5 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// Sandbox iframe srcdoc for scripted visualizers.
+// Sandbox iframe document for scripted visualizers.
 //
 // Isolation model (phase-3 marketplace tiles reuse this exact runtime):
 //   - iframe attribute `sandbox="allow-scripts"` — no allow-same-origin, so
@@ -9,11 +9,57 @@
 //     <img>/<script src> all die at the policy layer. Only inline script and
 //     style (the shim itself + user code via new Function) are allowed.
 //   - The ONLY channel in or out is postMessage (see manifest.ts protocol).
+//
+// DELIVERY: this document is served by a Rust custom-URI-scheme protocol
+// (see src-tauri/src/sandbox.rs) and loaded via the iframe's `src`, NOT via
+// `srcdoc`. That is load-bearing, not cosmetic:
+//
+//   `about:srcdoc` (like about:blank, blob: and data:) is a *local scheme*:
+//   per CSP spec its policy container is INHERITED from the embedder, and
+//   multiple policies combine by intersection. In a packaged build Tauri
+//   injects `script-src 'self'` on the app document, so inside a srcdoc
+//   frame the effective policy became 'self' ∩ ('unsafe-inline'
+//   'unsafe-eval') = nothing, and the inline runtime shim below never
+//   executed at all. `tauri dev` hid this completely (Tauri injects no CSP
+//   against a Vite-served document), so every scripted visualizer was dead
+//   in every packaged build the project ever produced and alive in dev.
+//
+//   A document fetched from a real URL does not inherit the embedder's
+//   policy container — it gets exactly the `Content-Security-Policy` header
+//   its own response carries. Hence the protocol handler, which serves this
+//   HTML with SANDBOX_CSP as a real header. The iframe keeps
+//   sandbox="allow-scripts" (no allow-same-origin), so it is still an
+//   opaque origin: a real `src` does not change that.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { BINS_SHIM_SRC, CLAMP_SHIM_SRC } from './bins';
 
 export const SANDBOX_ATTR = 'allow-scripts';
+
+/** Custom URI scheme registered in Rust (src-tauri/src/sandbox.rs). Must stay
+ *  a single valid hostname label: on Windows/Android wry cannot register a
+ *  non-standard scheme with WebView2 at all, so it rewrites custom protocols
+ *  to `http://<scheme>.localhost/...` and intercepts them with a
+ *  WebResourceRequested filter (wry-0.54.4 src/custom_protocol_workaround.rs
+ *  + src/webview2/mod.rs::attach_custom_protocol_handler). */
+export const SANDBOX_SCHEME = 'vizsandbox';
+
+/** The frame's real origin, as WebView2 sees it. This exact string must also
+ *  appear as the `frame-src` value in src-tauri/tauri.conf.json — the app's
+ *  own CSP otherwise blocks the frame from loading. A test below pins the two
+ *  together.
+ *
+ *  Windows form. macOS/Linux would be `vizsandbox://localhost`; the bundle
+ *  targets only `nsis`, and tauri.conf.json's CSP is a static string that can
+ *  encode exactly one form, so this is deliberately the Windows one. A future
+ *  macOS build will see the frame blocked by frame-src — loudly, in the
+ *  console — rather than silently misbehave. */
+export const SANDBOX_ORIGIN = `http://${SANDBOX_SCHEME}.localhost`;
+
+/** What the iframe's `src` points at. Any path works — the protocol handler
+ *  serves the same static document for every path — but a stable one keeps
+ *  the WebView2 cache and any devtools inspection predictable. */
+export const SANDBOX_SRC = `${SANDBOX_ORIGIN}/index.html`;
 // 'unsafe-eval' is required for the `new Function(msg.code)()` call below that
 // runs the bundle's own top-level code — see the isolation-model comment
 // above, which already documented "user code via new Function" as the
@@ -30,10 +76,33 @@ export const SANDBOX_ATTR = 'allow-scripts';
 export const SANDBOX_CSP = "default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval'; style-src 'unsafe-inline'";
 
 /** The runtime shim. Kept as a plain string (not a bundled module) so the
- *  srcdoc is fully self-contained and inspectable. See manifest.ts for the
- *  message shapes. */
+ *  served document is fully self-contained and inspectable. See manifest.ts
+ *  for the message shapes. */
 const RUNTIME = String.raw`
 'use strict';
+// Drop the WebView2 host-message transport before any bundle code can see it.
+//
+// WebView2 has no per-frame option for AddScriptToExecuteOnDocumentCreated
+// (wry-0.54.4 src/webview2/mod.rs), so Tauri's initialization scripts run in
+// EVERY frame regardless of the for_main_frame_only flag it sets. This frame
+// therefore starts with window.__TAURI_INTERNALS__, window.isTauri and
+// window.chrome.webview defined. Those are all non-configurable except
+// chrome.webview, which is the one that actually matters: it is the transport
+// __TAURI_INTERNALS__.invoke posts through. Deleting it makes invoke throw.
+//
+// This is defence in depth, not the boundary. Two facts, both verified in the
+// packaged build (task-7b): (1) ICoreWebView2::WebMessageReceived fires only
+// for the main frame, so a sub-frame's postMessage never reaches Rust at all
+// - a secret_set invoked from here left the store untouched while the same
+// call from the main frame wrote it; (2) if that ever changed, Tauri's
+// is_local_url (tauri-2.10.3 src/webview/mod.rs) classifies ANY registered
+// custom-scheme URL as Origin::Local on Windows, including this frame's - so
+// the ACL would grant it the main window's full command surface. (1) is an
+// implementation detail of the current WebView2; this delete is what stops
+// (2) from becoming reachable if (1) ever stops holding. It is not airtight:
+// a nested about:blank iframe would get a fresh chrome.webview, so treat the
+// opaque origin and the empty BROKER_COMMANDS as the real boundary.
+try { if (window.chrome) { delete window.chrome.webview; } } catch (e) { /* already gone */ }
 ` + BINS_SHIM_SRC + CLAMP_SHIM_SRC + String.raw`
 var frameCbs = [];
 var settingsCache = {};
@@ -112,6 +181,13 @@ function applySize(size) {
 }
 
 window.addEventListener('message', function (ev) {
+  // Only the embedder drives this runtime. Deliberately a SOURCE check, not
+  // an origin check: this document is sandboxed without allow-same-origin,
+  // so nothing that does not already hold a handle to it can reach it, and
+  // the host origin differs between dev (the Vite dev server) and a packaged
+  // build (the tauri asset origin) - a static document cannot hardcode it.
+  // parent is exactly one window and is not forgeable from script elsewhere.
+  if (ev.source !== parent) return;
   var msg = ev.data || {};
   if (msg.type === 'rpc:result') {
     var pending = rpcPending[msg.rpcId];
@@ -160,6 +236,20 @@ window.addEventListener('message', function (ev) {
 parent.postMessage({ type: 'ready' }, '*');
 `;
 
+/** The sandbox document. Fully static — the bundle's code arrives later over
+ *  postMessage `init`, never baked in — so the Rust protocol handler can serve
+ *  one fixed byte string for every instance and every visualizer.
+ *
+ *  This is the single source of truth. `npm run gen:sandbox` (run
+ *  automatically by `predev`/`prebuild`) writes the result to
+ *  src-tauri/sandbox.html, which sandbox.rs `include_str!`s; the generated
+ *  file is committed and a test below fails if it drifts from this function.
+ *
+ *  The `<meta>` CSP is kept alongside the response header: the header is what
+ *  actually matters now (meta in a srcdoc frame was the thing that never
+ *  worked), but two identical policies intersect to the same policy, so it
+ *  costs nothing and keeps the document self-describing if it is ever read
+ *  outside the protocol handler. */
 export function buildSandboxHtml(): string {
   return [
     '<!doctype html>',

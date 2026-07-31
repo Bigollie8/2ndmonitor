@@ -4,7 +4,10 @@
   "version": "0.4.0",
   "type": "module",
   "scripts": {
+    "gen:sandbox": "tsx scripts/gen-sandbox-html.ts",
+    "predev": "npm run gen:sandbox",
     "dev": "vite",
+    "prebuild": "npm run gen:sandbox",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "test": "tsx --test src/**/*.test.ts",

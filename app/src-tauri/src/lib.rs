@@ -11,6 +11,7 @@ mod mixer;
 mod nowplaying;
 mod marketplace;
 mod presets;
+mod sandbox;
 mod secrets;
 mod seed;
 mod tiles;
@@ -43,6 +44,13 @@ pub fn run() {
             None,
         ))
         .plugin(tauri_plugin_dialog::init())
+        // Serves the scripted-visualizer sandbox document with its own CSP
+        // header. Must be registered before `build()`: the protocol table is
+        // copied onto each pending webview at creation time
+        // (tauri-2.10.3/src/manager/webview.rs::prepare_pending_webview), so a
+        // scheme added later is never attached to the main window.
+        // See sandbox.rs for why srcdoc could not work in a packaged build.
+        .register_uri_scheme_protocol(sandbox::SCHEME, sandbox::handle)
         .invoke_handler(tauri::generate_handler![
             webtiles::position_tile,
             webtiles::close_tile,
