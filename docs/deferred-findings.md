@@ -160,3 +160,23 @@ Note the app's marketplace client hard-requires `https://`, so there is no LAN-U
 The built-in is deliberately untouched, so both remain selectable and the comparison is still available. Earlier canvas ports had known, accepted deltas (see the MilkDrop project notes), so expect differences and judge them rather than assuming identity.
 
 Everything the smoke suite proves is that the bundle *runs and builds elements* — `fakeElement` records `scaleY(NaN)` as cleanly as a real value.
+
+### 22. MilkDrop presets that need runtime `eval` are broken in packaged builds
+
+Found during the visualizer migration's packaged-build verification. Selecting the preset "Aderrasi + Geiss - Airhandler" in fullscreen focus dumps raw CSP error text onto the canvas before recovering.
+
+Cause: `VizMilkdrop` runs in the **main document**, not the sandbox. The app's CSP is `script-src 'self'` with no `'unsafe-eval'`, and butterchurn compiles some presets at runtime via `new Function`. So any preset requiring runtime compilation fails.
+
+Same family as the sandbox CSP bug fixed in spec C7b, and it means an unknown fraction of the shipped preset pack simply does not work in a packaged build. Note the fix is **not** to add `'unsafe-eval'` to the app CSP — that hands the whole application the capability the sandbox exists to contain. The shape of the fix is the same one C7b used: give MilkDrop its own CSP context, or pre-compile presets at build time.
+
+### 23. The visualizer empty state's recovery hint points at a dead end
+
+The empty state ("No visualizers installed") tells the user to go via Configure → Content Library. Configure opens the **Gallery**, which when the catalog is empty has no route onward to the Content Library.
+
+The primary recovery, "Restore all defaults", genuinely works — so this is a misleading hint rather than a trap, but it points at exactly the wrong place for a user who has removed everything.
+
+### 24. The pending visualizer frame renders nothing for ~1s on first run
+
+The one-way seed latch correctly holds the surface at `pending` until seeding settles, avoiding a MilkDrop mount-and-teardown. But `pending` renders `null`, so a fresh install shows full dashboard chrome around a completely black hero panel for roughly a second (observed at +988ms, resolved by +5.8s). A skeleton or a quiet "preparing visualizers…" would be better than a black rectangle.
+
+Related: the Settings → Style select shows "MilkDrop" during that window even when the saved value is something else.
