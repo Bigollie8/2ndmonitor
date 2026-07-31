@@ -180,3 +180,20 @@ The primary recovery, "Restore all defaults", genuinely works — so this is a m
 The one-way seed latch correctly holds the surface at `pending` until seeding settles, avoiding a MilkDrop mount-and-teardown. But `pending` renders `null`, so a fresh install shows full dashboard chrome around a completely black hero panel for roughly a second (observed at +988ms, resolved by +5.8s). A skeleton or a quiet "preparing visualizers…" would be better than a black rectangle.
 
 Related: the Settings → Style select shows "MilkDrop" during that window even when the saved value is something else.
+
+---
+
+## Tile migration scoping (2026-07-31)
+
+### 25. Half the remaining tile migration is blocked on a missing capability
+
+23 built-in tiles remain to migrate (33 total minus the 10 first-party ones that never can). Classified against what the bundle format can express today:
+
+- **Migrate today (4):** `onThisDay`, `randomWiki`, `launches`, `stocks` — plain fetch and render.
+- **Need credentials (5):** `githubPrs`, `homeAssistant`, `energy`, `phoneNotifs`, `birds` — the `secret:<key>` permission already covers this.
+- **Blocked on shared location (11):** `airQuality`, `aurora`, `clock`, `pollen`, `sun`, `tides`, `weatherRadar`, `lightning`, `aircraft`, `iss`, `solarFlare`. All read the user's saved weather location, which is app state a bundle cannot see. Per-tile `config` is the wrong shape — the user would enter their location eleven times.
+- **Blocked on per-instance persistent state (3):** `notes`, `pomodoro`, `scratchpad`. Declarative tiles are fetch-and-render with no durable per-instance store.
+
+**Decision taken:** expose location as a **declared permission**, delivered on the tile's data context the way `theme` reaches visualizers. Declaring it makes the install dialog state that the tile can see the user's location — handing precise coordinates to every marketplace bundle silently would be the wrong default, and the permission model exists precisely to surface that.
+
+Per-instance state remains an open design question for the last three.
