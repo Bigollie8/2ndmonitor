@@ -1,0 +1,9 @@
+{
+  "id": "circular",
+  "name": "Circular Pulse",
+  "author": "official",
+  "version": "1.0.0",
+  "api": 1,
+  "permissions": [],
+  "surface": "dom"
+}

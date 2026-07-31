@@ -139,7 +139,19 @@ function frame(opts: {
  *  harness needs to fake away. This plain Node process has no such global,
  *  so one is installed on `globalThis` for the duration of this call only
  *  and removed again in `finally` — never left dangling for a later test in
- *  this same process to trip over. */
+ *  this same process to trip over.
+ *
+ *  `createElementNS` is included alongside `createElement` for the same
+ *  reason: circular/tunnel/ribbon (Task 3) build inline SVG the way their
+ *  source components (viz-extra.tsx) do, and a real SVG element requires the
+ *  namespaced constructor — `document.createElement('svg')` produces an
+ *  HTMLUnknownElement that never renders as SVG in an actual browser, so
+ *  faking that call away instead of supporting it would validate a shape of
+ *  code the real sandbox iframe (a genuine document) doesn't actually need
+ *  bundles to write. `fakeElement` is already tag-agnostic (only records
+ *  `tagName`), so the SVG namespace argument is simply discarded, matching
+ *  how little this harness asserts about tag correctness for `createElement`
+ *  either. */
 function loadBundle(id: string) {
   const code = readFileSync(join(BUNDLES, id, 'main.js'), 'utf8');
   const cbs: ((f: unknown) => void)[] = [];
@@ -167,7 +179,10 @@ function loadBundle(id: string) {
   const g = globalThis as Record<string, unknown>;
   const hadDocument = Object.prototype.hasOwnProperty.call(g, 'document');
   const prevDocument = g.document;
-  g.document = { createElement: (tag: string) => fakeElement(tag) };
+  g.document = {
+    createElement: (tag: string) => fakeElement(tag),
+    createElementNS: (_ns: string, tag: string) => fakeElement(tag),
+  };
   try {
     new Function('viz', code)(viz);
   } finally {
