@@ -22,3 +22,6 @@ app/src-tauri/gen/
 /index.html
 design/
 docs/superpowers/
+
+# Secrets (Discord webhook URLs — see docs/superpowers/specs/2026-07-31-discord-release-announcements-design.md)
+.env
