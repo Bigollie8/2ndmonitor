@@ -9,9 +9,21 @@ import { isTauri } from '../state/tauri';
 import {
   LS_URL, LS_PUBKEY, DEFAULT_URL, DEFAULT_PUBKEY, cfgUrl, cfgPubkey, isDefaultServer,
 } from '../state/marketplaceConfig';
+import { useMarketplaceAuth } from '../state/marketplaceAuth';
 
 const MONO = '"JetBrains Mono", ui-monospace, monospace';
 const HAIRLINE = '1px solid rgba(255,255,255,0.05)';
+
+// Shared by MarketplaceServerEditor and MarketplaceAccountEditor — both are
+// label-above-input stacked fields inside the Marketplace pane.
+const fieldInputStyle: React.CSSProperties = {
+  width: '100%', fontSize: 11.5, padding: '6px 9px', marginTop: 3,
+  background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.08)',
+  borderRadius: 6, color: '#fff', outline: 'none', boxSizing: 'border-box',
+};
+const fieldLabelStyle: React.CSSProperties = {
+  fontSize: 10.5, color: 'rgba(255,255,255,0.45)',
+};
 
 export type PerfMode = 'uncapped' | 'high' | 'balanced' | 'battery';
 
@@ -247,6 +259,11 @@ export function SettingsWindow({
     {
       id: 'marketplace', icon: '⇄', title: 'Marketplace',
       rows: [
+        {
+          id: 'marketplace-account', label: 'Account', stacked: true,
+          hint: 'Sign in to rate bundles. Your session token is stored locally, encrypted, and never leaves this device except to the marketplace server itself.',
+          control: <MarketplaceAccountEditor accent={accent} />,
+        },
         {
           id: 'marketplace-server', label: 'Server & signing key', stacked: true,
           hint: 'The app ships pointed at the official marketplace. To use your own server, enter its URL and the signing public key it prints on startup — the app verifies the index signature and every bundle’s checksum before installing.',
@@ -677,6 +694,80 @@ function AutostartSwitch({ accent }: { accent: string }) {
 }
 
 // ---------------------------------------------------------------------------
+// Marketplace account — sign in to rate bundles. The session token is never
+// visible here: useMarketplaceAuth (state/marketplaceAuth.ts) only ever hands
+// this component a state tag ('checking' | 'signed-out' | 'signing-in' |
+// 'signed-in' | 'error'), a masked email, or the server's own failure message
+// — the actual token stays Rust-side in the DPAPI secret store end to end.
+// ---------------------------------------------------------------------------
+
+function MarketplaceAccountEditor({ accent }: { accent: string }) {
+  const { state, signIn, signOut } = useMarketplaceAuth();
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+
+  const busy = state.status === 'checking' || state.status === 'signing-in';
+  const canSubmit = !busy && email.trim() !== '' && password !== '';
+
+  const handleSignIn = () => {
+    if (!canSubmit) return;
+    void signIn(email.trim(), password);
+  };
+
+  if (state.status === 'signed-in') {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <div style={{ fontSize: 11.5, color: 'rgba(255,255,255,0.75)' }}>
+          Signed in{state.email ? <> as <span style={{ fontFamily: MONO, color: accent }}>{state.email}</span></> : ''}
+        </div>
+        <SettingsButton label="Sign out" onClick={() => void signOut()} />
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 10, maxWidth: 460 }}>
+      <div>
+        <label style={fieldLabelStyle}>Email</label>
+        <input
+          type="email" value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          disabled={busy}
+          spellCheck={false}
+          autoComplete="username"
+          style={fieldInputStyle}
+        />
+      </div>
+      <div>
+        <label style={fieldLabelStyle}>Password</label>
+        <input
+          type="password" value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          disabled={busy}
+          autoComplete="current-password"
+          onKeyDown={(e) => { if (e.key === 'Enter') handleSignIn(); }}
+          style={fieldInputStyle}
+        />
+      </div>
+      {/* On failure, the server's own message (wrong password vs. unverified
+         vs. unreachable server are different problems and read differently
+         here) — never a generic "sign-in failed". See login_status_message
+         in marketplace.rs. */}
+      {state.status === 'error' && (
+        <div style={{ color: '#fb7185', fontSize: 11 }}>{state.message}</div>
+      )}
+      <div>
+        <SettingsButton
+          label={state.status === 'signing-in' ? 'Signing in…' : 'Sign in'}
+          onClick={handleSignIn}
+          accent={canSubmit ? accent : undefined}
+        />
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Marketplace server config — URL + pinned signing pubkey. Lifted from the
 // old MarketplaceTab.tsx unchanged in validation behavior: URL must start
 // with https:// (the Rust client refuses anything else), pubkey must be 64
@@ -717,15 +808,6 @@ function MarketplaceServerEditor({ accent }: { accent: string }) {
     setPubkey(DEFAULT_PUBKEY);
     setError('');
     setSaved(true);
-  };
-
-  const fieldInputStyle: React.CSSProperties = {
-    width: '100%', fontSize: 11.5, padding: '6px 9px', marginTop: 3,
-    background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.08)',
-    borderRadius: 6, color: '#fff', outline: 'none', boxSizing: 'border-box',
-  };
-  const fieldLabelStyle: React.CSSProperties = {
-    fontSize: 10.5, color: 'rgba(255,255,255,0.45)',
   };
 
   return (

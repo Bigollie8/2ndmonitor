@@ -143,6 +143,13 @@ commands.allow = [
   "marketplace_uninstall",
   "broker_fetch",
 
+  # marketplace sign-in — session token lives in the DPAPI secret store
+  # (secrets.rs), never returned to the frontend; only a bool + masked email
+  # cross the IPC boundary (src/state/marketplaceAuth.ts).
+  "marketplace_login",
+  "marketplace_logout",
+  "marketplace_session_status",
+
   # first-run seeding (src/App.tsx, src/components/ContentLibrary.tsx).
   "seed_sync",
 

@@ -82,6 +82,166 @@ fn get_capped(url: &str, cap: usize) -> Result<Vec<u8>, String> {
     Ok(buf)
 }
 
+// ---------------------------------------------------------------------------
+// Sign-in: POST /auth/login, session token in the DPAPI secret store.
+//
+// The token is a credential and is handled exactly like every other one this
+// app stores (github_pat, ha_token, ...): through secrets.rs's DPAPI-backed
+// store, NEVER localStorage, and NEVER returned across the IPC boundary to
+// the frontend. `marketplace_login` returns `Result<(), String>` — nothing on
+// success — and `marketplace_session_status` exposes only a bool plus a
+// PRE-MASKED email (masked here at write time, the same way index.rs masks
+// bundle authors, so there is no unmasked copy anywhere for a later bug to
+// accidentally serialize). Every future command that needs the token (rating
+// submission, Task 3) reads it Rust-side via `secrets::secret_get`, never
+// receives it as a parameter from the frontend.
+// ---------------------------------------------------------------------------
+
+/// Fixed key the session lives under in the shared secrets.json store. Its
+/// value is a small JSON blob — `{"token": "...", "email_masked": "..."}` —
+/// so a single secret_get/secret_set pair covers both fields; there is no
+/// unmasked email stored anywhere.
+const SESSION_SECRET_KEY: &str = "marketplace_session";
+
+// 8 KiB — enforced ceiling for the /auth/login response, which is either a
+// small `{"token": "..."}` object or an empty error body. Deliberately its
+// own constant rather than reusing FETCH_CAP (1 MiB, sized for the index) —
+// a login response has no business being anywhere near that large.
+const AUTH_CAP: usize = 8_192;
+
+/// Masks an email exactly the way the server masks bundle authors in the
+/// signed index (`server/src/index.rs`: `format!("{}***", email.chars()
+/// .take(3)...)`). Applied here, before the value ever reaches the secret
+/// store, so the ONLY email-shaped string this app ever persists is already
+/// irreversibly truncated — there is no unmasked copy for `secret_get` to
+/// leak later even by accident.
+fn mask_email(email: &str) -> String {
+    format!("{}***", email.chars().take(3).collect::<String>())
+}
+
+/// Maps a `/auth/login` HTTP status to a human-readable message, or `None`
+/// for success (200). Pulled out as a pure function so the status→message
+/// mapping — the whole reason this task exists ("a wrong password and an
+/// unreachable server are different problems") — is unit-testable without a
+/// live server. A transport-level failure (offline, DNS, refused) never
+/// reaches this function at all; it fails inside `post_capped_json` with its
+/// own distinct message, which is exactly the point.
+fn login_status_message(status: u16) -> Option<String> {
+    match status {
+        200 => None,
+        401 => Some("incorrect email or password".into()),
+        403 => Some("account not verified — check your email for the verification link".into()),
+        429 => Some("too many sign-in attempts — wait a minute and try again".into()),
+        other => Some(format!("marketplace server returned HTTP {other}")),
+    }
+}
+
+/// POST-with-JSON-body counterpart to `get_capped`, used only by
+/// `marketplace_login`. `get_capped` treats ANY non-2xx as a single opaque
+/// "request failed" transport error (ureq's default), which is exactly wrong
+/// here: the caller needs to tell a 401 (wrong password) apart from a
+/// connection that never completed at all (unreachable server) so the two
+/// can produce different messages. So this function surfaces status/body for
+/// EVERY response that actually completed — 2xx or not — and reserves the
+/// `Err` return for a genuine transport failure. `login_status_message` is
+/// the caller-side decision that turns the status into the user-facing text.
+fn post_capped_json(url: &str, body: &serde_json::Value, cap: usize) -> Result<(u16, Vec<u8>), String> {
+    if !url.starts_with("https://") {
+        return Err("only https URLs are allowed".into());
+    }
+    fn read_capped(resp: ureq::Response, cap: usize) -> Result<Vec<u8>, String> {
+        let mut buf = Vec::new();
+        resp.into_reader()
+            .take((cap + 1) as u64)
+            .read_to_end(&mut buf)
+            .map_err(|e| format!("read failed: {e}"))?;
+        if buf.len() > cap {
+            return Err("response too large".into());
+        }
+        Ok(buf)
+    }
+    match ureq::post(url)
+        .timeout(std::time::Duration::from_secs(10))
+        .send_json(body.clone())
+    {
+        Ok(resp) => {
+            let status = resp.status();
+            Ok((status, read_capped(resp, cap)?))
+        }
+        Err(ureq::Error::Status(code, resp)) => Ok((code, read_capped(resp, cap)?)),
+        Err(ureq::Error::Transport(t)) => Err(format!("request failed: {t}")),
+    }
+}
+
+/// Signs in against the marketplace server and stores the session token.
+///
+/// Returns nothing on success — see the module-level comment above for why.
+/// `password` is used only to build the outgoing HTTPS request body (the
+/// login submission IS the credential channel) and to hash-compare nothing
+/// else; it is never logged, never included in an error message, and is
+/// dropped when this function returns.
+#[tauri::command]
+pub fn marketplace_login<R: Runtime>(
+    app: AppHandle<R>,
+    url: String,
+    email: String,
+    password: String,
+) -> Result<(), String> {
+    let base = url.trim_end_matches('/');
+    let endpoint = format!("{base}/auth/login");
+    let body = serde_json::json!({ "email": email, "password": password });
+    let (status, buf) = post_capped_json(&endpoint, &body, AUTH_CAP)?;
+    if let Some(msg) = login_status_message(status) {
+        return Err(msg);
+    }
+    let v: serde_json::Value =
+        serde_json::from_slice(&buf).map_err(|_| "login response was not JSON".to_string())?;
+    let token = v
+        .get("token")
+        .and_then(|t| t.as_str())
+        .ok_or("login response missing a token")?;
+    let stored = serde_json::json!({
+        "token": token,
+        "email_masked": mask_email(&email),
+    })
+    .to_string();
+    crate::secrets::secret_set(app, SESSION_SECRET_KEY.to_string(), stored)
+}
+
+/// Clears the stored session. Idempotent — signing out when already signed
+/// out is not an error (mirrors `secret_delete`'s own idempotence).
+#[tauri::command]
+pub fn marketplace_logout<R: Runtime>(app: AppHandle<R>) -> Result<(), String> {
+    crate::secrets::secret_delete(app, SESSION_SECRET_KEY.to_string())
+}
+
+/// What the frontend is allowed to know about the session: whether one
+/// exists, and a display-only masked email. No token field exists on this
+/// type — there is nothing here for a future edit to accidentally wire up
+/// and leak.
+#[derive(Serialize)]
+pub struct MarketplaceSessionStatus {
+    #[serde(rename = "signedIn")]
+    pub signed_in: bool,
+    pub email: Option<String>,
+}
+
+/// Cheap, local, no network: just "does a token exist in the store". The
+/// email returned is the masked value written at login time — see
+/// `mask_email` — never the raw one.
+#[tauri::command]
+pub fn marketplace_session_status<R: Runtime>(
+    app: AppHandle<R>,
+) -> Result<MarketplaceSessionStatus, String> {
+    let Some(raw) = crate::secrets::secret_get(app, SESSION_SECRET_KEY.to_string()) else {
+        return Ok(MarketplaceSessionStatus { signed_in: false, email: None });
+    };
+    let email = serde_json::from_str::<serde_json::Value>(&raw)
+        .ok()
+        .and_then(|v| v.get("email_masked").and_then(|e| e.as_str()).map(str::to_string));
+    Ok(MarketplaceSessionStatus { signed_in: true, email })
+}
+
 #[tauri::command]
 pub fn marketplace_fetch_index(url: String, pubkey: String) -> Result<serde_json::Value, String> {
     let base = url.trim_end_matches('/');
@@ -749,5 +909,65 @@ mod tests {
         assert!(validate_headers(&empty).is_err());
         let oversized = headers(&[("X-Big", &"a".repeat(MAX_HEADER_VALUE_BYTES + 1))]);
         assert!(validate_headers(&oversized).is_err());
+    }
+
+    #[test]
+    fn mask_email_matches_the_servers_author_masking_format() {
+        // Mirrors server/src/index.rs's `format!("{}***", email.chars().take(3)...)`
+        // exactly — the app must never invent its own masking convention that
+        // could disagree with what a user has already seen the server print.
+        assert_eq!(mask_email("oliver@example.com"), "oli***");
+        // Whatever the first 3 characters are, verbatim — the server's
+        // masking is not "local part before @", it's a flat first-3-chars-
+        // of-the-whole-string rule, "@" included if it lands in that window.
+        assert_eq!(mask_email("ab@x.io"), "ab@***");
+        assert_eq!(mask_email("a"), "a***"); // shorter than 3 chars: takes what's there
+        assert_eq!(mask_email(""), "***");
+    }
+
+    #[test]
+    fn login_status_message_distinguishes_wrong_password_from_unverified_and_rate_limited() {
+        // The whole point of this task: a 401, a 403 and a 429 must not
+        // collapse into one generic "sign-in failed" — the user needs to know
+        // which of these it was.
+        assert!(login_status_message(200).is_none());
+        let unauthorized = login_status_message(401).unwrap();
+        let unverified = login_status_message(403).unwrap();
+        let rate_limited = login_status_message(429).unwrap();
+        assert_ne!(unauthorized, unverified);
+        assert_ne!(unauthorized, rate_limited);
+        assert_ne!(unverified, rate_limited);
+        assert!(unauthorized.contains("password"), "{unauthorized}");
+        assert!(unverified.contains("verif"), "{unverified}");
+        assert!(rate_limited.contains("many"), "{rate_limited}");
+    }
+
+    #[test]
+    fn login_status_message_falls_back_to_the_raw_status_for_anything_unrecognised() {
+        let msg = login_status_message(500).unwrap();
+        assert!(msg.contains("500"), "{msg}");
+    }
+
+    #[test]
+    fn post_capped_json_rejects_non_https_without_making_a_request() {
+        // No network involved in this branch — the https check runs before
+        // any request is issued, so this is safe to run in any test
+        // environment, sandboxed or not.
+        let err = post_capped_json("http://example.com/auth/login", &serde_json::json!({}), AUTH_CAP)
+            .unwrap_err();
+        assert!(err.contains("https"), "{err}");
+    }
+
+    #[test]
+    fn session_status_type_carries_no_token_field() {
+        // Regression guard: MarketplaceSessionStatus must never grow a token
+        // field. Serializing it and checking the key set catches a future
+        // edit that adds one just as reliably as a doc comment, and doesn't
+        // rely on anyone re-reading the doc comment before doing it.
+        let status = MarketplaceSessionStatus { signed_in: true, email: Some("oli***".into()) };
+        let v = serde_json::to_value(&status).unwrap();
+        let mut keys: Vec<&str> = v.as_object().unwrap().keys().map(String::as_str).collect();
+        keys.sort();
+        assert_eq!(keys, vec!["email", "signedIn"]);
     }
 }
