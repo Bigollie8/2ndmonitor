@@ -157,6 +157,11 @@ export function SandboxVizSurface({
   }, []);
   const codeRef = useRef<string>('');
   const brokerRef = useRef<ReturnType<typeof makeBrokerHandler> | null>(null);
+  // Surface for the bundle currently loaded, off its *validated* manifest
+  // (see the try block below) — never the raw JSON. A manifest that fails
+  // validation short-circuits before codeRef is populated, so sendInit never
+  // fires for it; this ref cannot carry an unvalidated value into `init`.
+  const surfaceRef = useRef<'canvas' | 'dom'>('canvas');
   const themeRef = useRef({ accent, accent2 });
   themeRef.current = { accent, accent2 };
   const trackRef = useRef(track ?? null);
@@ -188,6 +193,7 @@ export function SandboxVizSurface({
     // Do not delete this as "redundant" — it is the fix for that race.
     codeRef.current = '';
     brokerRef.current = null;
+    surfaceRef.current = 'canvas';
     (async () => {
       try {
         const { invoke } = await import('@tauri-apps/api/core');
@@ -198,17 +204,21 @@ export function SandboxVizSurface({
           // allowPermissions: installed marketplace bundles may carry vetted
           // permissions; locally-authored ones still declare none.
           const v = validateManifest(JSON.parse(src.manifest), { allowPermissions: true });
-          if (!v.ok) manifestErr = v.error;
-          else brokerRef.current = makeBrokerHandler(permissionsOf(v.manifest.permissions), {
-            fetch: async (url) => {
-              const { invoke } = await import('@tauri-apps/api/core');
-              return invoke('broker_fetch', { url });
-            },
-            invoke: async (command, args) => {
-              const { invoke } = await import('@tauri-apps/api/core');
-              return invoke(command, args as Record<string, unknown> | undefined);
-            },
-          });
+          if (!v.ok) {
+            manifestErr = v.error;
+          } else {
+            surfaceRef.current = v.manifest.surface ?? 'canvas';
+            brokerRef.current = makeBrokerHandler(permissionsOf(v.manifest.permissions), {
+              fetch: async (url) => {
+                const { invoke } = await import('@tauri-apps/api/core');
+                return invoke('broker_fetch', { url });
+              },
+              invoke: async (command, args) => {
+                const { invoke } = await import('@tauri-apps/api/core');
+                return invoke(command, args as Record<string, unknown> | undefined);
+              },
+            });
+          }
         } catch {
           manifestErr = 'manifest.json is not valid JSON';
         }
@@ -241,6 +251,7 @@ export function SandboxVizSurface({
       settings,
       size: { width: Math.round(rect.width), height: Math.round(rect.height) },
       theme: themeRef.current,
+      surface: surfaceRef.current,
     };
     win.postMessage(msg, '*');
     // eslint-disable-next-line react-hooks/exhaustive-deps

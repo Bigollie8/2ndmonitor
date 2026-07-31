@@ -226,7 +226,7 @@ export function validateManifest(
 
 // ── postMessage protocol ─────────────────────────────────────────────────────
 // Host → sandbox:
-//   { type: 'init', code, settings, size, theme }
+//   { type: 'init', code, settings, size, theme, surface }
 //   { type: 'frame', spectrum, waveform, bands, onset, level, dt, size, theme, track, playback }
 // Sandbox → host:
 //   { type: 'ready', token }   (repeated until an 'init' arrives)
@@ -265,6 +265,11 @@ export interface InitMessage {
   settings: Record<string, unknown>;
   size: VizSize;
   theme: VizTheme;
+  /** Which surface (canvas or DOM root) the frame should show for this
+   *  bundle. The host reads this off the bundle's *validated* manifest — see
+   *  validateManifest above, which normalizes an absent field to 'canvas' —
+   *  so a bundle that failed validation never reaches sendInit at all. */
+  surface: 'canvas' | 'dom';
 }
 
 export interface FrameMessage {

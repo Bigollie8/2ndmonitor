@@ -195,3 +195,23 @@ test('validateManifest: an unknown surface is rejected, not silently defaulted',
 test('validateManifest: surface must be a string', () => {
   assert.equal(validateManifest({ id: 'x', name: 'X', version: '1.0.0', api: 1, permissions: [], surface: 1 }).ok, false);
 });
+
+// ── InitMessage carries the resolved surface (Task 3) ────────────────────────
+
+import type { InitMessage } from './manifest';
+
+test('InitMessage: surface is a required field carrying the validated manifest value', () => {
+  // Compile-time pin as much as runtime: if `surface` were ever dropped from
+  // InitMessage this object literal would fail `tsc -b`, not just this
+  // assertion — see viz-sandbox-surface.tsx's sendInit, which builds exactly
+  // this shape from validateManifest's own output.
+  const msg: InitMessage = {
+    type: 'init',
+    code: '',
+    settings: {},
+    size: { width: 1, height: 1 },
+    theme: { accent: '#000', accent2: '#fff' },
+    surface: 'dom',
+  };
+  assert.equal(msg.surface, 'dom');
+});
