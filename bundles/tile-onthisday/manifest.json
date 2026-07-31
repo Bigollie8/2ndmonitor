@@ -1,0 +1,12 @@
+{
+  "id": "tile-onthisday",
+  "name": "On this day",
+  "author": "official",
+  "version": "1.0.0",
+  "api": 1,
+  "permissions": ["net:api.wikimedia.org"],
+  "config": [
+    { "key": "month", "label": "Month, 2-digit (e.g. 07)", "type": "text" },
+    { "key": "day", "label": "Day, 2-digit (e.g. 31)", "type": "text" }
+  ]
+}

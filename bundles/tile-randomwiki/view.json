@@ -1,0 +1,13 @@
+{
+  "source": {
+    "kind": "http",
+    "url": "https://en.wikipedia.org/w/api.php?action=query&format=json&formatversion=2&generator=random&grnnamespace=0&grnlimit=1&prop=extracts%7Cpageimages%7Cinfo&exintro=1&explaintext=1&exchars=600&piprop=thumbnail&pithumbsize=300&inprop=url",
+    "intervalMs": 3600000
+  },
+  "select": "query.pages.0",
+  "view": {
+    "type": "text",
+    "body": "{{data.extract}}",
+    "attribution": "{{data.title}}"
+  }
+}
