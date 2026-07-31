@@ -12,7 +12,7 @@
 
 - **`SANDBOX_CSP` is unchanged.** No `connect-src`, no `img-src`, `default-src` exactly `'none'`. A ported style must inline everything — no fonts, no images, no network. This is the only thing preventing untrusted bundle code from reaching the app's entire command surface (`docs/deferred-findings.md` item 2a). A test pins it.
 - `SANDBOX_ATTR` stays `'allow-scripts'` with no `allow-same-origin`. `BROKER_COMMANDS` stays `{}`. Every ported style declares `permissions: []`.
-- `milkdrop` and `scripted` are **first-party and never migrate** — one hosts a bundled library and preset store, the other is the authoring surface. They stay in `BUILTIN_VIZ_STYLES` and in `firstParty.ts`.
+- `milkdrop` and `scripted` are **first-party and never migrate out of the marketplace bundle** — `milkdrop` stays in the app and renders on the sandbox runtime via `localSource` (see `docs/scripted-visualizers.md#first-party-surfaces-on-the-sandbox-runtime`), and `scripted` is the authoring surface. They stay in `BUILTIN_VIZ_STYLES` and in `firstParty.ts`.
 - Bundle ids must match `[a-z0-9-]` and versions must contain **no hyphen** (the seed filename splits on the last one; `bundles.mjs seed` rejects a violation).
 - Seed zips carry exactly `manifest.json` + `main.js`. Any other entry aborts the install.
 - Frontend tests: `npm test`, `node:test` + `node:assert/strict`, pure modules only. Typecheck with `npx tsc -b` (NOT `--noEmit`).
