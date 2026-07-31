@@ -134,6 +134,14 @@ const TOKEN_PLACEHOLDER: &str = "__SANDBOX_TOKEN__";
 /// A local server cannot know this value: it is generated in-process, is never
 /// written to disk, and is handed to the frontend only over IPC from the main
 /// webview (see [`sandbox_token`]).
+///
+/// The host side of that bargain is `viz-sandbox-surface.tsx`'s `onMessage`,
+/// where the check sits **above** the whole message dispatch. Until 2026-07-31
+/// it sat inside the `ready` branch and *below* the `rpc` and `settings:set`
+/// branches, so the last two items in the paragraph above - the broker and the
+/// `scripted.settings.<id>` writes - were in fact still reachable by a frame
+/// that never echoed this token. Only the "post it an installed bundle's
+/// source" half was actually covered.
 pub fn token() -> &'static str {
     static TOKEN: OnceLock<String> = OnceLock::new();
     TOKEN.get_or_init(|| hex::encode(rand::random::<[u8; 16]>()))

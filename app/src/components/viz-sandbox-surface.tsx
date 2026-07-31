@@ -12,9 +12,16 @@ const settingsKey = (id: string) => `scripted.settings.${id}`;
 
 // ── sandbox proof token ─────────────────────────────────────────────────────
 // The Rust protocol handler stamps a per-process random token into every copy
-// of the sandbox document it serves; the frame echoes it in `ready`. Until it
-// matches, we do NOT init the frame — i.e. we do not post it a bundle's source
-// code and we do not accept `settings:set` writes driven by it.
+// of the sandbox document it serves; the frame echoes it in `ready`. A frame
+// that cannot echo it is never treated as ours: it is not inited (so no bundle
+// source code is posted to it) and — because the check gates the WHOLE message
+// dispatch in `onMessage` below, not just the `ready` branch — none of its
+// `rpc`, `settings:set` or `error` messages are acted on either.
+//
+// That last clause is load-bearing and was not true until 2026-07-31: the check
+// used to sit *inside* the `ready` branch, below the `rpc` and `settings:set`
+// branches, so an unproven frame could still drive both. See the long comment
+// on the guard in `onMessage`.
 //
 // It closes a fail-OPEN case in the delivery path: wry only intercepts
 // sub-frame custom-protocol requests when ICoreWebView2_22 is present
@@ -34,13 +41,25 @@ function loadSandboxToken(): Promise<void> {
       const { invoke } = await import('@tauri-apps/api/core');
       sandboxToken = await invoke<string>('sandbox_token');
     })().catch(() => {
-      // Fail closed: no token, no init. Clear the memo so a later mount can
-      // retry rather than pinning the failure for the life of the process.
+      // Fail closed: no token, no init. Clear the memo so the NEXT caller
+      // starts a fresh attempt rather than pinning the failure for the life of
+      // the process. The retry driver is the frame's own `ready` ping loop (see
+      // onMessage) — before that, a single transient failure inside one mount
+      // was never retried and left a permanently black surface with no banner,
+      // because the token-mismatch path is a silent `return`.
       sandboxTokenLoad = null;
     });
   }
   return sandboxTokenLoad;
 }
+
+/** How many token-less `ready` pings to absorb before telling the user. The
+ *  frame re-posts `ready` every 250ms and gives up after 60 tries
+ *  (sandbox/sandbox-html.ts), so this is ~10s of silent retrying inside its
+ *  ~15s budget: long enough that a cold-start `invoke('sandbox_token')` — one
+ *  IPC round trip behind a dynamic import — never trips it, short enough that
+ *  the frame has not yet stopped pinging when the banner appears. */
+const READY_TOKEN_GRACE_PINGS = 40;
 
 export type ScriptError = { message: string; line: number | null } | null;
 
@@ -108,6 +127,9 @@ export function SandboxVizSurface({
   }, []);
 
   const readyRef = useRef(false);
+  /** Count of `ready` pings dropped because the frame could not prove itself.
+   *  Drives the give-up banner; reset whenever a fresh load starts. */
+  const unprovenReadyRef = useRef(0);
   // MUST be a stable callback, not an inline arrow. An inline arrow is a new
   // function identity every render, so React detaches it (calls it with null)
   // and re-attaches it on EVERY re-render — and each of those calls sees
@@ -152,6 +174,7 @@ export function SandboxVizSurface({
     // load; `ready` is re-posted until we can act on it, so whichever wins is
     // fine. Memoised process-wide, so N mounted surfaces cost one invoke.
     void loadSandboxToken();
+    unprovenReadyRef.current = 0;
     setScriptError(null); // clear any stale banner immediately on switch/reload
     // Clear stale code/broker BEFORE the async read below. The iframe remounts
     // (key={bundleId}) and its inline script posts `ready` almost immediately —
@@ -239,6 +262,51 @@ export function SandboxVizSurface({
       if (e.source !== iframeRef.current?.contentWindow) return;
       if (e.origin !== 'null') return;
       const msg = e.data as SandboxToHost | { type: 'rpc'; rpcId: number; rpc: RpcRequest['rpc']; url?: string; command?: string; args?: unknown };
+
+      // ── the token gate, ABOVE the whole dispatch ──────────────────────────
+      // `ready` is the only message that carries the token, so "prove the
+      // frame" and "accept anything from it" are one decision: nothing but
+      // `ready` is honoured until a token-matching `ready` has set readyRef.
+      //
+      // This check used to live inside the `ready` branch, *below* the `rpc`
+      // and `settings:set` branches. In the exact fail-open case the token
+      // exists to close — a foreign document answering at
+      // http://vizsandbox.localhost because an old WebView2 did not intercept
+      // the sub-frame request — that document passes both the `e.source` and
+      // `e.origin` checks above, and could therefore still:
+      //   * post `settings:set` → arbitrary writes into
+      //     localStorage['scripted.settings.<bundleId>'], later handed to the
+      //     real bundle as `init.settings`; and
+      //   * post `rpc` → brokerRef is populated by an async effect
+      //     independently of readyRef, so a never-inited frame reached the
+      //     broker. `tauri.invoke` stays dead while BROKER_COMMANDS is `{}`,
+      //     but `net.fetch` to manifest-allowlisted hosts was live.
+      // Do not move this back down, and do not add a message type above it.
+      if (msg?.type === 'ready') {
+        if (!sandboxToken || (msg as { token?: unknown }).token !== sandboxToken) {
+          // No token yet means the invoke has not landed — or failed, in which
+          // case loadSandboxToken has already cleared its memo. Kick it again:
+          // the frame's own 250ms ping loop is the retry driver, so a transient
+          // failure costs a ping rather than the surface. A token that is
+          // present but does not match is the attack this whole mechanism is
+          // for; retrying would not help, but the ping counter still runs out
+          // and says so instead of leaving a silent black rectangle.
+          if (!sandboxToken) void loadSandboxToken();
+          if (++unprovenReadyRef.current === READY_TOKEN_GRACE_PINGS) {
+            setScriptError({
+              message: 'sandbox handshake failed: the frame could not prove it was served by the app',
+              line: null,
+            });
+          }
+          return;
+        }
+        readyRef.current = true;
+        sendInit();
+        return;
+      }
+      // Every other message type requires a frame that already proved itself.
+      if (!readyRef.current) return;
+
       if (msg?.type === 'rpc') {
         // Broker-mediated capability request from an installed bundle.
         const win = iframeRef.current?.contentWindow;
@@ -247,17 +315,6 @@ export function SandboxVizSurface({
           win?.postMessage({ type: 'rpc:result', rpcId: msg.rpcId, ...r }, '*');
         if (!handler) { reply({ ok: false, error: 'no permissions granted' }); return; }
         void handler({ rpc: msg.rpc, url: msg.url, command: msg.command, args: msg.args }).then(reply);
-        return;
-      }
-      if (msg?.type === 'ready') {
-        // Prove the document in the frame is the one our protocol handler
-        // served, not something else that answered at the same URL (see the
-        // token block at the top of this file). The frame re-posts `ready`
-        // until it is initialised, so losing this race while the token is
-        // still in flight costs a few hundred milliseconds, not the surface.
-        if (!sandboxToken || (msg as { token?: unknown }).token !== sandboxToken) return;
-        readyRef.current = true;
-        sendInit();
       } else if (msg?.type === 'error') {
         setScriptError({ message: msg.message, line: msg.line });
       } else if (msg?.type === 'settings:set' && bundleId) {

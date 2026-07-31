@@ -118,11 +118,50 @@ test('the served document carries a token placeholder the host can check', () =>
 test('the host refuses to init a frame that cannot echo the token', () => {
   const tsx = readApp('src', 'components', 'viz-sandbox-surface.tsx');
   assert.ok(tsx.includes("invoke<string>('sandbox_token')"), 'host fetches the token over IPC');
-  assert.ok(/if \(!sandboxToken \|\| \(msg as \{ token\?: unknown \}\)\.token !== sandboxToken\) return;/.test(tsx),
+  assert.ok(tsx.includes('if (!sandboxToken || (msg as { token?: unknown }).token !== sandboxToken) {'),
     'a ready without the right token must not set readyRef');
   // Ordering matters: the check has to precede readyRef/sendInit, not follow it.
   assert.ok(tsx.indexOf('.token !== sandboxToken') < tsx.indexOf('readyRef.current = true'),
     'the token check must gate readyRef, not run after it');
+});
+
+// The regression this replaces: the token check sat INSIDE the `ready` branch,
+// which sat BELOW the `rpc` and `settings:set` branches — so a frame that could
+// not echo the token still reached the broker (net.fetch to manifest-allowlisted
+// hosts) and still wrote localStorage['scripted.settings.<bundleId>'], which is
+// later fed back to the real bundle as `init.settings`.
+test('the token gates every message type, not just ready', () => {
+  const tsx = readApp('src', 'components', 'viz-sandbox-surface.tsx');
+  const tokenCheck = tsx.indexOf('if (!sandboxToken || (msg as { token?: unknown }).token !== sandboxToken) {');
+  const proven = tsx.indexOf('if (!readyRef.current) return;');
+  const rpc = tsx.indexOf("if (msg?.type === 'rpc') {");
+  const settings = tsx.indexOf("} else if (msg?.type === 'settings:set' && bundleId) {");
+  assert.ok(tokenCheck > 0 && proven > 0 && rpc > 0 && settings > 0,
+    'all four landmarks must still exist — a rename here silently voids this test');
+  assert.ok(tokenCheck < proven, 'the token check must come first');
+  assert.ok(proven < rpc, 'rpc must be below the proven-frame sentinel');
+  assert.ok(proven < settings, 'settings:set must be below the proven-frame sentinel');
+  // ...and the sentinel must be an unconditional bail, not a branch that some
+  // other message type can slip past.
+  assert.ok(/if \(!readyRef\.current\) return;\s*\n\s*\n?\s*if \(msg\?\.type === 'rpc'\) \{/.test(lf(tsx)),
+    'nothing may be dispatched between the sentinel and the first message branch');
+});
+
+test('a token that never arrives surfaces a banner instead of a black frame', () => {
+  const tsx = readApp('src', 'components', 'viz-sandbox-surface.tsx');
+  // Retry: the frame's own ready pings re-drive the invoke, because
+  // loadSandboxToken clears its memo on failure.
+  assert.ok(tsx.includes('if (!sandboxToken) void loadSandboxToken();'),
+    'a token-less ready must retry the invoke, not just return');
+  assert.ok(tsx.includes('sandboxTokenLoad = null;'), 'the memo must clear on failure or the retry is a no-op');
+  // Give-up banner, inside the frame's own 60-ping budget.
+  assert.ok(/const READY_TOKEN_GRACE_PINGS = (\d+);/.test(tsx));
+  const grace = Number(/const READY_TOKEN_GRACE_PINGS = (\d+);/.exec(tsx)![1]);
+  assert.ok(grace > 0 && grace < 60,
+    `grace must land inside the frame's 60-ping budget, got ${grace}`);
+  assert.ok(tsx.includes('++unprovenReadyRef.current === READY_TOKEN_GRACE_PINGS'),
+    'the banner must fire exactly once, on the counter reaching the grace');
+  assert.ok(tsx.includes('unprovenReadyRef.current = 0;'), 'the counter must reset on a fresh load');
 });
 
 // The handshake must not depend on one edge being caught by a listener that
