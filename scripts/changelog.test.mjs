@@ -1,6 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { parseChangelog } from './changelog.mjs';
+import {
+  parseChangelog,
+  buildReleaseEmbed,
+  buildSpotlightEmbed,
+  buildDevEmbed,
+  truncateDescription,
+  CHANGELOG_URL,
+} from './changelog.mjs';
 
 const SAMPLE = `# Changelog
 
@@ -65,4 +72,44 @@ test('added captures bullets even when not the first subsection', () => {
   const entries = parseChangelog(changelog);
   assert.equal(entries[0].version, '0.5.0');
   assert.equal(entries[0].added, '- Feature one\n- Feature two');
+});
+
+const ENTRY = {
+  version: '0.4.0',
+  date: '2026-05-08',
+  body: '### Added\n- Now Playing tile',
+  added: '- Now Playing tile',
+};
+
+test('release embed carries title, body, color, dated footer', () => {
+  const e = buildReleaseEmbed(ENTRY);
+  assert.equal(e.title, '2ndMonitor v0.4.0');
+  assert.equal(e.description, ENTRY.body);
+  assert.equal(e.color, 0x5865f2);
+  assert.equal(e.footer.text, '2ndMonitor Releases • 2026-05-08');
+});
+
+test('spotlight embed uses only Added bullets; null without them', () => {
+  const e = buildSpotlightEmbed(ENTRY);
+  assert.equal(e.title, '✨ New in 2ndMonitor v0.4.0');
+  assert.equal(e.description, '- Now Playing tile');
+  assert.equal(e.color, 0x57f287);
+  assert.equal(buildSpotlightEmbed({ ...ENTRY, added: null }), null);
+});
+
+test('dev embed frames in-development work', () => {
+  const e = buildDevEmbed({ title: 'Tile Library', body: 'Browse and add tiles.', date: '2026-07-31' });
+  assert.equal(e.title, '🔧 In development — Tile Library');
+  assert.equal(e.description, 'Browse and add tiles.');
+  assert.equal(e.color, 0xfaa61a);
+  assert.equal(e.footer.text, '2ndMonitor Features • 2026-07-31');
+});
+
+test('truncateDescription caps at 4096 and links the changelog', () => {
+  const short = 'fits fine';
+  assert.equal(truncateDescription(short), short);
+  const long = 'x'.repeat(5000);
+  const out = truncateDescription(long);
+  assert.ok(out.length <= 4096);
+  assert.ok(out.endsWith(`…[full changelog](${CHANGELOG_URL})`));
 });

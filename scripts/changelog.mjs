@@ -27,3 +27,42 @@ function extractAdded(body) {
   const m = body.match(/(?:^|\n)### Added\s*\n([\s\S]*?)(?=\n### |$)/);
   return m ? m[1].trim() : null;
 }
+
+export const CHANGELOG_URL =
+  'https://github.com/Bigollie8/2ndmonitor/blob/main/CHANGELOG.md';
+
+const EMBED_DESCRIPTION_MAX = 4096;
+
+export function truncateDescription(text) {
+  if (text.length <= EMBED_DESCRIPTION_MAX) return text;
+  const suffix = `…[full changelog](${CHANGELOG_URL})`;
+  return `${text.slice(0, EMBED_DESCRIPTION_MAX - suffix.length - 2)}\n\n${suffix}`.slice(0, EMBED_DESCRIPTION_MAX);
+}
+
+export function buildReleaseEmbed({ version, date, body }) {
+  return {
+    title: `2ndMonitor v${version}`,
+    description: truncateDescription(body),
+    color: 0x5865f2,
+    footer: { text: `2ndMonitor Releases • ${date}` },
+  };
+}
+
+export function buildSpotlightEmbed({ version, date, added }) {
+  if (!added) return null;
+  return {
+    title: `✨ New in 2ndMonitor v${version}`,
+    description: truncateDescription(added),
+    color: 0x57f287,
+    footer: { text: `2ndMonitor Features • ${date}` },
+  };
+}
+
+export function buildDevEmbed({ title, body, date }) {
+  return {
+    title: `🔧 In development — ${title}`,
+    description: truncateDescription(body),
+    color: 0xfaa61a,
+    footer: { text: `2ndMonitor Features • ${date}` },
+  };
+}
