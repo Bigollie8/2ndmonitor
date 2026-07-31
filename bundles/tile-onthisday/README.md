@@ -1,9 +1,30 @@
 # On this day
 
-Fetches `https://api.wikimedia.org/feed/v1/wikipedia/en/onthisday/all/<mm>/<dd>`
+Fetches `https://api.wikimedia.org/feed/v1/wikipedia/en/onthisday/events/<mm>/<dd>`
 (Wikipedia's "on this day" feed, public, key-less, generous CORS) and shows
 that date's historical events. Migrated from the built-in `OnThisDayTile`,
 with one deliberate behavior change — read on.
+
+## Why `/events/`, not `/all/` — read this before "simplifying" back
+
+The feed has two shapes at the same host: `/onthisday/all/<mm>/<dd>` bundles
+`selected`, `births`, `deaths`, `events` and `holidays` into one payload;
+`/onthisday/events/<mm>/<dd>` returns `events` alone. This tile only ever
+rendered `events` (see Fields below), but it originally shipped pointed at
+`/all/` anyway, because Task 1 verified it with bare `curl`, which has no
+size limit. `broker_fetch` — the only network path a bundle tile can
+actually use — does: `FETCH_CAP` in `app/src-tauri/src/marketplace.rs` caps
+every response at 1 MiB (1,048,576 bytes), and `/all/07/31` measured
+**1,470,210 bytes** live, ~40% over. Every fetch through the real app
+failed with `TileError "response too large"` — deterministically, for
+every date, for every user; confirmed in packaged-build verification
+(Task 4). `/events/07/31` measured **413,994 bytes** live on the same
+date — 39% of the cap, comfortably clear with room for a busier news date.
+The response shape for `events` itself is unchanged between the two
+endpoints (both put a top-level `events` array at the response root, no
+`data` envelope on either), so `select: "events"` and every path below
+still resolve exactly as documented — only the URL and the payload size
+differ.
 
 ## Pinned date, not a rolling "today" — read why
 
@@ -25,7 +46,7 @@ the date (e.g. to re-pin it each morning, if that's the workflow you want).
 ### Why 2-digit *text*, not a `number` config
 
 Wikimedia's endpoint 404s on an unpadded single-digit month or day —
-confirmed live: `.../all/7/31` → 404, `.../all/07/31` → 200. A `number`
+confirmed live: `.../events/7/31` → 404, `.../events/07/31` → 200. A `number`
 config's template substitution has no zero-pad step (`render()` just calls
 `String(v)`), so `config.month = 7` would render as `7` and break every
 month before October. A `text` config lets the user type the zero-padded
@@ -33,10 +54,12 @@ string directly (`"07"`), which substitutes verbatim and always resolves.
 
 ## Fields
 
-`select` is `events` (the array of historical events for the pinned date;
-`births`/`deaths` are also in the response but a declarative tile can only
-render one array — `events` matches the built-in's default tab). Real
-response for `07/31` (fetched live 2026-07-31), first element:
+`select` is `events` (the array of historical events for the pinned date —
+`/events/` returns only this array, so there's no `births`/`deaths` to
+select away anymore, but the field stays named the same as the array it
+targets — `events` matches the built-in's default tab). Real response for
+`07/31` from the live `/events/` endpoint (fetched 2026-07-31, top-level
+keys `["events"]`, 55 items, 413,994 bytes total), first element:
 
 ```json
 {"text":"A De Havilland Canada DHC-2 Beaver and Piper PA-12 Super Cruiser collide over Soldotna, Alaska, killing all seven people on board both aircraft, including state representative Gary Knopp.","pages":[{"content_urls":{"desktop":{"page":"https://en.wikipedia.org/wiki/De_Havilland_Canada_DHC-2_Beaver"}}}],"year":2020}

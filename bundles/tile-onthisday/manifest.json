@@ -2,7 +2,7 @@
   "id": "tile-onthisday",
   "name": "On this day",
   "author": "official",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "api": 1,
   "permissions": ["net:api.wikimedia.org"],
   "config": [

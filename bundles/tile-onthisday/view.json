@@ -1,7 +1,7 @@
 {
   "source": {
     "kind": "http",
-    "url": "https://api.wikimedia.org/feed/v1/wikipedia/en/onthisday/all/{{config.month}}/{{config.day}}",
+    "url": "https://api.wikimedia.org/feed/v1/wikipedia/en/onthisday/events/{{config.month}}/{{config.day}}",
     "intervalMs": 21600000
   },
   "select": "events",
