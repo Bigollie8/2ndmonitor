@@ -44,9 +44,17 @@
     "targets": ["nsis"],
     "icon": ["icons/icon.ico"],
     "resources": ["resources/seed/**/*"],
+    "createUpdaterArtifacts": true,
     "windows": {
       "webviewInstallMode": { "type": "downloadBootstrapper" }
     }
   },
-  "plugins": {}
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDY0Q0RENjVENEFEQTVENEYKUldSUFhkcEtYZGJOWkV0bUJyRFIzZ0U4aXMvQTU5a21lMHQ0VHcxSmxqY3QzZDNYWHNGWXFLZW8K",
+      "endpoints": [
+        "https://github.com/Bigollie8/2ndmonitor/releases/latest/download/latest.json"
+      ]
+    }
+  }
 }

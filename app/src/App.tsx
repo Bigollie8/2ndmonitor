@@ -29,6 +29,7 @@ import {
 } from './state/pomodoro';
 import { TRACKS, ACCENT_PALETTES } from './data';
 import { useTweaks } from './state/useTweaks';
+import { UpdateToast } from './components/UpdateToast';
 import { useSysmon, useNowPlaying, useSpectrumRef } from './state/tauri';
 import { setWindowHidden } from './state/framePace';
 import { VizHero, setVizDprCap, setVizMaxFps, getVizMaxFps } from './components/viz';
@@ -1152,6 +1153,8 @@ export default function App() {
       )}
 
       {t.perfDebug && <PerfDebugHUD />}
+
+      <UpdateToast accent={accent} />
     </div>
   );
 }
