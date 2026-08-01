@@ -232,12 +232,15 @@ export function validateManifest(
 //   { type: 'ready', token }   (repeated until an 'init' arrives)
 //   { type: 'error', message, line }
 //   { type: 'settings:set', key, value }
+//   { type: 'data', payload }   (both directions; first-party surfaces only —
+//                                delivered to viz.on('data') / posted by viz.post)
 
 export const MSG_INIT = 'init';
 export const MSG_FRAME = 'frame';
 export const MSG_READY = 'ready';
 export const MSG_ERROR = 'error';
 export const MSG_SETTINGS_SET = 'settings:set';
+export const MSG_DATA = 'data';
 
 export interface VizTheme { accent: string; accent2: string }
 export interface VizSize { width: number; height: number }
@@ -296,5 +299,11 @@ export interface FrameMessage {
 export interface ReadyMessage { type: typeof MSG_READY; token: string }
 export interface ErrorMessage { type: typeof MSG_ERROR; message: string; line: number | null }
 export interface SettingsSetMessage { type: typeof MSG_SETTINGS_SET; key: string; value: unknown }
+/** Generic first-party payload channel, both directions. Additive to api 1:
+ *  bundles that never register viz.on('data') or call viz.post are unaffected.
+ *  The host only acts on it when a surface passes an `onData` callback —
+ *  installed marketplace bundles get no callback, so their `data` posts go
+ *  nowhere. */
+export interface DataMessage { type: typeof MSG_DATA; payload: unknown }
 
-export type SandboxToHost = ReadyMessage | ErrorMessage | SettingsSetMessage;
+export type SandboxToHost = ReadyMessage | ErrorMessage | SettingsSetMessage | DataMessage;

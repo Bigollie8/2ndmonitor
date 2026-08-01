@@ -78,6 +78,7 @@ function __clampBinCount(n) {
 }
 
 var frameCbs = [];
+var dataCbs = [];
 var settingsCache = {};
 var lastErrorAt = 0;
 var canvas = document.getElementById('c');
@@ -115,7 +116,13 @@ var viz = Object.freeze({
   },
   on: function (name, cb) {
     if (name === 'frame' && typeof cb === 'function') frameCbs.push(cb);
+    if (name === 'data' && typeof cb === 'function') dataCbs.push(cb);
   },
+  // First-party payload channel to the embedder. Marketplace bundles can call
+  // this too, but the host only listens when a surface passed an onData
+  // callback - and only the builtin milkdrop surface does - so for bundles it
+  // is a no-op, not a capability.
+  post: function (payload) { parent.postMessage({ type: 'data', payload: payload }, '*'); },
   settings: Object.freeze({
     get: function (key) { return settingsCache[key]; },
     set: function (key, value) {
@@ -179,6 +186,7 @@ window.addEventListener('message', function (ev) {
   } else if (msg.type === 'init') {
     stopReadyPings();
     frameCbs = [];
+    dataCbs = [];
     settingsCache = msg.settings || {};
     applySize(msg.size);
     // Surface selection (I11): the host sends msg.surface (Task 3). Absent
@@ -219,6 +227,10 @@ window.addEventListener('message', function (ev) {
     };
     for (var i = 0; i < frameCbs.length; i++) {
       try { frameCbs[i](payload); } catch (e) { reportError(e); }
+    }
+  } else if (msg.type === 'data') {
+    for (var i = 0; i < dataCbs.length; i++) {
+      try { dataCbs[i](msg.payload); } catch (e) { reportError(e); }
     }
   }
 });

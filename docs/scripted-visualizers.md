@@ -75,6 +75,21 @@ Runtime errors surface as an overlay on the tile (and in the editor) with a line
 - CSP `default-src 'none'` — `fetch`, XHR, images, external scripts and styles are all blocked
 - the only channel in or out is the frame/settings message protocol above
 
+## First-party surfaces on the sandbox runtime
+
+The builtin MilkDrop visualizer renders through the same sandbox iframe as
+marketplace bundles, via `SandboxVizSurface`'s `localSource` prop: its code
+(butterchurn + preset pack UMDs + glue, see `src/components/milkdrop-code.ts`)
+ships inside the app and is passed to the standard `init` path — no
+`visualizers_read`, no manifest, and no broker permissions. It talks to its
+host chrome over the generic `data` message (`viz.on('data')` / `viz.post`).
+
+Why: butterchurn compiles preset equations with `new Function`. The main
+window's CSP pins `script-src 'self'` (a test enforces it), so the only place
+that eval may run is the sandbox — which also means a preset `.json`
+downloaded from the internet executes in an opaque-origin frame with
+`default-src 'none'`, not in the privileged app document.
+
 ## Permissions (marketplace bundles only)
 
 Locally-authored visualizers must declare `"permissions": []` — they get audio data in and pixels out, nothing more. Bundles **installed from the marketplace** may declare permissions, which the app enforces through a broker:

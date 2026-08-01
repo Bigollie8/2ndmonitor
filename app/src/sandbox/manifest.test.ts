@@ -198,7 +198,8 @@ test('validateManifest: surface must be a string', () => {
 
 // ── InitMessage carries the resolved surface (Task 3) ────────────────────────
 
-import type { InitMessage } from './manifest';
+import type { InitMessage, DataMessage, SandboxToHost } from './manifest';
+import { MSG_DATA } from './manifest';
 
 test('InitMessage: surface is a required field carrying the validated manifest value', () => {
   // Compile-time pin as much as runtime: if `surface` were ever dropped from
@@ -214,4 +215,12 @@ test('InitMessage: surface is a required field carrying the validated manifest v
     surface: 'dom',
   };
   assert.equal(msg.surface, 'dom');
+});
+
+test('data message: additive host<->frame channel for first-party surfaces', () => {
+  assert.equal(MSG_DATA, 'data');
+  const msg: DataMessage = { type: MSG_DATA, payload: { kind: 'milkdrop:load' } };
+  // Must be a member of SandboxToHost so the host dispatch can narrow on it.
+  const narrowed: SandboxToHost = msg;
+  assert.equal(narrowed.type, 'data');
 });

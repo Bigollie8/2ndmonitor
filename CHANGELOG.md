@@ -16,6 +16,12 @@ All notable changes to 2ndMonitor are documented here. Format follows
 - Fonts are self-hosted as 2 variable-weight files (no external font hosts)
 
 ### Fixed
+- MilkDrop presets now load in packaged builds. Butterchurn compiles preset
+  equations with `new Function`, which the app CSP (`script-src 'self'`)
+  rightly blocks in the main window; the visualizer now runs inside the
+  eval-capable viz sandbox iframe, so downloaded presets also stop executing
+  with app privileges. (`tauri dev` injects no CSP, which is why this never
+  reproduced in development.)
 - Visualizer frame pacing no longer fights 144 Hz vsync; the render loop pauses while hidden to tray
 - Clicking the tray icon restores a minimized window; second launches refocus the running instance
 - Settings import merges over current values (not defaults) and surfaces errors in the UI
