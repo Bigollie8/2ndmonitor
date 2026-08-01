@@ -6,6 +6,8 @@ import {
   mergePresetLibrary, resolveLoadSource,
   type PresetEntry, type MilkdropLoadSource, type MilkdropHostToFrame, type MilkdropFrameToHost,
 } from '../state/milkdrop-presets';
+import { ORIGINALS } from '../state/originals';
+import { TRON_PALETTE, paletteFromAccents } from '../state/originals/palette';
 
 /** MilkDrop 2 presets via Butterchurn (WebGL2), run inside the no-capability
  *  viz sandbox iframe — butterchurn compiles preset equations with
@@ -24,6 +26,11 @@ const AUTO_ADVANCE_MS = 30_000;
 const BLEND_SECONDS = 2.7;
 const LS_PRESET = 'milkdrop.preset';
 const LS_AUTO = 'milkdrop.autoAdvance';
+/** Per-original tint choice — canonical Tron palette vs the app accents. */
+const lsTintKey = (id: string) => `milkdrop.tint.${id}`;
+/** The picker rows for `mergePresetLibrary`'s first parameter — module-scope
+ *  because the registry is compile-time static. */
+const ORIGINAL_ROWS = ORIGINALS.map((o) => ({ id: o.id, label: o.label }));
 
 /** Stable identity is load-bearing: SandboxVizSurface documents localSource
  *  as a module-scope constant; an inline literal would re-init per render. */
@@ -62,6 +69,25 @@ function MilkdropSurface({ accent, accent2, spectrumRef, paused }: Pick<VizProps
   const [pickerOpen, setPickerOpen] = useState(false);
   const [libraryVersion, setLibraryVersion] = useState(0);
   const [autoAdvance, setAutoAdvance] = useState(() => localStorage.getItem(LS_AUTO) !== 'off');
+  /** Bumped on tint toggles so the ◐ chip re-reads localStorage. */
+  const [tintVersion, setTintVersion] = useState(0);
+
+  /** Current accents behind a ref so `loadAt` (and everything hanging off it)
+   *  stays referentially stable across theme changes — the tint builder reads
+   *  the ref at build time instead of closing over stale props. */
+  const accentsRef = useRef({ accent, accent2 });
+  accentsRef.current = { accent, accent2 };
+
+  /** Builds an original's preset JSON at load time: canonical Tron palette by
+   *  default, or a palette derived from the CURRENT app accents when this
+   *  preset's ◐ tint is on. */
+  const buildOriginal = useCallback((id: string): object => {
+    const def = ORIGINALS.find((o) => o.id === id);
+    if (!def) throw new Error(`original preset missing: ${id}`);
+    const tinted = localStorage.getItem(lsTintKey(id)) === 'on';
+    const { accent: a1, accent2: a2 } = accentsRef.current;
+    return def.build(tinted ? paletteFromAccents(a1, a2) : TRON_PALETTE);
+  }, []);
 
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const showToast = useCallback((msg: string) => {
@@ -122,7 +148,7 @@ function MilkdropSurface({ accent, accent2, spectrumRef, paused }: Pick<VizProps
       const i = (index + attempt + lib.length) % lib.length;
       const entry = lib[i];
       try {
-        const source = await resolveLoadSource(entry, readUserFile);
+        const source = await resolveLoadSource(entry, readUserFile, buildOriginal);
         const res = await sendLoad(source, blend);
         if (!res.ok) throw new Error(res.error ?? 'load failed');
         indexRef.current = i;
@@ -136,7 +162,7 @@ function MilkdropSurface({ accent, accent2, spectrumRef, paused }: Pick<VizProps
         showToast(`${entry.label}: ${msg}`);
       }
     }
-  }, [readUserFile, sendLoad, showToast]);
+  }, [readUserFile, sendLoad, showToast, buildOriginal]);
 
   const advance = useCallback((how: 'next' | 'prev' | 'random', blend = BLEND_SECONDS) => {
     const lib = libraryRef.current;
@@ -182,7 +208,7 @@ function MilkdropSurface({ accent, accent2, spectrumRef, paused }: Pick<VizProps
     const gen = ++namesGenRef.current;
     const user = await getUserFiles();
     if (gen !== namesGenRef.current) return; // superseded by a newer onNames while we awaited
-    libraryRef.current = mergePresetLibrary(names, user);
+    libraryRef.current = mergePresetLibrary(ORIGINAL_ROWS, names, user);
     setLibraryVersion((v) => v + 1);
     const lib = libraryRef.current;
     const savedKey = localStorage.getItem(LS_PRESET);
@@ -206,6 +232,17 @@ function MilkdropSurface({ accent, accent2, spectrumRef, paused }: Pick<VizProps
     const id = setInterval(() => advance('random'), AUTO_ADVANCE_MS);
     return () => clearInterval(id);
   }, [autoAdvance, paused, advance]);
+
+  // Rebuild a TINTED original when the app accents change under it — its
+  // colors are baked from the accents at build time, so without this it keeps
+  // wearing the previous theme. Canonical-palette originals don't care.
+  useEffect(() => {
+    const e = libraryRef.current[indexRef.current];
+    if (e?.source === 'original' && localStorage.getItem(lsTintKey(e.id!)) === 'on') {
+      void loadAt(indexRef.current, 0.8);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [accent, accent2]);
 
   const toggleAuto = () => {
     setAutoAdvance((prev) => {
@@ -256,6 +293,25 @@ function MilkdropSurface({ accent, accent2, spectrumRef, paused }: Pick<VizProps
         opacity: hovered || pickerOpen ? 1 : 0, transition: 'opacity 160ms ease',
         pointerEvents: hovered || pickerOpen ? 'auto' : 'none',
       }}>
+        {(() => {
+          const current = libraryRef.current[indexRef.current];
+          if (current?.source !== 'original') return null;
+          void tintVersion; // re-read localStorage after each toggle
+          const tinted = localStorage.getItem(lsTintKey(current.id!)) === 'on';
+          return (
+            <button
+              style={{ ...chip, color: tinted ? accent : 'rgba(255,255,255,0.85)' }}
+              title={tinted
+                ? 'Tinted with your accent colors — click for the canonical Tron palette'
+                : 'Canonical Tron palette — click to tint with your accent colors'}
+              onClick={() => {
+                localStorage.setItem(lsTintKey(current.id!), tinted ? 'off' : 'on');
+                setTintVersion((v) => v + 1);
+                void loadAt(indexRef.current, 0.5);
+              }}
+            >◐</button>
+          );
+        })()}
         <button style={chip} title="Previous preset" onClick={() => advance('prev', 1.0)}>‹</button>
         <button style={chip} title="Random preset" onClick={() => advance('random', 1.0)}>⚄</button>
         <button style={chip} title="Next preset" onClick={() => advance('next', 1.0)}>›</button>
@@ -300,7 +356,8 @@ function PresetPicker({ library, failures, currentKey, accent, onPick, onClose }
   onClose: () => void;
 }) {
   const bundledCount = library.filter((e) => e.source === 'bundled').length;
-  const renderGroup = (source: 'bundled' | 'user', title: string) => {
+  const originalCount = library.filter((e) => e.source === 'original').length;
+  const renderGroup = (source: PresetEntry['source'], title: string) => {
     const items = library
       .map((entry, index) => ({ entry, index }))
       .filter(({ entry }) => entry.source === source);
@@ -346,6 +403,7 @@ function PresetPicker({ library, failures, currentKey, accent, onPick, onClose }
           boxShadow: '0 16px 48px rgba(0,0,0,0.6)',
         }}
       >
+        {renderGroup('original', `Originals · ${originalCount}`)}
         {renderGroup('bundled', `Bundled · ${bundledCount}`)}
         {renderGroup('user', 'Your presets — %APPDATA%\\com.secondmonitor.hub\\presets')}
         <div style={{

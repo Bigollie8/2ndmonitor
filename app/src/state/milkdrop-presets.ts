@@ -8,23 +8,32 @@
 export interface PresetEntry {
   key: string;
   label: string;
-  source: 'bundled' | 'user';
+  source: 'original' | 'bundled' | 'user';
+  /** original entries only — the registry id the builder is looked up by */
+  id?: string;
   /** user entries only */
   file?: string;
   ext?: string;
 }
 
-/** Pure merge: bundled presets (sorted by name) followed by user files in the
- *  order the store returned them. Keys are namespaced (`b:`/`u:`) so a user
- *  file named after a bundled preset can't collide. */
+/** Pure merge: original (first-party) presets in authored order, then bundled
+ *  presets (sorted by name), then user files in the order the store returned
+ *  them. Keys are namespaced (`o:`/`b:`/`u:`) so names can't collide across
+ *  sources. Originals go first — they're ours, there are few, and burying six
+ *  hand-authored presets under a 90-name alphabetical pack is how they never
+ *  get seen. */
 export function mergePresetLibrary(
+  originals: { id: string; label: string }[],
   bundledNames: string[],
   user: { name: string; file: string; ext: string }[],
 ): PresetEntry[] {
-  const out: PresetEntry[] = bundledNames
+  const out: PresetEntry[] = originals
+    .map((o) => ({ key: `o:${o.id}`, label: o.label, source: 'original' as const, id: o.id }));
+  for (const name of bundledNames
     .slice()
-    .sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()))
-    .map((name) => ({ key: `b:${name}`, label: name, source: 'bundled' as const }));
+    .sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()))) {
+    out.push({ key: `b:${name}`, label: name, source: 'bundled' });
+  }
   for (const u of user) {
     out.push({ key: `u:${u.file}`, label: u.name, source: 'user', file: u.file, ext: u.ext });
   }
@@ -40,7 +49,15 @@ export type MilkdropLoadSource = { bundled: string } | { preset: object };
 export async function resolveLoadSource(
   entry: PresetEntry,
   readUserFile: (file: string) => Promise<string>,
+  /** Builds an original preset's JSON by registry id (originals/index.ts —
+   *  injected, like readUserFile, so this module stays dependency-free and
+   *  the palette baking stays the caller's concern). */
+  buildOriginal?: (id: string) => object,
 ): Promise<MilkdropLoadSource> {
+  if (entry.source === 'original') {
+    if (!buildOriginal) throw new Error('no builder for original presets');
+    return { preset: buildOriginal(entry.id!) };
+  }
   if (entry.source === 'bundled') return { bundled: entry.label };
   const text = await readUserFile(entry.file!);
   if (entry.ext === 'json') {
