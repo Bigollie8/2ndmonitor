@@ -243,3 +243,14 @@ What *was* verified: the server's rate/re-rate semantics directly (`INSERT OR RE
 **Fix shape:** document a supported local-testing path — either a dev-only trust anchor gated behind `cfg!(debug_assertions)`, or a documented mkcert/step-ca recipe whose root the build trusts in debug only. Do **not** relax the `https://` guard or add the Windows trust store in release.
 
 This blocks meaningful end-to-end testing of anything authenticated, not just ratings.
+
+### 31. SPEC ERROR — live preview was treated as a substitute for preview images on visualizers
+
+Spec C decided visualizers "preview themselves" live in the sandbox and therefore need no published image. That was wrong, and it produces two user-visible failures:
+
+1. **`PREVIEW_CONCURRENCY = 6`**, but a catalog slice can hold 25+ visualizer cards. Only six animate; the rest fall back to a letter glyph, so the catalog looks broken even though every bundle is installed and healthy.
+2. **An uninstalled visualizer cannot be previewed at all** — `previewSourceFor` only offers `live` when `installed && installedVersion != null`. So a user cannot see what a visualizer looks like *before* installing it, which is the single thing a marketplace preview exists to do.
+
+The asymmetry in spec C §2 ("visualizers preview themselves, tiles need an image") confused *capability* with *sufficiency*. Visualizers **can** render live; that does not mean an image is unnecessary.
+
+**Correct architecture:** every bundle — visualizer and tile — carries a published preview image as the baseline. Live rendering stays as an enhancement for cards actually on screen, under the same concurrency cap. `previewSourceFor`'s order becomes: live (installed, in view, budget available) → **image** → glyph → placeholder, so a card never degrades past its image.
