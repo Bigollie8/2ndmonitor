@@ -5,6 +5,21 @@ All notable changes to 2ndMonitor are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-08-01
+
+### Added
+- Auto-update: the app checks for new releases and offers a one-click
+  "Update & restart" — updates are cryptographically signed, and nothing
+  downloads or installs without your click
+- "Check for updates" button in Settings → System for checking on demand
+- Six original Tron-inspired MilkDrop presets in a new "Originals" group at
+  the top of the preset picker, each with a ◐ toggle between the canonical
+  Tron palette and your theme's accent colors
+
+### Changed
+- This is the first release the app can update itself FROM — anyone on 0.5.0
+  or older needs one last manual install
+
 ## [0.5.0] - 2026-08-01
 
 ### Added
