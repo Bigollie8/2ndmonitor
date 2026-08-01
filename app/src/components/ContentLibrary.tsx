@@ -262,6 +262,7 @@ export function ContentLibrary({
     vizStyles: BUILTIN_VIZ_STYLES,
     installedTiles,
     installedViz,
+    installedPresets: [],
     index,
     removed: catalogRemoved,
     needsSetup: needsSetupKeys,

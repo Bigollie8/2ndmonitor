@@ -20,7 +20,7 @@ import type { InstalledVizFolder } from './contentRegistry';
 import { isFirstParty } from './firstParty';
 import { parsePermission } from '../sandbox/manifest';
 
-export type CatalogKind = 'tile' | 'visualizer';
+export type CatalogKind = 'tile' | 'visualizer' | 'preset';
 export type CatalogSource = 'first-party' | 'bundle';
 
 /** One bundle's aggregate rating, as `GET /ratings` reports it (server/src/
@@ -58,7 +58,7 @@ export interface CatalogItem {
   id: string;
   name: string;
   description: string;
-  category: TileCategory | VizCategory;
+  category: TileCategory | VizCategory | 'milkdrop';
   source: CatalogSource;
 
   installed: boolean;
@@ -94,11 +94,25 @@ export interface CatalogItem {
   rating: RatingAgg | null;
 }
 
+/** One installed MilkDrop preset folder, exactly as the Rust command
+ *  `presets_market_list` returns it — `author` is nullable because a preset's
+ *  manifest may not declare one (unlike a tile/visualizer bundle's `author`,
+ *  which the marketplace always supplies), and there is no `api`/
+ *  `manifest_error` here because a preset has no sandboxed runtime to fail —
+ *  it is data (a `.milk` file), not code. */
+export interface InstalledPresetFolder {
+  id: string;
+  name: string;
+  author: string | null;
+  version: string;
+}
+
 export interface MergeCatalogArgs {
   tileMeta: Record<BuiltinTileType, TileMeta>;
   vizStyles: VizStyle[];
   installedTiles: InstalledTileFolder[];
   installedViz: InstalledVizFolder[];
+  installedPresets: InstalledPresetFolder[];
   /** Empty when the marketplace is unreachable — the catalog still renders. */
   index: IndexBundle[];
   /** Keys the user removed. Persisted; see state/removedContent.ts. */
@@ -200,10 +214,33 @@ export function mergeCatalog(args: MergeCatalogArgs): CatalogItem[] {
   for (const f of args.installedTiles) installedFolder('tile', f, 'integrations');
   for (const f of args.installedViz) installedFolder('visualizer', f, 'ambient');
 
+  // Installed preset folders. Unlike tiles/visualizers, presets have no
+  // compile-time table (pass 1) to overwrite and no `manifest_error`/
+  // `permissions` of their own — a preset is data, not sandboxed code — so
+  // this is a simpler put than `installedFolder` above, matching the brief's
+  // pass-2 shape exactly.
+  for (const p of args.installedPresets) {
+    const key = catalogKey('preset', p.id);
+    if (removed.has(key)) continue;
+    const prev = items.get(key);
+    put({
+      key, kind: 'preset', id: p.id,
+      name: p.name.trim() || p.id,
+      description: p.author ? `by ${p.author}` : prev?.description ?? '',
+      category: 'milkdrop',
+      source: 'bundle',
+      installed: true, installedVersion: p.version, availableVersion: prev?.availableVersion ?? null,
+      updateAvailable: false,
+      permissions: [], needsSetup: false, downloads: prev?.downloads ?? null, brokenReason: null,
+      removed: false, hasPreview: false, rating: prev?.rating ?? null,
+    });
+  }
+
   // 3. The signed index. Adds items nobody has installed, and supplies the
   //    available version, permissions and download count for those they do.
+  //    Presets are included here too (not skipped) — a `kind: 'preset'` entry
+  //    is exactly as browsable/installable as a tile or visualizer one.
   for (const b of args.index) {
-    if (b.kind === 'preset') continue; // presets are data, not catalog content
     const kind: CatalogKind = b.kind;
     const key = catalogKey(kind, b.id);
     const prev = items.get(key);
@@ -216,7 +253,7 @@ export function mergeCatalog(args: MergeCatalogArgs): CatalogItem[] {
       key, kind, id: b.id,
       name: b.name || prev?.name || b.id,
       description: prev?.description ?? (b.author ? `by ${b.author}` : ''),
-      category: prev?.category ?? (kind === 'tile' ? 'integrations' : 'ambient'),
+      category: prev?.category ?? (kind === 'tile' ? 'integrations' : kind === 'preset' ? 'milkdrop' : 'ambient'),
       source: 'bundle',
       installed,
       installedVersion: prev?.installedVersion ?? null,
