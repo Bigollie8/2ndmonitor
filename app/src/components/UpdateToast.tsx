@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { shouldPrompt, SNOOZE_MS } from '../state/updater';
+import { checkForUpdate } from '../state/updaterClient';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Auto-update toast: checks the release endpoint on mount and every 6h, and
@@ -36,48 +37,43 @@ export function UpdateToast({ accent }: { accent: string }) {
   // Once per version per session — a ref, not state: it must survive re-renders
   // without triggering them, and reset only on a fresh app session.
   const promptedRef = useRef<string | null>(null);
-  const updateRef = useRef<{ downloadAndInstall: () => Promise<void> } | null>(null);
+  const installRef = useRef<(() => Promise<void>) | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-    const check = async () => {
-      try {
-        const [{ check }, { getVersion }] = await Promise.all([
-          import('@tauri-apps/plugin-updater'),
-          import('@tauri-apps/api/app'),
-        ]);
-        const [update, currentVersion] = await Promise.all([check(), getVersion()]);
-        if (cancelled || !update) return;
-        const snooze = readSnooze();
-        const ok = shouldPrompt({
-          currentVersion,
-          offeredVersion: update.version,
-          promptedThisSession: promptedRef.current,
-          snoozedVersion: snooze?.version ?? null,
-          snoozedUntil: snooze?.until ?? null,
-        }, Date.now());
-        if (!ok) return;
-        promptedRef.current = update.version;
-        updateRef.current = update;
-        setOffered({ version: update.version, notes: update.body ?? null });
-      } catch {
-        // Endpoint unreachable / no releases yet / dev without tauri — all
-        // silently fine; the next interval tick tries again.
-      }
+    const runCheck = async () => {
+      // checkForUpdate never throws and never downloads; 'error' (endpoint
+      // unreachable, no releases yet, dev without tauri) is silently fine —
+      // the next interval tick tries again.
+      const result = await checkForUpdate();
+      if (cancelled || result.kind !== 'update') return;
+      const snooze = readSnooze();
+      const ok = shouldPrompt({
+        // `current` isn't in the result's update arm; comparing offered to
+        // running is already done inside checkForUpdate, so pass a sentinel
+        // that can never equal a real version string.
+        currentVersion: '',
+        offeredVersion: result.version,
+        promptedThisSession: promptedRef.current,
+        snoozedVersion: snooze?.version ?? null,
+        snoozedUntil: snooze?.until ?? null,
+      }, Date.now());
+      if (!ok) return;
+      promptedRef.current = result.version;
+      installRef.current = result.install;
+      setOffered({ version: result.version, notes: result.notes });
     };
-    void check();
-    const id = setInterval(() => { void check(); }, CHECK_EVERY_MS);
+    void runCheck();
+    const id = setInterval(() => { void runCheck(); }, CHECK_EVERY_MS);
     return () => { cancelled = true; clearInterval(id); };
   }, []);
 
   const install = useCallback(async () => {
-    if (!updateRef.current) return;
+    if (!installRef.current) return;
     setBusy(true);
     setError(null);
     try {
-      await updateRef.current.downloadAndInstall();
-      const { relaunch } = await import('@tauri-apps/plugin-process');
-      await relaunch();
+      await installRef.current();
     } catch (e) {
       setBusy(false);
       setError(String(e instanceof Error ? e.message : e));

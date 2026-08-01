@@ -1,3 +1,4 @@
+import { UpdateCheckRow } from './UpdateCheckRow';
 import React, { useCallback, useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { VizMode, AccentTheme, Density, WeatherLocation } from '../types';
@@ -307,6 +308,11 @@ export function SettingsWindow({
     {
       id: 'system', icon: '⚙', title: 'System',
       rows: [
+        {
+          id: 'system-updates', label: 'App updates',
+          hint: 'Check GitHub for a newer version — nothing downloads or installs unless you choose to',
+          control: <UpdateCheckRow accent={accent} />,
+        },
         {
           id: 'system-autostart', label: 'Launch at startup',
           hint: 'Start the hub automatically when you sign in to Windows',
