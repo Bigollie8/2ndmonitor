@@ -99,6 +99,8 @@ pub fn run() {
             audio::set_waveform_enabled,
             presets::presets_list,
             presets::presets_read,
+            presets::presets_market_list,
+            presets::presets_market_read,
             visualizers::visualizers_list,
             visualizers::visualizers_read,
             visualizers::visualizers_write,

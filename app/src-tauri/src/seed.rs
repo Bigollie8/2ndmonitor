@@ -164,12 +164,14 @@ pub fn seed_zip_for<R: Runtime>(
 /// installed.
 ///
 /// Only ever walks `resources/seed/tile` and `resources/seed/visualizer`
-/// (never `preset`): `marketplace::is_installed` always returns false for
-/// `kind == "preset"` (presets have no per-id directory or marker), so a
-/// naive "if not installed, install" over presets would re-write and clobber
-/// a user's edited preset file on every launch. `plan_seeds` additionally
-/// enforces this via `parse_seed_path`'s kind check, so the constraint holds
-/// even if this loop were ever accidentally widened.
+/// (never `preset`): presets are not seeded content at all, and
+/// `parse_seed_path` rejects any `preset/...` path outright regardless of
+/// `is_installed` — so a naive "if not installed, install" over presets can
+/// never run here even now that `marketplace::is_installed` does have a
+/// meaningful `"preset"` arm (marketplace-installed presets get the same
+/// per-id folder + marker as visualizers/tiles; see `install_bundle_zip`).
+/// `plan_seeds` enforces the exclusion via `parse_seed_path`'s kind check, so
+/// the constraint holds even if this loop were ever accidentally widened.
 #[tauri::command]
 pub fn seed_sync<R: Runtime>(app: AppHandle<R>, removed: Vec<String>) -> Result<Vec<String>, String> {
     let Some(dir) = seed_dir(&app) else { return Ok(vec![]) };

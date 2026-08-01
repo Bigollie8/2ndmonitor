@@ -441,13 +441,17 @@ pub fn marketplace_fetch_index(url: String, pubkey: String) -> Result<serde_json
     Ok(v)
 }
 
-fn content_dir<R: Runtime>(app: &AppHandle<R>, sub: &str) -> Result<std::path::PathBuf, String> {
+fn content_dir<R: Runtime>(
+    app: &AppHandle<R>,
+    sub: impl AsRef<std::path::Path>,
+) -> Result<std::path::PathBuf, String> {
+    let sub = sub.as_ref();
     let dir = app
         .path()
         .app_data_dir()
         .map_err(|e| format!("app_data_dir: {e}"))?
         .join(sub);
-    std::fs::create_dir_all(&dir).map_err(|e| format!("create {sub}: {e}"))?;
+    std::fs::create_dir_all(&dir).map_err(|e| format!("create {}: {e}", sub.display()))?;
     Ok(dir)
 }
 
@@ -490,15 +494,20 @@ fn write_installed_marker(
 /// contains the `installed.json` marker written by `write_installed_marker`.
 /// Used by the seed installer (Task 5) to skip a bundle already on disk.
 ///
-/// Presets have no per-id directory and no marker (see `install_bundle_zip`),
-/// so there is nothing meaningful to check for that kind — always false.
+/// Presets now get the same per-id folder + marker as visualizers/tiles (see
+/// `install_bundle_zip`'s `"preset"` arm) — this doc comment previously
+/// claimed presets had neither and always returned false for that kind; that
+/// is no longer true. `seed_sync` still never walks preset seeds regardless
+/// (see seed.rs), so this arm exists for completeness/future callers rather
+/// than because seed_sync depends on it today.
 pub fn is_installed<R: Runtime>(app: &AppHandle<R>, kind: &str, id: &str) -> bool {
-    let sub = match kind {
-        "visualizer" => "visualizers",
-        "tile" => "tiles",
+    let sub_path = match kind {
+        "visualizer" => std::path::PathBuf::from("visualizers"),
+        "tile" => std::path::PathBuf::from("tiles"),
+        "preset" => std::path::PathBuf::from("presets").join("marketplace"),
         _ => return false,
     };
-    match content_dir(app, sub) {
+    match content_dir(app, &sub_path) {
         Ok(dir) => dir.join(id).join("installed.json").is_file(),
         Err(_) => false,
     }
@@ -583,9 +592,18 @@ pub fn install_bundle_zip<R: Runtime>(
             write_installed_marker(&dir, id, version, kind, origin)?;
         }
         "preset" => {
+            let manifest = entries.get("manifest.json").ok_or("bundle missing manifest.json")?;
             let preset = entries.get("preset.json").ok_or("bundle missing preset.json")?;
-            let dir = content_dir(app, "presets")?;
-            std::fs::write(dir.join(format!("{id}.json")), preset).map_err(|e| format!("write preset: {e}"))?;
+            let dir = content_dir(app, "presets")?.join("marketplace").join(id);
+            std::fs::create_dir_all(&dir).map_err(|e| format!("create {id}: {e}"))?;
+            std::fs::write(dir.join("manifest.json"), manifest).map_err(|e| format!("write manifest: {e}"))?;
+            std::fs::write(dir.join("preset.json"), preset).map_err(|e| format!("write preset: {e}"))?;
+            write_installed_marker(&dir, id, version, kind, origin)?;
+            // Clean up the pre-0.6 flat-file layout for this id, if present — that
+            // path was never exposed in the UI, but a leftover would show up as an
+            // anonymous "user preset" in the picker.
+            let legacy = content_dir(app, "presets")?.join(format!("{id}.json"));
+            if legacy.is_file() { let _ = std::fs::remove_file(&legacy); }
         }
         other => return Err(format!("unknown kind {other}")),
     }
@@ -683,10 +701,12 @@ pub fn marketplace_uninstall<R: Runtime>(app: AppHandle<R>, id: String, kind: St
             }
         }
         "preset" => {
-            let f = content_dir(&app, "presets")?.join(format!("{id}.json"));
-            if f.exists() {
-                std::fs::remove_file(&f).map_err(|e| format!("remove {id}: {e}"))?;
+            let dir = content_dir(&app, "presets")?.join("marketplace").join(&id);
+            if dir.exists() {
+                std::fs::remove_dir_all(&dir).map_err(|e| format!("remove {id}: {e}"))?;
             }
+            let legacy = content_dir(&app, "presets")?.join(format!("{id}.json"));
+            if legacy.is_file() { let _ = std::fs::remove_file(&legacy); }
         }
         other => return Err(format!("unknown kind {other}")),
     }
@@ -731,7 +751,7 @@ pub fn marketplace_fetch_preview(url: String, id: String, version: String, kind:
     if !is_safe_id(&id) {
         return Err("invalid bundle id".into());
     }
-    if kind != "tile" && kind != "visualizer" {
+    if kind != "tile" && kind != "visualizer" && kind != "preset" {
         return Err("invalid kind".into());
     }
     if !crate::seed::is_safe_version(&version) {
