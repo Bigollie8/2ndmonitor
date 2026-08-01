@@ -1,0 +1,53 @@
+# Builds, signs, and publishes the Windows installer + updater artifacts as a
+# GitHub Release whenever a v* tag is pushed. The updater endpoint
+# (releases/latest/download/latest.json) is fed by tauri-action's generated
+# manifest, signed with the minisign key in the two TAURI_SIGNING_* secrets.
+#
+# Coexists with announce-release.yml on the same tag: this one publishes the
+# artifacts, that one posts to Discord. First live run: the v0.5.1 tag — this
+# workflow cannot be end-to-end tested without pushing a tag.
+name: Release build
+
+on:
+  push:
+    tags: ["v*"]
+
+concurrency:
+  group: release-build-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: app/src-tauri
+
+      - name: Install frontend dependencies
+        working-directory: app
+        run: npm ci
+
+      - name: Build, sign, and publish release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          projectPath: app
+          tagName: ${{ github.ref_name }}
+          releaseName: "2ndMonitor ${{ github.ref_name }}"
+          releaseBody: "See CHANGELOG.md for details. Installer below; the app auto-updates from this release onward."
+          releaseDraft: false
+          prerelease: false
