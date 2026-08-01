@@ -7,6 +7,7 @@ import {
   type ActionContext,
 } from '../state/actions';
 import { StreamDeckActionPicker } from './StreamDeckActionPicker';
+import { useVizStyles } from './useVizStyles';
 import type { Profile, VizMode, Density } from '../types';
 
 export interface StreamDeckTileProps {
@@ -19,6 +20,8 @@ export interface StreamDeckTileProps {
   setVizMode: (m: VizMode) => void;
   profiles: Profile[];
   setActiveProfileId: (id: string) => void;
+  /** The catalog removal list — see state/removedContent.ts. */
+  catalogRemoved: string[];
 }
 
 type PickerState =
@@ -28,16 +31,28 @@ type PickerState =
 
 export function StreamDeckTile({
   config, setConfig, editing, density, accent,
-  vizMode, setVizMode, profiles, setActiveProfileId,
+  vizMode, setVizMode, profiles, setActiveProfileId, catalogRemoved,
 }: StreamDeckTileProps) {
   const [pickerState, setPickerState] = useState<PickerState>({ open: false });
+  const { styles: vizStyles, loaded: vizStylesLoaded } = useVizStyles(catalogRemoved);
 
-  const ctx: ActionContext = { vizMode, setVizMode, setActiveProfileId };
+  const ctx: ActionContext = {
+    vizMode, setVizMode, setActiveProfileId,
+    vizIds: vizStyles.map((s) => s.id),
+  };
 
   const handleButtonClick = (button: StreamDeckButton, index: number) => {
     if (editing) {
       setPickerState({ open: true, mode: 'edit', index });
     } else {
+      // A Stream Deck is a physical device and can fire a cycleViz press
+      // before visualizers_list resolves. Before that, a `bundle:` vizMode
+      // has no match in ctx.vizIds, so cycleViz's indexOf(-1) math lands on
+      // index 0 and silently persists the catalog's first style over the
+      // user's actual selection — same root cause as the Critical fixed in
+      // Task 9. Make
+      // cycling a no-op until the catalog is known rather than guessing.
+      if (button.action.kind === 'cycleViz' && !vizStylesLoaded) return;
       void executeAction(button.action, ctx);
     }
   };

@@ -32,6 +32,24 @@ pub fn set_audio_emit_hz(hz: u64) {
     let clamped = hz.clamp(5, 120);
     EMIT_HZ.store(clamped, std::sync::atomic::Ordering::Relaxed);
 }
+
+/// Butterchurn consumes 1024 time-domain samples per frame (its AudioProcessor
+/// fftSize), as unsigned bytes matching Web Audio's getByteTimeDomainData.
+const WAVEFORM_LEN: usize = 1024;
+/// Waveform emission is opt-in: only the MilkDrop viz consumes it, so other
+/// styles pay zero extra IPC. Toggled by the `set_waveform_enabled` command.
+static WAVEFORM_ENABLED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+#[tauri::command]
+pub fn set_waveform_enabled(enabled: bool) {
+    WAVEFORM_ENABLED.store(enabled, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// f32 [-1,1] → u8 centered at 128 (Web Audio getByteTimeDomainData convention).
+fn sample_to_byte(s: f32) -> u8 {
+    ((s.clamp(-1.0, 1.0) * 127.0) + 128.0) as u8
+}
 /// Most we'll ever buffer (samples). Caps memory if the processor stalls.
 const RING_CAP: usize = FFT_SIZE * 8;
 
@@ -240,6 +258,14 @@ fn process_loop<R: Runtime>(
         let level = (rms * 4.0).clamp(0.0, 1.0);
 
         let _ = app.emit("audio:spectrum", AudioFrame { bands, level });
+
+        if WAVEFORM_ENABLED.load(std::sync::atomic::Ordering::Relaxed) {
+            let wave: Vec<u8> = samples[FFT_SIZE - WAVEFORM_LEN..]
+                .iter()
+                .map(|s| sample_to_byte(*s))
+                .collect();
+            let _ = app.emit("audio:waveform", wave);
+        }
     }
 }
 
@@ -273,4 +299,22 @@ fn log_band_edges(bands: usize, max_bin: usize, sample_rate: f32, fmin: f32, fma
         edges.push((s, e));
     }
     edges
+}
+
+#[cfg(test)]
+mod tests {
+    use super::sample_to_byte;
+
+    #[test]
+    fn silence_maps_to_center() {
+        assert_eq!(sample_to_byte(0.0), 128);
+    }
+
+    #[test]
+    fn full_scale_clamps() {
+        assert_eq!(sample_to_byte(1.5), 255);
+        assert_eq!(sample_to_byte(-1.5), 1);
+        assert_eq!(sample_to_byte(1.0), 255);
+        assert_eq!(sample_to_byte(-1.0), 1);
+    }
 }

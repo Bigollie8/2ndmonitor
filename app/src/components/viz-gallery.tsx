@@ -1,12 +1,17 @@
-import { useEffect, useState, type MutableRefObject } from 'react';
+import { lazy, Suspense, useEffect, useState, type MutableRefObject } from 'react';
 import type { SpectrumState } from '../state/tauri';
 import type { VizMode } from '../types';
 import { HiFiVizSurface } from './viz';
-import { VIZ_STYLES, type VizStyle } from './viz-styles';
+import { useVizStyles } from './useVizStyles';
+import { bundleIdOf, type VizStyleEntry } from '../state/contentRegistry';
+
+const SandboxVizSurface = lazy(() =>
+  import('./viz-sandbox-surface').then((m) => ({ default: m.SandboxVizSurface })),
+);
 
 export function VizGallery({
   accent, accent2, spectrumRef, currentMode, onPick, onClose,
-  sensitivity = 1, smoothing = 0,
+  sensitivity = 1, smoothing = 0, catalogRemoved,
 }: {
   accent: string; accent2: string;
   spectrumRef?: MutableRefObject<SpectrumState>;
@@ -15,22 +20,27 @@ export function VizGallery({
   onClose: () => void;
   sensitivity?: number;
   smoothing?: number;
+  /** The catalog removal list — see state/removedContent.ts. */
+  catalogRemoved: string[];
 }) {
+  const { styles: vizStyles } = useVizStyles(catalogRemoved);
   const [size, setSize] = useState<'compact' | 'regular' | 'large'>('regular');
   const cols = size === 'compact' ? 4 : size === 'regular' ? 3 : 2;
   const [focused, setFocused] = useState<VizMode | null>(null);
 
   // Stagger surface mounts in batches across rAF ticks so opening the gallery
   // doesn't try to allocate 27 canvases + state buffers in a single commit.
+  // Bundle entries render a static card (no canvas), so they don't count
+  // against the mount budget the way builtin live previews do.
   const MOUNT_BATCH = 4;
   const [mountedCount, setMountedCount] = useState(MOUNT_BATCH);
   useEffect(() => {
-    if (mountedCount >= VIZ_STYLES.length) return;
+    if (mountedCount >= vizStyles.length) return;
     const raf = requestAnimationFrame(() => {
-      setMountedCount((n) => Math.min(VIZ_STYLES.length, n + MOUNT_BATCH));
+      setMountedCount((n) => Math.min(vizStyles.length, n + MOUNT_BATCH));
     });
     return () => cancelAnimationFrame(raf);
-  }, [mountedCount]);
+  }, [mountedCount, vizStyles.length]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -46,7 +56,7 @@ export function VizGallery({
     return () => window.removeEventListener('keydown', onKey, true);
   }, [focused, onClose]);
 
-  const focusedStyle = focused ? VIZ_STYLES.find((s) => s.id === focused) : null;
+  const focusedStyle = focused ? vizStyles.find((s) => s.id === focused) : null;
 
   return (
     <div onClick={onClose} style={{
@@ -73,7 +83,7 @@ export function VizGallery({
             <h1 style={{ fontSize: 22, margin: 0, fontWeight: 700, letterSpacing: '-0.02em' }}>Visualizer Gallery</h1>
           </div>
           <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.4)', fontFamily: '"JetBrains Mono", ui-monospace, monospace' }}>
-            {VIZ_STYLES.length} styles · live preview
+            {vizStyles.length} styles · live preview
           </span>
           <div style={{ flex: 1 }} />
           {(['compact', 'regular', 'large'] as const).map((s) => (
@@ -95,7 +105,7 @@ export function VizGallery({
         <div style={{
           display: 'grid', gridTemplateColumns: `repeat(${cols}, 1fr)`, gap: 20,
         }}>
-          {VIZ_STYLES.map((s, i) => (
+          {vizStyles.map((s, i) => (
             <GalleryCard
               key={s.id}
               style={s}
@@ -109,6 +119,7 @@ export function VizGallery({
               surfaceMounted={i < mountedCount || s.id === currentMode}
               onPick={() => { onPick(s.id); onClose(); }}
               onFocus={() => setFocused(s.id)}
+              catalogRemoved={catalogRemoved}
             />
           ))}
         </div>
@@ -142,8 +153,20 @@ export function VizGallery({
             border: `1px solid ${accent}33`,
             boxShadow: `0 30px 80px -20px ${accent}66`,
           }}>
-            <HiFiVizSurface mode={focusedStyle.id} accent={accent} accent2={accent2}
-              spectrumRef={spectrumRef} sensitivity={sensitivity} smoothing={smoothing} />
+            {focusedStyle.source === 'bundle' ? (
+              // One sandbox for one fullscreen preview — the concurrency
+              // argument that keeps grid cards static does not apply here.
+              <Suspense fallback={<BundleCard style={focusedStyle} accent={accent} accent2={accent2} />}>
+                <SandboxVizSurface
+                  bundleId={bundleIdOf(focusedStyle.id)}
+                  accent={accent} accent2={accent2}
+                  spectrumRef={spectrumRef} sensitivity={sensitivity} smoothing={smoothing} />
+              </Suspense>
+            ) : (
+              <HiFiVizSurface mode={focusedStyle.id} accent={accent} accent2={accent2}
+                spectrumRef={spectrumRef} sensitivity={sensitivity} smoothing={smoothing}
+                catalogRemoved={catalogRemoved} />
+            )}
           </div>
         </div>
       )}
@@ -153,9 +176,9 @@ export function VizGallery({
 
 function GalleryCard({
   style, index, accent, accent2, spectrumRef, active, sensitivity, smoothing,
-  surfaceMounted, onPick, onFocus,
+  surfaceMounted, onPick, onFocus, catalogRemoved,
 }: {
-  style: VizStyle;
+  style: VizStyleEntry;
   index: number;
   accent: string; accent2: string;
   spectrumRef?: MutableRefObject<SpectrumState>;
@@ -164,12 +187,15 @@ function GalleryCard({
   surfaceMounted: boolean;
   onPick: () => void;
   onFocus: () => void;
+  /** The catalog removal list — see state/removedContent.ts. */
+  catalogRemoved: string[];
 }) {
   const [hovered, setHovered] = useState(false);
   // Only the active card and the hovered card animate. Previously every card
   // ran at full fps for a 1200ms "warmup" window, which caused a hard freeze
   // when the gallery opened (~27 canvases ticking simultaneously).
   const paused = !active && !hovered;
+  const isBundle = style.source === 'bundle';
 
   return (
     <div style={{
@@ -192,10 +218,27 @@ function GalleryCard({
     }}
     onClick={onPick}>
       <div style={{ position: 'relative', width: '100%', aspectRatio: '16/9', background: '#06070a' }}>
-        {surfaceMounted && (
+        {isBundle ? (
+          // Bundle entries preview live too, but only while active or hovered.
+          // Mounting a sandbox per installed bundle up front is what we were
+          // avoiding; one or two at a time is the same budget the builtin
+          // cards already run under (see `paused` above). Idle cards keep the
+          // static card, which doubles as the Suspense fallback.
+          (active || hovered) && surfaceMounted ? (
+            <Suspense fallback={<BundleCard style={style} accent={accent} accent2={accent2} />}>
+              <SandboxVizSurface
+                bundleId={bundleIdOf(style.id)}
+                accent={accent} accent2={accent2}
+                spectrumRef={spectrumRef} sensitivity={sensitivity} smoothing={smoothing}
+                paused={paused} suppressErrorBanner />
+            </Suspense>
+          ) : (
+            <BundleCard style={style} accent={accent} accent2={accent2} />
+          )
+        ) : surfaceMounted && (
           <HiFiVizSurface mode={style.id} accent={accent} accent2={accent2}
             spectrumRef={spectrumRef} sensitivity={sensitivity} smoothing={smoothing}
-            paused={paused} />
+            paused={paused} preview catalogRemoved={catalogRemoved} />
         )}
         <div style={{
           position: 'absolute', top: 12, left: 12,
@@ -233,6 +276,35 @@ function GalleryCard({
           #{style.id}
         </span>
       </div>
+    </div>
+  );
+}
+
+/** Static stand-in for a bundle entry's preview surface — label, author,
+ *  version and an "installed" chip, in the same footprint an
+ *  `HiFiVizSurface` occupies for a builtin card. No canvas, no sandbox. */
+function BundleCard({ style, accent, accent2 }: { style: VizStyleEntry; accent: string; accent2: string }) {
+  return (
+    <div style={{
+      position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column',
+      alignItems: 'center', justifyContent: 'center', gap: 8, padding: 16,
+      textAlign: 'center',
+      background: `linear-gradient(135deg, ${accent}22, transparent 55%), linear-gradient(315deg, ${accent2}22, transparent 55%), #06070a`,
+    }}>
+      <div style={{ fontSize: 16, fontWeight: 700, letterSpacing: '-0.01em' }}>{style.label}</div>
+      {style.author && (
+        <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)' }}>by {style.author}</div>
+      )}
+      {style.version && (
+        <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.35)', fontFamily: '"JetBrains Mono", ui-monospace, monospace' }}>
+          v{style.version}
+        </div>
+      )}
+      <span style={{
+        marginTop: 4, padding: '3px 9px', fontSize: 9, fontWeight: 700,
+        letterSpacing: '.06em', textTransform: 'uppercase', borderRadius: 999,
+        background: `${accent}22`, color: accent, border: `1px solid ${accent}55`,
+      }}>Installed</span>
     </div>
   );
 }

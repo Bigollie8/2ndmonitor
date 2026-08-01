@@ -1,0 +1,17 @@
+{
+  "source": {
+    "kind": "http",
+    "url": "https://leetcode.com/graphql?query=query+questionOfToday+%7B%0A++activeDailyCodingChallengeQuestion+%7B%0A++++date%0A++++link%0A++++question+%7B%0A++++++questionId%0A++++++titleSlug%0A++++++title%0A++++++difficulty%0A++++++acRate%0A++++%7D%0A++%7D%0A%7D&operationName=questionOfToday",
+    "intervalMs": 21600000
+  },
+  "select": "data",
+  "view": {
+    "type": "rows",
+    "rows": [
+      { "label": "Problem", "value": "{{data.activeDailyCodingChallengeQuestion.question.title}}" },
+      { "label": "Difficulty", "value": "{{data.activeDailyCodingChallengeQuestion.question.difficulty}}" },
+      { "label": "Accept rate", "value": "{{data.activeDailyCodingChallengeQuestion.question.acRate}}%" },
+      { "label": "Link", "value": "https://leetcode.com{{data.activeDailyCodingChallengeQuestion.link}}" }
+    ]
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "source": {
+    "kind": "http",
+    "url": "https://query1.finance.yahoo.com/v8/finance/chart/{{config.symbol}}?interval=1d&range=2d",
+    "intervalMs": 60000
+  },
+  "select": "chart.result.0.meta",
+  "view": {
+    "type": "stat",
+    "value": "{{data.regularMarketPrice}}",
+    "label": "{{data.symbol}}",
+    "delta": "prev {{data.chartPreviousClose}}"
+  }
+}

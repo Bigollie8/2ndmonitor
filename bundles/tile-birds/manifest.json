@@ -1,0 +1,21 @@
+{
+  "id": "tile-birds",
+  "name": "Recent birds",
+  "author": "official",
+  "version": "1.0.0",
+  "api": 1,
+  "permissions": ["net:api.ebird.org", "secret:ebird_key"],
+  "secrets": [
+    {
+      "key": "ebird_key",
+      "label": "eBird API key",
+      "kind": "password",
+      "help": "Free key at ebird.org/api/keygen."
+    }
+  ],
+  "config": [
+    { "key": "lat", "label": "Latitude", "type": "number" },
+    { "key": "lon", "label": "Longitude", "type": "number" },
+    { "key": "radiusKm", "label": "Radius, km (1-50)", "type": "number" }
+  ]
+}

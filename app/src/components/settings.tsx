@@ -3,12 +3,27 @@ import type { ReactNode } from 'react';
 import type { VizMode, AccentTheme, Density, WeatherLocation } from '../types';
 import type { GeocodeResult } from '../state/weatherLocation';
 import { ACCENT_PALETTES } from '../data';
-import { VIZ_STYLES } from './viz-styles';
+import { useVizStyles } from './useVizStyles';
 import { defaultBookmarks, type Bookmark } from './browser-player';
 import { isTauri } from '../state/tauri';
+import {
+  LS_URL, LS_PUBKEY, DEFAULT_URL, DEFAULT_PUBKEY, cfgUrl, cfgPubkey, isDefaultServer,
+} from '../state/marketplaceConfig';
+import { useMarketplaceAuth } from '../state/marketplaceAuth';
 
 const MONO = '"JetBrains Mono", ui-monospace, monospace';
 const HAIRLINE = '1px solid rgba(255,255,255,0.05)';
+
+// Shared by MarketplaceServerEditor and MarketplaceAccountEditor — both are
+// label-above-input stacked fields inside the Marketplace pane.
+const fieldInputStyle: React.CSSProperties = {
+  width: '100%', fontSize: 11.5, padding: '6px 9px', marginTop: 3,
+  background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.08)',
+  borderRadius: 6, color: '#fff', outline: 'none', boxSizing: 'border-box',
+};
+const fieldLabelStyle: React.CSSProperties = {
+  fontSize: 10.5, color: 'rgba(255,255,255,0.45)',
+};
 
 export type PerfMode = 'uncapped' | 'high' | 'balanced' | 'battery';
 
@@ -36,6 +51,9 @@ export interface SettingsValues {
   videoEnabled: boolean;
   videoBookmarks: Bookmark[];
   closeToTray: boolean;
+  /** The catalog removal list — see state/removedContent.ts. Needed here
+   *  because the Visualizer pane's style dropdown is a picker. */
+  catalogRemoved: string[];
 }
 
 export type SettingsSetter = <K extends keyof SettingsValues>(key: K, value: SettingsValues[K]) => void;
@@ -94,7 +112,7 @@ interface PaneDef {
 
 export function SettingsWindow({
   values: v, set, accent, accent2, accentLinked, trackTitle,
-  onOpenTileLibrary, onReplayOnboarding, onResetLayout, onExportSettings, onImportSettings, onClose,
+  onOpenContentLibrary, onReplayOnboarding, onResetLayout, onExportSettings, onImportSettings, onClose,
 }: {
   values: SettingsValues;
   set: SettingsSetter;
@@ -102,8 +120,8 @@ export function SettingsWindow({
   accent2: string;
   accentLinked: boolean;
   trackTitle: string;
-  /** Closes Settings and opens the Tile Library (App owns both). */
-  onOpenTileLibrary?: () => void;
+  /** Closes Settings and opens the content library (App owns both). */
+  onOpenContentLibrary?: () => void;
   onReplayOnboarding: () => void;
   onResetLayout: () => void;
   onExportSettings?: () => void;
@@ -112,6 +130,7 @@ export function SettingsWindow({
 }) {
   const [activePane, setActivePane] = useState('visualizer');
   const [query, setQuery] = useState('');
+  const { styles: vizStyles } = useVizStyles(v.catalogRemoved);
 
   const panes: PaneDef[] = [
     {
@@ -123,7 +142,11 @@ export function SettingsWindow({
           control: (
             <SettingsSelect<VizMode>
               value={v.vizMode}
-              options={VIZ_STYLES.map((s) => ({ value: s.id, label: s.label }))}
+              options={vizStyles.map((s) => ({
+                value: s.id,
+                label: s.label,
+                group: s.source === 'bundle' ? 'Installed' : undefined,
+              }))}
               onChange={(m) => set('vizMode', m)}
             />
           ),
@@ -227,9 +250,24 @@ export function SettingsWindow({
       id: 'tiles', icon: '⊞', title: 'Tiles',
       rows: [
         {
-          id: 'tiles-library', label: 'Tile Library',
-          hint: 'Add and remove tiles for the active profile from one place — search, categories, and explicit per-tile controls.',
-          control: <SettingsButton label="Open Tile Library →" onClick={() => onOpenTileLibrary?.()} accent={accent} />,
+          id: 'content-library', label: 'Content library',
+          hint: 'Add and remove tiles and visualizers for the active profile from one place — search, categories, and explicit per-item controls.',
+          control: <SettingsButton label="Open content library →" onClick={() => onOpenContentLibrary?.()} accent={accent} />,
+        },
+      ],
+    },
+    {
+      id: 'marketplace', icon: '⇄', title: 'Marketplace',
+      rows: [
+        {
+          id: 'marketplace-account', label: 'Account', stacked: true,
+          hint: 'Sign in to rate bundles. Your session token is stored locally, encrypted, and never leaves this device except to the marketplace server itself.',
+          control: <MarketplaceAccountEditor accent={accent} />,
+        },
+        {
+          id: 'marketplace-server', label: 'Server & signing key', stacked: true,
+          hint: 'The app ships pointed at the official marketplace. To use your own server, enter its URL and the signing public key it prints on startup — the app verifies the index signature and every bundle’s checksum before installing.',
+          control: <MarketplaceServerEditor accent={accent} />,
         },
       ],
     },
@@ -238,7 +276,7 @@ export function SettingsWindow({
       rows: [
         {
           id: 'weather-location', label: 'Location', stacked: true,
-          hint: 'Used by weather, radar, sun, air quality, pollen, birds and other location-aware tiles',
+          hint: 'Used by weather, radar, sun, air quality, pollen and other location-aware tiles',
           control: (
             <SettingsWeatherSearch
               current={v.weatherLocation}
@@ -534,9 +572,21 @@ function Toggle({ checked, onChange, accent, disabled }: {
 
 function SettingsSelect<T extends string>({ value, options, onChange }: {
   value: T;
-  options: { value: T; label: string }[];
+  /** `group` is optional — used by the viz style dropdown to set installed
+   *  bundles apart from built-ins under an "Installed" optgroup. Options
+   *  without a group render flat, at top, in array order. */
+  options: { value: T; label: string; group?: string }[];
   onChange: (v: T) => void;
 }) {
+  const ungrouped = options.filter((o) => !o.group);
+  const groups = new Map<string, { value: T; label: string }[]>();
+  for (const o of options) {
+    if (!o.group) continue;
+    const list = groups.get(o.group) ?? [];
+    list.push(o);
+    groups.set(o.group, list);
+  }
+  const optionStyle = { background: '#14161c', color: '#fff' };
   return (
     <select
       value={value}
@@ -551,10 +601,19 @@ function SettingsSelect<T extends string>({ value, options, onChange }: {
         color: '#fff', outline: 'none', cursor: 'pointer', maxWidth: 220,
       }}
     >
-      {options.map((o) => (
-        <option key={o.value} value={o.value} style={{ background: '#14161c', color: '#fff' }}>
+      {ungrouped.map((o) => (
+        <option key={o.value} value={o.value} style={optionStyle}>
           {o.label}
         </option>
+      ))}
+      {[...groups.entries()].map(([label, opts]) => (
+        <optgroup key={label} label={label} style={optionStyle}>
+          {opts.map((o) => (
+            <option key={o.value} value={o.value} style={optionStyle}>
+              {o.label}
+            </option>
+          ))}
+        </optgroup>
       ))}
     </select>
   );
@@ -632,6 +691,179 @@ function SettingsButton({ label, onClick, accent }: { label: string; onClick: ()
 function AutostartSwitch({ accent }: { accent: string }) {
   const [enabled, toggle] = useAutostart();
   return <Toggle checked={enabled === true} disabled={enabled === null} onChange={toggle} accent={accent} />;
+}
+
+// ---------------------------------------------------------------------------
+// Marketplace account — sign in to rate bundles. The session token is never
+// visible here: useMarketplaceAuth (state/marketplaceAuth.ts) only ever hands
+// this component a state tag ('checking' | 'signed-out' | 'signing-in' |
+// 'signed-in' | 'error'), a masked email, or the server's own failure message
+// — the actual token stays Rust-side in the DPAPI secret store end to end.
+// ---------------------------------------------------------------------------
+
+function MarketplaceAccountEditor({ accent }: { accent: string }) {
+  const { state, signIn, signOut } = useMarketplaceAuth();
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+
+  const busy = state.status === 'checking' || state.status === 'signing-in';
+  const canSubmit = !busy && email.trim() !== '' && password !== '';
+
+  // The password only ever needs to live in this state for the duration of
+  // one sign-in attempt — leaving it in the JS heap for the rest of the
+  // Settings window's lifetime (this component stays mounted after the
+  // early-return below just renders a different tree) is pointless exposure.
+  // Cleared on success; deliberately NOT cleared on failure, so a typo is one
+  // correction away rather than a full retype.
+  useEffect(() => {
+    if (state.status === 'signed-in') { setPassword(''); setEmail(''); }
+  }, [state.status]);
+
+  // The server URL is user-editable (Settings -> Marketplace -> Server &
+  // signing key, or anything else that can write the marketplace.url
+  // localStorage key) and, unlike the signed index, a login POST has no
+  // pinned-key verification of its own — an https:// URL pointed at an
+  // attacker's host is indistinguishable from the real one by the https
+  // check alone. Surfacing the exact host the password is about to be sent
+  // to turns a silent redirect into a visible one.
+  const targetHost = (() => {
+    try { return new URL(cfgUrl()).host; } catch { return cfgUrl(); }
+  })();
+
+  const handleSignIn = () => {
+    if (!canSubmit) return;
+    void signIn(email.trim(), password);
+  };
+
+  if (state.status === 'signed-in') {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <div style={{ fontSize: 11.5, color: 'rgba(255,255,255,0.75)' }}>
+          Signed in{state.email ? <> as <span style={{ fontFamily: MONO, color: accent }}>{state.email}</span></> : ''}
+        </div>
+        <SettingsButton label="Sign out" onClick={() => void signOut()} />
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 10, maxWidth: 460 }}>
+      <div style={{ fontSize: 10.5, color: 'rgba(255,255,255,0.45)' }}>
+        Signing in to <span style={{ fontFamily: MONO, color: accent }}>{targetHost}</span>
+      </div>
+      <div>
+        <label style={fieldLabelStyle}>Email</label>
+        <input
+          type="email" value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          disabled={busy}
+          spellCheck={false}
+          autoComplete="username"
+          style={fieldInputStyle}
+        />
+      </div>
+      <div>
+        <label style={fieldLabelStyle}>Password</label>
+        <input
+          type="password" value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          disabled={busy}
+          autoComplete="current-password"
+          onKeyDown={(e) => { if (e.key === 'Enter') handleSignIn(); }}
+          style={fieldInputStyle}
+        />
+      </div>
+      {/* On failure, the server's own message (wrong password vs. unverified
+         vs. unreachable server are different problems and read differently
+         here) — never a generic "sign-in failed". See login_status_message
+         in marketplace.rs. */}
+      {state.status === 'error' && (
+        <div style={{ color: '#fb7185', fontSize: 11 }}>{state.message}</div>
+      )}
+      <div>
+        <SettingsButton
+          label={state.status === 'signing-in' ? 'Signing in…' : 'Sign in'}
+          onClick={handleSignIn}
+          accent={canSubmit ? accent : undefined}
+        />
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Marketplace server config — URL + pinned signing pubkey. Lifted from the
+// old MarketplaceTab.tsx unchanged in validation behavior: URL must start
+// with https:// (the Rust client refuses anything else), pubkey must be 64
+// hex characters. Reads/writes the same `marketplace.url` / `marketplace.pubkey`
+// localStorage keys, via the shared state/marketplaceConfig module (the same
+// module ContentLibrary imports), so a user override survives the move and
+// there is exactly one place the pinned key lives.
+// ---------------------------------------------------------------------------
+
+function MarketplaceServerEditor({ accent }: { accent: string }) {
+  const [url, setUrl] = useState(cfgUrl);
+  const [pubkey, setPubkey] = useState(cfgPubkey);
+  const [error, setError] = useState('');
+  const [saved, setSaved] = useState(false);
+
+  const save = () => {
+    // The Rust client refuses anything but https, so reject it here too.
+    if (!url.trim().startsWith('https://')) {
+      setError('Server URL must start with https://');
+      setSaved(false);
+      return;
+    }
+    if (!/^[0-9a-f]{64}$/i.test(pubkey.trim())) {
+      setError('Signing public key must be 64 hex characters');
+      setSaved(false);
+      return;
+    }
+    localStorage.setItem(LS_URL, url.trim());
+    localStorage.setItem(LS_PUBKEY, pubkey.trim());
+    setError('');
+    setSaved(true);
+  };
+
+  const reset = () => {
+    localStorage.removeItem(LS_URL);
+    localStorage.removeItem(LS_PUBKEY);
+    setUrl(DEFAULT_URL);
+    setPubkey(DEFAULT_PUBKEY);
+    setError('');
+    setSaved(true);
+  };
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 10, maxWidth: 460 }}>
+      <div>
+        <label style={fieldLabelStyle}>Server URL</label>
+        <input
+          value={url}
+          onChange={(e) => { setUrl(e.target.value); setSaved(false); }}
+          placeholder="https://market.example.com"
+          spellCheck={false}
+          style={fieldInputStyle}
+        />
+      </div>
+      <div>
+        <label style={fieldLabelStyle}>Signing public key (hex)</label>
+        <input
+          value={pubkey}
+          onChange={(e) => { setPubkey(e.target.value); setSaved(false); }}
+          placeholder="64 hex chars"
+          spellCheck={false}
+          style={{ ...fieldInputStyle, fontFamily: MONO }}
+        />
+      </div>
+      {error && <div style={{ color: '#fb7185', fontSize: 11 }}>{error}</div>}
+      {saved && !error && <div style={{ color: accent, fontSize: 11 }}>Saved — reopen the content library to reload.</div>}
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+        <SettingsButton label="Save" onClick={save} accent={accent} />
+        {!isDefaultServer() && <SettingsButton label="Use official server" onClick={reset} />}
+      </div>
+    </div>
+  );
 }
 
 // ---------------------------------------------------------------------------

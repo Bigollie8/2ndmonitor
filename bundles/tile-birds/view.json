@@ -1,0 +1,18 @@
+{
+  "source": {
+    "kind": "http",
+    "url": "https://api.ebird.org/v2/data/obs/geo/recent?lat={{config.lat}}&lng={{config.lon}}&dist={{config.radiusKm}}",
+    "headers": {
+      "X-eBirdApiToken": "{{secret.ebird_key}}"
+    },
+    "intervalMs": 900000
+  },
+  "view": {
+    "type": "list",
+    "row": {
+      "title": "{{item.comName}}",
+      "right": "{{item.locName}}"
+    },
+    "emptyText": "No recent observations."
+  }
+}

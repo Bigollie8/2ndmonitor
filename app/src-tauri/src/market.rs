@@ -1,7 +1,7 @@
 //! Backend proxies for tile data sources that don't ship browser-friendly CORS:
-//! stocks (Yahoo Finance unofficial), tides (NOAA), and a generic GitHub fetch
-//! used by the PRs tile. All run in a blocking Tauri command via `ureq` because
-//! the latency budget is wide (these refresh on a minute-scale at fastest).
+//! stocks (Yahoo Finance unofficial), tides (NOAA), and aircraft (OpenSky). All
+//! run in a blocking Tauri command via `ureq` because the latency budget is
+//! wide (these refresh on a minute-scale at fastest).
 
 use serde::Serialize;
 
@@ -307,34 +307,4 @@ fn fetch_aircraft_blocking(lat: f64, lon: f64, radius_km: f64) -> AircraftResult
         })
         .collect();
     AircraftResult { states, error: None }
-}
-
-/// Generic GitHub fetcher used by the PRs tile. Sends the user's PAT as a
-/// Bearer token; no auth caching here — the front-end stores the PAT and
-/// passes it on each request, which is fine for a single-user desktop app.
-#[tauri::command]
-pub async fn fetch_github_prs(token: String, query: String) -> Result<serde_json::Value, String> {
-    if token.trim().is_empty() {
-        return Err("missing GitHub token".into());
-    }
-    if query.trim().is_empty() {
-        return Err("missing query".into());
-    }
-    tokio::task::spawn_blocking(move || {
-        let url = format!(
-            "https://api.github.com/search/issues?q={}&per_page=30",
-            urlencoding::encode(&query)
-        );
-        let resp = ureq::get(&url)
-            .set("Authorization", &format!("Bearer {}", token.trim()))
-            .set("User-Agent", "SecondMonitorHub/0.3")
-            .set("Accept", "application/vnd.github+json")
-            .timeout(std::time::Duration::from_secs(10))
-            .call()
-            .map_err(|e| format!("network: {e}"))?;
-        resp.into_json::<serde_json::Value>()
-            .map_err(|e| format!("parse: {e}"))
-    })
-    .await
-    .map_err(|e| format!("join error: {e}"))?
 }

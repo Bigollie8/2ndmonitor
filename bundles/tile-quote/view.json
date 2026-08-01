@@ -1,0 +1,12 @@
+{
+  "source": {
+    "kind": "http",
+    "url": "https://zenquotes.io/api/today",
+    "intervalMs": 3600000
+  },
+  "view": {
+    "type": "text",
+    "body": "{{data.0.q}}",
+    "attribution": "{{data.0.a}}"
+  }
+}

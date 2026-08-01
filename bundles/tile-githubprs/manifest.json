@@ -1,0 +1,19 @@
+{
+  "id": "tile-githubprs",
+  "name": "GitHub PRs",
+  "author": "official",
+  "version": "1.0.0",
+  "api": 1,
+  "permissions": ["net:api.github.com", "secret:github_pat"],
+  "secrets": [
+    {
+      "key": "github_pat",
+      "label": "GitHub personal access token",
+      "kind": "password",
+      "help": "Classic token (scope: repo). Create one at github.com/settings/tokens."
+    }
+  ],
+  "config": [
+    { "key": "user", "label": "GitHub username", "type": "text" }
+  ]
+}

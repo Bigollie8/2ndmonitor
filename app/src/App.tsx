@@ -3,6 +3,7 @@ import type { TileType, Layout, TileInstance, OrientationLayout, Rect } from './
 import {
   DEFAULT_LANDSCAPE_LAYOUT,
   DEFAULT_PORTRAIT_LAYOUT,
+  DEFAULT_BUNDLE_TILE_RECT,
   migrateLegacyProfileToOrientations,
   useCanvas,
   useOrientation,
@@ -10,10 +11,15 @@ import {
   ALL_TILE_TYPES,
   migrateLayoutHiddenToTiles,
   findInstance,
+  findEmptyRect,
   addInstance,
   removeInstance,
+  removeTilesOfType,
   updateInstance,
+  remapRetiredTileType,
 } from './state/layout';
+import { isBundleTile, bundleIdOf } from './tiles/tileRegistry';
+import { useTileCatalog } from './tiles/useTileCatalog';
 import type { Track, Profile, AccentTheme, VizMode, Density, Todo, WeatherLocation } from './types';
 import {
   DEFAULT_POMODORO_STATE,
@@ -28,14 +34,23 @@ import { setWindowHidden } from './state/framePace';
 import { VizHero, setVizDprCap, setVizMaxFps, getVizMaxFps } from './components/viz';
 import * as perfDebug from './perf/debug';
 import { PerfDebugHUD } from './perf/PerfDebugHUD';
-import { VIZ_STYLES } from './components/viz-styles';
+import { useVizStyles } from './components/useVizStyles';
+import {
+  remapRetiredVizMode,
+  resolveVizSurface,
+  resolvedVizModeLabel,
+  bundleIdOf as vizBundleIdOf,
+  isBundleMode as isVizBundleMode,
+} from './state/contentRegistry';
+import { markSeedSettled } from './state/seedStatus';
+import { catalogKey } from './state/catalog';
 import { defaultBookmarks, type Bookmark } from './components/browser-player';
 import {
   SpotifyTile, NotesTile,
   SysMonTile,
 } from './components/tiles';
 import { EditModeOverlay } from './components/edit';
-import { TileLibrary } from './components/TileLibrary';
+import { ContentLibrary } from './components/ContentLibrary';
 import { ProfileSwitcher } from './components/profile';
 import { Onboarding } from './components/onboarding';
 import { TileFrame } from './components/TileFrame';
@@ -46,7 +61,7 @@ import { parseStreamDeckConfig } from './state/actions';
 // Standalone tiles are lazy-loaded per-tile so the initial bundle only pays
 // for what's actually visible in the active profile/orientation. Kept EAGER:
 // './components/tiles' (Spotify/Notes/Sysmon — entangled with boot), VizHero,
-// TileFrame, EditModeOverlay, TileLibrary, ProfileSwitcher, Onboarding,
+// TileFrame, EditModeOverlay, ContentLibrary, ProfileSwitcher, Onboarding,
 // SettingsWindow (see imports above/below).
 const VizGallery = lazy(() => import('./components/viz-gallery').then((m) => ({ default: m.VizGallery })));
 const ClaudeCodeTile = lazy(() => import('./components/claude-tile').then((m) => ({ default: m.ClaudeCodeTile })));
@@ -61,26 +76,20 @@ const AuroraTile = lazy(() => import('./components/AuroraTile').then((m) => ({ d
 const AirQualityTile = lazy(() => import('./components/AirQualityTile').then((m) => ({ default: m.AirQualityTile })));
 const StocksTile = lazy(() => import('./components/StocksTile').then((m) => ({ default: m.StocksTile })));
 const TidesTile = lazy(() => import('./components/TidesTile').then((m) => ({ default: m.TidesTile })));
-const GithubPrsTile = lazy(() => import('./components/GithubPrsTile').then((m) => ({ default: m.GithubPrsTile })));
 const StreamChatTile = lazy(() => import('./components/StreamChatTile').then((m) => ({ default: m.StreamChatTile })));
-const PhoneNotifsTile = lazy(() => import('./components/PhoneNotifsTile').then((m) => ({ default: m.PhoneNotifsTile })));
 const HomeAssistantTile = lazy(() => import('./components/HomeAssistantTile').then((m) => ({ default: m.HomeAssistantTile })));
 const ScratchpadTile = lazy(() => import('./components/ScratchpadTile').then((m) => ({ default: m.ScratchpadTile })));
-const QuoteTile = lazy(() => import('./components/QuoteTile').then((m) => ({ default: m.QuoteTile })));
 const OnThisDayTile = lazy(() => import('./components/OnThisDayTile').then((m) => ({ default: m.OnThisDayTile })));
-const RandomWikiTile = lazy(() => import('./components/RandomWikiTile').then((m) => ({ default: m.RandomWikiTile })));
-const WordOfDayTile = lazy(() => import('./components/WordOfDayTile').then((m) => ({ default: m.WordOfDayTile })));
 const IssTile = lazy(() => import('./components/IssTile').then((m) => ({ default: m.IssTile })));
-const LaunchesTile = lazy(() => import('./components/LaunchesTile').then((m) => ({ default: m.LaunchesTile })));
-const DailyChallengeTile = lazy(() => import('./components/DailyChallengeTile').then((m) => ({ default: m.DailyChallengeTile })));
 const PollenTile = lazy(() => import('./components/PollenTile').then((m) => ({ default: m.PollenTile })));
-const BirdsTile = lazy(() => import('./components/BirdsTile').then((m) => ({ default: m.BirdsTile })));
 const SolarFlareTile = lazy(() => import('./components/SolarFlareTile').then((m) => ({ default: m.SolarFlareTile })));
 const LightningTile = lazy(() => import('./components/LightningTile').then((m) => ({ default: m.LightningTile })));
 const AircraftTile = lazy(() => import('./components/AircraftTile').then((m) => ({ default: m.AircraftTile })));
 const ActiveWindowTile = lazy(() => import('./components/ActiveWindowTile').then((m) => ({ default: m.ActiveWindowTile })));
 const DockerTile = lazy(() => import('./components/DockerTile').then((m) => ({ default: m.DockerTile })));
 const EnergyTile = lazy(() => import('./components/EnergyTile').then((m) => ({ default: m.EnergyTile })));
+const DeclarativeTile = lazy(() => import('./components/DeclarativeTile').then((m) => ({ default: m.DeclarativeTile })));
+const MissingTileCard = lazy(() => import('./components/MissingTileCard').then((m) => ({ default: m.MissingTileCard })));
 
 // Vite injects `import.meta.env` at build time; the project has no
 // vite-env.d.ts / "vite/client" types reference, so declare the one flag we
@@ -136,10 +145,28 @@ interface TweakState extends Record<string, unknown> {
   profiles: Profile[];
   activeProfileId: string;
   onboardingDone: boolean;
+  /** The catalog removal list — see state/removedContent.ts. Keys of the form
+   *  `${kind}:${id}`. A bundle's key stays here after its folder is deleted,
+   *  which is the tombstone that stops a later seed sync from reinstalling
+   *  it. Travels with settings export/import like any other tweak. */
+  catalogRemoved: string[];
 }
 
+/** How long the viz surface will wait for boot seeding before giving up and
+ *  resolving against whatever is installed so far. Only reached if `seed_sync`
+ *  never settles at all — the normal success and failure paths both latch
+ *  immediately. Generous enough that a slow disk unzipping ~30 seed bundles
+ *  finishes first, short enough that a hung invoke is a blink, not a session. */
+const SEED_SETTLE_WATCHDOG_MS = 8_000;
+
 const TWEAK_DEFAULTS: TweakState = {
-  vizMode: 'bars',
+  // Bars is a bundle now, not a built-in — this names the seed zip that
+  // `seed_sync` installs on first run, so an out-of-the-box install still
+  // opens on the classic spectrum analyzer rather than the MilkDrop engine.
+  // It is a *preference*, not a guarantee: if the bundle isn't there (seeding
+  // hasn't finished, or the user removed it) HiFiVizSurface resolves against
+  // the live catalog instead. Nothing downstream may assume this id exists.
+  vizMode: 'bundle:bars',
   accentTheme: 'auto',
   density: 'compact',
   vizArtBg: false,
@@ -163,6 +190,7 @@ const TWEAK_DEFAULTS: TweakState = {
   profiles: [],
   activeProfileId: '',
   onboardingDone: false,
+  catalogRemoved: [],
 };
 
 const PROFILE_DEFAULT_COLORS = ['#a78bfa', '#f59e0b', '#22d3ee', '#22c55e', '#f472b6', '#60a5fa', '#facc15', '#f97316'];
@@ -173,6 +201,18 @@ function migrateTweaks(loaded: Record<string, unknown>): Record<string, unknown>
   // Old `quality` perfMode was renamed to `uncapped`. Same behavior; just clearer label.
   if (loaded.perfMode === 'quality') {
     loaded.perfMode = 'uncapped';
+  }
+  // All 27 formerly-built-in viz styles were retired from the binary and now
+  // live in the shop as `bundle:` ids. A saved selection naming one of them is
+  // rewritten here so it keeps working the moment its seed zip installs; until
+  // then HiFiVizSurface renders whatever else is in the catalog.
+  //
+  // `remapRetiredVizMode` returns null only when handed an empty style table,
+  // which the compile-time one never is — keep the saved value in that case
+  // rather than substituting a constant, which is exactly the hardcoded-'bars'
+  // trap this wave removed.
+  if (typeof loaded.vizMode === 'string') {
+    loaded.vizMode = remapRetiredVizMode(loaded.vizMode) ?? loaded.vizMode;
   }
   const profilesField = loaded.profiles;
   // True first launch: nothing was loaded from disk at all (no profiles, no
@@ -285,11 +325,42 @@ function migrateTweaks(loaded: Record<string, unknown>): Record<string, unknown>
     }
     result.tile_array_migration_v1 = true;
   }
+
+  // Three built-ins retired in favor of published bundles (quote, word of the
+  // day, daily challenge). A saved tile instance naming one is rewritten to
+  // its bundle id on every load, so an existing placement keeps working the
+  // moment the bundle is installed — and falls back to MissingTileCard via
+  // renderTile's default case until it is. Mirrors the vizMode remap above.
+  {
+    const profiles = result.profiles as Array<Record<string, unknown>> | undefined;
+    if (profiles) {
+      result.profiles = profiles.map((p) => {
+        const profile = p as Record<string, unknown>;
+        const remapOrientation = (slotRaw: unknown): unknown => {
+          const slot = slotRaw as { tiles?: TileInstance[] } | undefined;
+          if (!slot?.tiles) return slotRaw;
+          return {
+            ...slot,
+            tiles: slot.tiles.map((inst) => ({
+              ...inst,
+              type: remapRetiredTileType(inst.type) as TileType,
+            })),
+          };
+        };
+        return {
+          ...profile,
+          landscape: remapOrientation(profile.landscape),
+          portrait: remapOrientation(profile.portrait),
+        };
+      });
+    }
+  }
+
   return result;
 }
 
 export default function App() {
-  const [t, setTweak, replaceTweaks] = useTweaks<TweakState>(TWEAK_DEFAULTS, { migrate: migrateTweaks });
+  const [t, setTweak, replaceTweaks, tweaksHydrated] = useTweaks<TweakState>(TWEAK_DEFAULTS, { migrate: migrateTweaks });
   useEffect(() => {
     if (t.profiles.length > 0 && t.activeProfileId) return;
     const seeded: Profile[] = [
@@ -318,13 +389,15 @@ export default function App() {
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [showGallery, setShowGallery] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
-  const [showTileLibrary, setShowTileLibrary] = useState(false);
+  const [showContentLibrary, setShowContentLibrary] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [selectedInstanceId, setSelectedInstanceId] = useState<string>('');
   // Transient "theme synced" toast: holds the track title being announced, or
   // null when hidden. Set by the effect below when accent is track-linked and
   // the title changes; auto-cleared after 2s.
   const [themeToast, setThemeToast] = useState<string | null>(null);
+  const { styles: vizStyles, loaded: vizStylesLoaded } = useVizStyles(t.catalogRemoved);
+  const { entries: tileCatalog, loaded: tileCatalogLoaded } = useTileCatalog(t.catalogRemoved);
   const spectrumRef = useSpectrumRef();
   const { track: livePlaying, playback: livePlayback, sourceAppId: liveSourceAppId } = useNowPlaying();
   // Real GSMTC track wins when it's available; otherwise the user's manual
@@ -377,11 +450,98 @@ export default function App() {
     })();
   }, [t.closeToTray]);
 
+  // Boot seeding (Critical 1 of the whole-branch review — see spec §5).
+  // `seed_sync` installs every seed bundle shipped in resources that isn't
+  // already installed and isn't tombstoned, so the base catalog is actually
+  // present on a fresh/offline install instead of showing 15 "Install"
+  // buttons for content the spec calls pre-installed. It runs exactly once
+  // per process, guarded by `ranRef`, and only after `tweaksHydrated`: the
+  // hook starts from TWEAK_DEFAULTS (catalogRemoved: []) and hydrates from
+  // disk asynchronously, so firing before hydration would hand seed_sync an
+  // empty removal list and resurrect content the user deliberately removed —
+  // the exact bug the tombstone list exists to prevent.
+  //
+  // Never blocks the window (fire-and-forget inside an effect, after first
+  // paint) and never throws (caught and logged) — a seed failure must not
+  // stop the app from booting. The catalog and V-cycle pick up whatever
+  // seed_sync installs on their own: `useTileCatalog`/`useVizStyles` already
+  // listen for the Rust-side `tiles:changed`/`visualizers:changed` watcher
+  // events (tiles.rs/visualizers.rs poll every 2s), which fire the moment
+  // seed_sync writes a folder — no extra refresh call needed here.
+  //
+  // `markSeedSettled()` in the `finally` is what lets the viz surface stop
+  // guessing. Until it fires, `useVizStyles` reports `loaded: false` and
+  // HiFiVizSurface holds at `pending` (a blank frame) instead of concluding
+  // that a bundle the seeder is about to write is missing — see
+  // state/seedStatus.ts for why that window exists on every launch, not just
+  // a fresh install. It must fire on the failure path too: a seed sync that
+  // errored is still an answer, and leaving the latch unset would blank the
+  // surface for the rest of the process.
+  const seedSyncRanRef = useRef(false);
+  useEffect(() => {
+    if (!tweaksHydrated || seedSyncRanRef.current) return;
+    seedSyncRanRef.current = true;
+    // Watchdog. The `finally` below covers every way the invoke can settle,
+    // but not one that never settles at all — and the cost of that is a
+    // permanently blank visualizer, which is the exact failure this whole
+    // wave exists to prevent. Falling back to a possibly-incomplete catalog
+    // after a few seconds is strictly better than showing nothing forever.
+    // Idempotent with the `finally` (markSeedSettled latches once).
+    const watchdog = setTimeout(markSeedSettled, SEED_SETTLE_WATCHDOG_MS);
+    void (async () => {
+      try {
+        const { invoke } = await import('@tauri-apps/api/core');
+        await invoke('seed_sync', { removed: t.catalogRemoved });
+      } catch (err) {
+        console.warn('seed_sync failed at startup:', err);
+      } finally {
+        clearTimeout(watchdog);
+        markSeedSettled();
+      }
+    })();
+  }, [tweaksHydrated, t.catalogRemoved]);
+
   // Feed perf-mode + viz-mode into the debug context so spike snapshots include
   // them; cheap unconditional call, the module ignores when not enabled.
+  //
+  // Records the RESOLVED mode, not `t.vizMode`. Before the styles were
+  // retired the dispatch always rendered exactly the requested mode, so the
+  // two were the same string by construction. They are not any more: in the
+  // fallback case a snapshot would read `viz:bundle:bars` while MilkDrop is
+  // the thing actually burning the GPU, which is precisely backwards for a
+  // tool whose entire job is attributing a spike to a surface. Same resolver
+  // the surface itself uses, so the two can never disagree.
+  const resolvedVizMode = resolvedVizModeLabel(
+    resolveVizSurface(t.vizMode, vizStyles, vizStylesLoaded), t.vizMode,
+  );
   useEffect(() => {
-    perfDebug.recordContext(t.perfMode, t.vizMode);
-  }, [t.perfMode, t.vizMode]);
+    perfDebug.recordContext(t.perfMode, resolvedVizMode);
+  }, [t.perfMode, resolvedVizMode]);
+
+  // wry never flips document.visibilityState when the parent window is
+  // hidden to the tray (SetIsVisible(false) isn't called on a Win32 hide), so
+  // the Rust side tells us explicitly. Without this, the rAF viz loop keeps
+  // drawing at the FPS cap while minimized to the tray — this is the single
+  // app-wide subscription every `useAnimateGate` (hero surface AND every
+  // sandboxed catalog-card preview, via `SandboxVizSurface`) reads through
+  // `framePace.ts`'s `isWindowHidden()`.
+  useEffect(() => {
+    // `cancelled` is load-bearing, not boilerplate: `listen()` is async, and
+    // under StrictMode the first effect's promise resolves AFTER its cleanup
+    // has already run — so without this the first listener is never released
+    // and every visibility event is handled twice for the life of the app.
+    let cancelled = false;
+    let un: (() => void) | undefined;
+    (async () => {
+      try {
+        const { listen } = await import('@tauri-apps/api/event');
+        const off = await listen<boolean>('hub://window-visibility', (e) => setWindowHidden(!e.payload));
+        if (cancelled) { off(); return; }
+        un = off;
+      } catch { /* browser dev — no tauri */ }
+    })();
+    return () => { cancelled = true; un?.(); };
+  }, []);
 
   // wry never flips document.visibilityState when the parent window is
   // hidden to the tray (SetIsVisible(false) isn't called on a Win32 hide), so
@@ -457,7 +617,7 @@ export default function App() {
       }
       else if (e.key === 'Escape') {
         if (showShortcuts) setShowShortcuts(false);
-        else if (showTileLibrary) setShowTileLibrary(false);
+        else if (showContentLibrary) setShowContentLibrary(false);
         else if (showSettings) setShowSettings(false);
         else if (showGallery) setShowGallery(false);
         else if (showSwitcher) setShowSwitcher(false);
@@ -470,20 +630,32 @@ export default function App() {
         if (showShortcuts) {
           e.preventDefault();
           setShowShortcuts(false);
-        } else if (!showTileLibrary && !showSettings && !showGallery && !showSwitcher && !showOnboarding) {
+        } else if (!showContentLibrary && !showSettings && !showGallery && !showSwitcher && !showOnboarding) {
           e.preventDefault();
           setShowShortcuts(true);
         }
       }
       else if (!editing && !cmd && (e.key === 'v' || e.key === 'V')) {
-        const ids = VIZ_STYLES.map((s) => s.id);
+        // Guard on vizStylesLoaded — same root cause as the Critical fixed in
+        // Task 9. Before visualizers_list resolves, a `bundle:` t.vizMode has
+        // no match in `ids`, so indexOf is -1 and (−1+1)%len lands on index 0
+        // — silently persisting the catalog's first style over the user's
+        // actual selection. Make cycling a no-op until the catalog is known
+        // rather than guessing.
+        if (!vizStylesLoaded) return;
+        const ids = vizStyles.map((s) => s.id);
+        // Every style removed: (i+1) % 0 is NaN, and the old `?? 'bars'`
+        // fallback could reactivate a style the user tombstoned on purpose —
+        // and now names one that isn't compiled in at all. Nothing to cycle
+        // to, so leave vizMode exactly where it is.
+        if (ids.length === 0) return;
         const i = ids.indexOf(t.vizMode);
-        setTweak('vizMode', ids[(i + 1) % ids.length] ?? 'bars');
+        setTweak('vizMode', ids[(i + 1) % ids.length] ?? ids[0] ?? t.vizMode);
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [showSwitcher, editMode, showOnboarding, showGallery, showSettings, showTileLibrary, showShortcuts, t.vizMode, t.profiles, setTweak]);
+  }, [showSwitcher, editMode, showOnboarding, showGallery, showSettings, showContentLibrary, showShortcuts, t.vizMode, t.profiles, setTweak, vizStyles, vizStylesLoaded]);
 
   const orientation = useOrientation();
   const canvas = useCanvas();
@@ -519,11 +691,54 @@ export default function App() {
   const addTileByType = (type: TileType) => {
     if (findInstance(activeOrientation.tiles, type)) return;
     const defaults = orientation === 'portrait' ? DEFAULT_PORTRAIT_LAYOUT : DEFAULT_LANDSCAPE_LAYOUT;
+    // A bundle tile (`bundle:<id>`) has no compile-time entry in the default
+    // layout maps — fall back to the shared bundle default rect.
+    const rect = isBundleTile(type) ? DEFAULT_BUNDLE_TILE_RECT[orientation] : defaults[type];
     updateActiveOrientation({
       tiles: addInstance(activeOrientation.tiles, {
-        instanceId: newId(), type, rect: defaults[type],
+        instanceId: newId(), type, rect,
       }),
     });
+  };
+  // Places a new instance of `type` on the active orientation, in the first
+  // empty snap-aligned slot near its default rect — the same placement logic
+  // the old TileLibrary.onAdd used (see App.tsx at 24f6166^: it called
+  // findEmptyRect itself before invoking this same onAdd shape). Unlike
+  // addTileByType above, this allows a second instance of a multi-instance
+  // type rather than no-op'ing — it backs ContentLibrary's "+ Add" button,
+  // the catalog's restored counterpart to placing a tile outside edit mode.
+  const addTileInstance = (type: TileType) => {
+    const defaults = orientation === 'portrait' ? DEFAULT_PORTRAIT_LAYOUT : DEFAULT_LANDSCAPE_LAYOUT;
+    const preferred = isBundleTile(type) ? DEFAULT_BUNDLE_TILE_RECT[orientation] : defaults[type];
+    const rect = findEmptyRect(activeOrientation.tiles.map((inst) => inst.rect), preferred, canvas);
+    updateActiveOrientation({
+      tiles: addInstance(activeOrientation.tiles, { instanceId: newId(), type, rect }),
+    });
+  };
+  // Called by ContentLibrary after a visualizer is actually removed
+  // (uninstall done, tombstone written), with its catalog key
+  // (`visualizer:<id>`). vizMode is the visualizer's equivalent of a placed
+  // tile instance — it names the style currently rendering — and it is
+  // persisted, so leaving it pointed at the style just removed would keep it
+  // selected (including after a restart) even though the catalog, the V-cycle
+  // and the quick-select strip now exclude it. Resets to the first surviving
+  // style in the merged catalog.
+  //
+  // If nothing survives — the user removed the last visualizer — vizMode is
+  // left exactly where it is rather than being rewritten to a hardcoded id.
+  // That used to be `?? 'bars'`, which silently reactivated a style the user
+  // had tombstoned on purpose (and, once Bars stopped being compiled in,
+  // pointed at nothing at all). The surface renders its empty state for this
+  // case, and restoring anything from the content library makes the stale
+  // selection resolve again on the next render.
+  const onVisualizerRemoved = (key: string) => {
+    const currentId = isVizBundleMode(t.vizMode) ? vizBundleIdOf(t.vizMode) : t.vizMode;
+    if (currentId == null || catalogKey('visualizer', currentId) !== key) return;
+    const survivor = vizStyles.find((s) => {
+      const id = isVizBundleMode(s.id) ? vizBundleIdOf(s.id) : s.id;
+      return id != null && catalogKey('visualizer', id) !== key;
+    });
+    if (survivor) setTweak('vizMode', survivor.id);
   };
   const resetLayout = () => {
     const defaults = orientation === 'portrait' ? DEFAULT_PORTRAIT_LAYOUT : DEFAULT_LANDSCAPE_LAYOUT;
@@ -571,10 +786,11 @@ export default function App() {
             onToggleVideo={() => setTweak('videoEnabled', !t.videoEnabled)}
             onNavigate={(url) => setTweak('videoCurrentUrl', url)}
             onExit={() => setTweak('videoEnabled', false)}
-            overlaysOpen={showGallery || editMode || showTileLibrary}
+            overlaysOpen={showGallery || editMode || showContentLibrary}
             paused={(t.videoEnabled && t.videoBookmarks.length > 0) || showGallery || (t.perfMode !== 'uncapped' && livePlayback?.playing !== true)}
             onConfigure={() => setShowGallery(true)}
             audioDebug={t.audioDebug}
+            catalogRemoved={t.catalogRemoved}
           />
         );
       case 'streamDeck':
@@ -591,6 +807,7 @@ export default function App() {
             setVizMode={(m) => setTweak('vizMode', m)}
             profiles={t.profiles}
             setActiveProfileId={(id) => setTweak('activeProfileId', id)}
+            catalogRemoved={t.catalogRemoved}
           />
         );
       case 'weatherRadar':
@@ -662,14 +879,6 @@ export default function App() {
             })}
           />
         );
-      case 'githubPrs':
-        return (
-          <GithubPrsTile
-            density={t.density}
-            accent={accent}
-            editing={editMode}
-          />
-        );
       case 'streamChat':
         return (
           <StreamChatTile
@@ -681,14 +890,6 @@ export default function App() {
             setConfig={(next) => updateActiveOrientation({
               tiles: updateInstance(activeOrientation.tiles, instance.instanceId, { config: next }),
             })}
-          />
-        );
-      case 'phoneNotifs':
-        return (
-          <PhoneNotifsTile
-            density={t.density}
-            accent={accent}
-            editing={editMode}
           />
         );
       case 'homeAssistant':
@@ -707,31 +908,12 @@ export default function App() {
             accent={accent}
           />
         );
-      case 'quote':
-        return <QuoteTile density={t.density} accent={accent} />;
       case 'onThisDay':
         return <OnThisDayTile density={t.density} accent={accent} />;
-      case 'randomWiki':
-        return <RandomWikiTile density={t.density} accent={accent} />;
-      case 'wordOfDay':
-        return <WordOfDayTile density={t.density} accent={accent} />;
       case 'iss':
         return <IssTile density={t.density} accent={accent} location={t.weatherLocation} />;
-      case 'launches':
-        return <LaunchesTile density={t.density} accent={accent} />;
-      case 'dailyChallenge':
-        return <DailyChallengeTile density={t.density} accent={accent} />;
       case 'pollen':
         return <PollenTile density={t.density} accent={accent} editing={editMode} location={t.weatherLocation} />;
-      case 'birds':
-        return (
-          <BirdsTile
-            density={t.density}
-            accent={accent}
-            editing={editMode}
-            location={t.weatherLocation}
-          />
-        );
       case 'solarFlare':
         return <SolarFlareTile density={t.density} accent={accent} />;
       case 'lightning':
@@ -755,6 +937,37 @@ export default function App() {
             })}
           />
         );
+      default: {
+        // Every BuiltinTileType is handled by a case above, so reaching here
+        // means instance.type is a `bundle:<id>` tile. Four states:
+        //  1. (not bundle — unreachable, handled by the cases above)
+        //  2. catalog hasn't loaded yet — render nothing rather than guess.
+        //  3. present in the loaded catalog — render its view.json payload.
+        //  4. absent from a loaded catalog — offer to install it, without
+        //     touching the layout (the slot is the user's to keep or remove).
+        if (!isBundleTile(instance.type)) return null;
+        if (!tileCatalogLoaded) return null;
+        const entry = tileCatalog.find((e) => e.type === instance.type);
+        if (!entry) {
+          return (
+            <MissingTileCard
+              bundleId={bundleIdOf(instance.type) ?? instance.type}
+              density={t.density}
+              accent={accent}
+              onOpenLibrary={() => setShowContentLibrary(true)}
+            />
+          );
+        }
+        return (
+          <DeclarativeTile
+            bundleId={entry.bundleId ?? bundleIdOf(instance.type) ?? instance.type}
+            instanceId={instance.instanceId}
+            density={t.density}
+            accent={accent}
+            editing={editMode}
+          />
+        );
+      }
     }
   };
 
@@ -812,11 +1025,7 @@ export default function App() {
             onRemove={(instanceId) => updateActiveOrientation({
               tiles: removeInstance(activeOrientation.tiles, instanceId),
             })}
-            onAdd={(type, rect) => updateActiveOrientation({
-              tiles: addInstance(activeOrientation.tiles, {
-                instanceId: newId(), type, rect,
-              }),
-            })}
+            onOpenLibrary={() => setShowContentLibrary(true)}
             tiles={activeOrientation.tiles}
             setTiles={(next) => updateActiveOrientation({ tiles: next })}
             selectedInstanceId={selectedInstanceId}
@@ -824,6 +1033,7 @@ export default function App() {
             snap={snapEnabled}
             setSnap={setSnapEnabled}
             profileName={activeProfile.name}
+            catalogRemoved={t.catalogRemoved}
           />
         )}
         {showSwitcher && (
@@ -879,25 +1089,25 @@ export default function App() {
               smoothing={t.vizSmoothing}
               onPick={(m) => setTweak('vizMode', m)}
               onClose={() => setShowGallery(false)}
+              catalogRemoved={t.catalogRemoved}
             />
           </Suspense>
         )}
-        {showTileLibrary && (
-          <TileLibrary
-            orientation={orientation}
-            canvas={canvas}
-            tiles={activeOrientation.tiles}
-            profileName={activeProfile.name}
+        {showContentLibrary && (
+          <ContentLibrary
             accent={accent}
-            onAdd={(type, rect) => updateActiveOrientation({
-              tiles: addInstance(activeOrientation.tiles, {
-                instanceId: newId(), type, rect,
-              }),
-            })}
-            onRemove={(instanceId) => updateActiveOrientation({
-              tiles: removeInstance(activeOrientation.tiles, instanceId),
-            })}
-            onClose={() => setShowTileLibrary(false)}
+            accent2={vizAccent2}
+            spectrumRef={spectrumRef}
+            catalogRemoved={t.catalogRemoved}
+            setCatalogRemoved={(next) => setTweak('catalogRemoved', next)}
+            onRemoveTileInstances={(type) => setTweak('profiles', t.profiles.map((p) => ({
+              ...p,
+              landscape: { tiles: removeTilesOfType(p.landscape.tiles, type) },
+              portrait: { tiles: removeTilesOfType(p.portrait.tiles, type) },
+            })))}
+            onAddTileInstance={addTileInstance}
+            onVisualizerRemoved={onVisualizerRemoved}
+            onClose={() => setShowContentLibrary(false)}
           />
         )}
       </div>
@@ -913,7 +1123,7 @@ export default function App() {
           accent2={accent2}
           accentLinked={accentLinked}
           trackTitle={track.title}
-          onOpenTileLibrary={() => { setShowSettings(false); setShowTileLibrary(true); }}
+          onOpenContentLibrary={() => { setShowSettings(false); setShowContentLibrary(true); }}
           onReplayOnboarding={() => { setShowSettings(false); setShowOnboarding(true); }}
           onResetLayout={resetLayout}
           onExportSettings={async () => {

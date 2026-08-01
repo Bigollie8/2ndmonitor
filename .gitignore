@@ -18,6 +18,9 @@ Thumbs.db
 # Tauri
 app/src-tauri/gen/
 
+# Bundle build artifacts
+bundles/dist/
+
 # Internal design references and planning docs (kept local)
 /index.html
 design/

@@ -4,17 +4,28 @@
   "version": "0.4.0",
   "type": "module",
   "scripts": {
+    "gen:sandbox": "tsx scripts/gen-sandbox-html.ts",
+    "predev": "npm run gen:sandbox",
     "dev": "vite",
+    "prebuild": "npm run gen:sandbox",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "test": "tsx --test src/**/*.test.ts",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
-    "tauri:build": "tauri build"
+    "tauri:build": "tauri build",
+    "bundles:build": "node ../scripts/bundles.mjs build",
+    "bundles:publish": "node ../scripts/bundles.mjs publish",
+    "bundles:seed": "node ../scripts/bundles.mjs seed"
   },
   "dependencies": {
+    "@codemirror/lang-javascript": "^6.2.5",
+    "@codemirror/theme-one-dark": "^6.1.3",
     "@tauri-apps/api": "^2.1.1",
     "@tauri-apps/plugin-autostart": "^2.5.1",
+    "butterchurn": "^2.6.7",
+    "butterchurn-presets": "^2.4.7",
+    "codemirror": "^6.0.2",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },

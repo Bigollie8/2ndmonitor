@@ -1,11 +1,21 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
+/** `setTimeout`'s delay argument is coerced to a 32-bit signed int; anything
+ *  larger silently clamps to 0 in both Node and browsers, turning a poll
+ *  "interval" into a tight loop instead of throwing (I3). `viewSpec.ts`
+ *  caps a declarative tile's `intervalMs` at 24h so `baseMs * 8` alone can't
+ *  reach this, but `usePoll` is also used by hand-written built-in tiles
+ *  that never go through that validator — so the clamp lives here too, as
+ *  defense in depth, not only at the one call site that happens to validate
+ *  its input. */
+const MAX_SETTIMEOUT_MS = 2_147_483_647; // 2^31 - 1
+
 /** Delay before the next poll after `failures` consecutive errors.
  *  Doubles per failure, capped at 8x the base interval so a dead endpoint
  *  is retried at a civilized rate instead of hammered forever. */
 export function backoffDelay(baseMs: number, failures: number): number {
   const n = Math.max(0, Math.min(3, failures));
-  return baseMs * 2 ** n;
+  return Math.min(baseMs * 2 ** n, MAX_SETTIMEOUT_MS);
 }
 
 export interface PollState<T> {

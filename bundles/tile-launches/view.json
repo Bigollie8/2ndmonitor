@@ -1,0 +1,17 @@
+{
+  "source": {
+    "kind": "http",
+    "url": "https://ll.thespacedevs.com/2.2.0/launch/upcoming/?limit=8&mode=list",
+    "intervalMs": 1800000
+  },
+  "select": "results",
+  "view": {
+    "type": "list",
+    "row": {
+      "left": "{{item.status.abbrev}}",
+      "title": "{{item.name}}",
+      "right": "{{item.lsp_name}} · {{item.net}}"
+    },
+    "emptyText": "No upcoming launches."
+  }
+}

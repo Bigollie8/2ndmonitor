@@ -1,11 +1,13 @@
 export type Density = 'compact' | 'regular' | 'spacious';
-export type VizMode =
-  | 'bars' | 'waveform' | 'radial' | 'particles' | 'ambient'
-  | 'neonbars' | 'splitmirror' | 'circular' | 'tunnel' | 'pixelled'
-  | 'ribbon' | 'scope' | 'spectrogram' | 'vinyl' | 'kaleidoscope'
-  | 'freqgrid' | 'minimal'
-  | 'starfield' | 'perlin' | 'orbital' | 'aurora' | 'city'
-  | 'strings' | 'hud' | 'liquid' | 'cassette' | 'constellation';
+/** Styles compiled into the binary. The fifteen DOM/canvas styles that used to
+ *  be listed here are now marketplace bundles (`bundle:bars` and friends) —
+ *  deliberately dropped from the union rather than kept "just in case", so any
+ *  code still naming one is a compile error instead of a runtime blank frame. */
+export type BuiltinVizMode = 'milkdrop' | 'scripted';
+
+/** A selected style: a built-in, or an installed marketplace bundle. Bundle
+ *  ids are namespaced so they can never collide with a built-in. */
+export type VizMode = BuiltinVizMode | `bundle:${string}`;
 export interface Profile {
   /** Stable id (UUID). Used for activeProfileId references. */
   id: string;

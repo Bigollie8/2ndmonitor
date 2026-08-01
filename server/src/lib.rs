@@ -1,0 +1,71 @@
+//! Marketplace server for Second-Monitor Hub — library surface.
+//! The binary (main.rs) is a thin wrapper; integration tests build the same
+//! router against an in-memory database.
+
+pub mod admin;
+pub mod ai_review;
+pub mod auth;
+pub mod db;
+pub mod index;
+pub mod keys;
+pub mod manifest;
+pub mod ratings;
+pub mod state;
+pub mod submit;
+
+use axum::routing::post;
+use axum::{routing::get, Json, Router};
+use parking_lot::Mutex;
+use serde_json::json;
+use state::{AppState, Config};
+use std::collections::HashMap;
+use std::sync::Arc;
+
+pub fn router(state: AppState) -> Router {
+    Router::new()
+        .route("/health", get(health))
+        .route("/auth/register", post(auth::register))
+        .route("/auth/verify", get(auth::verify))
+        .route("/auth/login", post(auth::login))
+        .route("/auth/request-reset", post(auth::request_reset))
+        .route("/auth/reset", post(auth::reset))
+        .route("/auth/whoami", get(auth::whoami))
+        .route("/submissions", post(submit::submit))
+        .route("/submissions/mine", get(submit::mine))
+        .route("/ratings", post(ratings::rate).get(ratings::ratings))
+        .route("/admin", get(admin::page))
+        .route("/admin/queue", get(admin::queue))
+        .route("/admin/decide", post(admin::decide))
+        .route("/index.json", get(index::index_json))
+        .route("/bundle/:id/:version", get(index::download))
+        .route("/bundle/:id/:version/preview", get(index::preview))
+        .with_state(state)
+}
+
+async fn health() -> Json<serde_json::Value> {
+    Json(json!({ "ok": true }))
+}
+
+pub fn build_state(cfg: Config, conn: rusqlite::Connection, seed: [u8; 32]) -> AppState {
+    db::init(&conn);
+    AppState {
+        db: Arc::new(Mutex::new(conn)),
+        cfg,
+        limiter: Arc::new(Mutex::new(HashMap::new())),
+        signing_seed: seed,
+        review_fn: None,
+    }
+}
+
+/// Test harness: in-memory DB, test config, fixed seed.
+pub fn test_state() -> AppState {
+    let conn = rusqlite::Connection::open_in_memory().expect("memory db");
+    build_state(Config::test(), conn, [7u8; 32])
+}
+
+/// Test harness with an injected AI reviewer (runs synchronously in kick()).
+pub fn test_state_with_reviewer(review_fn: state::ReviewFn) -> AppState {
+    let mut s = test_state();
+    s.review_fn = Some(review_fn);
+    s
+}

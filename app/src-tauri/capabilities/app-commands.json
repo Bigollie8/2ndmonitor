@@ -1,0 +1,8 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "app-commands",
+  "description": "The app's own commands, restricted to the main webview loaded from a local origin. Deliberately NOT merged into `default`: that capability uses `windows: [\"main\"]`, and `resolve_access` matches `webviews` OR `windows`, so a window-scoped grant also covers the `browser-tile` child webview (an arbitrary user-chosen remote page). Naming `webviews` and omitting `windows` is the fine-grained form Tauri's own docs recommend on multiwebview windows, and it means an app command needs BOTH the `main` webview label AND a local origin.",
+  "webviews": ["main"],
+  "local": true,
+  "permissions": ["allow-app-commands"]
+}

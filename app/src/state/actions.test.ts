@@ -4,19 +4,49 @@ import assert from 'node:assert/strict';
 import { executeAction, type ActionContext } from './actions';
 import type { VizMode } from '../types';
 
+// `vizIds` holds whatever the merged catalog produced — bare built-in ids and
+// `bundle:` ids alike. These fixtures use two of them as opaque strings.
 const makeCtx = (overrides: Partial<ActionContext> = {}): ActionContext => ({
-  vizMode: 'bars',
+  vizMode: 'bundle:bars',
   setVizMode: () => {},
   setActiveProfileId: () => {},
+  vizIds: ['bundle:bars', 'bundle:waveform'],
   ...overrides,
 });
 
 test('executeAction cycleViz advances vizMode to a different style', async () => {
   let called: VizMode | null = null;
-  const ctx = makeCtx({ vizMode: 'bars', setVizMode: (m) => { called = m; } });
+  const ctx = makeCtx({ vizMode: 'bundle:bars', setVizMode: (m) => { called = m; } });
   await executeAction({ kind: 'cycleViz' }, ctx);
   assert.notEqual(called, null);
-  assert.notEqual(called, 'bars');
+  assert.notEqual(called, 'bundle:bars');
+});
+
+// Regression: this used to be `ids[(i + 1) % ids.length] ?? 'bars'`. With an
+// empty catalog the modulo is NaN, so the `??` fired and a physical Stream
+// Deck press persisted a style that is no longer compiled in — a blank
+// surface, and before that a silent un-removal of a tombstoned style.
+test('executeAction cycleViz is a no-op when nothing is installed', async () => {
+  let called: VizMode | null = null;
+  const ctx = makeCtx({ vizIds: [], setVizMode: (m) => { called = m; } });
+  await executeAction({ kind: 'cycleViz' }, ctx);
+  assert.equal(called, null, 'must not invent a style id when the catalog is empty');
+});
+
+test('executeAction cycleViz wraps to the first entry from the last', async () => {
+  let called: VizMode | null = null;
+  const ctx = makeCtx({ vizMode: 'bundle:waveform', setVizMode: (m) => { called = m; } });
+  await executeAction({ kind: 'cycleViz' }, ctx);
+  assert.equal(called, 'bundle:bars');
+});
+
+// An unrecognised current mode (a style removed while it was selected) must
+// still land somewhere real rather than falling through to a constant.
+test('executeAction cycleViz from an unknown mode lands on a style that exists', async () => {
+  let called: VizMode | null = null;
+  const ctx = makeCtx({ vizMode: 'bundle:gone', setVizMode: (m) => { called = m; } });
+  await executeAction({ kind: 'cycleViz' }, ctx);
+  assert.ok(ctx.vizIds.includes(called as string), `${called} is not in the catalog`);
 });
 
 test('executeAction switchProfile calls setActiveProfileId with the id', async () => {

@@ -1,9 +1,9 @@
 import React, { useState } from 'react';
 import type { TileType, TileInstance, Rect } from '../state/layout';
 import {
-  ALL_TILE_TYPES,
   DEFAULT_LANDSCAPE_LAYOUT,
   DEFAULT_PORTRAIT_LAYOUT,
+  DEFAULT_BUNDLE_TILE_RECT,
   clampRectFrac,
   useCanvas,
   useOrientation,
@@ -12,20 +12,28 @@ import {
   updateInstance,
 } from '../state/layout';
 import { TILE_META } from '../state/tileMeta';
-import { TileLibrary } from './TileLibrary';
+import { isBundleTile, bundleIdOf, BUNDLE_TILE_ICON } from '../tiles/tileRegistry';
+import { useTileCatalog } from '../tiles/useTileCatalog';
 
 export function EditModeOverlay({
-  accent, accent2, onExit, onRemove, onAdd,
+  accent, accent2, onExit, onRemove, onOpenLibrary,
   tiles, setTiles,
   selectedInstanceId, setSelectedInstanceId,
   snap, setSnap,
   profileName,
+  catalogRemoved,
 }: {
   accent: string;
   accent2: string;
   onExit: () => void;
   onRemove?: (instanceId: string) => void;
-  onAdd: (type: TileType, rect: Rect) => void;
+  /** Opens the unified content library (App owns it — same instance Settings
+   *  and a missing bundle tile open) to add or remove tiles. Edit mode used
+   *  to mount its own standalone tile picker here (the old TileLibrary
+   *  component); now it just surfaces the one canonical catalog surface,
+   *  which stacks fine on top of the edit overlay and closes independently
+   *  via the Esc cascade in App.tsx. */
+  onOpenLibrary: () => void;
   tiles: TileInstance[];
   setTiles: (next: TileInstance[]) => void;
   selectedInstanceId: string;
@@ -33,16 +41,28 @@ export function EditModeOverlay({
   snap: boolean;
   setSnap: (enabled: boolean) => void;
   profileName: string;
+  /** The catalog removal list — see state/removedContent.ts. */
+  catalogRemoved: string[];
 }) {
   const [showGuides, setShowGuides] = useState(true);
   const [showGrid, setShowGrid] = useState(true);
-  const [pickerOpen, setPickerOpen] = useState(false);
 
   // Labels/icons come from the shared registry — this used to be a third
-  // hand-maintained copy of the tile metadata.
-  const ALL_LABELS = Object.fromEntries(
-    ALL_TILE_TYPES.map((k) => [k, TILE_META[k].label]),
-  ) as Record<TileType, string>;
+  // hand-maintained copy of the tile metadata. A plain `Record<TileType, ...>`
+  // built from `ALL_TILE_TYPES` (built-ins only) type-checks against the
+  // `bundle:${string}` half of TileType but has no entries for it — a lookup
+  // for a placed bundle tile would return `undefined` at runtime with no
+  // compiler complaint. `labelFor` instead resolves a bundle tile against the
+  // live catalog, falling back to the bundle id (never `undefined`) if the
+  // catalog hasn't loaded yet or the bundle was uninstalled.
+  const { entries: tileCatalog } = useTileCatalog(catalogRemoved);
+  const labelFor = (type: TileType): string => {
+    if (isBundleTile(type)) {
+      const entry = tileCatalog.find((e) => e.type === type);
+      return entry?.meta.label ?? bundleIdOf(type) ?? type;
+    }
+    return TILE_META[type].label;
+  };
 
   const orientation = useOrientation();
   const canvas = useCanvas();
@@ -50,10 +70,10 @@ export function EditModeOverlay({
 
   const tileMap: Record<string, { rect: Rect; label: string; type: TileType }> = {};
   for (const inst of tiles) {
-    tileMap[inst.instanceId] = { rect: inst.rect, label: ALL_LABELS[inst.type], type: inst.type };
+    tileMap[inst.instanceId] = { rect: inst.rect, label: labelFor(inst.type), type: inst.type };
   }
 
-  const sel = tileMap[selectedInstanceId] ?? (tiles[0] ? { rect: tiles[0].rect, label: ALL_LABELS[tiles[0].type], type: tiles[0].type } : undefined);
+  const sel = tileMap[selectedInstanceId] ?? (tiles[0] ? { rect: tiles[0].rect, label: labelFor(tiles[0].type), type: tiles[0].type } : undefined);
 
   const setRect = (instanceId: string, r: Rect) =>
     setTiles(updateInstance(tiles, instanceId, { rect: clampRectFrac(r, canvas) }));
@@ -61,7 +81,10 @@ export function EditModeOverlay({
   const resetRect = (instanceId: string) => {
     const inst = getInstance(tiles, instanceId);
     if (!inst) return;
-    setTiles(updateInstance(tiles, instanceId, { rect: defaults[inst.type] }));
+    // A bundle tile (`bundle:<id>`) has no compile-time entry in `defaults` —
+    // fall back to the shared bundle default rect for this orientation.
+    const rect = isBundleTile(inst.type) ? DEFAULT_BUNDLE_TILE_RECT[orientation] : defaults[inst.type];
+    setTiles(updateInstance(tiles, instanceId, { rect }));
   };
 
   return (
@@ -77,7 +100,7 @@ export function EditModeOverlay({
           snap={snap} setSnap={setSnap}
           profileName={profileName}
           onExit={onExit}
-          onPickerOpen={() => setPickerOpen(true)} />
+          onPickerOpen={onOpenLibrary} />
       </div>
       {showGrid && <GridOverlay />}
       {showGuides && sel && <SmartGuides rect={sel.rect} accent={accent2} canvas={canvas} />}
@@ -101,22 +124,8 @@ export function EditModeOverlay({
             }
           />
         )}
-        <LayersPanel accent={accent} selectedInstanceId={selectedInstanceId} setSelectedInstanceId={setSelectedInstanceId} tiles={tiles} canvas={canvas} labels={ALL_LABELS} />
+        <LayersPanel accent={accent} selectedInstanceId={selectedInstanceId} setSelectedInstanceId={setSelectedInstanceId} tiles={tiles} canvas={canvas} labelFor={labelFor} />
       </div>
-      {pickerOpen && (
-        <div style={{ pointerEvents: 'auto' }}>
-          <TileLibrary
-            orientation={orientation}
-            canvas={canvas}
-            tiles={tiles}
-            profileName={profileName}
-            accent={accent}
-            onAdd={(type, rect) => onAdd(type, rect)}
-            onRemove={(instanceId) => onRemove && onRemove(instanceId)}
-            onClose={() => setPickerOpen(false)}
-          />
-        </div>
-      )}
     </div>
   );
 }
@@ -298,7 +307,7 @@ function PropertiesPanel({
         <button
           onClick={onRemove}
           disabled={!onRemove}
-          title={onRemove ? 'Remove this tile (add it back from the Tile Library)' : 'The visualizer cannot be removed'}
+          title={onRemove ? 'Remove this tile (add it back from the content library)' : 'The visualizer cannot be removed'}
           style={{
             flex: 1, padding: '7px', fontSize: 10.5, fontWeight: 600,
             background: 'rgba(239,68,68,0.1)', color: onRemove ? '#fca5a5' : 'rgba(239,68,68,0.4)',
@@ -365,15 +374,17 @@ function EmToggle({ on, accent }: { on: boolean; accent: string }) {
   );
 }
 
-function LayersPanel({ accent, selectedInstanceId, setSelectedInstanceId, tiles, canvas, labels }: {
+function LayersPanel({ accent, selectedInstanceId, setSelectedInstanceId, tiles, canvas, labelFor }: {
   accent: string;
   selectedInstanceId: string;
   setSelectedInstanceId: (id: string) => void;
   tiles: TileInstance[];
   canvas: { w: number; h: number };
-  labels: Record<TileType, string>;
+  labelFor: (type: TileType) => string;
 }) {
-  const kindIcon = (type: TileType): string => TILE_META[type].icon;
+  // A bundle tile (`bundle:<id>`) has no entry in TILE_META — it shares the
+  // same fallback glyph the tile registry synthesizes for it.
+  const kindIcon = (type: TileType): string => (isBundleTile(type) ? BUNDLE_TILE_ICON : TILE_META[type].icon);
   return (
     <div style={{
       position: 'absolute', bottom: 16, left: 16, width: 240,
@@ -398,7 +409,7 @@ function LayersPanel({ accent, selectedInstanceId, setSelectedInstanceId, tiles,
               textAlign: 'left',
             }}>
               <span style={{ fontSize: 11 }}>{kindIcon(inst.type)}</span>
-              <span style={{ fontSize: 11, flex: 1 }}>{inst.name ?? labels[inst.type]}</span>
+              <span style={{ fontSize: 11, flex: 1 }}>{inst.name ?? labelFor(inst.type)}</span>
               <span style={{ fontSize: 9, color: 'rgba(255,255,255,0.3)', fontFamily: '"JetBrains Mono", ui-monospace, monospace' }}>
                 {Math.round(inst.rect.w * canvas.w)}×{Math.round(inst.rect.h * canvas.h)}
               </span>

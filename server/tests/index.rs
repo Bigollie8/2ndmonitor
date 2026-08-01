@@ -1,0 +1,228 @@
+use axum::body::Body;
+use axum::http::{header, Request, StatusCode};
+use http_body_util::BodyExt;
+use hub_marketplace::keys::verify_index;
+use hub_marketplace::{router, test_state};
+use sha2::{Digest, Sha256};
+use tower::ServiceExt;
+
+async fn call(
+    app: &axum::Router,
+    method: &str,
+    uri: &str,
+    token: Option<&str>,
+    body: Option<serde_json::Value>,
+) -> (StatusCode, Vec<u8>) {
+    let mut req = Request::builder().method(method).uri(uri);
+    if let Some(t) = token {
+        req = req.header(header::AUTHORIZATION, format!("Bearer {t}"));
+    }
+    let req = if let Some(b) = body {
+        req.header(header::CONTENT_TYPE, "application/json")
+            .header("x-forwarded-for", "1.1.1.1")
+            .body(Body::from(b.to_string()))
+            .unwrap()
+    } else {
+        req.header("x-forwarded-for", "1.1.1.1").body(Body::empty()).unwrap()
+    };
+    let res = app.clone().oneshot(req).await.unwrap();
+    let status = res.status();
+    let bytes = res.into_body().collect().await.unwrap().to_bytes().to_vec();
+    (status, bytes)
+}
+
+async fn setup_approved_preset(app: &axum::Router) {
+    let (_, body) = call(app, "POST", "/auth/register", None,
+        Some(serde_json::json!({"email": "a@b.c", "password": "hunter22"}))).await;
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let verify = v["verify_token"].as_str().unwrap().to_string();
+    call(app, "GET", &format!("/auth/verify?token={verify}"), None, None).await;
+    let (_, body) = call(app, "POST", "/auth/login", None,
+        Some(serde_json::json!({"email": "a@b.c", "password": "hunter22"}))).await;
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let t = v["token"].as_str().unwrap().to_string();
+    let (st, _) = call(app, "POST", "/submissions", Some(&t), Some(serde_json::json!({
+        "kind": "preset",
+        "manifest": serde_json::json!({"id":"cool-preset","name":"P","version":"1.0.0","api":1,"permissions":[]}).to_string(),
+        "preset_json": "{\"baseVals\":{}}"
+    }))).await;
+    assert_eq!(st, StatusCode::OK);
+    // Plus a pending visualizer that must NOT appear in the index.
+    let (st, _) = call(app, "POST", "/submissions", Some(&t), Some(serde_json::json!({
+        "kind": "visualizer",
+        "manifest": serde_json::json!({"id":"pending-viz","name":"V","version":"1.0.0","api":1,"permissions":[]}).to_string(),
+        "code": "x()"
+    }))).await;
+    assert_eq!(st, StatusCode::OK);
+}
+
+fn extract_bundles_str(raw: &str) -> String {
+    // The signature covers the exact "bundles" array substring.
+    let start = raw.find("\"bundles\":").unwrap() + "\"bundles\":".len();
+    let rest = &raw[start..];
+    let end = rest.rfind(",\"pubkey\"").unwrap();
+    rest[..end].to_string()
+}
+
+#[tokio::test]
+async fn index_lists_only_approved_and_signature_verifies() {
+    let app = router(test_state());
+    setup_approved_preset(&app).await;
+
+    let (st, body) = call(&app, "GET", "/index.json", None, None).await;
+    assert_eq!(st, StatusCode::OK);
+    let raw = String::from_utf8(body).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&raw).unwrap();
+    let bundles = v["bundles"].as_array().unwrap();
+    assert_eq!(bundles.len(), 1);
+    assert_eq!(bundles[0]["id"], "cool-preset");
+    assert_eq!(bundles[0]["author"], "a@b***");
+
+    let bundles_str = extract_bundles_str(&raw);
+    let sig = v["sig"].as_str().unwrap();
+    let pubkey = v["pubkey"].as_str().unwrap();
+    assert!(verify_index(&bundles_str, sig, pubkey), "signature must verify");
+
+    // Tampered payload fails.
+    let tampered = bundles_str.replace("cool-preset", "evil-preset");
+    assert!(!verify_index(&tampered, sig, pubkey));
+}
+
+#[tokio::test]
+async fn download_matches_sha_and_increments_count() {
+    let app = router(test_state());
+    setup_approved_preset(&app).await;
+
+    let (st, zip1) = call(&app, "GET", "/bundle/cool-preset/1.0.0", None, None).await;
+    assert_eq!(st, StatusCode::OK);
+    let (_, idx) = call(&app, "GET", "/index.json", None, None).await;
+    let v: serde_json::Value = serde_json::from_slice(&idx).unwrap();
+    assert_eq!(v["bundles"][0]["downloads"], 1);
+    assert_eq!(
+        v["bundles"][0]["sha256"].as_str().unwrap(),
+        hex::encode(Sha256::digest(&zip1))
+    );
+
+    // Pending bundle is not downloadable.
+    let (st, _) = call(&app, "GET", "/bundle/pending-viz/1.0.0", None, None).await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+}
+
+async fn make_user(app: &axum::Router, email: &str) -> String {
+    let (_, body) = call(app, "POST", "/auth/register", None,
+        Some(serde_json::json!({"email": email, "password": "hunter22"}))).await;
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let verify = v["verify_token"].as_str().unwrap().to_string();
+    call(app, "GET", &format!("/auth/verify?token={verify}"), None, None).await;
+    let (_, body) = call(app, "POST", "/auth/login", None,
+        Some(serde_json::json!({"email": email, "password": "hunter22"}))).await;
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    v["token"].as_str().unwrap().to_string()
+}
+
+fn png_bytes() -> Vec<u8> {
+    [vec![0x89u8, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A], vec![0u8; 16]].concat()
+}
+
+/// The index's `hasPreview` field must reflect whether a `preview` BLOB is
+/// stored, and adding the field must not disturb the signed substring — the
+/// signature still has to verify over the (now-larger) `bundles` array.
+#[tokio::test]
+async fn index_reports_has_preview_and_signature_still_verifies() {
+    use base64::Engine;
+    let app = router(test_state());
+    let t = make_user(&app, "a@b.c").await;
+    let preview_b64 = base64::engine::general_purpose::STANDARD.encode(png_bytes());
+
+    let (st, _) = call(&app, "POST", "/submissions", Some(&t), Some(serde_json::json!({
+        "kind": "preset",
+        "manifest": serde_json::json!({"id":"with-preview","name":"P","version":"1.0.0","api":1,"permissions":[]}).to_string(),
+        "preset_json": "{\"baseVals\":{}}",
+        "preview": preview_b64,
+    }))).await;
+    assert_eq!(st, StatusCode::OK);
+    let (st, _) = call(&app, "POST", "/submissions", Some(&t), Some(serde_json::json!({
+        "kind": "preset",
+        "manifest": serde_json::json!({"id":"without-preview","name":"P","version":"1.0.0","api":1,"permissions":[]}).to_string(),
+        "preset_json": "{\"baseVals\":{}}",
+    }))).await;
+    assert_eq!(st, StatusCode::OK);
+
+    let (st, body) = call(&app, "GET", "/index.json", None, None).await;
+    assert_eq!(st, StatusCode::OK);
+    let raw = String::from_utf8(body).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&raw).unwrap();
+    let bundles = v["bundles"].as_array().unwrap();
+    let with = bundles.iter().find(|b| b["id"] == "with-preview").unwrap();
+    let without = bundles.iter().find(|b| b["id"] == "without-preview").unwrap();
+    assert_eq!(with["hasPreview"], serde_json::json!(true));
+    assert_eq!(without["hasPreview"], serde_json::json!(false));
+
+    let bundles_str = extract_bundles_str(&raw);
+    let sig = v["sig"].as_str().unwrap();
+    let pubkey = v["pubkey"].as_str().unwrap();
+    assert!(verify_index(&bundles_str, sig, pubkey), "signature must verify with hasPreview present");
+}
+
+/// An unapproved bundle's preview must not leak through the preview
+/// endpoint, exactly like the zip download.
+#[tokio::test]
+async fn preview_endpoint_404s_for_unapproved_bundle() {
+    use base64::Engine;
+    let app = router(test_state());
+    let t = make_user(&app, "a@b.c").await;
+    let preview_b64 = base64::engine::general_purpose::STANDARD.encode(png_bytes());
+
+    let (st, _) = call(&app, "POST", "/submissions", Some(&t), Some(serde_json::json!({
+        "kind": "visualizer",
+        "manifest": serde_json::json!({"id":"pending-with-preview","name":"V","version":"1.0.0","api":1,"permissions":[]}).to_string(),
+        "code": "x()",
+        "preview": preview_b64,
+    }))).await;
+    assert_eq!(st, StatusCode::OK);
+
+    let (st, _) = call(&app, "GET", "/bundle/pending-with-preview/1.0.0/preview", None, None).await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+}
+
+/// An approved bundle with no stored preview 404s; one with a preview
+/// serves the raw bytes with a content type sniffed from the bytes.
+#[tokio::test]
+async fn preview_endpoint_404s_without_preview_and_serves_sniffed_mime_with_one() {
+    use base64::Engine;
+    let app = router(test_state());
+    let t = make_user(&app, "a@b.c").await;
+    let png = png_bytes();
+    let preview_b64 = base64::engine::general_purpose::STANDARD.encode(&png);
+
+    let (st, _) = call(&app, "POST", "/submissions", Some(&t), Some(serde_json::json!({
+        "kind": "preset",
+        "manifest": serde_json::json!({"id":"preview-preset","name":"P","version":"1.0.0","api":1,"permissions":[]}).to_string(),
+        "preset_json": "{\"baseVals\":{}}",
+        "preview": preview_b64,
+    }))).await;
+    assert_eq!(st, StatusCode::OK);
+    let (st, _) = call(&app, "POST", "/submissions", Some(&t), Some(serde_json::json!({
+        "kind": "preset",
+        "manifest": serde_json::json!({"id":"no-preview-preset","name":"P","version":"1.0.0","api":1,"permissions":[]}).to_string(),
+        "preset_json": "{\"baseVals\":{}}",
+    }))).await;
+    assert_eq!(st, StatusCode::OK);
+
+    // No preview stored -> 404, even though the bundle itself is approved.
+    let (st, _) = call(&app, "GET", "/bundle/no-preview-preset/1.0.0/preview", None, None).await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+
+    // Preview stored -> 200 with a mime type sniffed from the bytes.
+    let req = Request::builder()
+        .method("GET")
+        .uri("/bundle/preview-preset/1.0.0/preview")
+        .header("x-forwarded-for", "1.1.1.1")
+        .body(Body::empty())
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    assert_eq!(res.headers().get(header::CONTENT_TYPE).unwrap(), "image/png");
+    let bytes = res.into_body().collect().await.unwrap().to_bytes().to_vec();
+    assert_eq!(bytes, png);
+}

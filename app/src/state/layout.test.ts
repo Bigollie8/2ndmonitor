@@ -12,7 +12,9 @@ import {
   SNAP_FRAC,
   DEFAULT_LANDSCAPE_LAYOUT,
   DEFAULT_PORTRAIT_LAYOUT,
+  removeTilesOfType,
 } from './layout';
+import type { TileInstance } from './layout';
 
 const LANDSCAPE = { w: 2560, h: 1440 };
 const PORTRAIT = { w: 1080, h: 1920 };
@@ -152,12 +154,12 @@ test('DEFAULT_PORTRAIT_LAYOUT contains all tile types', () => {
   // Note: JS default sort is codepoint-based, so capital Q < lowercase i
   // (airQuality precedes aircraft, etc.).
   assert.deepEqual(ids, [
-    'activeWindow', 'airQuality', 'aircraft', 'aurora', 'birds', 'claude',
-    'clock', 'dailyChallenge', 'discord', 'docker', 'energy', 'githubPrs',
-    'homeAssistant', 'iss', 'launches', 'lightning', 'mixer', 'notes',
-    'onThisDay', 'phoneNotifs', 'pollen', 'pomodoro', 'quote', 'randomWiki',
+    'activeWindow', 'airQuality', 'aircraft', 'aurora', 'claude',
+    'clock', 'discord', 'docker', 'energy',
+    'homeAssistant', 'iss', 'lightning', 'mixer', 'notes',
+    'onThisDay', 'pollen', 'pomodoro',
     'scratchpad', 'solarFlare', 'spotify', 'stocks', 'streamChat',
-    'streamDeck', 'sun', 'sysmon', 'tides', 'viz', 'weatherRadar', 'wordOfDay',
+    'streamDeck', 'sun', 'sysmon', 'tides', 'viz', 'weatherRadar',
   ]);
 });
 
@@ -269,4 +271,56 @@ test('migrateLayoutHiddenToTiles: result preserves ALL_TILE_TYPES order', () => 
   const tiles = migrateLayoutHiddenToTiles({}, {}, DEFAULT_LANDSCAPE_LAYOUT);
   const types = tiles.map((t) => t.type);
   assert.deepEqual(types, ALL_TILE_TYPES);
+});
+
+test('removeTilesOfType: drops every instance matching the type, keeps the rest', () => {
+  const tiles: TileInstance[] = [
+    { instanceId: 'a', type: 'notes', rect: { x: 0, y: 0, w: 1, h: 1 } },
+    { instanceId: 'b', type: 'clock', rect: { x: 0, y: 0, w: 1, h: 1 } },
+    { instanceId: 'c', type: 'notes', rect: { x: 0, y: 0, w: 1, h: 1 } },
+  ];
+  const out = removeTilesOfType(tiles, 'notes');
+  assert.deepEqual(out.map((t) => t.instanceId), ['b']);
+});
+
+test('removeTilesOfType: matches bundle: ids by exact type, not by prefix', () => {
+  const tiles: TileInstance[] = [
+    { instanceId: 'a', type: 'bundle:foo', rect: { x: 0, y: 0, w: 1, h: 1 } },
+    { instanceId: 'b', type: 'bundle:foobar', rect: { x: 0, y: 0, w: 1, h: 1 } },
+  ];
+  const out = removeTilesOfType(tiles, 'bundle:foo');
+  assert.deepEqual(out.map((t) => t.instanceId), ['b']);
+});
+
+test('removeTilesOfType: no match leaves the array unchanged (by value)', () => {
+  const tiles: TileInstance[] = [
+    { instanceId: 'a', type: 'notes', rect: { x: 0, y: 0, w: 1, h: 1 } },
+  ];
+  assert.deepEqual(removeTilesOfType(tiles, 'clock'), tiles);
+});
+
+import { remapRetiredTileType } from './layout';
+
+test('remapRetiredTileType: retired built-ins point at their bundle ids', () => {
+  assert.equal(remapRetiredTileType('quote'), 'bundle:tile-quote');
+  assert.equal(remapRetiredTileType('wordOfDay'), 'bundle:tile-dictionary');
+  assert.equal(remapRetiredTileType('dailyChallenge'), 'bundle:tile-dailychallenge');
+  assert.equal(remapRetiredTileType('randomWiki'), 'bundle:tile-randomwiki');
+  assert.equal(remapRetiredTileType('launches'), 'bundle:tile-launches');
+  assert.equal(remapRetiredTileType('githubPrs'), 'bundle:tile-githubprs');
+  assert.equal(remapRetiredTileType('phoneNotifs'), 'bundle:tile-phonenotifs');
+  assert.equal(remapRetiredTileType('birds'), 'bundle:tile-birds');
+});
+
+test('remapRetiredTileType: a live built-in is unchanged', () => {
+  assert.equal(remapRetiredTileType('mixer'), 'mixer');
+});
+
+test('remapRetiredTileType: onThisDay and stocks stay built-in (additional listings, not replacements)', () => {
+  assert.equal(remapRetiredTileType('onThisDay'), 'onThisDay');
+  assert.equal(remapRetiredTileType('stocks'), 'stocks');
+});
+
+test('remapRetiredTileType: an already-bundle type is unchanged', () => {
+  assert.equal(remapRetiredTileType('bundle:tile-quote'), 'bundle:tile-quote');
 });
