@@ -161,16 +161,29 @@ fn login_status_message(status: u16) -> Option<String> {
     }
 }
 
-/// POST-with-JSON-body counterpart to `get_capped`, used only by
-/// `marketplace_login`. `get_capped` treats ANY non-2xx as a single opaque
-/// "request failed" transport error (ureq's default), which is exactly wrong
-/// here: the caller needs to tell a 401 (wrong password) apart from a
-/// connection that never completed at all (unreachable server) so the two
-/// can produce different messages. So this function surfaces status/body for
-/// EVERY response that actually completed — 2xx or not — and reserves the
-/// `Err` return for a genuine transport failure. `login_status_message` is
-/// the caller-side decision that turns the status into the user-facing text.
-fn post_capped_json(url: &str, body: &serde_json::Value, cap: usize) -> Result<(u16, Vec<u8>), String> {
+/// POST-with-JSON-body counterpart to `get_capped`, used by
+/// `marketplace_login` and `marketplace_rate`. `get_capped` treats ANY
+/// non-2xx as a single opaque "request failed" transport error (ureq's
+/// default), which is exactly wrong here: the caller needs to tell a 401
+/// (wrong password, or — for `marketplace_rate` — no/expired session) apart
+/// from a connection that never completed at all (unreachable server) so the
+/// two can produce different messages. So this function surfaces
+/// status/body for EVERY response that actually completed — 2xx or not —
+/// and reserves the `Err` return for a genuine transport failure.
+/// `login_status_message`/`rate_status_message` are the caller-side
+/// decisions that turn the status into user-facing text.
+///
+/// `bearer` is `None` for the unauthenticated login POST, `Some(token)` for
+/// `marketplace_rate` — the ONLY place that token is ever attached to an
+/// outgoing request. It is read Rust-side via `secrets::secret_get_inner`
+/// by the caller and passed in as a borrow here; this function does not
+/// store, log, or otherwise retain it beyond building the one header.
+fn post_capped_json(
+    url: &str,
+    body: &serde_json::Value,
+    cap: usize,
+    bearer: Option<&str>,
+) -> Result<(u16, Vec<u8>), String> {
     if !url.starts_with("https://") {
         return Err("only https URLs are allowed".into());
     }
@@ -197,12 +210,15 @@ fn post_capped_json(url: &str, body: &serde_json::Value, cap: usize) -> Result<(
     // this, it would say nothing about where the response that decides
     // `token` came from. With redirects(0) a 3xx just comes back as an
     // ordinary status this function already handles like any other non-200.
+    // The same reasoning applies to `marketplace_rate`'s bearer token: a
+    // redirect silently followed to an attacker-controlled host would carry
+    // the `Authorization` header wherever `Location` points.
     let agent = ureq::AgentBuilder::new().redirects(0).build();
-    match agent
-        .post(url)
-        .timeout(std::time::Duration::from_secs(10))
-        .send_json(body.clone())
-    {
+    let mut req = agent.post(url).timeout(std::time::Duration::from_secs(10));
+    if let Some(token) = bearer {
+        req = req.set("Authorization", &format!("Bearer {token}"));
+    }
+    match req.send_json(body.clone()) {
         Ok(resp) => {
             let status = resp.status();
             Ok((status, read_capped(resp, cap)?))
@@ -229,7 +245,7 @@ pub fn marketplace_login<R: Runtime>(
     let base = url.trim_end_matches('/');
     let endpoint = format!("{base}/auth/login");
     let body = serde_json::json!({ "email": email, "password": password });
-    let (status, buf) = post_capped_json(&endpoint, &body, AUTH_CAP)?;
+    let (status, buf) = post_capped_json(&endpoint, &body, AUTH_CAP, None)?;
     if let Some(msg) = login_status_message(status) {
         return Err(msg);
     }
@@ -307,6 +323,108 @@ pub fn marketplace_session_status<R: Runtime>(
         .ok()
         .and_then(|v| v.get("email_masked").and_then(|e| e.as_str()).map(str::to_string));
     Ok(MarketplaceSessionStatus { signed_in: true, email })
+}
+
+// ---------------------------------------------------------------------------
+// Ratings: GET /ratings is public, unsigned browse data (see server/src/
+// ratings.rs's module doc) — fetched through get_capped exactly like the
+// index, but never signature-verified, because it isn't part of the signed
+// payload at all. A failure here is silent by design: the catalog renders
+// unchanged with every item's rating simply absent (see
+// state/catalog.ts's MergeCatalogArgs.ratings), same treatment as a missing
+// preview image. POST /ratings (marketplace_rate) is the one authenticated
+// call in this section — it reads the session token Rust-side via
+// `secrets::secret_get_inner`, the same pattern the CORRECTION note atop the
+// sign-in section above documents, and NEVER accepts a token from the
+// frontend or returns one.
+// ---------------------------------------------------------------------------
+
+/// True for an in-range integer rating. Pure so the boundary values (0, 1,
+/// 5, 6) are covered without a live server or an `AppHandle` — mirrors the
+/// server's own `ratings::validate_stars` range check; the type-validity half
+/// of that function (rejecting `3.5`/`"5"`/`null`) has no equivalent needed
+/// here because Tauri's IPC layer already deserializes `stars` into a real
+/// `i64` before this command's body ever runs, unlike the server which reads
+/// raw JSON off the wire.
+fn stars_in_range(stars: i64) -> bool {
+    (1..=5).contains(&stars)
+}
+
+/// Maps a `/ratings` POST response to a caller-facing error, or `None` for
+/// success (200). Pulled out as a pure function, same shape as
+/// `login_status_message` — but unlike login, the server's failure bodies
+/// here ARE genuinely useful plain text (see server/src/ratings.rs: "stars
+/// must be an integer from 1 to 5", "bundle does not exist or is not
+/// approved", "auth required" for a missing/expired session), so this
+/// forwards `body` verbatim rather than inventing a second copy of the same
+/// messages, and only substitutes a generic one when the body is empty or
+/// unreadable as UTF-8 text.
+fn rate_status_message(status: u16, body: &str) -> Option<String> {
+    if status == 200 {
+        return None;
+    }
+    if !body.is_empty() {
+        return Some(body.to_string());
+    }
+    Some(format!("marketplace server returned HTTP {status}"))
+}
+
+/// Fetches the current aggregate ratings for every rated bundle — `{"<bundle_
+/// id>": {"avg": 4.2, "count": 17}}`. Unsigned and public: no pubkey
+/// parameter, no signature check, unlike `marketplace_fetch_index`. Callers
+/// must treat any `Err` exactly like a missing preview (silent, see the
+/// module comment above) — this function itself has no special-casing for
+/// that; it is ordinary `get_capped` error propagation.
+#[tauri::command]
+pub fn marketplace_fetch_ratings(url: String) -> Result<serde_json::Value, String> {
+    let base = url.trim_end_matches('/');
+    let body_bytes = get_capped(&format!("{base}/ratings"), FETCH_CAP)?;
+    let body = String::from_utf8(body_bytes).map_err(|_| "ratings not UTF-8".to_string())?;
+    serde_json::from_str(&body).map_err(|e| format!("ratings not JSON: {e}"))
+}
+
+/// Casts (or replaces — the server's `(bundle_id, user_id)` primary key means
+/// a second vote from this account REPLACES rather than stacks, see
+/// server/src/ratings.rs) a 1-5 star vote for `id`.
+///
+/// The session token is read Rust-side via `secrets::secret_get_inner` and
+/// attached as the `Authorization: Bearer` header inside `post_capped_json`
+/// — it is never accepted as a parameter of this command (the frontend
+/// cannot supply it even if it wanted to; `id`/`stars`/`url` are the only
+/// inputs) and never appears in this function's `Ok` or `Err` return. An
+/// absent or unparseable stored session — meaning: no token was ever read
+/// off the wire, not even in transit — fails with "not signed in" before any
+/// network request is made, the same fail-fast shape `marketplace_install`
+/// uses for `is_safe_id`.
+#[tauri::command]
+pub fn marketplace_rate<R: Runtime>(
+    app: AppHandle<R>,
+    url: String,
+    id: String,
+    stars: i64,
+) -> Result<(), String> {
+    if !is_safe_id(&id) {
+        return Err("invalid bundle id".into());
+    }
+    if !stars_in_range(stars) {
+        return Err("stars must be an integer from 1 to 5".into());
+    }
+    let raw = crate::secrets::secret_get_inner(&app, SESSION_SECRET_KEY)
+        .ok_or_else(|| "not signed in".to_string())?;
+    let token = serde_json::from_str::<serde_json::Value>(&raw)
+        .ok()
+        .and_then(|v| v.get("token").and_then(|t| t.as_str()).map(str::to_string))
+        .ok_or_else(|| "not signed in".to_string())?;
+
+    let base = url.trim_end_matches('/');
+    let endpoint = format!("{base}/ratings");
+    let body = serde_json::json!({ "id": id, "stars": stars });
+    let (status, buf) = post_capped_json(&endpoint, &body, AUTH_CAP, Some(&token))?;
+    let text = String::from_utf8_lossy(&buf).into_owned();
+    if let Some(msg) = rate_status_message(status, &text) {
+        return Err(msg);
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -1020,7 +1138,7 @@ mod tests {
         // No network involved in this branch — the https check runs before
         // any request is issued, so this is safe to run in any test
         // environment, sandboxed or not.
-        let err = post_capped_json("http://example.com/auth/login", &serde_json::json!({}), AUTH_CAP)
+        let err = post_capped_json("http://example.com/auth/login", &serde_json::json!({}), AUTH_CAP, None)
             .unwrap_err();
         assert!(err.contains("https"), "{err}");
     }
@@ -1033,6 +1151,44 @@ mod tests {
         assert!(!session_blob_has_token(r#"{"token":123}"#), "token is the wrong JSON type");
         assert!(!session_blob_has_token("not json"), "unparseable blob");
         assert!(!session_blob_has_token(""), "empty blob");
+    }
+
+    #[test]
+    fn stars_in_range_accepts_1_to_5_only() {
+        for ok in 1i64..=5 {
+            assert!(stars_in_range(ok), "{ok} should be in range");
+        }
+        assert!(!stars_in_range(0));
+        assert!(!stars_in_range(6));
+        assert!(!stars_in_range(-1));
+        assert!(!stars_in_range(i64::MAX));
+    }
+
+    #[test]
+    fn rate_status_message_forwards_the_servers_own_body_text() {
+        // server/src/ratings.rs's actual failure bodies — this must forward
+        // them verbatim, not invent a second copy of the same messages.
+        assert_eq!(
+            rate_status_message(400, "stars must be an integer from 1 to 5"),
+            Some("stars must be an integer from 1 to 5".to_string())
+        );
+        assert_eq!(
+            rate_status_message(400, "bundle does not exist or is not approved"),
+            Some("bundle does not exist or is not approved".to_string())
+        );
+        assert_eq!(rate_status_message(401, "auth required"), Some("auth required".to_string()));
+    }
+
+    #[test]
+    fn rate_status_message_is_none_only_for_200() {
+        assert_eq!(rate_status_message(200, "{\"ok\":true}"), None);
+        assert!(rate_status_message(201, "").is_some(), "200 specifically, not just any 2xx");
+    }
+
+    #[test]
+    fn rate_status_message_falls_back_to_the_status_when_the_body_is_empty() {
+        let msg = rate_status_message(500, "").unwrap();
+        assert!(msg.contains("500"), "{msg}");
     }
 
     #[test]

@@ -110,6 +110,8 @@ pub fn run() {
             marketplace::marketplace_login,
             marketplace::marketplace_logout,
             marketplace::marketplace_session_status,
+            marketplace::marketplace_fetch_ratings,
+            marketplace::marketplace_rate,
             seed::seed_sync,
             mixer::mixer_set_master_volume,
             mixer::mixer_set_master_mute,

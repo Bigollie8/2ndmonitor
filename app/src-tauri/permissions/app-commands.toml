@@ -150,6 +150,12 @@ commands.allow = [
   "marketplace_logout",
   "marketplace_session_status",
 
+  # ratings — GET /ratings is public/unsigned (src/components/{CatalogCard,
+  # ContentLibrary,StarRating}.tsx); POST /ratings reads the session token
+  # Rust-side via secret_get_inner and never accepts or returns it over IPC.
+  "marketplace_fetch_ratings",
+  "marketplace_rate",
+
   # first-run seeding (src/App.tsx, src/components/ContentLibrary.tsx).
   "seed_sync",
 

@@ -8,7 +8,7 @@ const item = (o: Partial<CatalogItem> = {}): CatalogItem => ({
   description: '', category: 'ambient', source: 'bundle', installed: false,
   installedVersion: null, availableVersion: '1.0.0', updateAvailable: false,
   permissions: [], needsSetup: false, downloads: 0, brokenReason: null,
-  removed: false, hasPreview: false, ...o,
+  removed: false, hasPreview: false, rating: null, ...o,
 });
 
 test('previewSourceFor: an installed visualizer previews live', () => {

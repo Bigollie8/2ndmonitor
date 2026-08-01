@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject } from 'react';
 import {
   mergeCatalog, catalogKey, planRemoval, restoreDefaults, tileInstanceType, secretSetupCandidates,
-  type CatalogItem, type IndexBundle,
+  applyOptimisticRating,
+  type CatalogItem, type IndexBundle, type RatingAgg,
 } from '../state/catalog';
+import { useMarketplaceAuth } from '../state/marketplaceAuth';
 import type { SpectrumState } from '../state/tauri';
 import { withRemoval, withoutRemoval, restoreItem } from '../state/removedContent';
 import { TILE_META } from '../state/tileMeta';
@@ -81,6 +83,21 @@ export function ContentLibrary({
   const [installedTiles, setInstalledTiles] = useState<InstalledTileFolder[]>([]);
   const [installedViz, setInstalledViz] = useState<InstalledVizFolder[]>([]);
   const [index, setIndex] = useState<IndexBundle[]>([]);
+  // Bundle id -> aggregate rating, from GET /ratings. Starts empty and STAYS
+  // empty on a failed fetch — see fetchRatings below and MergeCatalogArgs.
+  // ratings' doc comment: this is deliberately the same silent-failure
+  // contract as a missing preview image, not a retryable error state like
+  // `indexUnreachable`. The marketplace's public HTTPS route being down as of
+  // this writing (per progress.md) makes this the NORMAL path right now.
+  const [ratings, setRatings] = useState<Record<string, RatingAgg>>({});
+  // This modal's own sign-in status — StarRating's click-to-rate is gated on
+  // it (see StarRating.tsx's ratingDisplay). Settings owns the sign-in FORM;
+  // this is a second, independent `useMarketplaceAuth()` mount that only
+  // ever reads status (its signIn/signOut are unused here) — the hook has no
+  // shared state to desync, each mount just re-asks
+  // `marketplace_session_status` on its own.
+  const { state: authState } = useMarketplaceAuth();
+  const signedIn = authState.status === 'signed-in';
   const [activeId, setActiveId] = useState('all');
   const [query, setQuery] = useState('');
   const [busyKeys, setBusyKeys] = useState<Set<string>>(new Set());
@@ -158,18 +175,37 @@ export function ContentLibrary({
     }
   }, []);
 
+  // Same shape as fetchIndex, and same silent-on-failure contract as
+  // PreviewImage's fetch (spec §9): `null` on any failure — offline, the
+  // marketplace unreachable, a malformed response — and the caller simply
+  // leaves `ratings` at whatever it already was (empty on first load) rather
+  // than surfacing an error. Unlike the index, there is no `ratingsUnreachable`
+  // notice and no Retry button: a missing rating is not worth interrupting a
+  // user over, exactly like a missing preview image.
+  const fetchRatings = useCallback(async (): Promise<Record<string, RatingAgg> | null> => {
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      return await invoke<Record<string, RatingAgg>>('marketplace_fetch_ratings', { url: cfgUrl() });
+    } catch {
+      return null;
+    }
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
     void (async () => {
       await refreshInstalled();
       if (cancelled) return;
-      const bundles = await fetchIndex();
+      // Independent fetches — a slow/failed ratings request must never delay
+      // or block the index (installed folders + index) from rendering.
+      const [bundles, ratingsResult] = await Promise.all([fetchIndex(), fetchRatings()]);
       if (cancelled) return;
       if (bundles) { setIndex(bundles); setIndexUnreachable(false); }
       else setIndexUnreachable(true);
+      if (ratingsResult) setRatings(ratingsResult);
     })();
     return () => { cancelled = true; };
-  }, [refreshInstalled, fetchIndex]);
+  }, [refreshInstalled, fetchIndex, fetchRatings]);
 
   // No mount guard here, unlike the effect above — a modal-closed-mid-fetch
   // race just discards the result into an unmounted component (a dev-only
@@ -229,7 +265,8 @@ export function ContentLibrary({
     index,
     removed: catalogRemoved,
     needsSetup: needsSetupKeys,
-  }), [installedTiles, installedViz, index, catalogRemoved, needsSetupKeys]);
+    ratings,
+  }), [installedTiles, installedViz, index, catalogRemoved, needsSetupKeys, ratings]);
 
   const rail = useMemo(() => buildRail(items), [items]);
   // rail[0] is always the 'all' row (buildRail always pushes it) — a safe
@@ -349,6 +386,45 @@ export function ContentLibrary({
       setBusy(item.key, false);
     }
   };
+
+  // Which cards have a rate request in flight — separate from `busyKeys`
+  // (install/remove) on purpose, see CatalogCard's `ratingBusy` doc comment:
+  // rating one card must not visually lock every other card's Install/Remove
+  // button the way an install/remove mutation does.
+  const [ratingBusyKeys, setRatingBusyKeys] = useState<Set<string>>(new Set());
+
+  // Posts a vote via marketplace_rate and optimistically updates `ratings`
+  // via applyOptimisticRating (state/catalog.ts) before the request resolves
+  // — the "optimistically updates" half of Task 3. `item.id` (the bare
+  // bundle id), not `item.key`, is both the ratings-map key and what the
+  // Rust command sends the server — see MergeCatalogArgs.ratings' doc
+  // comment for why the two ids differ. On failure the optimistic value is
+  // rolled back to exactly what it was before this call (not just cleared —
+  // a previously-known rating must not vanish because a re-vote failed) and
+  // the error is flashed, same as every other mutation in this file.
+  const handleRate = useCallback(async (item: CatalogItem, stars: number) => {
+    const bundleId = item.id;
+    const previous = ratings[bundleId] ?? null;
+    setRatings((prev) => ({ ...prev, [bundleId]: applyOptimisticRating(previous, stars) }));
+    setRatingBusyKeys((prev) => new Set(prev).add(item.key));
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      await invoke('marketplace_rate', { url: cfgUrl(), id: bundleId, stars });
+    } catch (e) {
+      setRatings((prev) => {
+        const next = { ...prev };
+        if (previous) next[bundleId] = previous; else delete next[bundleId];
+        return next;
+      });
+      flash(String(e));
+    } finally {
+      setRatingBusyKeys((prev) => {
+        const next = new Set(prev);
+        next.delete(item.key);
+        return next;
+      });
+    }
+  }, [ratings, flash]);
 
   // The empty state's recovery path. The actual clear-before-sync ordering
   // decision lives in the pure, tested `restoreDefaults` (state/catalog.ts)
@@ -644,6 +720,9 @@ export function ContentLibrary({
                       onRemove={() => void handleRemove(item)}
                       onAdd={item.kind === 'tile' && item.installed ? () => handleAdd(item) : undefined}
                       onRestore={() => void handleRestore(item)}
+                      signedIn={signedIn}
+                      ratingBusy={ratingBusyKeys.has(item.key)}
+                      onRate={(stars) => void handleRate(item, stars)}
                     />
                   ))}
                 </div>

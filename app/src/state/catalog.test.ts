@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  mergeCatalog, catalogKey, planRemoval, restoreDefaults, secretSetupCandidates,
+  mergeCatalog, catalogKey, planRemoval, restoreDefaults, secretSetupCandidates, applyOptimisticRating,
   type MergeCatalogArgs, type IndexBundle,
 } from './catalog';
 import { TILE_META } from './tileMeta';
@@ -24,7 +24,7 @@ const idx = (o: Record<string, unknown> = {}) => ({
 
 const base = (o: Partial<MergeCatalogArgs> = {}): MergeCatalogArgs => ({
   tileMeta: TILE_META, vizStyles: BUILTIN_VIZ_STYLES,
-  installedTiles: [], installedViz: [], index: [], removed: [], needsSetup: [], ...o,
+  installedTiles: [], installedViz: [], index: [], removed: [], needsSetup: [], ratings: {}, ...o,
 });
 
 test('mergeCatalog: built-ins appear as first-party or bundle-target items', () => {
@@ -155,6 +155,93 @@ test('mergeCatalog: a local draft folder is not a catalog item', () => {
 test('mergeCatalog: needsSetup is carried through by key', () => {
   const out = mergeCatalog(base({ installedTiles: [tileFolder()], needsSetup: ['tile:quote'] }));
   assert.equal(out.find((i) => i.key === 'tile:quote')?.needsSetup, true);
+});
+
+// rating — carried through all four merge passes, per bare bundle id (not
+// catalogKey). See MergeCatalogArgs.ratings' doc comment for why the lookup
+// key differs from every other index-sourced field.
+
+test('mergeCatalog pass 1: a compile-time table entry has no rating', () => {
+  const out = mergeCatalog(base());
+  assert.equal(out.find((i) => i.key === 'tile:mixer')?.rating, null);
+});
+
+test('mergeCatalog pass 2: an installed folder with no index entry has no rating', () => {
+  const out = mergeCatalog(base({ installedViz: [vizFolder()] }));
+  assert.equal(out.find((i) => i.key === 'visualizer:aurora')?.rating, null);
+});
+
+test('mergeCatalog: an installed AND indexed item gets its rating from the index (pass 3 runs after pass 2)', () => {
+  // Exercises pass 2's `prev?.rating ?? null` fallback (always null in
+  // practice, since pass 1 never sets a rating — same as `downloads`'
+  // identical fallback there) and then pass 3 overwriting it from the
+  // ratings map, in one call.
+  const out = mergeCatalog(base({
+    installedViz: [vizFolder()],
+    index: [idx()],
+    ratings: { aurora: { avg: 4.5, count: 8 } },
+  }));
+  assert.deepEqual(out.find((i) => i.key === 'visualizer:aurora')?.rating, { avg: 4.5, count: 8 });
+});
+
+test('mergeCatalog pass 3: an index entry supplies the rating for its bare bundle id', () => {
+  const out = mergeCatalog(base({
+    index: [idx({ id: 'liquid', name: 'Liquid' })],
+    ratings: { liquid: { avg: 4.2, count: 17 } },
+  }));
+  const liquid = out.find((i) => i.key === 'visualizer:liquid');
+  assert.deepEqual(liquid?.rating, { avg: 4.2, count: 17 });
+});
+
+test('mergeCatalog pass 3: an id absent from the ratings map is null, not zero', () => {
+  const out = mergeCatalog(base({ index: [idx({ id: 'liquid', name: 'Liquid' })], ratings: {} }));
+  assert.equal(out.find((i) => i.key === 'visualizer:liquid')?.rating, null);
+});
+
+test('mergeCatalog: a failed ratings fetch ({}) leaves every item\'s rating null, catalog otherwise unaffected', () => {
+  const withRatings = mergeCatalog(base({
+    index: [idx({ id: 'liquid', name: 'Liquid' })],
+    ratings: { liquid: { avg: 5, count: 1 } },
+  }));
+  const withoutRatings = mergeCatalog(base({
+    index: [idx({ id: 'liquid', name: 'Liquid' })],
+    ratings: {},
+  }));
+  assert.equal(withoutRatings.find((i) => i.key === 'visualizer:liquid')?.rating, null);
+  // Every other field is identical whether or not ratings resolved — the
+  // silent-failure contract from PreviewImage/previewCache.ts applies here
+  // too: a missing rating changes nothing else about the item.
+  const a = withRatings.find((i) => i.key === 'visualizer:liquid');
+  const b = withoutRatings.find((i) => i.key === 'visualizer:liquid');
+  assert.deepEqual({ ...a, rating: null }, b);
+});
+
+test('mergeCatalog pass 4: a removed item still carries its rating — not dropped', () => {
+  const out = mergeCatalog(base({
+    index: [idx({ id: 'liquid', name: 'Liquid' })],
+    removed: ['visualizer:liquid'],
+    ratings: { liquid: { avg: 3.7, count: 9 } },
+  }));
+  const liquid = out.find((i) => i.key === 'visualizer:liquid');
+  assert.ok(liquid);
+  assert.equal(liquid.removed, true);
+  assert.deepEqual(liquid.rating, { avg: 3.7, count: 9 });
+});
+
+// applyOptimisticRating — the pure recomputation behind StarRating's
+// optimistic update while marketplace_rate's POST is in flight.
+
+test('applyOptimisticRating: a first vote on an unrated bundle becomes the whole average', () => {
+  assert.deepEqual(applyOptimisticRating(null, 4), { avg: 4, count: 1 });
+});
+
+test('applyOptimisticRating: a zero-count rating object is treated the same as null', () => {
+  assert.deepEqual(applyOptimisticRating({ avg: 0, count: 0 }, 5), { avg: 5, count: 1 });
+});
+
+test('applyOptimisticRating: an additional vote shifts the average and increments the count', () => {
+  // 3 votes averaging 4.0 (total 12), a new vote of 2: (12+2)/4 = 3.5.
+  assert.deepEqual(applyOptimisticRating({ avg: 4, count: 3 }, 2), { avg: 3.5, count: 4 });
 });
 
 test('catalogKey: composes kind and id', () => {

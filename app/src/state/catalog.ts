@@ -23,6 +23,16 @@ import { parsePermission } from '../sandbox/manifest';
 export type CatalogKind = 'tile' | 'visualizer';
 export type CatalogSource = 'first-party' | 'bundle';
 
+/** One bundle's aggregate rating, as `GET /ratings` reports it (server/src/
+ *  ratings.rs) — `avg` already rounded to one decimal server-side so every
+ *  client shows the identical number. Never `{avg:0,count:0}`: a bundle with
+ *  no votes is simply absent from the response, which is why every consumer
+ *  models "no rating yet" as `null`, not a zero-valued object. */
+export interface RatingAgg {
+  avg: number;
+  count: number;
+}
+
 /** One entry in the signed marketplace index. Mirrors the server's index.json. */
 export interface IndexBundle {
   id: string;
@@ -72,6 +82,16 @@ export interface CatalogItem {
    *  published image, only the signed index does. See previewSource.ts for
    *  the rule that consumes this alongside `installed`/`brokenReason`. */
   hasPreview: boolean;
+  /** Aggregate rating from `GET /ratings` — unsigned, deliberately not part
+   *  of the index (see server/src/ratings.rs), so it comes from its own
+   *  `MergeCatalogArgs.ratings` input rather than an `IndexBundle` field.
+   *  `null` for every compile-time table entry and installed folder (passes
+   *  1 and 2, same as `downloads`) and whenever the endpoint has nothing for
+   *  this bundle's id — including when the whole fetch failed, in which case
+   *  the caller passes `{}` and every item's rating is `null`. See
+   *  StarRating.tsx's `ratingDisplay` for the rule that turns this into what
+   *  the card shows. */
+  rating: RatingAgg | null;
 }
 
 export interface MergeCatalogArgs {
@@ -91,6 +111,13 @@ export interface MergeCatalogArgs {
    *  TileCredentialPanel.tsx), so there is no single catalog-level answer for
    *  it without restructuring that component to be instance-aware here too. */
   needsSetup: string[];
+  /** Bundle id → aggregate rating, from `GET /ratings`. Keyed on the bare
+   *  bundle id (server's `ratings.bundle_id`, no kind prefix) — NOT
+   *  `catalogKey`, since the endpoint has no notion of tile-vs-visualizer.
+   *  Pass `{}` when the fetch fails or hasn't resolved yet: every item's
+   *  `rating` then comes out `null` and the catalog renders exactly as it
+   *  does today, same silent-failure contract as a missing preview image. */
+  ratings: Record<string, RatingAgg>;
 }
 
 export const catalogKey = (kind: CatalogKind, id: string): string => `${kind}:${id}`;
@@ -126,7 +153,7 @@ export function mergeCatalog(args: MergeCatalogArgs): CatalogItem[] {
       source: isFirstParty('tile', id) ? 'first-party' : 'bundle',
       installed: true, installedVersion: null, availableVersion: null, updateAvailable: false,
       permissions: [], needsSetup: needsSetup.has(key), downloads: null, brokenReason: null,
-      removed: false, hasPreview: false,
+      removed: false, hasPreview: false, rating: null,
     });
   }
   for (const s of args.vizStyles) {
@@ -137,7 +164,7 @@ export function mergeCatalog(args: MergeCatalogArgs): CatalogItem[] {
       source: isFirstParty('visualizer', s.id) ? 'first-party' : 'bundle',
       installed: true, installedVersion: null, availableVersion: null, updateAvailable: false,
       permissions: [], needsSetup: needsSetup.has(key), downloads: null, brokenReason: null,
-      removed: false, hasPreview: false,
+      removed: false, hasPreview: false, rating: null,
     });
   }
 
@@ -167,7 +194,7 @@ export function mergeCatalog(args: MergeCatalogArgs): CatalogItem[] {
       needsSetup: needsSetup.has(key),
       downloads: prev?.downloads ?? null,
       brokenReason: f.manifest_error,
-      removed: false, hasPreview: false,
+      removed: false, hasPreview: false, rating: prev?.rating ?? null,
     });
   };
   for (const f of args.installedTiles) installedFolder('tile', f, 'integrations');
@@ -200,6 +227,12 @@ export function mergeCatalog(args: MergeCatalogArgs): CatalogItem[] {
       downloads: b.downloads,
       brokenReason: prev?.brokenReason ?? null,
       removed: false, hasPreview: b.hasPreview === true,
+      // Keyed by bare bundle id, not `key` — see MergeCatalogArgs.ratings'
+      // doc comment. `undefined` (no votes yet, or the ratings fetch failed
+      // and the caller passed `{}`) becomes `null`, exactly like `downloads`
+      // has no equivalent fallback because the index always supplies it but
+      // ratings is a separate, independently-fallible fetch.
+      rating: args.ratings[b.id] ?? null,
     });
   }
 
@@ -215,6 +248,15 @@ export function mergeCatalog(args: MergeCatalogArgs): CatalogItem[] {
   //    Callers that want the ordinary browsable set (every rail row except
   //    "Removed") must filter on `!item.removed` themselves — see
   //    catalogRail.ts's `visible` helper.
+  //
+  //    `rating` (like every other field added since this comment was written)
+  //    survives this pass via the `...item` spread in BOTH branches below,
+  //    not because either branch names it explicitly — a prior task's review
+  //    caught a field silently dropped here when an earlier version of this
+  //    pass built the removed-item object by hand instead of spreading. Kept
+  //    as a spread specifically so a future field addition to `CatalogItem`
+  //    can't repeat that: see catalog.test.ts's
+  //    "a removed item still carries its rating" test.
   const out: CatalogItem[] = [];
   for (const item of items.values()) {
     if (!removed.has(item.key)) { out.push(item); continue; }
@@ -372,4 +414,29 @@ export function secretSetupCandidates(
   for (const f of installedTiles) if (f.source === 'marketplace') add('tile', f.id);
   for (const f of installedViz) if (f.source === 'marketplace') add('visualizer', f.id);
   return out;
+}
+
+/** Recomputes a bundle's rating for immediate UI feedback the instant the
+ *  local user casts a vote, while `marketplace_rate`'s POST is still in
+ *  flight — the "optimistically updates" half of Task 3's StarRating widget.
+ *  Pure so ContentLibrary's handler is a thin wrapper around a tested
+ *  decision, same pattern as `planRemoval`/`restoreDefaults`.
+ *
+ *  Always treats `stars` as an ADDITIONAL vote (`avg*count + stars`,
+ *  `count + 1`), never as a replacement of one this session already cast.
+ *  That is a known, deliberate approximation: the server's `(bundle_id,
+ *  user_id)` primary key means a second vote from the same user REPLACES
+ *  their first rather than stacking (see server/src/ratings.rs's
+ *  `INSERT OR REPLACE`), but this app has no "my current rating" endpoint to
+ *  ask, so it cannot tell a first vote from a re-vote client-side. A re-vote
+ *  therefore optimistically overcounts by one until the next real
+ *  `GET /ratings` fetch (e.g. the catalog being reopened) corrects it —
+ *  preferred over blocking the optimistic update entirely, since the common
+ *  case (a first vote) is exact and the rare case (changing your mind) only
+ *  self-heals slightly late rather than not updating at all. */
+export function applyOptimisticRating(current: RatingAgg | null, stars: number): RatingAgg {
+  if (current == null || current.count <= 0) return { avg: stars, count: 1 };
+  const count = current.count + 1;
+  const avg = (current.avg * current.count + stars) / count;
+  return { avg, count };
 }

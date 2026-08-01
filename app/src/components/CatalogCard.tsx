@@ -4,6 +4,7 @@ import type { SpectrumState } from '../state/tauri';
 import { previewSourceFor } from './previewSource';
 import { PreviewImage } from './PreviewImage';
 import { LivePreview } from './LivePreview';
+import { StarRating } from './StarRating';
 import { cfgUrl } from '../state/marketplaceConfig';
 
 const MONO = '"JetBrains Mono", ui-monospace, monospace';
@@ -57,6 +58,7 @@ export function catalogCardTags(item: CatalogItem): CatalogTag[] {
  *  JetBrains Mono metadata. */
 export function CatalogCard({
   item, accent, accent2, spectrumRef, glyph: tileGlyph, busy, disabled, onInstall, onRemove, onAdd, onRestore,
+  signedIn, ratingBusy, onRate,
 }: {
   item: CatalogItem;
   accent: string;
@@ -95,6 +97,16 @@ export function CatalogCard({
    *  place this card is used for a removed item. See
    *  state/removedContent.ts's `restoreItem`. */
   onRestore?: () => void;
+  /** Whether the marketplace session is signed in — passed down rather than
+   *  read here so this card stays presentational; ContentLibrary owns
+   *  `useMarketplaceAuth()`. Gates `StarRating`'s click-to-rate, per
+   *  `ratingDisplay`'s rule (StarRating.tsx). */
+  signedIn: boolean;
+  /** This card's own rate request is in flight — separate from `busy`
+   *  (install/remove), since rating one card shouldn't visually couple to a
+   *  install/remove mutation on another. */
+  ratingBusy: boolean;
+  onRate: (stars: number) => void;
 }) {
   const tags = catalogCardTags(item);
   const version = item.installed ? item.installedVersion : item.availableVersion;
@@ -174,6 +186,13 @@ export function CatalogCard({
       }} title={item.description}>
         {item.kind} · v{version ?? '—'}{item.description ? ` · ${item.description}` : ''}
       </div>
+
+      <StarRating
+        rating={item.rating}
+        signedIn={signedIn}
+        busy={ratingBusy}
+        onRate={onRate}
+      />
 
       <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
         <div style={{ flex: 1 }} />
