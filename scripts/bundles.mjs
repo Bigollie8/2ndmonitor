@@ -22,22 +22,32 @@
 //     "main.js" internally, but the wire field is still `code`). The server
 //     builds its own zip internally (`submit::zip_bundle`) once a submission
 //     is approved; nothing here needs to ship a zip over the wire.
-//   - For kind "visualizer" or "tile" (what these bundles are), a fresh
-//     submission lands with status "pending" — it only appears in the signed
-//     `/index.json` after a human approves it via `/admin/decide`. Publishing
-//     is therefore inherently two-step and NOT completed by this script alone.
+//   - Kind "preset" (a MilkDrop/Butterchurn preset) is the one exception:
+//     the payload rides in a dedicated `preset_json` field, not `code` (see
+//     server/src/submit.rs's `SubmitBody`), because presets are pure data —
+//     `submit()` sets `auto_approve = body.kind == "preset"` and the
+//     submission lands with status "approved" immediately, no human review
+//     queue, no AI report (validation IS the entire review for pure data).
+//   - For kind "visualizer" or "tile", a fresh submission instead lands with
+//     status "pending" — it only appears in the signed `/index.json` after a
+//     human approves it via `/admin/decide`. Publishing those two kinds is
+//     therefore inherently two-step and NOT completed by this script alone.
 // The server rejects a duplicate id@version outright (`INSERT OR IGNORE`
 // affecting 0 rows -> 409), regardless of the prior row's status; republishing
 // after a fix requires a version bump. This script skips ids/versions already
 // present in the live (approved) index rather than failing the run, but a
 // prior *pending* submission of the same id@version will still 409 here.
 import { readdirSync, readFileSync, mkdirSync, existsSync, unlinkSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
 
 const ROOT = join(fileURLToPath(new URL('.', import.meta.url)), '..');
-const BUNDLES = join(ROOT, 'bundles');
+// BUNDLES_DIR lets this script build against a different staging root, e.g.
+// bundles-presets/ (Task 7's staged MilkDrop preset folders), without moving
+// those folders into bundles/ itself. Default stays bundles/ so every other
+// verb (seed, the live-index skip check, etc.) behaves exactly as before.
+const BUNDLES = process.env.BUNDLES_DIR ? resolve(process.env.BUNDLES_DIR) : join(ROOT, 'bundles');
 const DIST = join(BUNDLES, 'dist');
 // Where seed zips land for Tauri to bundle as resources. Layout mirrors what
 // seed.rs (app/src-tauri/src/seed.rs) reads: resources/seed/<kind>/<id>-<version>.zip.
@@ -103,15 +113,18 @@ function bundleIds() {
     .map((d) => d.name);
 }
 
-/** A bundle is either a scripted visualizer (`main.js`) or a declarative
- *  tile (`view.json`) — told apart by which file the folder actually has,
- *  same rule the smoke harness (sandbox/bundles.test.ts) uses. */
+/** A bundle is a scripted visualizer (`main.js`), a declarative tile
+ *  (`view.json`), or a MilkDrop preset (`preset.json`) — told apart by which
+ *  file the folder actually has, same rule the smoke harness
+ *  (sandbox/bundles.test.ts) uses for the first two. */
 function bundleKind(id) {
   const hasMainJs = existsSync(join(BUNDLES, id, 'main.js'));
   const hasViewJson = existsSync(join(BUNDLES, id, 'view.json'));
-  if (hasMainJs && !hasViewJson) return { kind: 'visualizer', codeFile: 'main.js' };
-  if (hasViewJson && !hasMainJs) return { kind: 'tile', codeFile: 'view.json' };
-  throw new Error(`${id}: must have exactly one of main.js (visualizer) or view.json (tile)`);
+  const hasPresetJson = existsSync(join(BUNDLES, id, 'preset.json'));
+  if (hasMainJs && !hasViewJson && !hasPresetJson) return { kind: 'visualizer', codeFile: 'main.js' };
+  if (hasViewJson && !hasMainJs && !hasPresetJson) return { kind: 'tile', codeFile: 'view.json' };
+  if (hasPresetJson && !hasMainJs && !hasViewJson) return { kind: 'preset', codeFile: 'preset.json' };
+  throw new Error(`${id}: must have exactly one of main.js (visualizer), view.json (tile), or preset.json (preset)`);
 }
 
 function validate(id) {
@@ -135,6 +148,21 @@ function validate(id) {
       JSON.parse(readFileSync(join(BUNDLES, id, 'view.json'), 'utf8'));
     } catch (e) {
       throw new Error(`${id}: view.json is not valid JSON: ${e.message}`);
+    }
+  }
+  if (kind === 'preset') {
+    // Same shallow check as the tile branch above: parseable JSON, and here
+    // specifically an object (Butterchurn's preset format is a JSON object of
+    // named shader/wave params, not an array or scalar) — the real preset
+    // parser lives in the sandbox, not this plain .mjs script.
+    let preset;
+    try {
+      preset = JSON.parse(readFileSync(join(BUNDLES, id, 'preset.json'), 'utf8'));
+    } catch (e) {
+      throw new Error(`${id}: preset.json is not valid JSON: ${e.message}`);
+    }
+    if (typeof preset !== 'object' || preset === null || Array.isArray(preset)) {
+      throw new Error(`${id}: preset.json must be a JSON object`);
     }
   }
   return { m, kind, codeFile };
@@ -219,6 +247,15 @@ for (const id of ids) {
       // is_safe_version (seed.rs) would reject, before writing a zip that
       // *looks* successful but that seed_sync will silently never install.
       // Do NOT rename or coerce the version to fit — fail the build instead.
+      if (kind === 'preset') {
+        // Same fail-loud precedent as the version-charset check below: refuse
+        // to emit an artifact seed.rs would never install, rather than
+        // silently skipping it. seed.rs only walks resources/seed/tile/ and
+        // resources/seed/visualizer/ — presets are excluded from the seeded
+        // (bundled-with-the-app) set by design; they only ever reach a user
+        // via the marketplace's /submissions + /index.json flow.
+        throw new Error(`${id}: presets are never seeded (seed.rs excludes them by design)`);
+      }
       if (!SEED_ID_RE.test(id)) {
         throw new Error(`${id}: id has characters outside seed.rs's is_safe_id charset [a-z0-9-]`);
       }
@@ -230,8 +267,9 @@ for (const id of ids) {
           `bump to a plain version instead of coercing this one.`
         );
       }
-      // `kind` here is only ever "tile" or "visualizer" (validate()/bundleKind()
-      // throws for anything else), matching the two subdirectories seed.rs walks.
+      // `kind` here is only ever "tile" or "visualizer" at this point (the
+      // "preset" case above already threw), matching the two subdirectories
+      // seed.rs walks.
       const outDir = join(SEED_ROOT, kind);
       cleanStaleSeedZips(outDir, id, m.version);
       path = zip(id, m.version, codeFile, outDir);
@@ -283,10 +321,15 @@ if (cmd === 'publish') {
       continue;
     }
 
+    // Wire field per server/src/submit.rs: presets go over as `preset_json`,
+    // not `code` — the server's SubmitBody has a dedicated field for them
+    // (they're stored/validated differently from a visualizer's main.js or a
+    // tile's view.json). Every other kind keeps sending `code` unchanged.
+    const payload = b.kind === 'preset' ? { preset_json: code } : { code };
     const res = await fetch(`${SERVER}/submissions`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ kind: b.kind, manifest, code, ...(preview ? { preview } : {}) }),
+      body: JSON.stringify({ kind: b.kind, manifest, ...payload, ...(preview ? { preview } : {}) }),
     });
     if (!res.ok) {
       console.error(`✗ ${b.id}: ${res.status} ${await res.text()}`);
