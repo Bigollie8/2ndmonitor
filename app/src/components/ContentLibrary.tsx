@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObjec
 import {
   mergeCatalog, catalogKey, planRemoval, restoreDefaults, tileInstanceType, secretSetupCandidates,
   applyOptimisticVote,
-  type CatalogItem, type IndexBundle, type RatingAgg,
+  type CatalogItem, type IndexBundle, type RatingAgg, type InstalledPresetFolder,
 } from '../state/catalog';
 import { useMarketplaceAuth } from '../state/marketplaceAuth';
 import type { SpectrumState } from '../state/tauri';
@@ -15,6 +15,7 @@ import type { TileType, BuiltinTileType } from '../state/layout';
 import { buildRail } from './catalogRail';
 import { searchItems } from './catalogSearch';
 import { CatalogCard } from './CatalogCard';
+import { PresetRow } from './PresetRow';
 import { parsePermission } from '../sandbox/manifest';
 import { cfgUrl, cfgPubkey } from '../state/marketplaceConfig';
 import { getSecret, bundleSecretKey } from '../state/secrets';
@@ -41,7 +42,7 @@ function describePermission(p: string): string {
  *  restore-defaults empty state are Task 10. */
 export function ContentLibrary({
   accent, accent2, spectrumRef, catalogRemoved, setCatalogRemoved, onRemoveTileInstances, onAddTileInstance,
-  onVisualizerRemoved, onClose,
+  onVisualizerRemoved, onClose, initialRail,
 }: {
   accent: string;
   /** Second theme color, threaded to `CatalogCard` for a `live` card's
@@ -79,9 +80,17 @@ export function ContentLibrary({
    *  would keep rendering it (and keep rendering it after a restart). */
   onVisualizerRemoved: (key: string) => void;
   onClose: () => void;
+  /** Rail row id to select on open — e.g. App.tsx's MilkDrop picker "browse
+   *  presets" button opens straight to `'preset:all'` instead of the default
+   *  `'all'`. Read exactly once via `useState(initialRail ?? 'all')`: this is
+   *  the initial selection for a freshly-mounted modal, not a controlled
+   *  value that keeps following the prop across the modal's lifetime — the
+   *  category rail's own buttons own `activeId` after that. */
+  initialRail?: string;
 }) {
   const [installedTiles, setInstalledTiles] = useState<InstalledTileFolder[]>([]);
   const [installedViz, setInstalledViz] = useState<InstalledVizFolder[]>([]);
+  const [installedPresets, setInstalledPresets] = useState<InstalledPresetFolder[]>([]);
   const [index, setIndex] = useState<IndexBundle[]>([]);
   // Bundle id -> aggregate rating, from GET /ratings. Starts empty and STAYS
   // empty on a failed fetch — see fetchRatings below and MergeCatalogArgs.
@@ -98,7 +107,7 @@ export function ContentLibrary({
   // `marketplace_session_status` on its own.
   const { state: authState } = useMarketplaceAuth();
   const signedIn = authState.status === 'signed-in';
-  const [activeId, setActiveId] = useState('all');
+  const [activeId, setActiveId] = useState(initialRail ?? 'all');
   const [query, setQuery] = useState('');
   const [busyKeys, setBusyKeys] = useState<Set<string>>(new Set());
   const [confirming, setConfirming] = useState<{ item: CatalogItem; bundle: IndexBundle } | null>(null);
@@ -142,12 +151,14 @@ export function ContentLibrary({
   // a hook shared with the dashboard).
   const refreshInstalled = useCallback(async () => {
     const { invoke } = await import('@tauri-apps/api/core');
-    const [tiles, viz] = await Promise.allSettled([
+    const [tiles, viz, presets] = await Promise.allSettled([
       invoke<InstalledTileFolder[]>('tiles_list'),
       invoke<InstalledVizFolder[]>('visualizers_list'),
+      invoke<InstalledPresetFolder[]>('presets_market_list'),
     ]);
     if (tiles.status === 'fulfilled') setInstalledTiles(tiles.value);
     if (viz.status === 'fulfilled') setInstalledViz(viz.value);
+    if (presets.status === 'fulfilled') setInstalledPresets(presets.value);
   }, []);
 
   // Fetches the index only — never touches installedTiles/installedViz. This
@@ -222,7 +233,6 @@ export function ContentLibrary({
   const indexByKey = useMemo(() => {
     const m = new Map<string, IndexBundle>();
     for (const b of index) {
-      if (b.kind === 'preset') continue;
       m.set(catalogKey(b.kind, b.id), b);
     }
     return m;
@@ -262,12 +272,12 @@ export function ContentLibrary({
     vizStyles: BUILTIN_VIZ_STYLES,
     installedTiles,
     installedViz,
-    installedPresets: [],
+    installedPresets,
     index,
     removed: catalogRemoved,
     needsSetup: needsSetupKeys,
     ratings,
-  }), [installedTiles, installedViz, index, catalogRemoved, needsSetupKeys, ratings]);
+  }), [installedTiles, installedViz, installedPresets, index, catalogRemoved, needsSetupKeys, ratings]);
 
   const rail = useMemo(() => buildRail(items), [items]);
   // rail[0] is always the 'all' row (buildRail always pushes it) — a safe
@@ -290,6 +300,15 @@ export function ContentLibrary({
   // widen button, so a zero-hit search in 'all' doesn't read as an empty
   // catalog.
   const canWiden = noMatches && active.id !== 'all';
+  // Presets never render as a `CatalogCard` — they get their own compact
+  // `PresetRow` list below the grid instead (see the render branch). This
+  // split is the whole of the "which UI a kind gets" decision: it falls out
+  // of `active.match` and `searchItems` the same as everything else, so
+  // 'preset:all' (all rows, no cards), 'all' (cards then rows), a mixed rail
+  // row ('installed'/'updates'/'removed'), and search all fall out correctly
+  // with no special-casing of the active rail id.
+  const cardItems = searched.filter((i) => i.kind !== 'preset');
+  const presetItems = searched.filter((i) => i.kind === 'preset');
 
   const runInstall = useCallback(async (item: CatalogItem, bundle: IndexBundle) => {
     setConfirming(null);
@@ -303,6 +322,14 @@ export function ContentLibrary({
       // seed_sync skips the thing the user just asked to install.
       setCatalogRemoved(withoutRemoval(catalogRemoved, item.key));
       await refreshInstalled();
+      // A live MilkDrop surface (Task 6) keeps its own preset picker state
+      // rather than re-querying `presets_market_list` on every render — this
+      // event is how it learns a preset install/update just changed what's
+      // on disk. Only presets have a live surface that cares; a tile or
+      // visualizer install already has its own refresh path (tiles_list/
+      // visualizers_list via refreshInstalled above, and the dashboard's own
+      // `tiles:changed`/`visualizers:changed` listeners elsewhere).
+      if (item.kind === 'preset') window.dispatchEvent(new Event('market-presets:changed'));
       flash(`Installed ${item.name}`);
     } catch (e) {
       flash(String(e));
@@ -314,9 +341,10 @@ export function ContentLibrary({
   const handleInstall = (item: CatalogItem) => {
     const bundle = indexByKey.get(item.key);
     if (!bundle) { flash('Not available from the marketplace right now.'); return; }
-    // Presets never reach the catalog (mergeCatalog skips them), so every
-    // bundle here is code — permissions gate exactly the ones that declare
-    // any, same rule as MarketplaceTab's startInstall.
+    // A preset's `IndexBundle.permissions` is always `[]` — it's data, not
+    // sandboxed code, so it declares nothing to gate — which means every
+    // preset already takes this direct-install path, same as any tile/
+    // visualizer bundle that happens to declare no permissions.
     if (bundle.permissions.length > 0) setConfirming({ item, bundle });
     else void runInstall(item, bundle);
   };
@@ -345,6 +373,7 @@ export function ContentLibrary({
       if (plan.instanceType != null) onRemoveTileInstances(plan.instanceType);
       if (item.kind === 'visualizer') onVisualizerRemoved(plan.tombstoneKey);
       await refreshInstalled();
+      if (item.kind === 'preset') window.dispatchEvent(new Event('market-presets:changed'));
       flash(`Removed ${item.name}`);
     } catch (e) {
       flash(String(e));
@@ -380,6 +409,7 @@ export function ContentLibrary({
         seedSync: (removed) => invoke<string[]>('seed_sync', { removed }),
       });
       await refreshInstalled();
+      if (item.kind === 'preset') window.dispatchEvent(new Event('market-presets:changed'));
       flash(`Restored ${item.name}`);
     } catch (e) {
       flash(String(e));
@@ -721,32 +751,64 @@ export function ContentLibrary({
                 <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.45)', marginBottom: 10 }}>
                   {searched.length} {searched.length === 1 ? 'item' : 'items'}
                 </div>
-                <div style={{
-                  display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(210px, 1fr))',
-                  gap: 10, alignContent: 'start',
-                }}>
-                  {searched.map((item) => (
-                    <CatalogCard
-                      key={item.key}
-                      item={item}
-                      accent={accent}
-                      accent2={accent2}
-                      spectrumRef={spectrumRef}
-                      glyph={item.kind === 'tile' && item.id in TILE_META
-                        ? TILE_META[item.id as BuiltinTileType].icon
-                        : null}
-                      busy={busyKeys.has(item.key)}
-                      disabled={busyKeys.size > 0 || restoring}
-                      onInstall={() => handleInstall(item)}
-                      onRemove={() => void handleRemove(item)}
-                      onAdd={item.kind === 'tile' && item.installed ? () => handleAdd(item) : undefined}
-                      onRestore={() => void handleRestore(item)}
-                      signedIn={signedIn}
-                      ratingBusy={ratingBusyKeys.has(item.key)}
-                      onRate={(stars) => void handleRate(item, stars)}
-                    />
-                  ))}
-                </div>
+                {/* Split by kind, not rendered by rail row: a preset is never
+                    a card here, in any of 'all' (cards then rows), a mixed
+                    rail row like 'installed'/'updates'/'removed', or a search
+                    — and 'preset:all' naturally renders as an empty
+                    `cardItems` grid (skipped) plus every row below, with no
+                    special-casing of the active rail id needed. */}
+                {cardItems.length > 0 && (
+                  <div style={{
+                    display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(210px, 1fr))',
+                    gap: 10, alignContent: 'start',
+                  }}>
+                    {cardItems.map((item) => (
+                      <CatalogCard
+                        key={item.key}
+                        item={item}
+                        accent={accent}
+                        accent2={accent2}
+                        spectrumRef={spectrumRef}
+                        glyph={item.kind === 'tile' && item.id in TILE_META
+                          ? TILE_META[item.id as BuiltinTileType].icon
+                          : null}
+                        busy={busyKeys.has(item.key)}
+                        disabled={busyKeys.size > 0 || restoring}
+                        onInstall={() => handleInstall(item)}
+                        onRemove={() => void handleRemove(item)}
+                        onAdd={item.kind === 'tile' && item.installed ? () => handleAdd(item) : undefined}
+                        onRestore={() => void handleRestore(item)}
+                        signedIn={signedIn}
+                        ratingBusy={ratingBusyKeys.has(item.key)}
+                        onRate={(stars) => void handleRate(item, stars)}
+                      />
+                    ))}
+                  </div>
+                )}
+                {presetItems.length > 0 && (
+                  <div style={{ marginTop: cardItems.length > 0 ? 16 : 0 }}>
+                    <div style={{
+                      fontSize: 9, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase',
+                      color: 'rgba(255,255,255,0.35)', marginBottom: 6,
+                    }}>
+                      MilkDrop presets · {presetItems.length}
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                      {presetItems.map((item) => (
+                        <PresetRow
+                          key={item.key}
+                          item={item}
+                          accent={accent}
+                          busy={busyKeys.has(item.key)}
+                          disabled={busyKeys.size > 0 || restoring}
+                          onInstall={() => handleInstall(item)}
+                          onRemove={() => void handleRemove(item)}
+                          onRestore={() => void handleRestore(item)}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                )}
               </>
             )}
           </div>

@@ -391,6 +391,13 @@ export default function App() {
   const [showGallery, setShowGallery] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showContentLibrary, setShowContentLibrary] = useState(false);
+  // Rail row ContentLibrary should open to — e.g. the MilkDrop picker's
+  // "browse presets" button (Task 6) opens straight to 'preset:all' instead
+  // of the default 'all'. `undefined` means "unset" — every existing opener
+  // (the header/nav "Library" buttons below) leaves this unset, so they keep
+  // opening to 'all' exactly as before. Reset to `undefined` on close so the
+  // NEXT plain open doesn't inherit a stale rail from whatever last set it.
+  const [libraryRail, setLibraryRail] = useState<string | undefined>();
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [selectedInstanceId, setSelectedInstanceId] = useState<string>('');
   // Transient "theme synced" toast: holds the track title being announced, or
@@ -1108,7 +1115,8 @@ export default function App() {
             })))}
             onAddTileInstance={addTileInstance}
             onVisualizerRemoved={onVisualizerRemoved}
-            onClose={() => setShowContentLibrary(false)}
+            onClose={() => { setShowContentLibrary(false); setLibraryRail(undefined); }}
+            initialRail={libraryRail}
           />
         )}
       </div>
