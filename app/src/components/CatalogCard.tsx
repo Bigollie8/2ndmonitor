@@ -1,7 +1,7 @@
-import type { MutableRefObject } from 'react';
+import { useState, type MutableRefObject } from 'react';
 import type { CatalogItem } from '../state/catalog';
 import type { SpectrumState } from '../state/tauri';
-import { previewSourceFor } from './previewSource';
+import { previewSourceFor, canLivePreview } from './previewSource';
 import { PreviewImage } from './PreviewImage';
 import { LivePreview } from './LivePreview';
 import { StarRating } from './StarRating';
@@ -48,12 +48,15 @@ export function catalogCardTags(item: CatalogItem): CatalogTag[] {
 /** One `CatalogItem` in the unified catalog grid. Presentational only — all
  *  data loading and the install/remove mutations live in ContentLibrary.tsx,
  *  which owns `busy` (disables the action button mid-mutation) and the two
- *  callbacks. Preview area renders one of `previewSource.ts`'s four
- *  treatments (spec C §6): a published image (`PreviewImage`, task 6), a
- *  first-party tile's geometric glyph large and centered, a live sandboxed
- *  render (`LivePreview`, task 7 — itself falls back to the glyph/letter
- *  block below when off-screen, budget-exhausted, or errored), or that same
- *  letter block for anything with nothing else to show. Visual language
+ *  callbacks. Preview area renders one of `previewSource.ts`'s three
+ *  baseline treatments (finding 31): a published image (`PreviewImage`), a
+ *  first-party tile's geometric glyph large and centered, or the letter
+ *  block for anything with nothing else to show. A live sandboxed render
+ *  (`LivePreview`) mounts only while the card is HOVERED and only when
+ *  `canLivePreview` allows it — so opening the catalog mounts zero
+ *  sandboxes, not `PREVIEW_CONCURRENCY` of them (the lag finding 31 fixed);
+ *  the budget/intersection/error gates inside `LivePreview` stay as defense
+ *  in depth. Visual language
  *  matches TileLibrary's TileCard: dark translucent panel, hairline border,
  *  JetBrains Mono metadata. */
 export function CatalogCard({
@@ -109,6 +112,10 @@ export function CatalogCard({
   onRate: (stars: number) => void;
 }) {
   const tags = catalogCardTags(item);
+  // Hover-gated live preview (finding 31): a sandbox exists only while the
+  // pointer is over this card's preview frame. Touch/keyboard users simply
+  // keep the baseline image — live is an enhancement, never the only view.
+  const [hovered, setHovered] = useState(false);
   const version = item.installed ? item.installedVersion : item.availableVersion;
   // Deepest fallback — "today's block": the letter this card has always
   // shown when there is nothing better (no TILE_META glyph, no published
@@ -128,6 +135,18 @@ export function CatalogCard({
     <span style={{ fontSize: 18, fontWeight: 700, color: `${accent}cc` }}>{letterFallback}</span>
   );
   const previewSrc = previewSourceFor(item, tileGlyph);
+  // The card's resting treatment — what shows when not hovered, and what
+  // `LivePreview` falls back to while hovered (budget exhausted, errored).
+  const baselineContent = previewSrc.kind === 'image' && item.availableVersion != null ? (
+    <PreviewImage
+      id={item.id}
+      version={item.availableVersion}
+      kind={item.kind}
+      url={cfgUrl()}
+      fallback={fallbackContent}
+    />
+  ) : fallbackContent;
+  const live = hovered && canLivePreview(item);
 
   return (
     <div style={{
@@ -137,33 +156,29 @@ export function CatalogCard({
       border: item.installed ? `1px solid ${accent}33` : '1px solid rgba(255,255,255,0.07)',
       minWidth: 0,
     }}>
-      {/* 46px preview — a published image (task 6), a live sandboxed render
-          (task 7), this item's glyph, or today's letter block. `overflow:
-          hidden` clips PreviewImage's <img> and LivePreview's sandbox to the
-          frame's rounded corners. */}
-      <div style={{
-        height: 46, borderRadius: 6, flexShrink: 0, overflow: 'hidden',
-        background: `linear-gradient(135deg, ${accent}22, ${accent}08)`,
-        border: `1px solid ${accent}2a`,
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-      }}>
-        {previewSrc.kind === 'image' && item.availableVersion != null ? (
-          <PreviewImage
-            id={item.id}
-            version={item.availableVersion}
-            kind={item.kind}
-            url={cfgUrl()}
-            fallback={fallbackContent}
-          />
-        ) : previewSrc.kind === 'live' ? (
+      {/* 46px preview — the baseline (image/glyph/letter), swapped for a live
+          sandboxed render only while hovered. `overflow: hidden` clips
+          PreviewImage's <img> and LivePreview's sandbox to the frame's
+          rounded corners. */}
+      <div
+        onPointerEnter={() => setHovered(true)}
+        onPointerLeave={() => setHovered(false)}
+        style={{
+          height: 46, borderRadius: 6, flexShrink: 0, overflow: 'hidden',
+          background: `linear-gradient(135deg, ${accent}22, ${accent}08)`,
+          border: `1px solid ${accent}2a`,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+        }}
+      >
+        {live ? (
           <LivePreview
-            bundleId={previewSrc.bundleId}
+            bundleId={item.id}
             accent={accent}
             accent2={accent2}
             spectrumRef={spectrumRef}
-            fallback={fallbackContent}
+            fallback={baselineContent}
           />
-        ) : fallbackContent}
+        ) : baselineContent}
       </div>
 
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, minWidth: 0 }}>
