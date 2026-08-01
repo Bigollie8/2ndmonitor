@@ -228,3 +228,18 @@ It was missed because every prior tile task verified its endpoint with bare `cur
 **Rule for future tile ports:** resolving paths against a live response is necessary but not sufficient. Also check the response **size** against `FETCH_CAP`, and prefer the narrowest endpoint variant. Wikimedia's `/onthisday/events/MM/DD` returns only what this tile uses, where `/all/` also carries `selected`, `births`, `deaths` and `holidays`.
 
 This is the third distinct case on this project where a check that bypassed the real mechanism gave a false pass — the others being `tauri dev` hiding the CSP inheritance failure, and a hand-copy into `%APPDATA%` bypassing `marketplace_install`.
+
+### 30. A release build cannot be pointed at a local marketplace — the app-side ratings path is unverifiable locally
+
+The ratings verification could not exercise sign-in, rating, or re-rating **through the app**. Two guards compose into a wall:
+
+1. The marketplace client requires `https://`, so a plain-HTTP local server is rejected client-side.
+2. The app statically links `rustls` + `webpki-roots` (confirmed in `Cargo.lock` — no `native-tls`, `schannel`, or `rustls-native-certs`), so it **never consults the Windows trust store**. A self-signed local cert fails the handshake with `UnknownIssuer`.
+
+So there is no way to point a release build at a local server without changing app code. Neither guard is wrong — both are deliberate hardening — but together they mean the entire authenticated marketplace path can only ever be tested against a publicly-trusted host.
+
+What *was* verified: the server's rate/re-rate semantics directly (`INSERT OR REPLACE` confirmed — 5★ then 2★ gave `{avg:2.0,count:1}`), the reserved-key guard at runtime, first-party widget inertness, and graceful degradation when the marketplace is unreachable.
+
+**Fix shape:** document a supported local-testing path — either a dev-only trust anchor gated behind `cfg!(debug_assertions)`, or a documented mkcert/step-ca recipe whose root the build trusts in debug only. Do **not** relax the `https://` guard or add the Windows trust store in release.
+
+This blocks meaningful end-to-end testing of anything authenticated, not just ratings.
