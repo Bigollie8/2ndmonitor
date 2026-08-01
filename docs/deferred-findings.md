@@ -153,6 +153,10 @@ This is the exact failure the original deploy notes warned about: NPM's sqlite d
 
 Note the app's marketplace client hard-requires `https://`, so there is no LAN-URL workaround for testing.
 
+**RESOLVED 2026-07-31.** The restore above was completed (cert `market-basedsecurity`, conf `900.conf` — both named collision-proof on purpose; the conf's header comment documents why). Verified end-to-end: `nginx -t` clean, `/health` 200 with `X-Served-By: market.basedsecurity.net`, `/index.json` served and signed.
+
+**Second, distinct problem found while verifying: flaky hairpin NAT.** From the dev box (same LAN as the server), connections to the public IP `104.60.40.210:443` failed ~7/10 times — the AT&T gateway drops most NAT-loopback connections, and this affected *every* `*.basedsecurity.net` subdomain tested, not just market. External clients are unaffected. This was a hidden contributor to the marketplace-open lag: most opens stalled on the app's 10s fetch timeouts. Fixed for this box with a hosts-file pin (`192.168.1.145 market.basedsecurity.net`) — TLS still validates fully because the cert matches the hostname and the app's rustls checks name+chain, not IP. Caveat: the server's LAN IP is DHCP and has drifted before (.104/.138/.144/.145 all seen) — if the marketplace goes dark on this box only, re-check the pin against the server's current IP, and consider a DHCP reservation on the gateway.
+
 ### 21. E4's visual comparison was never done
 
 `bundles/neonbars` (the first DOM-surface bundle) validates, zips with exactly `manifest.json` + `main.js`, and passes the bundle smoke suite — but the **side-by-side comparison against the built-in `VizNeonBars` in a packaged build was not performed**. The task was cut off by an account spend limit partway through.
