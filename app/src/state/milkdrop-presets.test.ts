@@ -26,6 +26,25 @@ test('originals first (authored order), then bundled (sorted), then user (as giv
   assert.equal(new Set(lib.map((e) => e.key)).size, 6);
 });
 
+test('originals, then market (sorted case-insensitively by name), then bundled, then user', () => {
+  const lib = mergePresetLibrary(
+    [{ id: 'tron-grid', label: 'The Grid' }],
+    ['Zebra', 'Alpha'],
+    [{ name: 'mine', file: 'mine.json', ext: 'json' }],
+    [{ id: 'm2', name: 'zeta' }, { id: 'm1', name: 'Beta' }],
+  );
+  assert.deepEqual(lib.map((e) => e.label), ['The Grid', 'Beta', 'zeta', 'Alpha', 'Zebra', 'mine']);
+  assert.deepEqual(lib.map((e) => e.source), ['original', 'market', 'market', 'bundled', 'bundled', 'user']);
+  assert.deepEqual(lib.filter((e) => e.source === 'market').map((e) => e.key), ['m:m1', 'm:m2']);
+  assert.deepEqual(lib.filter((e) => e.source === 'market').map((e) => e.id), ['m1', 'm2']);
+});
+
+test('a market preset and a bundled preset with the same display name coexist (distinct keys)', () => {
+  const lib = mergePresetLibrary([], ['Same'], [], [{ id: 'mkt1', name: 'Same' }]);
+  assert.equal(new Set(lib.map((e) => e.key)).size, 2);
+  assert.deepEqual(lib.map((e) => e.key).sort(), ['b:Same', 'm:mkt1']);
+});
+
 test('user preset colliding with bundled name still gets a unique key', () => {
   const lib = mergePresetLibrary([], ['Same'], [{ name: 'Same', file: 'Same.json', ext: 'json' }]);
   assert.equal(new Set(lib.map((e) => e.key)).size, 2);
@@ -92,6 +111,52 @@ test('resolveLoadSource: .milk still reports the conversion gap', async () => {
       async () => 'per_frame_1=',
     ),
     /\.milk conversion unavailable/,
+  );
+});
+
+test('resolveLoadSource: a market entry calls readMarketPreset with the entry id and returns the parsed object', async () => {
+  let calledWith = '';
+  const src = await resolveLoadSource(
+    { key: 'm:abc', label: 'Cool One', source: 'market', id: 'abc' },
+    async () => '',
+    undefined,
+    async (id) => { calledWith = id; return '{"baseVals":{"x":1}}'; },
+  );
+  assert.deepEqual(src, { preset: { baseVals: { x: 1 } } });
+  assert.equal(calledWith, 'abc');
+});
+
+test('resolveLoadSource: a market entry with invalid JSON is a readable error mentioning preset', async () => {
+  await assert.rejects(
+    resolveLoadSource(
+      { key: 'm:abc', label: 'Cool One', source: 'market', id: 'abc' },
+      async () => '',
+      undefined,
+      async () => 'not json',
+    ),
+    /preset/,
+  );
+});
+
+test('resolveLoadSource: a market entry that is not an object is a readable error mentioning preset', async () => {
+  await assert.rejects(
+    resolveLoadSource(
+      { key: 'm:abc', label: 'Cool One', source: 'market', id: 'abc' },
+      async () => '',
+      undefined,
+      async () => '[1,2]',
+    ),
+    /preset/,
+  );
+});
+
+test('resolveLoadSource: a market entry without a reader throws a specific error', async () => {
+  await assert.rejects(
+    resolveLoadSource(
+      { key: 'm:abc', label: 'Cool One', source: 'market', id: 'abc' },
+      async () => '',
+    ),
+    /no reader for marketplace presets/,
   );
 });
 
