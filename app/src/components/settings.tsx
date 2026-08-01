@@ -709,6 +709,27 @@ function MarketplaceAccountEditor({ accent }: { accent: string }) {
   const busy = state.status === 'checking' || state.status === 'signing-in';
   const canSubmit = !busy && email.trim() !== '' && password !== '';
 
+  // The password only ever needs to live in this state for the duration of
+  // one sign-in attempt — leaving it in the JS heap for the rest of the
+  // Settings window's lifetime (this component stays mounted after the
+  // early-return below just renders a different tree) is pointless exposure.
+  // Cleared on success; deliberately NOT cleared on failure, so a typo is one
+  // correction away rather than a full retype.
+  useEffect(() => {
+    if (state.status === 'signed-in') { setPassword(''); setEmail(''); }
+  }, [state.status]);
+
+  // The server URL is user-editable (Settings -> Marketplace -> Server &
+  // signing key, or anything else that can write the marketplace.url
+  // localStorage key) and, unlike the signed index, a login POST has no
+  // pinned-key verification of its own — an https:// URL pointed at an
+  // attacker's host is indistinguishable from the real one by the https
+  // check alone. Surfacing the exact host the password is about to be sent
+  // to turns a silent redirect into a visible one.
+  const targetHost = (() => {
+    try { return new URL(cfgUrl()).host; } catch { return cfgUrl(); }
+  })();
+
   const handleSignIn = () => {
     if (!canSubmit) return;
     void signIn(email.trim(), password);
@@ -727,6 +748,9 @@ function MarketplaceAccountEditor({ accent }: { accent: string }) {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 10, maxWidth: 460 }}>
+      <div style={{ fontSize: 10.5, color: 'rgba(255,255,255,0.45)' }}>
+        Signing in to <span style={{ fontFamily: MONO, color: accent }}>{targetHost}</span>
+      </div>
       <div>
         <label style={fieldLabelStyle}>Email</label>
         <input

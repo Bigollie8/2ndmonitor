@@ -87,14 +87,39 @@ fn get_capped(url: &str, cap: usize) -> Result<Vec<u8>, String> {
 //
 // The token is a credential and is handled exactly like every other one this
 // app stores (github_pat, ha_token, ...): through secrets.rs's DPAPI-backed
-// store, NEVER localStorage, and NEVER returned across the IPC boundary to
-// the frontend. `marketplace_login` returns `Result<(), String>` — nothing on
-// success — and `marketplace_session_status` exposes only a bool plus a
-// PRE-MASKED email (masked here at write time, the same way index.rs masks
-// bundle authors, so there is no unmasked copy anywhere for a later bug to
-// accidentally serialize). Every future command that needs the token (rating
-// submission, Task 3) reads it Rust-side via `secrets::secret_get`, never
-// receives it as a parameter from the frontend.
+// store, NEVER localStorage. `marketplace_login` returns `Result<(), String>`
+// — nothing on success — and `marketplace_session_status` exposes only a bool
+// plus a PRE-MASKED email (masked here at write time, the same way index.rs
+// masks bundle authors, so there is no unmasked copy anywhere for a later bug
+// to accidentally serialize).
+//
+// CORRECTION (post D2-review): an earlier version of this comment, and of
+// the Task 2 report, claimed the token was "NEVER returned across the IPC
+// boundary to the frontend". That was FALSE as originally shipped.
+// secrets.rs's `secret_get` is a generic `#[tauri::command]`, already in the
+// allowlist for legitimate uses (github_pat, ha_token, per-bundle secrets),
+// and it took an arbitrary caller-supplied key with no reserved list — so
+// `invoke('secret_get', { key: 'marketplace_session' })`, issued from the
+// main webview exactly like any other secret read, returned the
+// DPAPI-decrypted session token in plain text. The ACL scoped that call to
+// webview `main` + `Origin::Local` (so the browser tile / sandboxed frame
+// couldn't reach it), and no shipped frontend code requested that key — but
+// "no shipped code does it" is not "the token can never leave Rust", which is
+// what the comment claimed.
+//
+// That gap is now closed in secrets.rs: `marketplace_session` is a RESERVED
+// key (see `secrets::RESERVED_KEYS`), rejected by the `secret_get`/
+// `secret_set`/`secret_delete` command wrappers before the store is ever
+// touched — pinned by a test that reads secrets.rs's own source to confirm
+// the guard runs before the inner store call, not just that the guard
+// predicate itself is correct. This module now reaches the store through
+// `secret_get_inner`/`secret_set_inner`/`secret_delete_inner` below — plain
+// Rust functions, not commands, unreachable over IPC under any key — which is
+// what actually makes "never returned to the frontend" true rather than
+// merely intended. Every future command that needs the token (rating
+// submission, Task 3) must do the same: read it Rust-side via
+// `secrets::secret_get_inner`, never accept it as a parameter from the
+// frontend, and never round-trip it through the generic `secret_get` command.
 // ---------------------------------------------------------------------------
 
 /// Fixed key the session lives under in the shared secrets.json store. Its
@@ -160,7 +185,21 @@ fn post_capped_json(url: &str, body: &serde_json::Value, cap: usize) -> Result<(
         }
         Ok(buf)
     }
-    match ureq::post(url)
+    // redirects(0): mirrors broker_fetch's SSRF-defense reasoning (see its
+    // doc comment). ureq's default agent follows up to 5 redirects with no
+    // scheme check; an https:// login endpoint that 302s to http://... or a
+    // LAN address would otherwise have this client silently follow it, and
+    // the response would be parsed as the login result. The password itself
+    // is not at risk that way — a POST redirect (301/302/303) rewrites to GET
+    // and drops the body, and 307/308 aren't followed by ureq's redirect
+    // handling either — but the "https enforced" check above is only
+    // meaningful for the request this function actually issues; without
+    // this, it would say nothing about where the response that decides
+    // `token` came from. With redirects(0) a 3xx just comes back as an
+    // ordinary status this function already handles like any other non-200.
+    let agent = ureq::AgentBuilder::new().redirects(0).build();
+    match agent
+        .post(url)
         .timeout(std::time::Duration::from_secs(10))
         .send_json(body.clone())
     {
@@ -205,25 +244,50 @@ pub fn marketplace_login<R: Runtime>(
         "email_masked": mask_email(&email),
     })
     .to_string();
-    crate::secrets::secret_set(app, SESSION_SECRET_KEY.to_string(), stored)
+    crate::secrets::secret_set_inner(&app, SESSION_SECRET_KEY, &stored)
 }
 
 /// Clears the stored session. Idempotent — signing out when already signed
-/// out is not an error (mirrors `secret_delete`'s own idempotence).
+/// out is not an error (mirrors `secret_delete_inner`'s own idempotence).
 #[tauri::command]
 pub fn marketplace_logout<R: Runtime>(app: AppHandle<R>) -> Result<(), String> {
-    crate::secrets::secret_delete(app, SESSION_SECRET_KEY.to_string())
+    crate::secrets::secret_delete_inner(&app, SESSION_SECRET_KEY)
 }
 
 /// What the frontend is allowed to know about the session: whether one
-/// exists, and a display-only masked email. No token field exists on this
-/// type — there is nothing here for a future edit to accidentally wire up
-/// and leak.
+/// exists, and a display-only masked email. This type has no token field,
+/// which is worth keeping true as defense in depth — but the type shape was
+/// never the actual enforcement point, and an earlier version of this
+/// comment overstated it as one ("nothing here for a future edit to
+/// accidentally wire up and leak"). What actually stops the token reaching
+/// the frontend is `secrets::secret_get`'s reserved-key guard (see the
+/// CORRECTION note at the top of this section) plus this command reading the
+/// store via `secret_get_inner`, not this struct's shape.
 #[derive(Serialize)]
 pub struct MarketplaceSessionStatus {
     #[serde(rename = "signedIn")]
     pub signed_in: bool,
     pub email: Option<String>,
+}
+
+/// True when a stored session blob parses and carries a non-empty `token`.
+/// Pulled out as a pure function — no AppHandle, no I/O — so a corrupt or
+/// half-written blob is unit-testable without touching the DPAPI store.
+/// Without this check, `marketplace_session_status` reported `signedIn: true`
+/// for ANY present value under the session key, parseable or not — which
+/// would show a signed-in UI with no way to diagnose why every rating
+/// submission then failed.
+///
+/// Deliberately does NOT check expiry (the server's 30-day session TTL,
+/// `auth.rs::SESSION_TTL`) — this app has no way to validate a token without
+/// a network round-trip, and Task 3's first authenticated call will get a 401
+/// for a genuinely expired token. This function only catches "the blob
+/// itself is useless", not "the token it names might no longer be honoured".
+fn session_blob_has_token(raw: &str) -> bool {
+    serde_json::from_str::<serde_json::Value>(raw)
+        .ok()
+        .and_then(|v| v.get("token").and_then(|t| t.as_str()).map(|s| !s.is_empty()))
+        .unwrap_or(false)
 }
 
 /// Cheap, local, no network: just "does a token exist in the store". The
@@ -233,9 +297,12 @@ pub struct MarketplaceSessionStatus {
 pub fn marketplace_session_status<R: Runtime>(
     app: AppHandle<R>,
 ) -> Result<MarketplaceSessionStatus, String> {
-    let Some(raw) = crate::secrets::secret_get(app, SESSION_SECRET_KEY.to_string()) else {
+    let Some(raw) = crate::secrets::secret_get_inner(&app, SESSION_SECRET_KEY) else {
         return Ok(MarketplaceSessionStatus { signed_in: false, email: None });
     };
+    if !session_blob_has_token(&raw) {
+        return Ok(MarketplaceSessionStatus { signed_in: false, email: None });
+    }
     let email = serde_json::from_str::<serde_json::Value>(&raw)
         .ok()
         .and_then(|v| v.get("email_masked").and_then(|e| e.as_str()).map(str::to_string));
@@ -956,6 +1023,16 @@ mod tests {
         let err = post_capped_json("http://example.com/auth/login", &serde_json::json!({}), AUTH_CAP)
             .unwrap_err();
         assert!(err.contains("https"), "{err}");
+    }
+
+    #[test]
+    fn session_blob_has_token_requires_a_real_non_empty_token_field() {
+        assert!(session_blob_has_token(r#"{"token":"abc123","email_masked":"oli***"}"#));
+        assert!(!session_blob_has_token(r#"{"token":"","email_masked":"oli***"}"#), "empty string token");
+        assert!(!session_blob_has_token(r#"{"email_masked":"oli***"}"#), "no token field at all");
+        assert!(!session_blob_has_token(r#"{"token":123}"#), "token is the wrong JSON type");
+        assert!(!session_blob_has_token("not json"), "unparseable blob");
+        assert!(!session_blob_has_token(""), "empty blob");
     }
 
     #[test]
