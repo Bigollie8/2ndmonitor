@@ -5,17 +5,42 @@ All notable changes to 2ndMonitor are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-08-01
+
 ### Added
+- Marketplace: browse, install, remove, and rate community visualizers and tiles
+  from inside the app — signed index, per-bundle permissions shown before
+  install, star ratings with sign-in, and one-click restore of removed content
+- Preview images on every marketplace card, generated from each visualizer's
+  real render; hovering an installed visualizer's card plays it live
+- MilkDrop visualizer: the classic preset engine (Butterchurn) with the full
+  preset pack, plus your own `.milk` presets from the app data `presets/` folder
+- Scripted visualizers: write your own visualizer in JavaScript with a live
+  in-app editor — code runs in a locked-down sandbox with a small `viz` API
+- 27 visualizer styles and 10 tiles now ship as marketplace bundles, so they
+  update independently of app releases
 - Settings window with searchable Tile Library (replaces the dev Tweaks panel)
 - Settings export/import via native file dialogs
 - System tray with close-to-tray (toggle in Settings, default on)
 - Encrypted secret store and shared polling infrastructure
 
 ### Changed
-- Faster startup: tiles, viz gallery, and the 22 extra visualizer styles now lazy-load
+- Built-in visualizer styles and five built-in tiles migrated to marketplace
+  bundles; existing layouts keep working through automatic id migration
+- Faster startup: tiles, viz gallery, and the extra visualizer styles now lazy-load
 - Fonts are self-hosted as 2 variable-weight files (no external font hosts)
 
+### Security
+- Tauri command ACL now ships a real manifest scoped to the main window, so
+  embedded browser pages can no longer reach app commands
+- The visualizer sandbox is served from its own origin with a header-delivered
+  CSP and a per-process proof token; sandboxed code has no network or IPC
+  access beyond its declared, brokered permissions
+
 ### Fixed
+- Opening the marketplace no longer mounts a grid of live sandboxes at once —
+  cards show images and animate only on hover (this was the marketplace-open
+  lag/near-crash)
 - MilkDrop presets now load in packaged builds. Butterchurn compiles preset
   equations with `new Function`, which the app CSP (`script-src 'self'`)
   rightly blocks in the main window; the visualizer now runs inside the
