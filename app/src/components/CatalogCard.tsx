@@ -190,6 +190,13 @@ export function CatalogCard({
       <StarRating
         rating={item.rating}
         signedIn={signedIn}
+        // A first-party built-in (Mixer, core tiles/visualizers) is never a
+        // marketplace bundle — the server 400s "bundle does not exist or is
+        // not approved" for any id that isn't one. Without this, a
+        // signed-in user clicking its stars saw a flicker of a fake
+        // optimistic rating followed by an error flash, every time (D3
+        // review, Important 1). See ratingDisplay's doc comment.
+        ratable={item.source !== 'first-party'}
         busy={ratingBusy}
         onRate={onRate}
       />

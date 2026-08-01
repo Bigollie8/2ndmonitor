@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  mergeCatalog, catalogKey, planRemoval, restoreDefaults, secretSetupCandidates, applyOptimisticRating,
+  mergeCatalog, catalogKey, planRemoval, restoreDefaults, secretSetupCandidates, applyOptimisticVote,
   type MergeCatalogArgs, type IndexBundle,
 } from './catalog';
 import { TILE_META } from './tileMeta';
@@ -228,20 +228,60 @@ test('mergeCatalog pass 4: a removed item still carries its rating — not dropp
   assert.deepEqual(liquid.rating, { avg: 3.7, count: 9 });
 });
 
-// applyOptimisticRating — the pure recomputation behind StarRating's
-// optimistic update while marketplace_rate's POST is in flight.
+// applyOptimisticVote — the pure recomputation behind StarRating's
+// optimistic update while marketplace_rate's POST is in flight. Renamed
+// from applyOptimisticRating and given a `previousStars` parameter per D3
+// review's Important 2: the old version treated every vote as additive, so
+// two changes of mind in one session overcounted by two phantom votes, not
+// the "overcounts by one" the old doc comment claimed.
 
-test('applyOptimisticRating: a first vote on an unrated bundle becomes the whole average', () => {
-  assert.deepEqual(applyOptimisticRating(null, 4), { avg: 4, count: 1 });
+test('applyOptimisticVote: a first vote (no previousStars) on an unrated bundle becomes the whole average', () => {
+  assert.deepEqual(applyOptimisticVote(null, 4, null), { avg: 4, count: 1 });
 });
 
-test('applyOptimisticRating: a zero-count rating object is treated the same as null', () => {
-  assert.deepEqual(applyOptimisticRating({ avg: 0, count: 0 }, 5), { avg: 5, count: 1 });
+test('applyOptimisticVote: a zero-count rating object is treated the same as null', () => {
+  assert.deepEqual(applyOptimisticVote({ avg: 0, count: 0 }, 5, null), { avg: 5, count: 1 });
 });
 
-test('applyOptimisticRating: an additional vote shifts the average and increments the count', () => {
+test('applyOptimisticVote: a first-this-session vote (previousStars null) is additive — shifts the average and increments the count', () => {
   // 3 votes averaging 4.0 (total 12), a new vote of 2: (12+2)/4 = 3.5.
-  assert.deepEqual(applyOptimisticRating({ avg: 4, count: 3 }, 2), { avg: 3.5, count: 4 });
+  assert.deepEqual(applyOptimisticVote({ avg: 4, count: 3 }, 2, null), { avg: 3.5, count: 4 });
+});
+
+test('applyOptimisticVote: a re-vote (previousStars set) replaces rather than adds — count unchanged', () => {
+  // 4 votes averaging 3.5 (total 14) where THIS user's own prior optimistic
+  // vote was a 2 — changing it to a 5 should replace that 2 with a 5:
+  // (14 - 2 + 5) / 4 = 4.25, count stays 4.
+  const out = applyOptimisticVote({ avg: 3.5, count: 4 }, 5, 2);
+  assert.equal(out.count, 4, 'count must not increment on a re-vote');
+  assert.ok(Math.abs(out.avg - 4.25) < 1e-9, `expected avg ~4.25, got ${out.avg}`);
+});
+
+test('applyOptimisticVote: three sequential votes for the same bundle never compound past a single +1', () => {
+  // The exact regression D3 caught: repeatedly changing your mind must not
+  // accumulate phantom votes. Start from 3 OTHER users averaging 4.0 (total
+  // 12, count 3) with nobody from this session voted yet.
+  let rating = { avg: 4, count: 3 };
+  let previousStars: number | null = null;
+
+  // First vote: 5. Additive — count becomes 4, total 17, avg 4.25.
+  rating = applyOptimisticVote(rating, 5, previousStars);
+  assert.deepEqual(rating, { avg: 4.25, count: 4 });
+  previousStars = 5;
+
+  // Changed my mind: 2. Replaces the 5, NOT additive — count stays 4,
+  // total (17-5+2)=14, avg 3.5.
+  rating = applyOptimisticVote(rating, 2, previousStars);
+  assert.equal(rating.count, 4, 'count must still be 4 after the first re-vote');
+  assert.ok(Math.abs(rating.avg - 3.5) < 1e-9, `expected avg 3.5, got ${rating.avg}`);
+  previousStars = 2;
+
+  // Changed my mind again: 4. Replaces the 2 — count still 4,
+  // total (14-2+4)=16, avg 4.0. If this were still additive (the D3 bug),
+  // count would now be 6 and avg would be wrong.
+  rating = applyOptimisticVote(rating, 4, previousStars);
+  assert.equal(rating.count, 4, 'count must never exceed the ONE real vote this session cast');
+  assert.ok(Math.abs(rating.avg - 4.0) < 1e-9, `expected avg 4.0, got ${rating.avg}`);
 });
 
 test('catalogKey: composes kind and id', () => {

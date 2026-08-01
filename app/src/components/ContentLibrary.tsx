@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject } from 'react';
 import {
   mergeCatalog, catalogKey, planRemoval, restoreDefaults, tileInstanceType, secretSetupCandidates,
-  applyOptimisticRating,
+  applyOptimisticVote,
   type CatalogItem, type IndexBundle, type RatingAgg,
 } from '../state/catalog';
 import { useMarketplaceAuth } from '../state/marketplaceAuth';
@@ -393,19 +393,34 @@ export function ContentLibrary({
   // button the way an install/remove mutation does.
   const [ratingBusyKeys, setRatingBusyKeys] = useState<Set<string>>(new Set());
 
+  // Bundle id -> the stars THIS content-library session last optimistically
+  // voted for it. Doubles as "have I voted on this bundle before, this
+  // session" (key presence) — added per D3 review's Important 2:
+  // `applyOptimisticVote` needs the PREVIOUS vote's value to replace rather
+  // than add on a re-vote, and a bare membership Set can't supply that by
+  // itself. Reset implicitly whenever this component remounts (plain React
+  // state, not persisted) — a fresh Content Library session has no memory
+  // of a prior session's votes either, the same residual gap
+  // `applyOptimisticVote`'s doc comment notes for a genuinely first vote.
+  const [votedStars, setVotedStars] = useState<Record<string, number>>({});
+
   // Posts a vote via marketplace_rate and optimistically updates `ratings`
-  // via applyOptimisticRating (state/catalog.ts) before the request resolves
+  // via applyOptimisticVote (state/catalog.ts) before the request resolves
   // — the "optimistically updates" half of Task 3. `item.id` (the bare
   // bundle id), not `item.key`, is both the ratings-map key and what the
   // Rust command sends the server — see MergeCatalogArgs.ratings' doc
-  // comment for why the two ids differ. On failure the optimistic value is
-  // rolled back to exactly what it was before this call (not just cleared —
-  // a previously-known rating must not vanish because a re-vote failed) and
-  // the error is flashed, same as every other mutation in this file.
+  // comment for why the two ids differ. On failure BOTH the optimistic
+  // rating and `votedStars` are rolled back to exactly what they were before
+  // this call (not just cleared — a previously-known rating, or a genuinely
+  // earlier vote this session already cast, must not vanish because a
+  // re-vote's network request failed) and the error is flashed, same as
+  // every other mutation in this file.
   const handleRate = useCallback(async (item: CatalogItem, stars: number) => {
     const bundleId = item.id;
-    const previous = ratings[bundleId] ?? null;
-    setRatings((prev) => ({ ...prev, [bundleId]: applyOptimisticRating(previous, stars) }));
+    const previousRating = ratings[bundleId] ?? null;
+    const previousStars = votedStars[bundleId] ?? null;
+    setRatings((prev) => ({ ...prev, [bundleId]: applyOptimisticVote(previousRating, stars, previousStars) }));
+    setVotedStars((prev) => ({ ...prev, [bundleId]: stars }));
     setRatingBusyKeys((prev) => new Set(prev).add(item.key));
     try {
       const { invoke } = await import('@tauri-apps/api/core');
@@ -413,7 +428,12 @@ export function ContentLibrary({
     } catch (e) {
       setRatings((prev) => {
         const next = { ...prev };
-        if (previous) next[bundleId] = previous; else delete next[bundleId];
+        if (previousRating) next[bundleId] = previousRating; else delete next[bundleId];
+        return next;
+      });
+      setVotedStars((prev) => {
+        const next = { ...prev };
+        if (previousStars != null) next[bundleId] = previousStars; else delete next[bundleId];
         return next;
       });
       flash(String(e));
@@ -424,7 +444,7 @@ export function ContentLibrary({
         return next;
       });
     }
-  }, [ratings, flash]);
+  }, [ratings, votedStars, flash]);
 
   // The empty state's recovery path. The actual clear-before-sync ordering
   // decision lives in the pure, tested `restoreDefaults` (state/catalog.ts)

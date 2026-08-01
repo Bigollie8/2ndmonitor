@@ -422,20 +422,45 @@ export function secretSetupCandidates(
  *  Pure so ContentLibrary's handler is a thin wrapper around a tested
  *  decision, same pattern as `planRemoval`/`restoreDefaults`.
  *
- *  Always treats `stars` as an ADDITIONAL vote (`avg*count + stars`,
- *  `count + 1`), never as a replacement of one this session already cast.
- *  That is a known, deliberate approximation: the server's `(bundle_id,
- *  user_id)` primary key means a second vote from the same user REPLACES
- *  their first rather than stacking (see server/src/ratings.rs's
- *  `INSERT OR REPLACE`), but this app has no "my current rating" endpoint to
- *  ask, so it cannot tell a first vote from a re-vote client-side. A re-vote
- *  therefore optimistically overcounts by one until the next real
- *  `GET /ratings` fetch (e.g. the catalog being reopened) corrects it —
- *  preferred over blocking the optimistic update entirely, since the common
- *  case (a first vote) is exact and the rare case (changing your mind) only
- *  self-heals slightly late rather than not updating at all. */
-export function applyOptimisticRating(current: RatingAgg | null, stars: number): RatingAgg {
+ *  `previousStars` is the stars value THIS content-library session already
+ *  optimistically voted for this same bundle, or `null` if it hasn't
+ *  (ContentLibrary tracks this per bundle id — see its `votedStars` state).
+ *  The two cases are handled differently, and the distinction is the whole
+ *  point of this function:
+ *
+ *  - `previousStars == null` (first vote this session): treated as an
+ *    ADDITIONAL vote — `avg*count + stars`, `count + 1`. This app has no "my
+ *    current rating" endpoint, so it genuinely cannot tell a first-ever vote
+ *    from a vote cast in an EARLIER session apart from this one — that
+ *    residual gap is real but bounded to at most one phantom vote per
+ *    catalog session, and self-heals on the next real `GET /ratings` fetch
+ *    (e.g. reopening the catalog).
+ *  - `previousStars != null` (a re-vote THIS session already knows about):
+ *    REPLACES that earlier optimistic contribution rather than adding a new
+ *    one — `count` stays fixed, `avg` shifts by `(stars - previousStars) /
+ *    count` — matching the server's real `(bundle_id, user_id)` REPLACE
+ *    semantics (`INSERT OR REPLACE`, server/src/ratings.rs) exactly.
+ *
+ *  D3 review (2026-07-31) caught an earlier version of this function
+ *  (`applyOptimisticRating`, no `previousStars` parameter) that treated
+ *  EVERY vote as additive — so changing your mind twice in one open Content
+ *  Library session overcounted the local optimistic average by two phantom
+ *  votes, not the one the old doc comment claimed as the worst case. This
+ *  version removes that drift entirely for the common "changed my mind"
+ *  case: see the sequential-re-vote test in catalog.test.ts, which casts
+ *  three votes for the same bundle and asserts the count never moves past
+ *  the first vote's `+1` and the average always reflects only the LATEST
+ *  vote's contribution, not an accumulation of every vote cast along the
+ *  way. */
+export function applyOptimisticVote(
+  current: RatingAgg | null,
+  stars: number,
+  previousStars: number | null,
+): RatingAgg {
   if (current == null || current.count <= 0) return { avg: stars, count: 1 };
+  if (previousStars != null) {
+    return { avg: current.avg + (stars - previousStars) / current.count, count: current.count };
+  }
   const count = current.count + 1;
   const avg = (current.avg * current.count + stars) / count;
   return { avg, count };
