@@ -17,9 +17,9 @@ import { TRON_PALETTE, paletteFromAccents } from '../state/originals/palette';
  *  data channel. In `preview` mode (gallery grid) renders a cheap 2D
  *  placeholder instead: the gallery mounts all surfaces simultaneously and
  *  Chromium caps live WebGL contexts (~16). */
-export function VizMilkdrop({ accent, accent2, spectrumRef, paused, preview }: VizProps) {
+export function VizMilkdrop({ accent, accent2, spectrumRef, paused, preview, onOpenLibrary }: VizProps) {
   if (preview) return <MilkdropPreviewCard accent={accent} accent2={accent2} />;
-  return <MilkdropSurface accent={accent} accent2={accent2} spectrumRef={spectrumRef} paused={paused} />;
+  return <MilkdropSurface accent={accent} accent2={accent2} spectrumRef={spectrumRef} paused={paused} onOpenLibrary={onOpenLibrary} />;
 }
 
 const AUTO_ADVANCE_MS = 30_000;
@@ -40,7 +40,7 @@ const MILKDROP_LOCAL_SOURCE = { code: MILKDROP_FRAME_CODE };
 const MILKDROP_BUNDLE_ID = 'builtin-milkdrop';
 const LOAD_TIMEOUT_MS = 5000;
 
-function MilkdropSurface({ accent, accent2, spectrumRef, paused }: Pick<VizProps, 'accent' | 'accent2' | 'spectrumRef' | 'paused'>) {
+function MilkdropSurface({ accent, accent2, spectrumRef, paused, onOpenLibrary }: Pick<VizProps, 'accent' | 'accent2' | 'spectrumRef' | 'paused' | 'onOpenLibrary'>) {
   const libraryRef = useRef<PresetEntry[]>([]);
   const indexRef = useRef(0);
   /** key → resolution error message, shown as ⚠ in the picker. */
@@ -52,11 +52,21 @@ function MilkdropSurface({ accent, accent2, spectrumRef, paused }: Pick<VizProps
    *  before readyRef settles). Caching only the result left a window where
    *  both arrivals saw `null` and both fired invoke('presets_list'). */
   const userPromiseRef = useRef<Promise<{ name: string; file: string; ext: string }[]> | null>(null);
-  /** Bumped on every onNames call; an onNames whose generation is stale by
-   *  the time its (now-deduped) user-list promise resolves abandons its walk
-   *  instead of writing host state (library/index/label/LS_PRESET) that a
-   *  newer, still-in-flight onNames is about to overwrite anyway. */
+  /** Same promise-cache reasoning as userPromiseRef, for the installed
+   *  marketplace preset list. Cleared (alongside userPromiseRef) whenever
+   *  'market-presets:changed' fires so a fresh install/uninstall/restore is
+   *  reflected without waiting for the next frame re-init. */
+  const marketPromiseRef = useRef<Promise<{ id: string; name: string }[]> | null>(null);
+  /** Bumped on every rebuildLibrary call; a walk whose generation is stale by
+   *  the time its (now-deduped) user/market list promises resolve abandons
+   *  its walk instead of writing host state (library/index/label/LS_PRESET)
+   *  that a newer, still-in-flight rebuild is about to overwrite anyway. */
   const namesGenRef = useRef(0);
+  /** The last 'milkdrop:names' payload — replayed by the
+   *  'market-presets:changed' handler, which has no fresh names of its own
+   *  (the frame's bundled-preset list didn't change, only the marketplace/user
+   *  dir did). */
+  const namesRef = useRef<string[]>([]);
   const mountedRef = useRef(true);
 
   const seqRef = useRef(0);
@@ -105,6 +115,12 @@ function MilkdropSurface({ accent, accent2, spectrumRef, paused }: Pick<VizProps
     return invoke<string>('presets_read', { file });
   }, []);
 
+  /** Reads one installed marketplace preset's JSON text by item id. */
+  const readMarketPreset = useCallback(async (id: string) => {
+    const { invoke } = await import('@tauri-apps/api/core');
+    return invoke<string>('presets_market_read', { id });
+  }, []);
+
   /** Post one load into the frame; resolves on the frame's seq-matched
    *  result, a timeout (dead frame), or immediately when the frame is not
    *  ready — never hangs the caller's walk-forward loop. */
@@ -148,7 +164,7 @@ function MilkdropSurface({ accent, accent2, spectrumRef, paused }: Pick<VizProps
       const i = (index + attempt + lib.length) % lib.length;
       const entry = lib[i];
       try {
-        const source = await resolveLoadSource(entry, readUserFile, buildOriginal);
+        const source = await resolveLoadSource(entry, readUserFile, buildOriginal, readMarketPreset);
         const res = await sendLoad(source, blend);
         if (!res.ok) throw new Error(res.error ?? 'load failed');
         indexRef.current = i;
@@ -162,7 +178,7 @@ function MilkdropSurface({ accent, accent2, spectrumRef, paused }: Pick<VizProps
         showToast(`${entry.label}: ${msg}`);
       }
     }
-  }, [readUserFile, sendLoad, showToast, buildOriginal]);
+  }, [readUserFile, sendLoad, showToast, buildOriginal, readMarketPreset]);
 
   const advance = useCallback((how: 'next' | 'prev' | 'random', blend = BLEND_SECONDS) => {
     const lib = libraryRef.current;
@@ -194,27 +210,73 @@ function MilkdropSurface({ accent, accent2, spectrumRef, paused }: Pick<VizProps
     return userPromiseRef.current;
   }, []);
 
-  /** Fires on every 'milkdrop:names' — first init AND hot re-inits. Rebuilds
-   *  the library (frame names + user files) and restores the saved preset;
-   *  after a re-init the frame has a blank visualizer, so always reload.
+  /** Same promise-cache reasoning as getUserFiles, for the marketplace list. */
+  const getMarketPresets = useCallback(() => {
+    if (!marketPromiseRef.current) {
+      marketPromiseRef.current = (async () => {
+        try {
+          const { invoke } = await import('@tauri-apps/api/core');
+          return await invoke<{ id: string; name: string; author: string | null; version: string }[]>('presets_market_list');
+        } catch { return []; }
+      })();
+    }
+    return marketPromiseRef.current;
+  }, []);
+
+  /** Rebuilds the library from a frame names list plus the (possibly cached)
+   *  user-file and marketplace lists, and restores a preset afterward — the
+   *  saved preset when `forceReload`, since after a frame re-init the
+   *  visualizer is blank and must always be given something; otherwise only
+   *  when the previously-playing entry's key no longer exists in the rebuilt
+   *  library (a marketplace uninstall took it out from under the frame).
    *
-   *  Two arrivals close together (the frame re-posts names on every proven
-   *  'ready', and a >250ms main-thread stall — plausible while the ~846KB
-   *  milkdrop chunk lands — can make a second 'ready' race the first's init)
-   *  must not both start a walk: whichever ends up older abandons before
-   *  touching host state, or indexRef/presetLabel/LS_PRESET can end up
-   *  describing a preset the frame never actually settled on. */
-  const onNames = useCallback(async (names: string[]) => {
+   *  Shared by onNames (below) and the 'market-presets:changed' listener, both
+   *  of which increment the same generation counter: two calls arriving close
+   *  together (the frame re-posts names on every proven 'ready', and a
+   *  >250ms main-thread stall — plausible while the ~846KB milkdrop chunk
+   *  lands — can make a second 'ready' race the first's init; or a names
+   *  arrival can race a marketplace change) must not both finish a walk —
+   *  whichever ends up older abandons before touching host state, or
+   *  indexRef/presetLabel/LS_PRESET can end up describing a preset the frame
+   *  never actually settled on. */
+  const rebuildLibrary = useCallback(async (names: string[], forceReload: boolean) => {
     const gen = ++namesGenRef.current;
-    const user = await getUserFiles();
-    if (gen !== namesGenRef.current) return; // superseded by a newer onNames while we awaited
-    libraryRef.current = mergePresetLibrary(ORIGINAL_ROWS, names, user);
+    const [user, market] = await Promise.all([getUserFiles(), getMarketPresets()]);
+    if (gen !== namesGenRef.current) return; // superseded by a newer rebuild while we awaited
+    const prevKey = libraryRef.current[indexRef.current]?.key;
+    libraryRef.current = mergePresetLibrary(ORIGINAL_ROWS, names, user, market);
     setLibraryVersion((v) => v + 1);
     const lib = libraryRef.current;
+    const stillThere = prevKey !== undefined && lib.some((e) => e.key === prevKey);
+    if (!forceReload && stillThere) return;
     const savedKey = localStorage.getItem(LS_PRESET);
     const savedIndex = savedKey ? lib.findIndex((e) => e.key === savedKey) : -1;
     void loadAt(savedIndex >= 0 ? savedIndex : Math.floor(Math.random() * lib.length), 0);
-  }, [loadAt, getUserFiles]);
+  }, [loadAt, getUserFiles, getMarketPresets]);
+
+  /** Fires on every 'milkdrop:names' — first init AND hot re-inits. After a
+   *  re-init the frame has a blank visualizer, so this always reloads. */
+  const onNames = useCallback(async (names: string[]) => {
+    namesRef.current = names;
+    await rebuildLibrary(names, true);
+  }, [rebuildLibrary]);
+
+  // A marketplace preset install/uninstall/restore changes what
+  // presets_market_list (and, for an uninstall, presets_list — the flat user
+  // dir) report, but the frame's own bundled-preset names haven't changed —
+  // replay the last names payload against fresh lists instead of waiting for
+  // the frame to re-post 'milkdrop:names' (it never will on its own). Only
+  // reload the live preset if the change actually took it out of the library;
+  // otherwise let it keep playing undisturbed.
+  useEffect(() => {
+    const onMarketChanged = () => {
+      marketPromiseRef.current = null;
+      userPromiseRef.current = null;
+      void rebuildLibrary(namesRef.current, false);
+    };
+    window.addEventListener('market-presets:changed', onMarketChanged);
+    return () => window.removeEventListener('market-presets:changed', onMarketChanged);
+  }, [rebuildLibrary]);
 
   const handleData = useCallback((payload: unknown) => {
     const msg = payload as MilkdropFrameToHost;
@@ -341,22 +403,25 @@ function MilkdropSurface({ accent, accent2, spectrumRef, paused }: Pick<VizProps
           accent={accent}
           onPick={(i) => { void loadAt(i, 1.0); setPickerOpen(false); }}
           onClose={() => setPickerOpen(false)}
+          onOpenLibrary={onOpenLibrary}
         />
       )}
     </div>
   );
 }
 
-function PresetPicker({ library, failures, currentKey, accent, onPick, onClose }: {
+function PresetPicker({ library, failures, currentKey, accent, onPick, onClose, onOpenLibrary }: {
   library: PresetEntry[];
   failures: Map<string, string>;
   currentKey?: string;
   accent: string;
   onPick: (index: number) => void;
   onClose: () => void;
+  onOpenLibrary?: (rail?: string) => void;
 }) {
   const bundledCount = library.filter((e) => e.source === 'bundled').length;
   const originalCount = library.filter((e) => e.source === 'original').length;
+  const marketCount = library.filter((e) => e.source === 'market').length;
   const renderGroup = (source: PresetEntry['source'], title: string) => {
     const items = library
       .map((entry, index) => ({ entry, index }))
@@ -404,6 +469,7 @@ function PresetPicker({ library, failures, currentKey, accent, onPick, onClose }
         }}
       >
         {renderGroup('original', `Originals · ${originalCount}`)}
+        {renderGroup('market', `Marketplace · ${marketCount}`)}
         {renderGroup('bundled', `Bundled · ${bundledCount}`)}
         {renderGroup('user', 'Your presets — %APPDATA%\\com.secondmonitor.hub\\presets')}
         <div style={{
@@ -411,6 +477,17 @@ function PresetPicker({ library, failures, currentKey, accent, onPick, onClose }
           borderTop: '1px solid rgba(255,255,255,0.06)',
         }}>
           Drop Butterchurn .json presets in the folder above. MilkDrop 2 presets only — .milk2 (MilkDrop 3) is not supported.
+        </div>
+        <div style={{
+          padding: '8px 12px 10px', borderTop: '1px solid rgba(255,255,255,0.06)',
+        }}>
+          <button
+            onClick={() => { onOpenLibrary?.('preset:all'); onClose(); }}
+            style={{
+              background: 'none', border: 'none', padding: 0, cursor: 'pointer',
+              fontSize: 11, fontWeight: 600, color: accent,
+            }}
+          >Get more presets →</button>
         </div>
       </div>
     </div>

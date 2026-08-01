@@ -799,6 +799,7 @@ export default function App() {
             onConfigure={() => setShowGallery(true)}
             audioDebug={t.audioDebug}
             catalogRemoved={t.catalogRemoved}
+            onOpenLibrary={(rail) => { setLibraryRail(rail); setShowContentLibrary(true); }}
           />
         );
       case 'streamDeck':

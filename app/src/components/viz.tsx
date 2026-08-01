@@ -162,6 +162,11 @@ export interface VizProps {
    *  instead — Chromium caps live WebGL contexts around 16 and the gallery
    *  mounts every style at once. */
   preview?: boolean;
+  /** Opens the content library, optionally deep-linked to a rail id (e.g.
+   *  `'preset:all'`). Surfaces with an in-picker discovery affordance —
+   *  currently only MilkDrop's "Get more presets →" — call this instead of
+   *  owning any content-library UI themselves. */
+  onOpenLibrary?: (rail?: string) => void;
 }
 
 /** Combined visibility + frame-rate gate. Each viz calls `shouldDraw()` once
@@ -199,7 +204,7 @@ export function useAnimateGate(paused?: boolean, name?: string): { shouldDraw():
   };
 }
 
-export function HiFiVizSurface({ mode, accent, accent2, spectrumRef, sensitivity, smoothing, paused, track, playback, preview, catalogRemoved }: { mode: VizMode; catalogRemoved: string[] } & VizProps) {
+export function HiFiVizSurface({ mode, accent, accent2, spectrumRef, sensitivity, smoothing, paused, track, playback, preview, catalogRemoved, onOpenLibrary }: { mode: VizMode; catalogRemoved: string[] } & VizProps) {
   // `catalogRemoved` is a prop, not read from the tweaks store here — useTweaks
   // is instantiated exactly once (App.tsx) and threaded down as props.
   const { styles: vizStyles, loaded: vizStylesLoaded } = useVizStyles(catalogRemoved);
@@ -217,7 +222,7 @@ export function HiFiVizSurface({ mode, accent, accent2, spectrumRef, sensitivity
   // and silently dropped here before, so MilkDrop's gallery card allocated a
   // real context; with only two built-in cards left that is now MilkDrop's
   // card and Scripted's, and the placeholder is the whole point of the flag.
-  const props = { accent, accent2, spectrumRef, sensitivity, smoothing, paused, track, playback, preview };
+  const props = { accent, accent2, spectrumRef, sensitivity, smoothing, paused, track, playback, preview, onOpenLibrary };
   // `target` (resolved above) is the whole decision. `resolveVizSurface`
   // (state/contentRegistry.ts) owns it and is node-tested; it never returns a
   // hardcoded id, only something present in `vizStyles` — or 'pending'/'empty'.
@@ -553,7 +558,7 @@ export function VizHero({
   showArtBg = false, sensitivity = 1, smoothing = 0, lyricsOverlayEnabled = true,
   videoEnabled = false, videoCurrentUrl = null, videoBookmarks = [],
   videoAvailable = false, onToggleVideo, onNavigate, onExit, overlaysOpen = false,
-  paused = false, onConfigure, audioDebug = false, catalogRemoved,
+  paused = false, onConfigure, audioDebug = false, catalogRemoved, onOpenLibrary,
 }: {
   mode: VizMode;
   setMode: (m: VizMode) => void;
@@ -592,6 +597,9 @@ export function VizHero({
   audioDebug?: boolean;
   /** The catalog removal list — see state/removedContent.ts. */
   catalogRemoved: string[];
+  /** Opens the content library, optionally deep-linked to a rail id. Threaded
+   *  through to the mounted surface (see VizProps.onOpenLibrary). */
+  onOpenLibrary?: (rail?: string) => void;
 }) {
   const [immersive, setImmersive] = useState(false);
   useEffect(() => {
@@ -639,7 +647,7 @@ export function VizHero({
             suppress={overlaysOpen}
           />
         ) : (
-          <HiFiVizSurface mode={mode} accent={accent} accent2={accent2} spectrumRef={spectrumRef} sensitivity={sensitivity} smoothing={smoothing} paused={paused} track={track} playback={playback} catalogRemoved={catalogRemoved} />
+          <HiFiVizSurface mode={mode} accent={accent} accent2={accent2} spectrumRef={spectrumRef} sensitivity={sensitivity} smoothing={smoothing} paused={paused} track={track} playback={playback} catalogRemoved={catalogRemoved} onOpenLibrary={onOpenLibrary} />
         )}
       </div>
       {!showVideo && (
