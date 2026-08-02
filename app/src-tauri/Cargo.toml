@@ -86,6 +86,13 @@ windows = { version = "0.58", features = [
 # macOS equivalent, so this is the platform-idiomatic substitute rather than
 # an attempt to fake the same encryption boundary.
 keyring = "3"
+# Backs foreground.rs's frontmost-app lookup via NSWorkspace. The "libc"
+# feature is required for NSRunningApplication::processIdentifier(), which
+# returns a libc::pid_t; we only ever `as u32` it, so no direct `libc`
+# dependency is needed.
+objc2 = "0.5"
+objc2-app-kit = { version = "0.2", features = ["NSWorkspace", "NSRunningApplication", "libc"] }
+objc2-foundation = "0.2"
 
 [profile.release]
 opt-level = "s"
