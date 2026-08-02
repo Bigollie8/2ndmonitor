@@ -24,7 +24,10 @@ use rustfft::{num_complex::Complex32, FftPlanner};
 use serde::Serialize;
 use std::{
     f32::consts::PI,
-    sync::{atomic::Ordering, mpsc, Arc},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        mpsc, Arc,
+    },
     thread,
     time::Duration,
 };
@@ -141,9 +144,33 @@ pub struct AudioSourceState {
     pub active: &'static str,
     /// The app being listened to (or excluded); `None` whenever the mix is live.
     pub active_exe: Option<String>,
-    /// False once a process activation has failed on this machine (old Windows).
+    /// False once a process activation has failed — usually a Windows build
+    /// without process loopback, which is why the UI stops offering it. Not a
+    /// permanent verdict: an explicit `audio_set_source` re-arms it and tries
+    /// again, since the same `Err` covers transient failures too.
     pub supported: bool,
     pub reason: Option<String>,
+}
+
+/// Last state emitted on `audio:source`, so it can be *asked for* as well as
+/// listened to. The startup emit almost certainly beats the webview's
+/// listener registration, and polling `audio_set_source(Mix)` to find out
+/// where things stand would clobber a persisted per-app source.
+static LAST_STATE: Mutex<Option<AudioSourceState>> = Mutex::new(None);
+
+/// Current capture state. Pure read — never touches the capture.
+///
+/// Before the supervisor's first swap (a window of a few ms at startup) this
+/// reports the state it is about to establish: the system mix, nothing wrong.
+#[tauri::command]
+pub fn audio_get_source() -> AudioSourceState {
+    LAST_STATE.lock().clone().unwrap_or(AudioSourceState {
+        requested: Source::Mix,
+        active: "mix",
+        active_exe: None,
+        supported: true,
+        reason: None,
+    })
 }
 
 /// Whichever capture currently owns the ring buffer. Exactly one may exist at
@@ -151,12 +178,15 @@ pub struct AudioSourceState {
 /// target while the first lives — and this enum is what enforces that.
 /// `cpal::Stream` is `!Send`, so `Live` never leaves the supervisor thread.
 ///
-/// Both payloads are held purely for their `Drop` — reading them is never the
-/// point, staying alive (and then not) is — hence the allow.
+/// The `cpal::Stream` payload is held purely for its `Drop` — reading it is
+/// never the point, staying alive (and then not) is — hence the allow.
 #[allow(dead_code)]
 enum Live {
     None,
-    Mix(cpal::Stream),
+    /// The stream, plus the flag `err_fn` clears when the endpoint dies. cpal
+    /// keeps handing back a `Stream` object that feeds nothing, so the object's
+    /// existence is not evidence that anything is being captured.
+    Mix(cpal::Stream, Arc<AtomicBool>),
     Process(crate::audio_loopback::ProcessCapture),
 }
 
@@ -195,7 +225,20 @@ fn supervisor<R: Runtime>(
 
     while let Ok(cmd) = rx.recv() {
         match cmd {
-            CaptureCmd::SetSource(s) => sup.apply(s),
+            CaptureCmd::SetSource(s) => {
+                // An explicit request re-arms per-app capture. `supported` is a
+                // hint learned from one failed activation, and `start` returns
+                // Err for plenty of transient reasons (Initialize against a
+                // device being switched, the activation deadline, a busy
+                // machine timing out) that have nothing to do with the Windows
+                // build lacking process loopback. Suppressing retries forever
+                // on that evidence would turn a UI hint into a permanent
+                // feature lockout with no way back. So: the sticky bit only
+                // suppresses *automatic* re-attempts (a watcher tick), never a
+                // user asking for it again.
+                sup.supported = true;
+                sup.apply(s);
+            }
         }
     }
 }
@@ -214,9 +257,10 @@ impl<R: Runtime> Supervisor<R> {
         let active = if self.supported {
             decide(&self.requested, pid)
         } else {
-            // Activation already failed once on this machine. Re-trying it on
-            // every request would tear down a working mix stream each time for
-            // a call we know cannot succeed.
+            // Activation failed the last time it was asked for, so automatic
+            // re-attempts (a watcher tick) stop here rather than tearing down a
+            // working mix stream on every poll. An explicit `audio_set_source`
+            // clears this first, so the user is never locked out.
             Active::Mix
         };
 
@@ -226,7 +270,7 @@ impl<R: Runtime> Supervisor<R> {
         let mut reason = match (&self.requested, active) {
             (Source::Mix, _) | (_, Active::Process { .. }) => None,
             (_, Active::Mix) if !self.supported => {
-                Some("per-app capture is not available on this Windows build".to_string())
+                Some("per-app capture could not be started on this machine".to_string())
             }
             (_, Active::Mix) => target_exe(&self.requested)
                 .map(|t| format!("{t} has no audio session right now")),
@@ -275,9 +319,10 @@ impl<R: Runtime> Supervisor<R> {
                     }
                     Err(e) => {
                         eprintln!("audio: process capture failed, falling back to mix: {e}");
-                        // Sticky: this machine can't do process loopback at all
-                        // (pre-20348 Windows), so the UI stops offering it and
-                        // the branch above stops re-trying.
+                        // Reported to the UI, and it stops *automatic* retries
+                        // (see the branch above). Cleared again by the next
+                        // explicit request, because this Err is not proof the
+                        // machine can't do process loopback at all.
                         self.supported = false;
                         reason = Some(e);
                         let (live, rate) = open_mix_or_none(&self.buffer, &mut reason);
@@ -298,12 +343,18 @@ impl<R: Runtime> Supervisor<R> {
         self.emit();
     }
 
-    /// Is the live backend the one `active` calls for, and still running? A
-    /// process capture whose pump has exited (endpoint invalidated) is *not* a
-    /// match — it would sit on a frozen ring forever.
+    /// Is the live backend the one `active` calls for, and *still capturing*?
+    ///
+    /// Liveness is checked on both backends, not just the process one. Either
+    /// client is invalidated by a default-device change
+    /// (`AUDCLNT_E_DEVICE_INVALIDATED`); a dead one leaves the object intact
+    /// and the ring frozen on its last samples. If this returned `true` for a
+    /// dead stream, `apply` would take the skip path and the user re-selecting
+    /// the same source — their only recovery affordance — would be a silent
+    /// no-op.
     fn live_matches(&self, active: Active) -> bool {
         match (&self.live, active) {
-            (Live::Mix(_), Active::Mix) => true,
+            (Live::Mix(_, alive), Active::Mix) => alive.load(Ordering::Relaxed),
             (Live::Process(cap), Active::Process { .. }) => cap.is_alive(),
             _ => false,
         }
@@ -320,6 +371,9 @@ impl<R: Runtime> Supervisor<R> {
             supported: self.supported,
             reason: self.reason.clone(),
         };
+        // Recorded before it is emitted, so `audio_get_source` can never report
+        // something older than what a listener has already seen.
+        *LAST_STATE.lock() = Some(state.clone());
         let _ = self.app.emit("audio:source", state);
     }
 }
@@ -333,7 +387,7 @@ fn open_mix_or_none(
     reason: &mut Option<String>,
 ) -> (Live, u32) {
     match open_mix(buffer.clone()) {
-        Ok((stream, rate)) => (Live::Mix(stream), rate),
+        Ok((stream, rate, alive)) => (Live::Mix(stream, alive), rate),
         Err(e) => {
             eprintln!("audio: mix capture unavailable: {e}");
             *reason = Some(match reason.take() {
@@ -349,8 +403,8 @@ fn open_mix_or_none(
 
 /// Build and start the cpal loopback stream on the *current* default output
 /// device. Re-queried on every call so a default-device change is picked up by
-/// the next swap.
-fn open_mix(buffer: Arc<Mutex<Vec<f32>>>) -> Result<(cpal::Stream, u32), String> {
+/// the next swap. The returned flag is the stream's liveness — see `build_stream`.
+fn open_mix(buffer: Arc<Mutex<Vec<f32>>>) -> Result<(cpal::Stream, u32, Arc<AtomicBool>), String> {
     let host = cpal::default_host();
     let device = host
         .default_output_device()
@@ -370,19 +424,37 @@ fn open_mix(buffer: Arc<Mutex<Vec<f32>>>) -> Result<(cpal::Stream, u32), String>
 
     // cpal recognizes "input on the default output device" as a request for
     // WASAPI loopback on Windows.
-    let stream = build_stream(&device, &config, sample_format, channels, buffer)?;
+    let alive = Arc::new(AtomicBool::new(true));
+    let stream = build_stream(
+        &device,
+        &config,
+        sample_format,
+        channels,
+        buffer,
+        alive.clone(),
+    )?;
     stream.play().map_err(|e| format!("stream.play: {e}"))?;
-    Ok((stream, sample_rate))
+    Ok((stream, sample_rate, alive))
 }
 
+/// `alive` is cleared the first time cpal reports a stream error. WASAPI's run
+/// loop stops processing once it errors — a `DeviceNotAvailable` from a default
+/// -device change ends the stream for good — but the `Stream` object stays
+/// perfectly alive, so this flag is the only way to tell a capturing stream
+/// from a dead one. The supervisor checks it before deciding it has nothing to
+/// do; without it, an invalidated endpoint freezes the ring permanently.
 fn build_stream(
     device: &cpal::Device,
     config: &cpal::StreamConfig,
     sample_format: cpal::SampleFormat,
     channels: usize,
     buffer: Arc<Mutex<Vec<f32>>>,
+    alive: Arc<AtomicBool>,
 ) -> Result<cpal::Stream, String> {
-    let err_fn = |err| eprintln!("audio stream error: {err}");
+    let err_fn = move |err| {
+        eprintln!("audio stream error: {err}");
+        alive.store(false, Ordering::Relaxed);
+    };
 
     fn push_mono<I, F>(samples: I, channels: usize, buffer: &Arc<Mutex<Vec<f32>>>, to_f32: F)
     where

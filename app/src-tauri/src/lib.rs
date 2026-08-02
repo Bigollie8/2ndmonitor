@@ -100,6 +100,7 @@ pub fn run() {
             audio::set_audio_emit_hz,
             audio::set_waveform_enabled,
             audio::audio_set_source,
+            audio::audio_get_source,
             audio_source::audio_sources_list,
             presets::presets_list,
             presets::presets_read,

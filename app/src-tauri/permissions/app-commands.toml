@@ -126,6 +126,7 @@ commands.allow = [
   # `audio:source` event). No frontend caller yet; wired up in a later task.
   "audio_sources_list",
   "audio_set_source",
+  "audio_get_source",
 
   # milkdrop presets (src/components/viz-milkdrop.tsx).
   "presets_list",
