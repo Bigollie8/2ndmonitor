@@ -26,6 +26,12 @@ export function parseSourceKey(key: string): AudioSource {
 }
 
 export function effectiveSensitivity(map: Record<string, number>, s: AudioSource): number {
+  // `map` is whatever a `tweaks_import` handed us — `migrateTweaks` only
+  // guards `undefined`, so a file with `"vizSensitivityBySource": null` (or
+  // any other non-object) reaches here as-is. Indexing that directly would
+  // throw during render (white screen) instead of just losing the tuning,
+  // so treat anything that isn't a plain object as "nothing saved".
+  if (typeof map !== 'object' || map === null || Array.isArray(map)) return DEFAULT_SENSITIVITY;
   const v = map[sourceKey(s)];
   return typeof v === 'number' && Number.isFinite(v) ? v : DEFAULT_SENSITIVITY;
 }

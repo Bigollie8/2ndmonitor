@@ -1485,7 +1485,18 @@ function BottomStatus({
   // the user picks one — no round trip needed. `status.active` is the only
   // thing that has to come from Rust: whether that request is actually live
   // right now (the app might not be playing anything yet).
-  const { status: audioSourceStatus, options: audioSourceOptions } = useAudioSource();
+  const { status: audioSourceStatus, options: audioSourceOptions, refresh: refreshAudioSourceOptions } = useAudioSource();
+  // `options` is fetched once on mount, and this bar never unmounts — left
+  // alone, the friendly-name list would be frozen at whatever was playing
+  // at launch (usually nothing) for the rest of the session, so the status
+  // text falls back to the raw exe forever. Re-fetch whenever the app the
+  // capture is actually bound to changes: that's the one moment a new name
+  // might have become resolvable, and it only fires on real transitions
+  // (a fresh app attaching, or a reattach after one quits/relaunches) —
+  // not a polling loop.
+  useEffect(() => {
+    if (audioSourceStatus?.active_exe) refreshAudioSourceOptions();
+  }, [audioSourceStatus?.active_exe, refreshAudioSourceOptions]);
   const audioSourceWaiting = audioSource.mode !== 'mix' && audioSourceStatus?.active === 'mix';
   const audioSourceText = describeAudioSource(
     audioSource,

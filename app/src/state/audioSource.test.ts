@@ -26,6 +26,14 @@ test('effectiveSensitivity: only and except keep separate values for one app', (
   assert.equal(effectiveSensitivity(map, { mode: 'except', exe: 'spotify.exe' }), 0.6);
 });
 
+test('effectiveSensitivity: a malformed map (e.g. null from a bad import) falls back to the default instead of throwing', () => {
+  // `migrateTweaks` only guards `undefined` on import — `null`, an array, or
+  // a scalar can all reach here from a hand-edited or corrupted tweaks file.
+  assert.equal(effectiveSensitivity(null as unknown as Record<string, number>, { mode: 'mix' }), DEFAULT_SENSITIVITY);
+  assert.equal(effectiveSensitivity([1, 2] as unknown as Record<string, number>, { mode: 'only', exe: 'a.exe' }), DEFAULT_SENSITIVITY);
+  assert.equal(effectiveSensitivity('nope' as unknown as Record<string, number>, { mode: 'mix' }), DEFAULT_SENSITIVITY);
+});
+
 test('migrateSensitivity: an old scalar becomes the mix entry', () => {
   assert.deepEqual(migrateSensitivity(1.65), { mix: 1.65 });
 });

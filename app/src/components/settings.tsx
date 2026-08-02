@@ -140,10 +140,17 @@ export function SettingsWindow({
   const [query, setQuery] = useState('');
   const { styles: vizStyles } = useVizStyles(v.catalogRemoved);
   const { options: sourceOptions, status: audioSourceStatus } = useAudioSource();
-  // `supported` defaults true while status is still loading (or outside
-  // Tauri) so the per-app options aren't shown disabled before we actually
-  // know they can't work.
-  const audioSourceSupported = audioSourceStatus?.supported ?? true;
+  // `audio_sources_list` only returns apps currently holding an audio
+  // session, so whatever is presently requested (even a quit app the
+  // visualizer is waiting to reattach to) may be missing from it. Union it
+  // in so the <select> always has a matching option — otherwise its value
+  // matches nothing, `selectedIndex` lands on -1, and the control renders
+  // blank. Falls back to the exe as its own label, same as the status line
+  // below and `describeAudioSource` do for an app with no known name.
+  const requestedExe = v.vizAudioSource.mode !== 'mix' ? v.vizAudioSource.exe : null;
+  const sourceOptionsWithRequested = requestedExe && !sourceOptions.some((o) => o.exe === requestedExe)
+    ? [...sourceOptions, { exe: requestedExe, name: requestedExe, icon: null }]
+    : sourceOptions;
 
   const panes: PaneDef[] = [
     {
@@ -178,14 +185,18 @@ export function SettingsWindow({
                 value={sourceKey(v.vizAudioSource)}
                 options={[
                   { value: 'mix', label: 'All system audio' },
-                  ...sourceOptions.flatMap((o) => [
-                    { value: `only:${o.exe}`, label: `Only ${o.name}`, disabled: !audioSourceSupported },
-                    { value: `except:${o.exe}`, label: `Everything except ${o.name}`, disabled: !audioSourceSupported },
+                  // Not gated on `supported`: an explicit pick here is exactly
+                  // what re-arms it on the Rust side (`CaptureCmd::SetSource`),
+                  // so disabling these on a sticky `supported: false` would
+                  // remove the only way to ask again.
+                  ...sourceOptionsWithRequested.flatMap((o) => [
+                    { value: `only:${o.exe}`, label: `Only ${o.name}` },
+                    { value: `except:${o.exe}`, label: `Everything except ${o.name}` },
                   ]),
                 ]}
                 onChange={(key) => set('vizAudioSource', parseSourceKey(key))}
               />
-              <AudioSourceStatusLine status={audioSourceStatus} options={sourceOptions} />
+              <AudioSourceStatusLine status={audioSourceStatus} options={sourceOptionsWithRequested} />
             </div>
           ),
         },
@@ -672,9 +683,13 @@ function AudioSourceStatusLine({ status, options }: {
 }) {
   if (!status) return null;
   if (status.supported === false) {
+    // `reason` carries whatever `audio_loopback::start` actually failed
+    // with — often a transient activation error, not a missing OS feature.
+    // The build-number message is a fallback for when Rust didn't send one,
+    // not an assertion about the cause.
     return (
       <div style={{ fontSize: 10.5, color: 'rgba(255,255,255,0.4)', textAlign: 'right' }}>
-        Per-app audio needs Windows 11 (build 20348+)
+        {status.reason ?? 'Per-app audio needs Windows 11 (build 20348+)'}
       </div>
     );
   }
