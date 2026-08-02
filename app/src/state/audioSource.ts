@@ -1,0 +1,35 @@
+// What the visualizer listens to, and how its per-source gain is keyed.
+// Pure module (no React, no Tauri) so it is node-testable, matching the
+// convention state/milkdrop-presets.ts and state/catalog.ts follow.
+
+export type AudioSource =
+  | { mode: 'mix' }
+  | { mode: 'only'; exe: string }
+  | { mode: 'except'; exe: string };
+
+export const DEFAULT_SENSITIVITY = 1.0;
+
+/** Mirrors Rust's `source_key` exactly — the two must agree or a user's gain
+ *  silently lands under a key nothing reads. */
+export function sourceKey(s: AudioSource): string {
+  return s.mode === 'mix' ? 'mix' : `${s.mode}:${s.exe}`;
+}
+
+export function effectiveSensitivity(map: Record<string, number>, s: AudioSource): number {
+  const v = map[sourceKey(s)];
+  return typeof v === 'number' && Number.isFinite(v) ? v : DEFAULT_SENSITIVITY;
+}
+
+/** `vizSensitivity` used to be one number for all audio. Fold it into the
+ *  per-source map as the mix entry so nobody's tuning resets on upgrade. */
+export function migrateSensitivity(raw: unknown): Record<string, number> {
+  if (typeof raw === 'number' && Number.isFinite(raw)) return { mix: raw };
+  if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+    const out: Record<string, number> = {};
+    for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+      if (typeof v === 'number' && Number.isFinite(v)) out[k] = v;
+    }
+    return out;
+  }
+  return {};
+}

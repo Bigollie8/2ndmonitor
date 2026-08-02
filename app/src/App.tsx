@@ -29,6 +29,8 @@ import {
 } from './state/pomodoro';
 import { TRACKS, ACCENT_PALETTES } from './data';
 import { useTweaks } from './state/useTweaks';
+import type { AudioSource } from './state/audioSource';
+import { effectiveSensitivity, migrateSensitivity } from './state/audioSource';
 import { UpdateToast } from './components/UpdateToast';
 import { useSysmon, useNowPlaying, useSpectrumRef } from './state/tauri';
 import { setWindowHidden } from './state/framePace';
@@ -114,7 +116,13 @@ interface TweakState extends Record<string, unknown> {
   accentTheme: AccentTheme;
   density: Density;
   vizArtBg: boolean;
-  vizSensitivity: number;
+  /** What the visualizer listens to — the whole system mix, or one app
+   *  included/excluded. See state/audioSource.ts. */
+  vizAudioSource: AudioSource;
+  /** Per-source input gain, keyed by `sourceKey(vizAudioSource)`. Replaces
+   *  the old single `vizSensitivity` scalar (migrated in migrateTweaks
+   *  below) so switching sources doesn't clobber a tuned gain. */
+  vizSensitivityBySource: Record<string, number>;
   vizSmoothing: number;
   vizColorOverride: VizColorOverride;
   lyricsOverlayEnabled: boolean;
@@ -171,7 +179,8 @@ const TWEAK_DEFAULTS: TweakState = {
   accentTheme: 'auto',
   density: 'compact',
   vizArtBg: false,
-  vizSensitivity: 1.0,
+  vizAudioSource: { mode: 'mix' },
+  vizSensitivityBySource: {},
   vizSmoothing: 0.0,
   vizColorOverride: { enabled: false, accent: '#a78bfa', accent2: '#ec4899' },
   lyricsOverlayEnabled: true,
@@ -214,6 +223,14 @@ function migrateTweaks(loaded: Record<string, unknown>): Record<string, unknown>
   // trap this wave removed.
   if (typeof loaded.vizMode === 'string') {
     loaded.vizMode = remapRetiredVizMode(loaded.vizMode) ?? loaded.vizMode;
+  }
+  // Audio-source sensitivity (added 2026-08): the old single `vizSensitivity`
+  // scalar becomes the 'mix' entry of the new per-source map, so upgrading
+  // doesn't reset anyone's tuned gain. Runs once — a saved
+  // `vizSensitivityBySource` (even `{}`) means this already happened.
+  if (loaded.vizSensitivityBySource === undefined && loaded.vizSensitivity !== undefined) {
+    loaded.vizSensitivityBySource = migrateSensitivity(loaded.vizSensitivity);
+    delete loaded.vizSensitivity;
   }
   const profilesField = loaded.profiles;
   // True first launch: nothing was loaded from disk at all (no profiles, no
@@ -362,6 +379,9 @@ function migrateTweaks(loaded: Record<string, unknown>): Record<string, unknown>
 
 export default function App() {
   const [t, setTweak, replaceTweaks, tweaksHydrated] = useTweaks<TweakState>(TWEAK_DEFAULTS, { migrate: migrateTweaks });
+  // Gain for whatever vizAudioSource currently points at — falls back to
+  // DEFAULT_SENSITIVITY the first time a given source is picked.
+  const vizSensitivity = effectiveSensitivity(t.vizSensitivityBySource, t.vizAudioSource);
   useEffect(() => {
     if (t.profiles.length > 0 && t.activeProfileId) return;
     const seeded: Profile[] = [
@@ -784,7 +804,7 @@ export default function App() {
             spectrumRef={spectrumRef}
             playback={livePlayback}
             showArtBg={t.vizArtBg}
-            sensitivity={t.vizSensitivity}
+            sensitivity={vizSensitivity}
             smoothing={t.vizSmoothing}
             lyricsOverlayEnabled={t.lyricsOverlayEnabled}
             videoEnabled={t.videoEnabled}
@@ -1094,7 +1114,7 @@ export default function App() {
               accent2={vizAccent2}
               spectrumRef={spectrumRef}
               currentMode={t.vizMode}
-              sensitivity={t.vizSensitivity}
+              sensitivity={vizSensitivity}
               smoothing={t.vizSmoothing}
               onPick={(m) => setTweak('vizMode', m)}
               onClose={() => setShowGallery(false)}

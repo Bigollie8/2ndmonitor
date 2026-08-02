@@ -2,6 +2,8 @@ import { UpdateCheckRow } from './UpdateCheckRow';
 import React, { useCallback, useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { VizMode, AccentTheme, Density, WeatherLocation } from '../types';
+import type { AudioSource } from '../state/audioSource';
+import { effectiveSensitivity, sourceKey } from '../state/audioSource';
 import type { GeocodeResult } from '../state/weatherLocation';
 import { ACCENT_PALETTES } from '../data';
 import { useVizStyles } from './useVizStyles';
@@ -39,7 +41,10 @@ export interface VizColorOverride {
 export interface SettingsValues {
   vizMode: VizMode;
   vizArtBg: boolean;
-  vizSensitivity: number;
+  /** What the visualizer listens to. Source picker UI lands in a later pass;
+   *  this pane still only exposes the sensitivity slider for it. */
+  vizAudioSource: AudioSource;
+  vizSensitivityBySource: Record<string, number>;
   vizSmoothing: number;
   vizColorOverride: VizColorOverride;
   lyricsOverlayEnabled: boolean;
@@ -162,9 +167,9 @@ export function SettingsWindow({
           hint: 'Input gain applied to the spectrum before drawing',
           control: (
             <SliderControl
-              value={v.vizSensitivity} min={0.3} max={2.5} step={0.05}
+              value={effectiveSensitivity(v.vizSensitivityBySource, v.vizAudioSource)} min={0.3} max={2.5} step={0.05}
               format={(x) => `${x.toFixed(2)}×`} accent={accent}
-              onChange={(x) => set('vizSensitivity', x)}
+              onChange={(x) => set('vizSensitivityBySource', { ...v.vizSensitivityBySource, [sourceKey(v.vizAudioSource)]: x })}
             />
           ),
         },
