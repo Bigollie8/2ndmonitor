@@ -158,6 +158,18 @@ const KEY_TAP_LIST: &str = "taps"; // kAudioAggregateDeviceTapListKey
 const KEY_SUBTAP_UID: &str = "uid"; // kAudioSubTapUIDKey
 const KEY_SUBTAP_DRIFT: &str = "drift"; // kAudioSubTapDriftCompensationKey
 
+/// Prefix of every UID this module gives one of its aggregate devices (the rest
+/// is pid/timestamp/tap-id, to keep two live captures from colliding).
+///
+/// `mixer::devices_snapshot` filters on it: `kAudioAggregateDeviceIsPrivateKey`
+/// hides the aggregate from *other* processes, not from the one that created
+/// it, and in the shape-(a) path below the aggregate carries the default output
+/// as a sub-device — so it presents output streams and would otherwise appear
+/// in our own output-device picker while a capture is live. Selecting it there
+/// would make a private aggregate whose IOProc zeroes its output buffers the
+/// system default, i.e. silence.
+pub const AGGREGATE_UID_PREFIX: &str = "com.secondmonitorhub.tap.";
+
 /// Fallback when neither the tap nor the aggregate device will tell us its
 /// rate. Only ever used after both queries have failed, and logged when it is.
 const FALLBACK_SAMPLE_RATE: u32 = 48_000;
@@ -757,9 +769,11 @@ unsafe fn create_aggregate_device(tap_id: AudioObjectID) -> Result<AudioObjectID
     let tap_list = arena.array(&[sub_tap])? as CFTypeRef;
 
     // A unique UID per aggregate, so two captures (or a stale one the HAL
-    // hasn't reaped yet) can never collide on the same device.
+    // hasn't reaped yet) can never collide on the same device. The shared
+    // prefix is what `mixer::devices_snapshot` filters on — see
+    // AGGREGATE_UID_PREFIX.
     let uid = format!(
-        "com.secondmonitorhub.tap.{}.{}.{tap_id}",
+        "{AGGREGATE_UID_PREFIX}{}.{}.{tap_id}",
         std::process::id(),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)

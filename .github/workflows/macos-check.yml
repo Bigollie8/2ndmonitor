@@ -1,7 +1,15 @@
+# The only automated verification the macOS port has: `cargo test` here LINKS,
+# which is what proves the hand-declared `extern "C"` Core Audio symbols in
+# audio_tap.rs actually resolve against the real framework. It therefore has to
+# keep running after this branch merges — a Windows-side edit to audio.rs,
+# mixer.rs or Cargo.toml can break the macOS build, and without `main` and
+# `pull_request` here nobody would find out until `tauri build` failed on
+# macos-latest halfway through a tagged release.
 name: macOS check
 on:
   push:
-    branches: [worktree-macos-support]
+    branches: [main, worktree-macos-support]
+  pull_request:
   workflow_dispatch:
 
 jobs:

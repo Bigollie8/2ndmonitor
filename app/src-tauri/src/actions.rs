@@ -55,9 +55,26 @@ pub fn app_open_url(url: String) -> Result<(), String> {
             .map_err(|e| format!("failed to launch browser: {e}"))?;
         return Ok(());
     }
-    #[cfg(not(windows))]
+    // macOS has no `xdg-open` — `open` is the system launcher, and it takes the
+    // URL as a single argument with no shell in between (unlike the Windows
+    // `cmd /C start` path above), so no extra quoting concerns apply. The
+    // spawn error is propagated rather than discarded: a silently-ignored
+    // NotFound here is exactly how "every link affordance does nothing, with no
+    // error anywhere" happens.
+    #[cfg(target_os = "macos")]
     {
-        let _ = Command::new("xdg-open").arg(trimmed).spawn();
+        Command::new("open")
+            .arg(trimmed)
+            .spawn()
+            .map_err(|e| format!("failed to launch browser: {e}"))?;
+        return Ok(());
+    }
+    #[cfg(all(not(windows), not(target_os = "macos")))]
+    {
+        Command::new("xdg-open")
+            .arg(trimmed)
+            .spawn()
+            .map_err(|e| format!("failed to launch browser: {e}"))?;
         Ok(())
     }
 }

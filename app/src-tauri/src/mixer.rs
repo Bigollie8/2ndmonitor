@@ -930,7 +930,8 @@ mod macimpl {
         kCFStringEncodingUTF8, CFStringGetCString, CFStringGetCStringPtr, CFStringRef,
     };
     use coreaudio_sys::{
-        kAudioDevicePropertyStreamConfiguration, kAudioHardwareNoError,
+        kAudioDevicePropertyDeviceUID, kAudioDevicePropertyStreamConfiguration,
+        kAudioHardwareNoError,
         kAudioHardwarePropertyDefaultOutputDevice, kAudioHardwarePropertyDevices,
         kAudioObjectPropertyElementMaster, kAudioObjectPropertyName,
         kAudioObjectPropertyScopeGlobal, kAudioObjectPropertyScopeOutput, kAudioObjectSystemObject,
@@ -1006,15 +1007,15 @@ mod macimpl {
         }
     }
 
-    /// `kAudioObjectPropertyName` as a CFStringRef, converted to an owned
-    /// `String`. Tries the zero-copy `CFStringGetCStringPtr` path first (only
-    /// available when the string is already backed by a contiguous UTF-8-ish
-    /// buffer internally); falls back to the always-correct
-    /// `CFStringGetCString` copy otherwise — the exact two-step dance Core
-    /// Audio client code (e.g. cpal's own coreaudio backend) uses for this.
-    unsafe fn read_device_name(id: AudioObjectID) -> Option<String> {
-        let addr = global_address(kAudioObjectPropertyName);
-        let mut name_ref: CFStringRef = null();
+    /// Any CFStringRef-valued global property, converted to an owned `String`.
+    /// Tries the zero-copy `CFStringGetCStringPtr` path first (only available
+    /// when the string is already backed by a contiguous UTF-8-ish buffer
+    /// internally); falls back to the always-correct `CFStringGetCString` copy
+    /// otherwise — the exact two-step dance Core Audio client code (e.g. cpal's
+    /// own coreaudio backend) uses for this.
+    unsafe fn read_string_property(id: AudioObjectID, selector: u32) -> Option<String> {
+        let addr = global_address(selector);
+        let mut str_ref: CFStringRef = null();
         let mut size = mem::size_of::<CFStringRef>() as u32;
         let status = AudioObjectGetPropertyData(
             id,
@@ -1022,26 +1023,39 @@ mod macimpl {
             0,
             null(),
             &mut size as *mut _,
-            &mut name_ref as *mut CFStringRef as *mut c_void,
+            &mut str_ref as *mut CFStringRef as *mut c_void,
         );
-        if status != kAudioHardwareNoError as i32 || name_ref.is_null() {
+        if status != kAudioHardwareNoError as i32 || str_ref.is_null() {
             return None;
         }
 
-        let ptr = CFStringGetCStringPtr(name_ref, kCFStringEncodingUTF8);
+        let ptr = CFStringGetCStringPtr(str_ref, kCFStringEncodingUTF8);
         let result = if !ptr.is_null() {
             CStr::from_ptr(ptr).to_str().ok().map(|s| s.to_string())
         } else {
             let mut buf = [0i8; 512];
-            let ok = CFStringGetCString(name_ref, buf.as_mut_ptr(), buf.len() as isize, kCFStringEncodingUTF8);
+            let ok = CFStringGetCString(str_ref, buf.as_mut_ptr(), buf.len() as isize, kCFStringEncodingUTF8);
             if ok != 0 {
                 Some(CStr::from_ptr(buf.as_ptr()).to_string_lossy().into_owned())
             } else {
                 None
             }
         };
-        CFRelease(name_ref as *const c_void);
+        CFRelease(str_ref as *const c_void);
         result
+    }
+
+    /// `kAudioObjectPropertyName` — the human-readable name shown in the picker.
+    unsafe fn read_device_name(id: AudioObjectID) -> Option<String> {
+        read_string_property(id, kAudioObjectPropertyName)
+    }
+
+    /// `kAudioDevicePropertyDeviceUID` — the stable string id the HAL knows the
+    /// device by, and the only way to recognize one of our own tap aggregates
+    /// (their display name is user-facing text, their UID is ours by
+    /// construction).
+    unsafe fn read_device_uid(id: AudioObjectID) -> Option<String> {
+        read_string_property(id, kAudioDevicePropertyDeviceUID)
     }
 
     /// Sum of `mNumberChannels` across every buffer in the device's output
@@ -1122,6 +1136,21 @@ mod macimpl {
             for id in ids {
                 let channels = output_channel_count(id).unwrap_or(0);
                 if channels == 0 {
+                    continue;
+                }
+                // Our own capture aggregate (audio_tap.rs) is created private,
+                // but `kAudioAggregateDeviceIsPrivateKey` only hides it from
+                // *other* processes — this enumeration runs in the process that
+                // created it, and in the shape-(a) path it carries the default
+                // output as a sub-device, so it has output streams and survives
+                // the channel filter above. Left in, the user would see a
+                // phantom "Second-Monitor Hub Capture" device appear and vanish
+                // with every source switch, and selecting it would make a
+                // private aggregate whose IOProc zeroes its output buffers the
+                // system default: silence.
+                if read_device_uid(id)
+                    .is_some_and(|uid| uid.starts_with(crate::audio_tap::AGGREGATE_UID_PREFIX))
+                {
                     continue;
                 }
                 let name = read_device_name(id).unwrap_or_else(|| "Unknown".to_string());
