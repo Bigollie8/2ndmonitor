@@ -5,6 +5,14 @@ All notable changes to 2ndMonitor are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.6.2] - 2026-08-02
+
+### Changed
+- "Reset layout" now clears the profile's canvas completely and drops you
+  into edit mode with the tile picker at hand, instead of re-placing every
+  tile type (which recreated the 28-tile pile-up 0.6.1 fixed for fresh
+  installs)
+
 ## [0.6.1] - 2026-08-02
 
 ### Fixed

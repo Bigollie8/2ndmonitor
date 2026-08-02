@@ -760,13 +760,11 @@ export default function App() {
     });
     if (survivor) setTweak('vizMode', survivor.id);
   };
+  // Reset = empty canvas, not the full catalog. Placing every tile type gave
+  // 28 overlapping tiles (only the core eight have a designed layout); starting
+  // from nothing and adding via the edit-mode picker is the intended flow.
   const resetLayout = () => {
-    const defaults = orientation === 'portrait' ? DEFAULT_PORTRAIT_LAYOUT : DEFAULT_LANDSCAPE_LAYOUT;
-    updateActiveOrientation({
-      tiles: ALL_TILE_TYPES.map((type) => ({
-        instanceId: newId(), type, rect: defaults[type],
-      })),
-    });
+    updateActiveOrientation({ tiles: [] });
   };
 
   const renderTile = (instance: TileInstance) => {
@@ -1147,7 +1145,9 @@ export default function App() {
           trackTitle={track.title}
           onOpenContentLibrary={() => { setShowSettings(false); setShowContentLibrary(true); }}
           onReplayOnboarding={() => { setShowSettings(false); setShowOnboarding(true); }}
-          onResetLayout={resetLayout}
+          // Close Settings and drop into edit mode so the empty canvas lands
+          // with the "+ Add tile" picker one click away.
+          onResetLayout={() => { resetLayout(); setShowSettings(false); setEditMode(true); }}
           onExportSettings={async () => {
             try {
               const { invoke } = await import('@tauri-apps/api/core');
