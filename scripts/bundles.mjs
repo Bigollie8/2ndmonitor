@@ -295,6 +295,20 @@ if (cmd === 'publish') {
       console.log(`- ${b.id}@${b.version} already published, skipping`);
       continue;
     }
+
+    // The offline pipeline's render gate deliberately withholds preview.png from
+    // a preset that renders black — such a preset is staged (it passed
+    // validate()'s shallow JSON checks) but must never be published, since a
+    // published preset with no preview is indistinguishable from one nobody got
+    // around to generating a preview for. One gate-rejected preset must not
+    // block the rest of the batch — same isolation principle as the
+    // bad-preview handling a few lines below.
+    if (b.kind === 'preset' && !existsSync(join(BUNDLES, b.id, 'preview.png'))) {
+      console.error(`✗ ${b.id}: preset has no preview.png (render-gate reject) — not publishing`);
+      process.exitCode = 1;
+      continue;
+    }
+
     const manifest = readFileSync(join(BUNDLES, b.id, 'manifest.json'), 'utf8');
     const code = readFileSync(join(BUNDLES, b.id, b.codeFile), 'utf8');
 

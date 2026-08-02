@@ -258,7 +258,15 @@ function MilkdropSurface({ accent, accent2, spectrumRef, paused, onOpenLibrary }
     setLibraryVersion((v) => v + 1);
     const lib = libraryRef.current;
     const stillThere = prevKey !== undefined && lib.some((e) => e.key === prevKey);
-    if (!forceReload && stillThere) return;
+    if (!forceReload && stillThere) {
+      // The rebuilt library can shift positions even when the playing preset is
+      // still in it (e.g. installing a marketplace preset shifts every bundled
+      // entry's index) — re-point indexRef at the same entry's new position so
+      // the picker highlight, next/prev walking, and the tint-rebuild effect
+      // (all of which read library[indexRef.current]) stay in sync.
+      indexRef.current = lib.findIndex((e) => e.key === prevKey);
+      return;
+    }
     const savedKey = localStorage.getItem(LS_PRESET);
     const savedIndex = savedKey ? lib.findIndex((e) => e.key === savedKey) : -1;
     void loadAt(savedIndex >= 0 ? savedIndex : Math.floor(Math.random() * lib.length), 0);
