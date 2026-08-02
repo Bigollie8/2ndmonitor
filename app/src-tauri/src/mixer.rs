@@ -119,9 +119,40 @@ pub fn spawn<R: Runtime>(app: AppHandle<R>) {
     });
 }
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
 fn worker<R: Runtime>(_app: AppHandle<R>, _rx: Receiver<MixerCmd>) -> Result<(), String> {
     Ok(())
+}
+
+/// Same shape as the Windows worker above, minus the COM apartment dance —
+/// Core Audio's `AudioObject*` calls need no per-thread initialization. Only
+/// `SetDefaultOutput` is handled; master/session volume commands are no-ops
+/// on macOS (no public per-app or master-volume API — see module docs), so
+/// `MixerSnapshot.master` stays `None` and `.sessions` stays empty. The
+/// frontend already renders that combination correctly (master row disabled,
+/// no per-app rows, device rows populated).
+#[cfg(target_os = "macos")]
+fn worker<R: Runtime>(app: AppHandle<R>, rx: Receiver<MixerCmd>) -> Result<(), String> {
+    loop {
+        // Block up to 1 second for a setter; emit a snapshot either way —
+        // mirrors the Windows loop's coalescing behaviour.
+        let cmd = rx.recv_timeout(Duration::from_secs(1));
+        if let Ok(c) = cmd {
+            macimpl::apply_cmd(c);
+            while let Ok(c) = rx.try_recv() {
+                macimpl::apply_cmd(c);
+            }
+        }
+        if !MIXER_ACTIVE.load(Ordering::Relaxed) {
+            continue;
+        }
+        let snap = macimpl::capture().unwrap_or_else(|_| MixerSnapshot {
+            master: None,
+            devices: vec![],
+            sessions: vec![],
+        });
+        let _ = app.emit("mixer:state", snap);
+    }
 }
 
 #[cfg(target_os = "windows")]
@@ -226,7 +257,12 @@ pub fn default_endpoint_id() -> Result<String, String> {
     }
 }
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(target_os = "macos")]
+pub fn default_endpoint_id() -> Result<String, String> {
+    macimpl::default_output_device_id().map(|id| id.to_string())
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
 pub fn default_endpoint_id() -> Result<String, String> {
     Err("default endpoint id is Windows-only".to_string())
 }
@@ -816,5 +852,259 @@ mod winimpl {
             writer.write_image_data(&rgba).ok()?;
         }
         Some(out)
+    }
+}
+
+/// Core Audio device enumeration and default-output switching, backed by
+/// `AudioObjectGetPropertyData`/`AudioObjectSetPropertyData` on
+/// `kAudioObjectSystemObject` — the HAL-level equivalent of the Windows
+/// `IMMDeviceEnumerator` calls in `winimpl` above.
+///
+/// Per-app volume has no public Core Audio equivalent of Windows'
+/// `ISimpleAudioVolume`/session model, so this module never touches
+/// `MixerSnapshot.sessions` (left empty by the caller) and doesn't implement
+/// master volume/mute either (no property is wired up for it — out of scope
+/// for this module; `MixerSnapshot.master` is always `None` on macOS today).
+#[cfg(target_os = "macos")]
+mod macimpl {
+    use super::{MixerCmd, MixerSnapshot, OutputDevice};
+    use core_foundation_sys::base::CFRelease;
+    use core_foundation_sys::string::{
+        kCFStringEncodingUTF8, CFStringGetCString, CFStringGetCStringPtr, CFStringRef,
+    };
+    use coreaudio_sys::{
+        kAudioDevicePropertyStreamConfiguration, kAudioHardwareNoError,
+        kAudioHardwarePropertyDefaultOutputDevice, kAudioHardwarePropertyDevices,
+        kAudioObjectPropertyElementMaster, kAudioObjectPropertyName,
+        kAudioObjectPropertyScopeGlobal, kAudioObjectPropertyScopeOutput, kAudioObjectSystemObject,
+        AudioBuffer, AudioBufferList, AudioObjectGetPropertyData, AudioObjectGetPropertyDataSize,
+        AudioObjectID, AudioObjectPropertyAddress, AudioObjectSetPropertyData,
+    };
+    use std::ffi::{c_void, CStr};
+    use std::mem;
+    use std::ptr::null;
+
+    fn check(status: i32) -> Result<(), String> {
+        if status != kAudioHardwareNoError as i32 {
+            Err(format!("Core Audio error {status}"))
+        } else {
+            Ok(())
+        }
+    }
+
+    fn global_address(selector: u32) -> AudioObjectPropertyAddress {
+        AudioObjectPropertyAddress {
+            mSelector: selector,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMaster,
+        }
+    }
+
+    /// Reads a fixed-size scalar property (anything that fits in `T`, here
+    /// always a 4-byte `AudioObjectID`) off `object`.
+    unsafe fn get_scalar<T: Copy>(
+        object: AudioObjectID,
+        addr: &AudioObjectPropertyAddress,
+        default: T,
+    ) -> Result<T, String> {
+        let mut value = default;
+        let mut size = mem::size_of::<T>() as u32;
+        let status = AudioObjectGetPropertyData(
+            object,
+            addr as *const _,
+            0,
+            null(),
+            &mut size as *mut _,
+            &mut value as *mut T as *mut c_void,
+        );
+        check(status)?;
+        Ok(value)
+    }
+
+    /// The current default output device — polled every 2 s by the audio
+    /// supervisor's device-follow watcher via `super::default_endpoint_id`,
+    /// and used here to compute each enumerated device's `is_default`.
+    pub fn default_output_device_id() -> Result<AudioObjectID, String> {
+        unsafe {
+            let addr = global_address(kAudioHardwarePropertyDefaultOutputDevice);
+            get_scalar(kAudioObjectSystemObject, &addr, 0)
+        }
+    }
+
+    /// `kAudioObjectPropertyName` as a CFStringRef, converted to an owned
+    /// `String`. Tries the zero-copy `CFStringGetCStringPtr` path first (only
+    /// available when the string is already backed by a contiguous UTF-8-ish
+    /// buffer internally); falls back to the always-correct
+    /// `CFStringGetCString` copy otherwise — the exact two-step dance Core
+    /// Audio client code (e.g. cpal's own coreaudio backend) uses for this.
+    unsafe fn read_device_name(id: AudioObjectID) -> Option<String> {
+        let addr = global_address(kAudioObjectPropertyName);
+        let mut name_ref: CFStringRef = null();
+        let mut size = mem::size_of::<CFStringRef>() as u32;
+        let status = AudioObjectGetPropertyData(
+            id,
+            &addr as *const _,
+            0,
+            null(),
+            &mut size as *mut _,
+            &mut name_ref as *mut CFStringRef as *mut c_void,
+        );
+        if status != kAudioHardwareNoError as i32 || name_ref.is_null() {
+            return None;
+        }
+
+        let ptr = CFStringGetCStringPtr(name_ref, kCFStringEncodingUTF8);
+        let result = if !ptr.is_null() {
+            CStr::from_ptr(ptr).to_str().ok().map(|s| s.to_string())
+        } else {
+            let mut buf = [0i8; 512];
+            let ok = CFStringGetCString(name_ref, buf.as_mut_ptr(), buf.len() as isize, kCFStringEncodingUTF8);
+            if ok != 0 {
+                Some(CStr::from_ptr(buf.as_ptr()).to_string_lossy().into_owned())
+            } else {
+                None
+            }
+        };
+        CFRelease(name_ref as *const c_void);
+        result
+    }
+
+    /// Sum of `mNumberChannels` across every buffer in the device's output
+    /// stream configuration — zero means the device has no output streams
+    /// (e.g. an input-only mic), the filter this task's brief calls for.
+    unsafe fn output_channel_count(id: AudioObjectID) -> Result<u32, String> {
+        let addr = AudioObjectPropertyAddress {
+            mSelector: kAudioDevicePropertyStreamConfiguration,
+            mScope: kAudioObjectPropertyScopeOutput,
+            mElement: kAudioObjectPropertyElementMaster,
+        };
+        let mut size: u32 = 0;
+        let status =
+            AudioObjectGetPropertyDataSize(id, &addr as *const _, 0, null(), &mut size as *mut _);
+        // A device that simply has no output-scope streams (e.g. a
+        // microphone) reports this as an error on some devices rather than a
+        // zero size — either way, "no output streams" for our purposes.
+        if status != kAudioHardwareNoError as i32 || size == 0 {
+            return Ok(0);
+        }
+
+        let mut buf: Vec<u8> = vec![0u8; size as usize];
+        let status = AudioObjectGetPropertyData(
+            id,
+            &addr as *const _,
+            0,
+            null(),
+            &mut size as *mut _,
+            buf.as_mut_ptr() as *mut c_void,
+        );
+        check(status)?;
+
+        let list = buf.as_ptr() as *const AudioBufferList;
+        let n_buffers = (*list).mNumberBuffers as usize;
+        if n_buffers == 0 {
+            return Ok(0);
+        }
+        let first: *const AudioBuffer = (*list).mBuffers.as_ptr();
+        let buffers = std::slice::from_raw_parts(first, n_buffers);
+        Ok(buffers.iter().map(|b| b.mNumberChannels).sum())
+    }
+
+    /// All devices with at least one output stream, sorted default-first
+    /// then alphabetically — mirrors `winimpl::capture`'s device sort so the
+    /// UI ordering is consistent across platforms.
+    pub fn devices_snapshot() -> Result<Vec<OutputDevice>, String> {
+        unsafe {
+            let addr = global_address(kAudioHardwarePropertyDevices);
+            let mut size: u32 = 0;
+            let status = AudioObjectGetPropertyDataSize(
+                kAudioObjectSystemObject,
+                &addr as *const _,
+                0,
+                null(),
+                &mut size as *mut _,
+            );
+            check(status)?;
+
+            let count = size as usize / mem::size_of::<AudioObjectID>();
+            let mut ids: Vec<AudioObjectID> = vec![0; count];
+            let status = AudioObjectGetPropertyData(
+                kAudioObjectSystemObject,
+                &addr as *const _,
+                0,
+                null(),
+                &mut size as *mut _,
+                ids.as_mut_ptr() as *mut c_void,
+            );
+            check(status)?;
+
+            // Best-effort: if the default-device query itself fails, fall
+            // back to "nothing is marked default" rather than failing the
+            // whole enumeration.
+            let default_id = default_output_device_id().ok();
+
+            let mut devices = Vec::with_capacity(ids.len());
+            for id in ids {
+                let channels = output_channel_count(id).unwrap_or(0);
+                if channels == 0 {
+                    continue;
+                }
+                let name = read_device_name(id).unwrap_or_else(|| "Unknown".to_string());
+                let is_default = default_id == Some(id);
+                devices.push(OutputDevice { id: id.to_string(), name, is_default });
+            }
+            devices.sort_by(|a, b| {
+                b.is_default
+                    .cmp(&a.is_default)
+                    .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+            });
+            Ok(devices)
+        }
+    }
+
+    /// Sets the system default output device. Rejects an id that doesn't
+    /// parse as an `AudioObjectID` outright rather than silently falling
+    /// back to some device — a bad id here should be loud, not quietly wrong.
+    pub fn set_default_output(device_id: &str) -> Result<(), String> {
+        let id: AudioObjectID = device_id
+            .parse()
+            .map_err(|_| format!("invalid Core Audio device id: {device_id:?}"))?;
+        unsafe {
+            let addr = global_address(kAudioHardwarePropertyDefaultOutputDevice);
+            let size = mem::size_of::<AudioObjectID>() as u32;
+            let status = AudioObjectSetPropertyData(
+                kAudioObjectSystemObject,
+                &addr as *const _,
+                0,
+                null(),
+                size,
+                &id as *const AudioObjectID as *const c_void,
+            );
+            check(status)
+        }
+    }
+
+    /// Applies one queued mixer command. Only `SetDefaultOutput` does
+    /// anything on macOS; the rest are master/session-volume commands with
+    /// no Core Audio path wired up here (see module docs), so they're
+    /// intentionally no-ops rather than errors — matching how the Windows
+    /// worker just logs-and-continues on a failed command.
+    pub fn apply_cmd(cmd: MixerCmd) {
+        let result = match cmd {
+            MixerCmd::SetDefaultOutput(id) => set_default_output(&id),
+            MixerCmd::SetMasterVolume(_)
+            | MixerCmd::SetMasterMute(_)
+            | MixerCmd::SetSessionVolume(_, _)
+            | MixerCmd::SetSessionMute(_, _)
+            | MixerCmd::Refresh => Ok(()),
+        };
+        if let Err(e) = result {
+            eprintln!("mixer cmd: {e}");
+        }
+    }
+
+    /// One snapshot for the worker's periodic emit: real devices, no master
+    /// state, no sessions (see module docs for why).
+    pub fn capture() -> Result<MixerSnapshot, String> {
+        Ok(MixerSnapshot { master: None, devices: devices_snapshot()?, sessions: vec![] })
     }
 }

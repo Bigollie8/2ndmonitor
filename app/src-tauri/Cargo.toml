@@ -93,6 +93,16 @@ keyring = "3"
 objc2 = "0.5"
 objc2-app-kit = { version = "0.2", features = ["NSWorkspace", "NSRunningApplication", "libc"] }
 objc2-foundation = "0.2"
+# Backs mixer.rs's Core Audio device enumeration / default-output switching
+# (AudioObjectGetPropertyData et al. on kAudioObjectSystemObject). Raw bindgen
+# bindings, not the higher-level coreaudio-rs wrapper, since we only need a
+# handful of AudioObject property calls. core-foundation-sys converts the
+# CFStringRef device names to Rust String — the same crate cpal's own
+# coreaudio backend uses for this (and already resolves in Cargo.lock via
+# cpal's transitive coreaudio-rs dependency), so this doesn't add a new
+# family of CF bindings, just our own direct edge to it.
+coreaudio-sys = "0.2"
+core-foundation-sys = "0.8"
 
 [profile.release]
 opt-level = "s"

@@ -4070,6 +4070,8 @@ version = "0.6.4"
 dependencies = [
  "arboard",
  "base64 0.22.1",
+ "core-foundation-sys",
+ "coreaudio-sys",
  "cpal",
  "ed25519-dalek",
  "hex",
