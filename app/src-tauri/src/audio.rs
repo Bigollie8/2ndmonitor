@@ -17,6 +17,11 @@
 //! loopback (`audio_loopback`). A supervisor thread owns whichever one is
 //! live — see [`supervisor`] — so exactly one backend writes the ring at any
 //! moment, and the frontend drives it with the `audio_set_source` command.
+//!
+//! That supervisor also *watches*: every two seconds it reattaches to the
+//! chosen app as it starts or stops playing, rebuilds a capture the OS
+//! invalidated, and follows a change of default playback device. See
+//! [`Supervisor::tick`].
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use parking_lot::Mutex;
@@ -202,7 +207,18 @@ struct Supervisor<R: Runtime> {
     active_exe: Option<String>,
     supported: bool,
     reason: Option<String>,
+    /// Id of the default render endpoint as of the last swap — what the live
+    /// capture is bound to. `None` when it could not be read (no audio device,
+    /// COM unavailable), which is a value the watcher compares like any other.
+    endpoint_id: Option<String>,
 }
+
+/// How often the watcher looks for an app to (re)attach to, a dead backend to
+/// rebuild, or a new default endpoint. Also the supervisor's `recv` timeout, so
+/// a command is still serviced the instant it arrives. Two seconds is the
+/// slowest the reattach can feel without seeming broken, and the cheapest tick
+/// (mix requested, mix healthy) is one endpoint query.
+const WATCH_INTERVAL: Duration = Duration::from_secs(2);
 
 fn supervisor<R: Runtime>(
     app: AppHandle<R>,
@@ -218,14 +234,15 @@ fn supervisor<R: Runtime>(
         active_exe: None,
         supported: true,
         reason: None,
+        endpoint_id: None,
     };
     // Startup goes through the same path as any later change, so the frontend
     // has a state event before it asks for anything.
     sup.apply(Source::Mix);
 
-    while let Ok(cmd) = rx.recv() {
-        match cmd {
-            CaptureCmd::SetSource(s) => {
+    loop {
+        match rx.recv_timeout(WATCH_INTERVAL) {
+            Ok(CaptureCmd::SetSource(s)) => {
                 // An explicit request re-arms per-app capture. `supported` is a
                 // hint learned from one failed activation, and `start` returns
                 // Err for plenty of transient reasons (Initialize against a
@@ -236,9 +253,19 @@ fn supervisor<R: Runtime>(
                 // feature lockout with no way back. So: the sticky bit only
                 // suppresses *automatic* re-attempts (a watcher tick), never a
                 // user asking for it again.
+                //
+                // This is exactly why the watcher must call `sup.apply` itself
+                // rather than post a `SetSource` to this channel: a tick routed
+                // through here would re-arm the flag every two seconds and
+                // retry activation forever on a machine that genuinely cannot
+                // do process loopback.
                 sup.supported = true;
                 sup.apply(s);
             }
+            Err(mpsc::RecvTimeoutError::Timeout) => sup.tick(),
+            // Every sender lives in a process-lifetime static, so this only
+            // happens at shutdown. Stop rather than spin.
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
         }
     }
 }
@@ -249,20 +276,7 @@ impl<R: Runtime> Supervisor<R> {
     /// state without touching the capture, so callers may call it freely.
     fn apply(&mut self, requested: Source) {
         self.requested = requested;
-        // "App not running" is decided here, by the session lookup — NOT by
-        // `audio_loopback::start` failing. Activating against a stale or bogus
-        // PID succeeds and then yields silence forever, so a missing session
-        // must be caught before we ever try.
-        let pid = target_exe(&self.requested).and_then(crate::mixer::find_pid_for_exe);
-        let active = if self.supported {
-            decide(&self.requested, pid)
-        } else {
-            // Activation failed the last time it was asked for, so automatic
-            // re-attempts (a watcher tick) stop here rather than tearing down a
-            // working mix stream on every poll. An explicit `audio_set_source`
-            // clears this first, so the user is never locked out.
-            Active::Mix
-        };
+        let active = self.decision_now();
 
         // Why we are not on the requested source, if we are not. Computed from
         // the decision rather than the swap, so the skip path below reports the
@@ -334,6 +348,12 @@ impl<R: Runtime> Supervisor<R> {
 
         self.live = live;
         self.active = Some(settled);
+        // Read *after* the backend is up, so a device switch that raced this
+        // build is seen as a difference on the next tick instead of being
+        // baked in as "what we're bound to". Refreshed on every swap, process
+        // captures included: they die on an endpoint change too, and the mix
+        // stream we fall back to must not inherit a stale id.
+        self.endpoint_id = crate::mixer::default_endpoint_id().ok();
         // Must happen on *every* swap, including the fallback paths: the FFT's
         // band edges are derived from this, so a stale value silently misplaces
         // every frequency band.
@@ -341,6 +361,101 @@ impl<R: Runtime> Supervisor<R> {
         self.active_exe = exe;
         self.reason = reason;
         self.emit();
+    }
+
+    /// Which backend `requested` implies *right now*, i.e. what `apply` would
+    /// settle on if it ran this instant.
+    ///
+    /// "App not running" is decided here, by the session lookup — NOT by
+    /// `audio_loopback::start` failing. Activating against a stale or bogus PID
+    /// succeeds and then yields silence forever, so a missing session must be
+    /// caught before we ever try.
+    ///
+    /// Costs a COM session enumeration (a few ms) whenever the requested source
+    /// names an app, and nothing at all for `Mix` — `target_exe` is `None`, so
+    /// `find_pid_for_exe` is never called.
+    fn decision_now(&self) -> Active {
+        let pid = target_exe(&self.requested).and_then(crate::mixer::find_pid_for_exe);
+        if self.supported {
+            decide(&self.requested, pid)
+        } else {
+            // Activation failed the last time it was asked for, so automatic
+            // re-attempts (a watcher tick) stop here rather than tearing down a
+            // working mix stream on every poll. An explicit `audio_set_source`
+            // clears this first, so the user is never locked out.
+            Active::Mix
+        }
+    }
+
+    /// One watcher pass. Runs on the supervisor thread every `WATCH_INTERVAL`,
+    /// and calls `apply` **directly** — never through `CaptureCmd::SetSource`,
+    /// which would re-arm the sticky `supported` flag and retry a hopeless
+    /// activation forever (see the note in `supervisor`).
+    ///
+    /// Three things can have changed since the last tick:
+    /// 1. the default playback device (rebind — nothing follows it for us),
+    /// 2. the live backend died (an invalidated endpoint leaves the object
+    ///    intact and the ring frozen, so only `live_matches` can tell),
+    /// 3. the chosen app started, stopped, or restarted under a new pid.
+    ///
+    /// Anything else must produce no event and no churn: this runs forever, on
+    /// every machine, whether or not the feature is used.
+    fn tick(&mut self) {
+        // (1) Follow the default endpoint. One enumerator + GetId, no session
+        // walk — cheap enough to pay unconditionally, which matters because a
+        // per-app request whose app is silent is *also* sitting on a mix
+        // stream. Skipped while a process capture is live: that one is torn
+        // down and rebuilt by (2) below when the endpoint change kills it, and
+        // rebuilding it here as well would double the interruption.
+        if !matches!(self.live, Live::Process(_)) {
+            let now_id = crate::mixer::default_endpoint_id().ok();
+            if now_id != self.endpoint_id {
+                eprintln!("audio: default output device changed, rebinding capture");
+                // `apply` is idempotent and the old stream has usually not
+                // errored *yet*, so it would take the skip path and leave us on
+                // the dead endpoint. Clearing the settled decision is what
+                // forces the rebuild; `apply` then refreshes `endpoint_id`,
+                // `SAMPLE_RATE` (a new endpoint may run at a different rate)
+                // and emits.
+                self.active = None;
+                self.apply(self.requested.clone());
+                return;
+            }
+        }
+
+        if matches!(self.requested, Source::Mix) {
+            // The feature is unused, so there is no app to look for and no
+            // session enumeration to pay for. One case still needs handling:
+            // the mix stream died without the endpoint id changing (device
+            // disabled and re-enabled, driver restart). That costs only the
+            // atomic below, and the guard means a machine with no audio device
+            // at all (`Live::None`) stays quiet instead of failing to open the
+            // mix every two seconds.
+            if matches!(&self.live, Live::Mix(_, alive) if !alive.load(Ordering::Relaxed)) {
+                eprintln!("audio: mix capture stopped, rebuilding");
+                self.apply(Source::Mix);
+            }
+            return;
+        }
+
+        // (2) + (3): has the decision changed, or has the backend behind it
+        // stopped? Identical to `apply`'s own skip condition, deliberately —
+        // asking `apply` and letting it no-op would re-emit an `audio:source`
+        // event every two seconds for a frontend with nothing to learn.
+        let want = self.decision_now();
+        // `Live::None` means the mix itself could not be opened. While that is
+        // still the decision (the app is silent), re-applying every two seconds
+        // would just re-fail, re-log and re-emit; the endpoint check above is
+        // what notices a device worth retrying for, and an explicit source
+        // change always retries from scratch. Same reasoning as the `Mix`
+        // branch above, which is why that one only rebuilds a *dead stream*.
+        if want == Active::Mix && matches!(self.live, Live::None) {
+            return;
+        }
+        if self.active == Some(want) && self.live_matches(want) {
+            return;
+        }
+        self.apply(self.requested.clone());
     }
 
     /// Is the live backend the one `active` calls for, and *still capturing*?

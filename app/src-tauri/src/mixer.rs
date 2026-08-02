@@ -196,6 +196,41 @@ pub fn sessions_snapshot() -> Result<Vec<AppSession>, String> {
 #[cfg(not(target_os = "windows"))]
 pub fn sessions_snapshot() -> Result<Vec<AppSession>, String> { Ok(vec![]) }
 
+/// Device id of the current default *render* endpoint (`eConsole` role) — the
+/// one WASAPI loopback captures. The audio supervisor polls this to notice a
+/// playback-device switch (including one made from the mixer tile's own
+/// dropdown) and rebind its capture, since neither cpal nor the process
+/// loopback client follows the default device on its own.
+///
+/// Deliberately much cheaper than [`sessions_snapshot`]: one enumerator plus
+/// `GetDefaultAudioEndpoint` + `GetId`, no session walk, no per-process image
+/// lookups. Same COM-apartment handling as `sessions_snapshot` — see the
+/// `RPC_E_CHANGED_MODE` note there.
+#[cfg(target_os = "windows")]
+pub fn default_endpoint_id() -> Result<String, String> {
+    use windows::Win32::Foundation::RPC_E_CHANGED_MODE;
+    use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_MULTITHREADED};
+    unsafe {
+        let hr = CoInitializeEx(None, COINIT_MULTITHREADED);
+        if hr.is_err() && hr != RPC_E_CHANGED_MODE {
+            return Err(format!("CoInitializeEx: {}", hr.message()));
+        }
+        let result = (|| {
+            let en = winimpl::create_enumerator().map_err(|e| e.to_string())?;
+            winimpl::default_endpoint_id(&en).map_err(|e| e.to_string())
+        })();
+        if hr.is_ok() {
+            CoUninitialize();
+        }
+        result
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn default_endpoint_id() -> Result<String, String> {
+    Err("default endpoint id is Windows-only".to_string())
+}
+
 /// PID of the first live session whose executable basename matches `exe`
 /// (lowercased comparison). `None` when the app isn't producing audio.
 pub fn find_pid_for_exe(exe: &str) -> Option<u32> {
@@ -238,6 +273,13 @@ mod winimpl {
 
     pub unsafe fn create_enumerator() -> windows::core::Result<IMMDeviceEnumerator> {
         CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)
+    }
+
+    /// Just the default render endpoint's id — the first two calls `capture`
+    /// makes, without the rest of the snapshot.
+    pub unsafe fn default_endpoint_id(en: &IMMDeviceEnumerator) -> windows::core::Result<String> {
+        let d = en.GetDefaultAudioEndpoint(eRender, eConsole)?;
+        Ok(pwstr_id(d.GetId()?))
     }
 
     pub unsafe fn capture(en: &IMMDeviceEnumerator) -> windows::core::Result<MixerSnapshot> {
