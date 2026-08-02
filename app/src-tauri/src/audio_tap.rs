@@ -998,8 +998,12 @@ mod tests {
     #[test]
     fn a_tap_on_no_processes_is_rejected() {
         let buffer = Arc::new(Mutex::new(Vec::new()));
-        let err = start(TapTarget::Only(vec![]), buffer, 1024).unwrap_err();
-        assert!(err.contains("capture nothing"), "unexpected error: {err}");
+        // Not `unwrap_err`: `TapCapture` is deliberately not `Debug` (it holds
+        // opaque Core Audio handles), so match the result instead.
+        match start(TapTarget::Only(vec![]), buffer, 1024) {
+            Ok(_) => panic!("a tap on an empty process list was accepted"),
+            Err(e) => assert!(e.contains("capture nothing"), "unexpected error: {e}"),
+        }
     }
 
     /// Peak absolute sample currently in the ring.
