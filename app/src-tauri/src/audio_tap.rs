@@ -219,9 +219,15 @@ impl TapCapture {
     /// underneath us (the tapped process quitting, the default output changing,
     /// the aggregate device being torn down by the HAL), and a dead device
     /// leaves the ring frozen on its last samples with the visualizer locked to
-    /// a static frame. Callback progress is the signal we do have: the IO cycle
-    /// is clocked by the aggregate's main sub-device, so it keeps firing
-    /// through silence, and it stopping means the device stopped.
+    /// a static frame. Callback progress is the signal we do have.
+    ///
+    /// This rests on an assumption we have not been able to verify on hardware:
+    /// that the IO cycle is clocked by the aggregate's main sub-device and so
+    /// keeps firing through silence, making a *stopped* callback mean a stopped
+    /// device rather than a quiet one. If that turns out to be wrong the
+    /// symptom is specific and recognisable — the supervisor rebuilding the
+    /// capture every few seconds while nothing is playing — and the fix is to
+    /// pin this to the `alive` flag alone.
     pub fn is_alive(&self) -> bool {
         if !self.alive.load(Ordering::Relaxed) {
             return false;
@@ -235,6 +241,17 @@ impl TapCapture {
         seen.1.elapsed() < STALE_AFTER
     }
 }
+
+/// The supervisor in `audio.rs` moves its live backend between threads, so a
+/// `TapCapture` that stopped being `Send` would fail there rather than here.
+/// Nothing in it is thread-affine — the raw pointer Core Audio holds lives in
+/// Core Audio, not in this struct — so pin that in at compile time.
+const _: () = {
+    fn assert_send_sync<T: Send + Sync>() {}
+    fn assertion() {
+        assert_send_sync::<TapCapture>();
+    }
+};
 
 impl Drop for TapCapture {
     fn drop(&mut self) {
@@ -290,6 +307,12 @@ pub fn start(
     buffer: Arc<Mutex<Vec<f32>>>,
     ring_cap: usize,
 ) -> Result<TapCapture, String> {
+    // `Except(vec![])` is meaningful — it's the system mix, and `AllProcesses`
+    // is spelled that way internally. `Only(vec![])` is not: it would build a
+    // tap that captures nothing and looks alive doing it.
+    if matches!(&target, TapTarget::Only(pids) if pids.is_empty()) {
+        return Err("a tap on an empty process list would capture nothing".to_string());
+    }
     unsafe {
         let tap_id = create_tap(&target)?;
 
@@ -968,6 +991,15 @@ mod tests {
         let mono = [1.0f32, 2.0, 3.0];
         push_mono(&[(&mono[..], 1)], &buffer, 4);
         assert_eq!(*buffer.lock(), vec![9.0, 1.0, 2.0, 3.0]);
+    }
+
+    /// The empty-`Only` guard rejects before any FFI happens, so this is safe
+    /// to run on a CI runner with no audio hardware and no tap permission.
+    #[test]
+    fn a_tap_on_no_processes_is_rejected() {
+        let buffer = Arc::new(Mutex::new(Vec::new()));
+        let err = start(TapTarget::Only(vec![]), buffer, 1024).unwrap_err();
+        assert!(err.contains("capture nothing"), "unexpected error: {err}");
     }
 
     /// Peak absolute sample currently in the ring.
