@@ -5,6 +5,26 @@ All notable changes to 2ndMonitor are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.6.4] - 2026-08-02
+
+### Added
+- Pick what the visualizer listens to: **all system audio** (as before),
+  **only one app**, or **everything except one app** — so the visualizer can
+  follow your music and ignore Discord voice, game audio, and notifications.
+  Choose it in Settings → Visualizer → Audio source, or click the new
+  headphone button on any Audio Mixer row
+- Sensitivity is remembered **per source**, so switching from a loud game to
+  a quiet podcast doesn't mean re-tuning the gain every time
+- The visualizer reattaches on its own: while the chosen app isn't playing it
+  falls back to the full mix, then picks the app back up the moment it starts
+  again. The status bar always says what it's actually listening to
+
+### Fixed
+- The visualizer no longer keeps capturing the old output device after you
+  switch playback devices — it followed the device only on restart before
+- A failed audio capture now falls back to the system mix and recovers
+  instead of leaving the visualizer frozen on a stale frame
+
 ## [0.6.3] - 2026-08-02
 
 ### Fixed
