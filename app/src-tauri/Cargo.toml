@@ -81,6 +81,12 @@ windows = { version = "0.58", features = [
     "Win32_Graphics_Gdi",
 ] }
 
+[target.'cfg(target_os = "macos")'.dependencies]
+# Backs the secret store (secrets.rs) with the system Keychain — DPAPI has no
+# macOS equivalent, so this is the platform-idiomatic substitute rather than
+# an attempt to fake the same encryption boundary.
+keyring = "3"
+
 [profile.release]
 opt-level = "s"
 lto = true

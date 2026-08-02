@@ -1,10 +1,15 @@
-//! DPAPI-encrypted key-value secret store.
+//! Platform-encrypted key-value secret store.
 //!
 //! Secrets (API tokens like "github_pat", "ha_token") live in
-//! `<app_config_dir>/secrets.json` as `{ key: base64(dpapi_blob) }`. DPAPI
+//! `<app_config_dir>/secrets.json` as `{ key: base64(protected_blob) }`. The
+//! `dpapi` module below picks the platform backend: on Windows, DPAPI
 //! current-user scope means the blobs only decrypt on this machine for this
-//! Windows account — no key management on our side, and the file is useless
-//! if copied elsewhere. Writes are atomic (temp + rename), same as tweaks.rs.
+//! Windows account; on macOS, the value stored in the map is just a marker
+//! and the real secret lives in the system Keychain, one entry per key
+//! (service `com.secondmonitor.hub`, account = the secret's key). Either way
+//! there's no key management on our side, and the file alone is useless if
+//! copied elsewhere. Writes to the map are atomic (temp + rename), same as
+//! tweaks.rs.
 //!
 //! # Reserved keys
 //!
@@ -110,12 +115,12 @@ pub fn secret_get_inner<R: Runtime>(app: &AppHandle<R>, key: &str) -> Option<Str
     let map = load_map(app).ok()?;
     let b64 = map.get(key)?.as_str()?;
     let cipher = STANDARD.decode(b64).ok()?;
-    let plain = dpapi::unprotect(&cipher).ok()?;
+    let plain = dpapi::unprotect(key, &cipher).ok()?;
     String::from_utf8(plain).ok()
 }
 
 pub fn secret_set_inner<R: Runtime>(app: &AppHandle<R>, key: &str, value: &str) -> Result<(), String> {
-    let cipher = dpapi::protect(value.as_bytes())?;
+    let cipher = dpapi::protect(key, value.as_bytes())?;
     let mut map = load_map(app)?;
     map.insert(key.to_string(), Value::String(STANDARD.encode(cipher)));
     save_map(app, &map)
@@ -126,7 +131,12 @@ pub fn secret_delete_inner<R: Runtime>(app: &AppHandle<R>, key: &str) -> Result<
     if map.remove(key).is_some() {
         save_map(app, &map)?;
     }
-    Ok(())
+    // Remove the platform-backed entry too, independent of whether the key
+    // was present in the map. On Windows this is a no-op (the ciphertext
+    // lived only in the map, already gone above); on macOS it deletes the
+    // real Keychain entry so `secret_delete` doesn't just forget the map
+    // pointer while leaving the actual secret alive in the Keychain.
+    dpapi::forget(key)
 }
 
 // ---------------------------------------------------------------------------
@@ -163,6 +173,13 @@ mod dpapi {
     //! CryptProtectData / CryptUnprotectData, current-user scope. The output
     //! blob is self-describing (embeds the master-key reference + salt), so we
     //! store it verbatim and hand it straight back for decryption.
+    //!
+    //! `protect`/`unprotect`/`forget` take the secret's map key so the
+    //! signature matches the macOS Keychain backend (which needs it to
+    //! address a per-secret entry), but DPAPI itself has no concept of a
+    //! named entry — the key is ignored here on purpose. This keeps existing
+    //! DPAPI blobs decrypting exactly as before: byte-for-byte identical
+    //! behaviour, just carrying an unused parameter.
 
     use windows::core::PWSTR;
     use windows::Win32::Foundation::{LocalFree, HLOCAL};
@@ -181,7 +198,7 @@ mod dpapi {
         out
     }
 
-    pub fn protect(plain: &[u8]) -> Result<Vec<u8>, String> {
+    pub fn protect(_key: &str, plain: &[u8]) -> Result<Vec<u8>, String> {
         let input = CRYPT_INTEGER_BLOB {
             cbData: plain.len() as u32,
             pbData: plain.as_ptr() as *mut u8,
@@ -204,7 +221,7 @@ mod dpapi {
         }
     }
 
-    pub fn unprotect(cipher: &[u8]) -> Result<Vec<u8>, String> {
+    pub fn unprotect(_key: &str, cipher: &[u8]) -> Result<Vec<u8>, String> {
         let input = CRYPT_INTEGER_BLOB {
             cbData: cipher.len() as u32,
             pbData: cipher.as_ptr() as *mut u8,
@@ -224,16 +241,71 @@ mod dpapi {
             Ok(take_blob(output))
         }
     }
+
+    /// No-op: DPAPI has no external store to clean up — the ciphertext lives
+    /// entirely in the JSON map, and the caller (`secret_delete_inner`)
+    /// already removes that entry before calling this.
+    pub fn forget(_key: &str) -> Result<(), String> {
+        Ok(())
+    }
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
 mod dpapi {
-    // Non-Windows builds keep the module compiling; the store is Windows-only.
-    pub fn protect(_plain: &[u8]) -> Result<Vec<u8>, String> {
-        Err("DPAPI secret store is Windows-only".into())
+    //! DPAPI has no macOS equivalent, so rather than fake the same
+    //! encryption-boundary shape, the non-Windows-on-macOS backend stores the
+    //! secret directly in the system Keychain, one entry per key. The JSON
+    //! map on disk (secrets.rs's `load_map`/`save_map`) still gets an entry
+    //! per key — its value is just a marker rather than ciphertext — so the
+    //! map's shape, the reserved-key guard, and the `Option`/`Result` return
+    //! shapes above are all unchanged.
+
+    const SERVICE: &str = "com.secondmonitor.hub";
+
+    fn entry(key: &str) -> Result<keyring::Entry, String> {
+        keyring::Entry::new(SERVICE, key).map_err(|e| e.to_string())
     }
-    pub fn unprotect(_cipher: &[u8]) -> Result<Vec<u8>, String> {
-        Err("DPAPI secret store is Windows-only".into())
+
+    pub fn protect(key: &str, plain: &[u8]) -> Result<Vec<u8>, String> {
+        entry(key)?
+            .set_secret(plain)
+            .map_err(|e| format!("keychain set: {e}"))?;
+        // The map on disk holds a marker, not ciphertext — the real bytes
+        // live in the Keychain, keyed by `key`. Keeps the caller's
+        // base64(map value) shape identical to the Windows path.
+        Ok(b"keychain".to_vec())
+    }
+
+    pub fn unprotect(key: &str, _marker: &[u8]) -> Result<Vec<u8>, String> {
+        entry(key)?
+            .get_secret()
+            .map_err(|e| format!("keychain get: {e}"))
+    }
+
+    /// Deletes the Keychain entry for `key`. A missing entry is success, not
+    /// an error — deleting an already-deleted (or never-set) secret must be
+    /// idempotent, not a failure the caller has to special-case.
+    pub fn forget(key: &str) -> Result<(), String> {
+        match entry(key)?.delete_credential() {
+            Ok(()) => Ok(()),
+            Err(keyring::Error::NoEntry) => Ok(()),
+            Err(e) => Err(format!("keychain delete: {e}")),
+        }
+    }
+}
+
+#[cfg(all(not(windows), not(target_os = "macos")))]
+mod dpapi {
+    // Non-Windows, non-macOS builds keep the module compiling; the store is
+    // unimplemented on these platforms (e.g. Linux — a future task).
+    pub fn protect(_key: &str, _plain: &[u8]) -> Result<Vec<u8>, String> {
+        Err("secret store is not implemented on this platform".into())
+    }
+    pub fn unprotect(_key: &str, _cipher: &[u8]) -> Result<Vec<u8>, String> {
+        Err("secret store is not implemented on this platform".into())
+    }
+    pub fn forget(_key: &str) -> Result<(), String> {
+        Err("secret store is not implemented on this platform".into())
     }
 }
 
