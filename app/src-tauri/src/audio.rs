@@ -18,21 +18,29 @@
 //! live — see [`supervisor`] — so exactly one backend writes the ring at any
 //! moment, and the frontend drives it with the `audio_set_source` command.
 //!
+//! macOS has no cpal equivalent of WASAPI loopback — `build_input_stream` on
+//! an output device opens the *microphone* there — so on macOS **both** roles
+//! are served by Core Audio process taps (`audio_tap`): the system mix is a
+//! global tap that excludes nothing, and a per-app source is a tap on (or
+//! excluding) that app's process. The cpal path below is compiled out
+//! entirely on macOS so it cannot be reached by accident. Everything above
+//! the backend seam — the ring, the FFT, `decide`, the watcher — is shared.
+//!
 //! That supervisor also *watches*: every two seconds it reattaches to the
 //! chosen app as it starts or stops playing, rebuilds a capture the OS
 //! invalidated, and follows a change of default playback device. See
 //! [`Supervisor::tick`].
 
+#[cfg(not(target_os = "macos"))]
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use parking_lot::Mutex;
 use rustfft::{num_complex::Complex32, FftPlanner};
 use serde::Serialize;
+#[cfg(not(target_os = "macos"))]
+use std::sync::atomic::AtomicBool;
 use std::{
     f32::consts::PI,
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        mpsc, Arc,
-    },
+    sync::{atomic::Ordering, mpsc, Arc},
     thread,
     time::Duration,
 };
@@ -191,8 +199,16 @@ enum Live {
     /// The stream, plus the flag `err_fn` clears when the endpoint dies. cpal
     /// keeps handing back a `Stream` object that feeds nothing, so the object's
     /// existence is not evidence that anything is being captured.
+    #[cfg(not(target_os = "macos"))]
     Mix(cpal::Stream, Arc<AtomicBool>),
+    #[cfg(not(target_os = "macos"))]
     Process(crate::audio_loopback::ProcessCapture),
+    /// macOS's single backend, covering *both* roles: a global tap for the
+    /// system mix and a per-process tap for an app. There is no second variant
+    /// because there is no second mechanism — which role a live tap was built
+    /// for is recorded in `Supervisor::active`, exactly as it is on Windows.
+    #[cfg(target_os = "macos")]
+    Tap(crate::audio_tap::TapCapture),
 }
 
 struct Supervisor<R: Runtime> {
@@ -322,14 +338,10 @@ impl<R: Runtime> Supervisor<R> {
                 (live, Active::Mix, rate)
             }
             Active::Process { pid, exclude } => {
-                match crate::audio_loopback::start(pid, exclude, self.buffer.clone(), RING_CAP) {
-                    Ok(cap) => {
-                        let rate = cap.sample_rate();
+                match open_process_capture(pid, exclude, &self.buffer) {
+                    Ok((live, rate)) => {
                         exe = target_exe(&self.requested).map(str::to_string);
-                        eprintln!(
-                            "audio: process loopback on pid {pid} (exclude={exclude}) @ {rate} Hz"
-                        );
-                        (Live::Process(cap), active, rate)
+                        (live, active, rate)
                     }
                     Err(e) => {
                         eprintln!("audio: process capture failed, falling back to mix: {e}");
@@ -407,7 +419,17 @@ impl<R: Runtime> Supervisor<R> {
         // stream. Skipped while a process capture is live: that one is torn
         // down and rebuilt by (2) below when the endpoint change kills it, and
         // rebuilding it here as well would double the interruption.
-        if !matches!(self.live, Live::Process(_)) {
+        #[cfg(not(target_os = "macos"))]
+        let process_capture_live = matches!(self.live, Live::Process(_));
+        // Not skipped on macOS, for a reason specific to how a tap is built:
+        // its aggregate device names the *current* default output as its main
+        // sub-device, so a device switch has to rebuild it whichever role it is
+        // serving. There is also no separate per-app backend here to leave
+        // alone — one `Live::Tap` covers both — so nothing can be interrupted
+        // twice by letting this branch handle it.
+        #[cfg(target_os = "macos")]
+        let process_capture_live = false;
+        if !process_capture_live {
             let now_id = crate::mixer::default_endpoint_id().ok();
             if now_id != self.endpoint_id {
                 eprintln!("audio: default output device changed, rebinding capture");
@@ -431,7 +453,14 @@ impl<R: Runtime> Supervisor<R> {
             // atomic below, and the guard means a machine with no audio device
             // at all (`Live::None`) stays quiet instead of failing to open the
             // mix every two seconds.
-            if matches!(&self.live, Live::Mix(_, alive) if !alive.load(Ordering::Relaxed)) {
+            #[cfg(not(target_os = "macos"))]
+            let mix_stopped = matches!(&self.live, Live::Mix(_, alive) if !alive.load(Ordering::Relaxed));
+            // Same question, asked of the tap that is playing the mix's role.
+            // `Live::None` (the tap could not be created at all) stays quiet
+            // here on both platforms — see the guard's rationale above.
+            #[cfg(target_os = "macos")]
+            let mix_stopped = matches!(&self.live, Live::Tap(cap) if !cap.is_alive());
+            if mix_stopped {
                 eprintln!("audio: mix capture stopped, rebuilding");
                 self.apply(Source::Mix);
             }
@@ -469,8 +498,18 @@ impl<R: Runtime> Supervisor<R> {
     /// no-op.
     fn live_matches(&self, active: Active) -> bool {
         match (&self.live, active) {
+            #[cfg(not(target_os = "macos"))]
             (Live::Mix(_, alive), Active::Mix) => alive.load(Ordering::Relaxed),
+            #[cfg(not(target_os = "macos"))]
             (Live::Process(cap), Active::Process { .. }) => cap.is_alive(),
+            // One tap serves both roles, so this arm answers only the liveness
+            // half of the question. That is not a hole: every caller pairs this
+            // with `self.active == Some(active)`, which is what distinguishes a
+            // global tap from a per-app one — and a role change always goes
+            // through `apply`, which rebuilds unconditionally when `active`
+            // differs.
+            #[cfg(target_os = "macos")]
+            (Live::Tap(cap), _) => cap.is_alive(),
             _ => false,
         }
     }
@@ -479,7 +518,14 @@ impl<R: Runtime> Supervisor<R> {
         let state = AudioSourceState {
             requested: self.requested.clone(),
             active: match self.live {
+                #[cfg(not(target_os = "macos"))]
                 Live::Process(_) => "process",
+                // The tap object alone cannot say which role it serves, so the
+                // settled decision does. `apply` only stores `Active::Process`
+                // once the per-app tap actually started, so this reports
+                // "process" under exactly the conditions the Windows arm does.
+                #[cfg(target_os = "macos")]
+                Live::Tap(_) if matches!(self.active, Some(Active::Process { .. })) => "process",
                 _ => "mix",
             },
             active_exe: self.active_exe.clone(),
@@ -493,10 +539,51 @@ impl<R: Runtime> Supervisor<R> {
     }
 }
 
+/// Start the per-app backend for `pid`. The two platforms reach the same
+/// contract by different mechanisms — WASAPI process loopback on Windows, a
+/// Core Audio process tap on macOS — and both report activation failure
+/// synchronously so `apply` can fall back to the mix without waiting.
+#[cfg(not(target_os = "macos"))]
+fn open_process_capture(
+    pid: u32,
+    exclude: bool,
+    buffer: &Arc<Mutex<Vec<f32>>>,
+) -> Result<(Live, u32), String> {
+    let cap = crate::audio_loopback::start(pid, exclude, buffer.clone(), RING_CAP)?;
+    let rate = cap.sample_rate();
+    eprintln!("audio: process loopback on pid {pid} (exclude={exclude}) @ {rate} Hz");
+    Ok((Live::Process(cap), rate))
+}
+
+#[cfg(target_os = "macos")]
+fn open_process_capture(
+    pid: u32,
+    exclude: bool,
+    buffer: &Arc<Mutex<Vec<f32>>>,
+) -> Result<(Live, u32), String> {
+    use crate::audio_tap::TapTarget;
+    // `find_pid_for_exe` sourced this pid from the Core Audio process object
+    // list, so it always fits. Converted fallibly rather than with `as`
+    // because the wrap `as` would do turns an out-of-range value into a
+    // *negative* pid_t, which names a process group — a tap on the wrong thing
+    // is far worse than a refusal the supervisor turns into a mix fallback.
+    let pid_t = i32::try_from(pid).map_err(|_| format!("pid {pid} is not a valid pid_t"))?;
+    let target = if exclude {
+        TapTarget::Except(vec![pid_t])
+    } else {
+        TapTarget::Only(vec![pid_t])
+    };
+    let cap = crate::audio_tap::start(target, buffer.clone(), RING_CAP)?;
+    let rate = cap.sample_rate();
+    eprintln!("audio: Core Audio tap on pid {pid} (exclude={exclude}) @ {rate} Hz");
+    Ok((Live::Tap(cap), rate))
+}
+
 /// Open the system-mix capture, or give up and leave the ring unfed. Failing
 /// to open the mix is not fatal — the endpoint may come back, and a later
 /// source change re-tries from scratch — so it degrades to `Live::None` with
 /// an explanation rather than killing the audio threads.
+#[cfg(not(target_os = "macos"))]
 fn open_mix_or_none(
     buffer: &Arc<Mutex<Vec<f32>>>,
     reason: &mut Option<String>,
@@ -516,9 +603,42 @@ fn open_mix_or_none(
     }
 }
 
+/// The macOS mix: a global tap that excludes nothing. Same contract as the
+/// cpal version above — including degrading to `Live::None` with an appended
+/// reason rather than failing the swap — because `apply` treats the two
+/// identically. The difference is only in what the failure usually *means*
+/// here: a refused tap is most often a denied audio-capture permission, and
+/// `audio_tap` spells that out in the error the UI ends up showing.
+#[cfg(target_os = "macos")]
+fn open_mix_or_none(
+    buffer: &Arc<Mutex<Vec<f32>>>,
+    reason: &mut Option<String>,
+) -> (Live, u32) {
+    match crate::audio_tap::start(
+        crate::audio_tap::TapTarget::AllProcesses,
+        buffer.clone(),
+        RING_CAP,
+    ) {
+        Ok(cap) => {
+            let rate = cap.sample_rate();
+            eprintln!("audio: Core Audio tap on the system mix @ {rate} Hz");
+            (Live::Tap(cap), rate)
+        }
+        Err(e) => {
+            eprintln!("audio: mix capture unavailable: {e}");
+            *reason = Some(match reason.take() {
+                Some(prev) => format!("{prev}; mix capture unavailable: {e}"),
+                None => format!("mix capture unavailable: {e}"),
+            });
+            (Live::None, SAMPLE_RATE.load(Ordering::Relaxed))
+        }
+    }
+}
+
 /// Build and start the cpal loopback stream on the *current* default output
 /// device. Re-queried on every call so a default-device change is picked up by
 /// the next swap. The returned flag is the stream's liveness — see `build_stream`.
+#[cfg(not(target_os = "macos"))]
 fn open_mix(buffer: Arc<Mutex<Vec<f32>>>) -> Result<(cpal::Stream, u32, Arc<AtomicBool>), String> {
     let host = cpal::default_host();
     let device = host
@@ -558,6 +678,7 @@ fn open_mix(buffer: Arc<Mutex<Vec<f32>>>) -> Result<(cpal::Stream, u32, Arc<Atom
 /// perfectly alive, so this flag is the only way to tell a capturing stream
 /// from a dead one. The supervisor checks it before deciding it has nothing to
 /// do; without it, an invalidated endpoint freezes the ring permanently.
+#[cfg(not(target_os = "macos"))]
 fn build_stream(
     device: &cpal::Device,
     config: &cpal::StreamConfig,

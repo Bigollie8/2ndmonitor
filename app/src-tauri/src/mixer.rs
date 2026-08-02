@@ -229,7 +229,11 @@ pub fn sessions_snapshot() -> Result<Vec<AppSession>, String> {
     }
 }
 
-#[cfg(not(target_os = "windows"))]
+/// macOS is excluded rather than stubbed: it has a real inventory of its own
+/// (`audio_process_apps` below), and both callers of this — the source picker
+/// and `find_pid_for_exe` — go there instead, so a stub here would be dead code
+/// that quietly answers "no apps" if anything ever reached it.
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
 pub fn sessions_snapshot() -> Result<Vec<AppSession>, String> { Ok(vec![]) }
 
 /// Device id of the current default *render* endpoint (`eConsole` role) — the
@@ -274,6 +278,7 @@ pub fn default_endpoint_id() -> Result<String, String> {
 
 /// PID of the first live session whose executable basename matches `exe`
 /// (lowercased comparison). `None` when the app isn't producing audio.
+#[cfg(not(target_os = "macos"))]
 pub fn find_pid_for_exe(exe: &str) -> Option<u32> {
     let want = exe.to_lowercase();
     sessions_snapshot()
@@ -281,6 +286,53 @@ pub fn find_pid_for_exe(exe: &str) -> Option<u32> {
         .into_iter()
         .find(|s| s.exe.as_deref().map(|e| e.to_lowercase()) == Some(want.clone()))
         .map(|s| s.pid)
+}
+
+/// An app that currently owns a Core Audio *process object* — the macOS
+/// analogue of holding a Windows audio session, and the same signal
+/// `audio_source::decide` reads it as: "this app is available to capture right
+/// now". A process object appears when an app first touches the audio HAL and
+/// survives it pausing, which matches how the Windows side keeps non-expired
+/// sessions.
+#[cfg(target_os = "macos")]
+#[derive(Debug, Clone)]
+pub struct AudioApp {
+    /// Lowercased bundle identifier (`com.spotify.client`). Plays exactly the
+    /// role the lowercased exe basename plays on Windows: it is what
+    /// `SourceOption.exe` carries, what `Source::{Only,Except}.exe` stores, and
+    /// therefore what the per-source sensitivity key is built from — so it must
+    /// be normalized here, since bundle ids are *not* reliably lowercase
+    /// (`com.apple.Music`).
+    pub bundle_id: String,
+    pub name: String,
+    pub pid: u32,
+}
+
+/// Apps with a Core Audio process object, deduped by bundle id. Drives both
+/// the source picker and `find_pid_for_exe` below, so the picker can never
+/// offer something the supervisor then fails to resolve.
+#[cfg(target_os = "macos")]
+pub fn audio_process_apps() -> Result<Vec<AudioApp>, String> {
+    macimpl::audio_process_apps()
+}
+
+/// PID of the app whose bundle identifier matches `exe`, case-insensitively.
+/// `None` when the app isn't running or hasn't touched the audio HAL.
+///
+/// Deliberately *not* a plain `NSWorkspace.runningApplications` scan. `decide`
+/// reads a `Some` here as "attachable right now", and a tap on a pid with no
+/// Core Audio process object fails — which would trip the sticky `supported`
+/// flag and stop the 2 s watcher from ever reattaching when the app does start
+/// playing. Filtering through the process-object list keeps `None` meaning
+/// "not playing yet, keep watching", exactly as the Windows session lookup does.
+#[cfg(target_os = "macos")]
+pub fn find_pid_for_exe(exe: &str) -> Option<u32> {
+    let want = exe.to_lowercase();
+    audio_process_apps()
+        .ok()?
+        .into_iter()
+        .find(|a| a.bundle_id == want)
+        .map(|a| a.pid)
 }
 
 #[cfg(target_os = "windows")]
@@ -872,7 +924,7 @@ mod winimpl {
 /// for this module; `MixerSnapshot.master` is always `None` on macOS today).
 #[cfg(target_os = "macos")]
 mod macimpl {
-    use super::{MixerCmd, MixerSnapshot, OutputDevice};
+    use super::{AudioApp, MixerCmd, MixerSnapshot, OutputDevice};
     use core_foundation_sys::base::CFRelease;
     use core_foundation_sys::string::{
         kCFStringEncodingUTF8, CFStringGetCString, CFStringGetCStringPtr, CFStringRef,
@@ -885,9 +937,27 @@ mod macimpl {
         AudioBuffer, AudioBufferList, AudioObjectGetPropertyData, AudioObjectGetPropertyDataSize,
         AudioObjectID, AudioObjectPropertyAddress, AudioObjectSetPropertyData,
     };
+    use objc2::rc::autoreleasepool;
+    use objc2_app_kit::NSRunningApplication;
+    use std::collections::HashSet;
     use std::ffi::{c_void, CStr};
     use std::mem;
     use std::ptr::null;
+
+    /// Core Audio's four-character-code selectors, big-endian packed. Same
+    /// helper `audio_tap.rs` uses, and for the same reason: the two constants
+    /// below were added to `<CoreAudio/AudioHardware.h>` in macOS 14.2, so
+    /// whether `coreaudio-sys`'s bindgen output contains them depends on which
+    /// SDK built it. The four-character code is fixed by the ABI, so spelling
+    /// it out here is both stable and self-documenting.
+    const fn fourcc(s: &[u8; 4]) -> u32 {
+        ((s[0] as u32) << 24) | ((s[1] as u32) << 16) | ((s[2] as u32) << 8) | (s[3] as u32)
+    }
+
+    /// `kAudioHardwarePropertyProcessObjectList` on the system object.
+    const K_AUDIO_HARDWARE_PROPERTY_PROCESS_OBJECT_LIST: u32 = fourcc(b"prol");
+    /// `kAudioProcessPropertyPID` on one of those process objects.
+    const K_AUDIO_PROCESS_PROPERTY_PID: u32 = fourcc(b"ppid");
 
     fn check(status: i32) -> Result<(), String> {
         if status != kAudioHardwareNoError as i32 {
@@ -1087,6 +1157,103 @@ mod macimpl {
             );
             check(status)
         }
+    }
+
+    /// Every Core Audio process object the HAL currently knows about.
+    ///
+    /// Two-call sizing like `devices_snapshot` above, with one difference that
+    /// matters: the second call may report a *smaller* size than the first (a
+    /// process exited between them), so the vector is truncated to what was
+    /// actually written rather than left with trailing zeros that would then be
+    /// queried as object id 0.
+    unsafe fn process_object_list() -> Result<Vec<AudioObjectID>, String> {
+        let addr = global_address(K_AUDIO_HARDWARE_PROPERTY_PROCESS_OBJECT_LIST);
+        let mut size: u32 = 0;
+        let status = AudioObjectGetPropertyDataSize(
+            kAudioObjectSystemObject,
+            &addr as *const _,
+            0,
+            null(),
+            &mut size as *mut _,
+        );
+        if status != kAudioHardwareNoError as i32 {
+            // The property itself is macOS 14.2+, so this is also what an older
+            // system looks like — the same vintage that has no process taps at
+            // all, which is why the message names the requirement.
+            return Err(format!(
+                "could not list Core Audio process objects (error {status}); per-app audio \
+                 capture needs macOS 14.2 or newer"
+            ));
+        }
+        let count = size as usize / mem::size_of::<AudioObjectID>();
+        if count == 0 {
+            return Ok(Vec::new());
+        }
+        let mut ids: Vec<AudioObjectID> = vec![0; count];
+        let status = AudioObjectGetPropertyData(
+            kAudioObjectSystemObject,
+            &addr as *const _,
+            0,
+            null(),
+            &mut size as *mut _,
+            ids.as_mut_ptr() as *mut c_void,
+        );
+        check(status)?;
+        ids.truncate(size as usize / mem::size_of::<AudioObjectID>());
+        Ok(ids)
+    }
+
+    /// `kAudioProcessPropertyPID` off one process object. `None` for anything
+    /// that isn't a usable pid, including the 0 a failed read leaves behind.
+    unsafe fn process_pid(object: AudioObjectID) -> Option<i32> {
+        let addr = global_address(K_AUDIO_PROCESS_PROPERTY_PID);
+        let pid: i32 = get_scalar(object, &addr, 0).ok()?;
+        (pid > 0).then_some(pid)
+    }
+
+    /// The picker's inventory: one entry per app that has a Core Audio process
+    /// object *and* is a launchable application (so it has a bundle id and a
+    /// localized name). Helper daemons like `coreaudiod` own process objects too
+    /// and have no `NSRunningApplication`; they drop out here, which is the
+    /// macOS counterpart of the Windows side skipping the system-sounds session.
+    pub fn audio_process_apps() -> Result<Vec<AudioApp>, String> {
+        let objects = unsafe { process_object_list()? };
+        let mut seen: HashSet<String> = HashSet::new();
+        let mut out = Vec::new();
+        // The lookups below hand back autoreleased temporaries; this thread is
+        // the mixer/audio-supervisor worker, not an AppKit run loop, so nothing
+        // else would ever drain them.
+        autoreleasepool(|_| {
+            for object in objects {
+                let Some(pid) = (unsafe { process_pid(object) }) else {
+                    continue;
+                };
+                // SAFETY: all three are read-only Objective-C message sends with
+                // no preconditions beyond a valid pid, and none is main-thread
+                // -only; the `Retained` values manage their own refcounts.
+                // `runningApplicationWithProcessIdentifier` returns nil for a
+                // pid that is not an application (a daemon, or one that exited
+                // since the list was taken), which is the filter described above.
+                let Some(app) =
+                    (unsafe { NSRunningApplication::runningApplicationWithProcessIdentifier(pid) })
+                else {
+                    continue;
+                };
+                let Some(bundle) = (unsafe { app.bundleIdentifier() }) else {
+                    continue;
+                };
+                let bundle_id = bundle.to_string().to_lowercase();
+                if bundle_id.is_empty() || !seen.insert(bundle_id.clone()) {
+                    continue;
+                }
+                let name = unsafe { app.localizedName() }
+                    .map(|n| n.to_string())
+                    .filter(|n| !n.is_empty())
+                    .unwrap_or_else(|| bundle_id.clone());
+                out.push(AudioApp { bundle_id, name, pid: pid as u32 });
+            }
+        });
+        Ok(out)
     }
 
     /// Applies one queued mixer command. Only `SetDefaultOutput` does
