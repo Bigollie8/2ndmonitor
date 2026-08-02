@@ -358,7 +358,7 @@ export function SettingsWindow({
         },
         {
           id: 'advanced-reset-layout', label: 'Reset layout',
-          hint: 'Restore default tile positions for this profile and orientation',
+          hint: 'Clear all tiles for this profile and orientation, then add the ones you want in edit mode',
           control: <SettingsButton label="Reset" onClick={onResetLayout} />,
         },
         {
