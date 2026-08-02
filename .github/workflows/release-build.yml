@@ -137,8 +137,22 @@ jobs:
           # would be easy to get wrong by hand.
           gh release download "$TAG" --pattern "*.sig" --dir dl --clobber
 
-          win_sig_path=$(ls dl/*-setup.exe.sig)
-          mac_sig_path=$(ls dl/*.app.tar.gz.sig)
+          # Assert exactly one match each rather than letting a silent 0- or
+          # 2-match glob feed `basename`/`cat` garbage — a bad match here is
+          # exactly the "manifest whose URLs 404" failure mode this job
+          # exists to avoid.
+          win_matches=(dl/*-setup.exe.sig)
+          mac_matches=(dl/*.app.tar.gz.sig)
+          if [ "${#win_matches[@]}" -ne 1 ] || [ ! -e "${win_matches[0]}" ]; then
+            echo "::error::expected exactly one Windows NSIS .sig asset (*-setup.exe.sig) on release $TAG, found: ${win_matches[*]}"
+            exit 1
+          fi
+          if [ "${#mac_matches[@]}" -ne 1 ] || [ ! -e "${mac_matches[0]}" ]; then
+            echo "::error::expected exactly one macOS .app.tar.gz.sig asset on release $TAG, found: ${mac_matches[*]}"
+            exit 1
+          fi
+          win_sig_path="${win_matches[0]}"
+          mac_sig_path="${mac_matches[0]}"
 
           win_asset=$(basename "$win_sig_path" .sig)
           mac_asset=$(basename "$mac_sig_path" .sig)
