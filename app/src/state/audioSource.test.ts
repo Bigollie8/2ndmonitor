@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { sourceKey, parseSourceKey, effectiveSensitivity, migrateSensitivity, DEFAULT_SENSITIVITY } from './audioSource';
+import { sourceKey, parseSourceKey, effectiveSensitivity, migrateSensitivity, describeAudioSource, DEFAULT_SENSITIVITY } from './audioSource';
 import type { AudioSource } from './audioSource';
 
 test('parseSourceKey round-trips every source shape', () => {
@@ -40,4 +40,14 @@ test('migrateSensitivity: junk becomes an empty map, not a crash', () => {
   assert.deepEqual(migrateSensitivity(null), {});
   assert.deepEqual(migrateSensitivity('1.5'), {});
   assert.deepEqual(migrateSensitivity(Number.NaN), {});
+});
+
+test('describeAudioSource: mix ignores the name resolver', () => {
+  assert.equal(describeAudioSource({ mode: 'mix' }, () => { throw new Error('should not be called'); }), 'all system audio');
+});
+
+test('describeAudioSource: only/except use the resolved friendly name', () => {
+  const nameOf = (exe: string) => (exe === 'spotify.exe' ? 'Spotify' : exe);
+  assert.equal(describeAudioSource({ mode: 'only', exe: 'spotify.exe' }, nameOf), 'only Spotify');
+  assert.equal(describeAudioSource({ mode: 'except', exe: 'discord.exe' }, nameOf), 'except discord.exe');
 });

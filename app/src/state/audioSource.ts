@@ -30,6 +30,15 @@ export function effectiveSensitivity(map: Record<string, number>, s: AudioSource
   return typeof v === 'number' && Number.isFinite(v) ? v : DEFAULT_SENSITIVITY;
 }
 
+/** Human-readable status-bar text for a source — "all system audio",
+ *  "only Spotify", "except Discord". `nameOf` resolves an exe to its
+ *  friendly display name (options/session list), falling back to the exe
+ *  itself when the app isn't in either (e.g. it just quit). */
+export function describeAudioSource(s: AudioSource, nameOf: (exe: string) => string): string {
+  if (s.mode === 'mix') return 'all system audio';
+  return `${s.mode} ${nameOf(s.exe)}`;
+}
+
 /** `vizSensitivity` used to be one number for all audio. Fold it into the
  *  per-source map as the mix entry so nobody's tuning resets on upgrade. */
 export function migrateSensitivity(raw: unknown): Record<string, number> {

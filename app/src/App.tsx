@@ -30,7 +30,8 @@ import {
 import { TRACKS, ACCENT_PALETTES } from './data';
 import { useTweaks } from './state/useTweaks';
 import type { AudioSource } from './state/audioSource';
-import { effectiveSensitivity, migrateSensitivity } from './state/audioSource';
+import { describeAudioSource, effectiveSensitivity, migrateSensitivity } from './state/audioSource';
+import { useAudioSource } from './state/useAudioSource';
 import { UpdateToast } from './components/UpdateToast';
 import { useSysmon, useNowPlaying, useSpectrumRef } from './state/tauri';
 import { setWindowHidden } from './state/framePace';
@@ -799,7 +800,13 @@ export default function App() {
       case 'claude':
         return <ClaudeCodeTile density={t.density} accent={accent} />;
       case 'mixer':
-        return <AudioMixerTile density={t.density} accent={accent} accent2={accent2} spectrumRef={spectrumRef} />;
+        return (
+          <AudioMixerTile
+            density={t.density} accent={accent} accent2={accent2} spectrumRef={spectrumRef}
+            audioSource={t.vizAudioSource}
+            onSetAudioSource={(s) => setTweak('vizAudioSource', s)}
+          />
+        );
       case 'notes':
         return <NotesTile density={t.density} accent={accent} todos={t.todos} setTodos={(next) => setTweak('todos', next)} />;
       case 'sysmon':
@@ -1058,6 +1065,7 @@ export default function App() {
           onSwitcher={() => setShowSwitcher(true)}
           profileName={activeProfile.name}
           tileCount={visibleTileCount}
+          audioSource={t.vizAudioSource}
         />
         {editMode && (
           <EditModeOverlay
@@ -1460,18 +1468,29 @@ function useFrameRate(): number {
 }
 
 function BottomStatus({
-  accent, onSwitcher, profileName, tileCount,
+  accent, onSwitcher, profileName, tileCount, audioSource,
 }: {
   accent: string;
   onSwitcher: () => void;
   profileName: string;
   tileCount: number;
+  audioSource: AudioSource;
 }) {
   // The 1Hz sysmon subscription and rAF frame counter live HERE, not in App:
   // this bar is the only chrome that displays them, and keeping them out of
   // the root means the ~36 tile subtrees no longer reconcile every second.
   const sysmon = useSysmon();
   const fps = useFrameRate();
+  // `audioSource` (the tweak) is the requested source and updates the moment
+  // the user picks one — no round trip needed. `status.active` is the only
+  // thing that has to come from Rust: whether that request is actually live
+  // right now (the app might not be playing anything yet).
+  const { status: audioSourceStatus, options: audioSourceOptions } = useAudioSource();
+  const audioSourceWaiting = audioSource.mode !== 'mix' && audioSourceStatus?.active === 'mix';
+  const audioSourceText = describeAudioSource(
+    audioSource,
+    (exe) => audioSourceOptions.find((o) => o.exe === exe)?.name ?? exe,
+  ) + (audioSourceWaiting ? ' (waiting)' : '');
   const app = sysmon.latest.app;
   // GPU spike feed for perf-debug snapshots rides along with the only
   // remaining chrome-level sysmon subscriber.
@@ -1501,7 +1520,7 @@ function BottomStatus({
       <span title="App resident memory">RAM {ramText}</span>
       <span title="App GPU usage (via NVML, NVIDIA only)">GPU {gpuText}</span>
       <span title="Render frame rate" style={{ color: fpsColor }}>{fpsText}</span>
-      <span>Audio: WASAPI loopback</span>
+      <span title="What the visualizer is listening to">Audio: {audioSourceText}</span>
       <div style={{ flex: 1 }} />
       <button onClick={onSwitcher} style={{ background: 'transparent', border: 'none', color: 'rgba(255,255,255,0.45)', fontFamily: 'inherit', fontSize: 'inherit', cursor: 'pointer', padding: 0 }}>{profileName}</button>
       <span style={{ color: 'rgba(255,255,255,0.25)' }}>·</span>
