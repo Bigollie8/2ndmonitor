@@ -1,8 +1,10 @@
 //! Discord local IPC (RPC) client.
 //!
-//! Connects to `\\.\pipe\discord-ipc-0` (Discord's local Named Pipe), performs
-//! the IPC handshake + AUTHENTICATE with our existing OAuth access token, then
-//! subscribes to the events we care about:
+//! Connects to Discord's local IPC endpoint — a Named Pipe
+//! (`\\.\pipe\discord-ipc-0`) on Windows, a Unix domain socket
+//! (`$TMPDIR/discord-ipc-0`) on macOS/Linux — performs the IPC handshake +
+//! AUTHENTICATE with our existing OAuth access token, then subscribes to the
+//! events we care about:
 //!
 //!   - NOTIFICATION_CREATE  → live DM / @mention feed (whenever Discord would
 //!     have shown a desktop notification, we get the same payload)
