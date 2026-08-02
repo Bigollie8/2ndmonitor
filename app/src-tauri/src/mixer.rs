@@ -168,15 +168,27 @@ fn worker<R: Runtime>(app: AppHandle<R>, rx: Receiver<MixerCmd>) -> Result<(), S
 /// once every 2 s by the reattach watcher.
 #[cfg(target_os = "windows")]
 pub fn sessions_snapshot() -> Result<Vec<AppSession>, String> {
+    use windows::Win32::Foundation::RPC_E_CHANGED_MODE;
     use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_MULTITHREADED};
     unsafe {
-        let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+        let hr = CoInitializeEx(None, COINIT_MULTITHREADED);
+        // RPC_E_CHANGED_MODE means this thread already has COM initialized in
+        // a different apartment mode (e.g. this ends up called on the
+        // mixer's own STA worker thread, see `worker()` above) — COM is
+        // already usable here, but this call did NOT take out a reference, so
+        // we must not pair it with CoUninitialize below. Any other failure
+        // means COM genuinely isn't usable on this thread; skip enumeration.
+        if hr.is_err() && hr != RPC_E_CHANGED_MODE {
+            return Err(format!("CoInitializeEx: {}", hr.message()));
+        }
         let result = (|| {
             let en = winimpl::create_enumerator().map_err(|e| e.to_string())?;
             let snap = winimpl::capture(&en).map_err(|e| e.to_string())?;
             Ok(snap.sessions)
         })();
-        CoUninitialize();
+        if hr.is_ok() {
+            CoUninitialize();
+        }
         result
     }
 }
