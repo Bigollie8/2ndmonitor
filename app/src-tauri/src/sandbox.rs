@@ -28,10 +28,13 @@
 //! (`wry-0.54.4/src/custom_protocol_workaround.rs`, and
 //! `attach_custom_protocol_handler` in `src/webview2/mod.rs`, which uses
 //! `AddWebResourceRequestedFilterWithRequestSourceKinds(..., SOURCE_KINDS_ALL)`
-//! specifically so iframes can load custom protocols). macOS/Linux would use
-//! `<scheme>://localhost/...`. The frontend's `SANDBOX_ORIGIN`
-//! (src/sandbox/sandbox-html.ts) and `tauri.conf.json`'s `frame-src` both
-//! encode the Windows form; `nsis` is the only bundle target.
+//! specifically so iframes can load custom protocols). macOS/WKWebView uses
+//! the real scheme, `<scheme>://localhost/...`. The frontend's
+//! `SANDBOX_ORIGIN` (src/sandbox/sandbox-html.ts) resolves to whichever form
+//! matches the platform a given build targets (`__SANDBOX_ORIGIN__`,
+//! injected by `vite.config.ts`); `tauri.conf.json`'s `frame-src` is a static
+//! string built once per release, so it lists both forms rather than
+//! resolving per platform.
 //!
 //! Tauri does not touch headers on custom-scheme responses - it only injects
 //! `Content-Security-Policy` for its own asset protocol

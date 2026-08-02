@@ -96,17 +96,6 @@ const EnergyTile = lazy(() => import('./components/EnergyTile').then((m) => ({ d
 const DeclarativeTile = lazy(() => import('./components/DeclarativeTile').then((m) => ({ default: m.DeclarativeTile })));
 const MissingTileCard = lazy(() => import('./components/MissingTileCard').then((m) => ({ default: m.MissingTileCard })));
 
-// Vite injects `import.meta.env` at build time; the project has no
-// vite-env.d.ts / "vite/client" types reference, so declare the one flag we
-// use. The dev-only Tweaks panel that used to read DEV here is gone
-// (superseded by the Settings window); kept in case future dev-only gating
-// needs it again.
-declare global {
-  interface ImportMeta {
-    readonly env: { readonly DEV: boolean };
-  }
-}
-
 interface VizColorOverride {
   enabled: boolean;
   accent: string;
