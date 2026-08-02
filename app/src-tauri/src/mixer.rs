@@ -44,6 +44,10 @@ pub struct AppSession {
     /// `data:image/png;base64,…` for the exe's shell icon, or null when not
     /// extractable (system-sounds session, vanished process, COM error).
     pub icon: Option<String>,
+    /// Lowercased executable basename (e.g. `"spotify.exe"`), or `None` for
+    /// the system-sounds session / when the process image path couldn't be
+    /// resolved.
+    pub exe: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -158,6 +162,86 @@ fn worker<R: Runtime>(app: AppHandle<R>, rx: Receiver<MixerCmd>) -> Result<(), S
     }
 }
 
+/// One-shot session snapshot for callers outside the mixer's own COM worker
+/// (the audio supervisor and the source picker). Initializes COM on the
+/// calling thread, enumerates, and tears down. Costs a few ms; called at most
+/// once every 2 s by the reattach watcher.
+#[cfg(target_os = "windows")]
+pub fn sessions_snapshot() -> Result<Vec<AppSession>, String> {
+    use windows::Win32::Foundation::RPC_E_CHANGED_MODE;
+    use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_MULTITHREADED};
+    unsafe {
+        let hr = CoInitializeEx(None, COINIT_MULTITHREADED);
+        // RPC_E_CHANGED_MODE means this thread already has COM initialized in
+        // a different apartment mode (e.g. this ends up called on the
+        // mixer's own STA worker thread, see `worker()` above) — COM is
+        // already usable here, but this call did NOT take out a reference, so
+        // we must not pair it with CoUninitialize below. Any other failure
+        // means COM genuinely isn't usable on this thread; skip enumeration.
+        if hr.is_err() && hr != RPC_E_CHANGED_MODE {
+            return Err(format!("CoInitializeEx: {}", hr.message()));
+        }
+        let result = (|| {
+            let en = winimpl::create_enumerator().map_err(|e| e.to_string())?;
+            let snap = winimpl::capture(&en).map_err(|e| e.to_string())?;
+            Ok(snap.sessions)
+        })();
+        if hr.is_ok() {
+            CoUninitialize();
+        }
+        result
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn sessions_snapshot() -> Result<Vec<AppSession>, String> { Ok(vec![]) }
+
+/// Device id of the current default *render* endpoint (`eConsole` role) — the
+/// one WASAPI loopback captures. The audio supervisor polls this to notice a
+/// playback-device switch (including one made from the mixer tile's own
+/// dropdown) and rebind its capture, since neither cpal nor the process
+/// loopback client follows the default device on its own.
+///
+/// Deliberately much cheaper than [`sessions_snapshot`]: one enumerator plus
+/// `GetDefaultAudioEndpoint` + `GetId`, no session walk, no per-process image
+/// lookups. Same COM-apartment handling as `sessions_snapshot` — see the
+/// `RPC_E_CHANGED_MODE` note there.
+#[cfg(target_os = "windows")]
+pub fn default_endpoint_id() -> Result<String, String> {
+    use windows::Win32::Foundation::RPC_E_CHANGED_MODE;
+    use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_MULTITHREADED};
+    unsafe {
+        let hr = CoInitializeEx(None, COINIT_MULTITHREADED);
+        if hr.is_err() && hr != RPC_E_CHANGED_MODE {
+            return Err(format!("CoInitializeEx: {}", hr.message()));
+        }
+        let result = (|| {
+            let en = winimpl::create_enumerator().map_err(|e| e.to_string())?;
+            winimpl::default_endpoint_id(&en).map_err(|e| e.to_string())
+        })();
+        if hr.is_ok() {
+            CoUninitialize();
+        }
+        result
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn default_endpoint_id() -> Result<String, String> {
+    Err("default endpoint id is Windows-only".to_string())
+}
+
+/// PID of the first live session whose executable basename matches `exe`
+/// (lowercased comparison). `None` when the app isn't producing audio.
+pub fn find_pid_for_exe(exe: &str) -> Option<u32> {
+    let want = exe.to_lowercase();
+    sessions_snapshot()
+        .ok()?
+        .into_iter()
+        .find(|s| s.exe.as_deref().map(|e| e.to_lowercase()) == Some(want.clone()))
+        .map(|s| s.pid)
+}
+
 #[cfg(target_os = "windows")]
 mod winimpl {
     use super::{AppSession, MasterState, MixerCmd, MixerSnapshot, OutputDevice};
@@ -189,6 +273,13 @@ mod winimpl {
 
     pub unsafe fn create_enumerator() -> windows::core::Result<IMMDeviceEnumerator> {
         CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)
+    }
+
+    /// Just the default render endpoint's id — the first two calls `capture`
+    /// makes, without the rest of the snapshot.
+    pub unsafe fn default_endpoint_id(en: &IMMDeviceEnumerator) -> windows::core::Result<String> {
+        let d = en.GetDefaultAudioEndpoint(eRender, eConsole)?;
+        Ok(pwstr_id(d.GetId()?))
     }
 
     pub unsafe fn capture(en: &IMMDeviceEnumerator) -> windows::core::Result<MixerSnapshot> {
@@ -314,6 +405,12 @@ mod winimpl {
         // exe, so skip — the frontend renders a "♪" glyph for it.
         let icon = exe_path.as_deref().and_then(cached_icon_data_url);
 
+        let exe = exe_path
+            .as_deref()
+            .and_then(|p| Path::new(p).file_name())
+            .and_then(|n| n.to_str())
+            .map(|s| s.to_lowercase());
+
         Some((
             priority,
             AppSession {
@@ -323,6 +420,7 @@ mod winimpl {
                 mute,
                 is_system_sounds,
                 icon,
+                exe,
             },
         ))
     }

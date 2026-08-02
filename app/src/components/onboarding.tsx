@@ -108,7 +108,7 @@ function OnbWelcome({ accent }: { accent: string }) {
       </h1>
       <p style={{ fontSize: 18, color: 'rgba(255,255,255,0.6)', lineHeight: 1.5, margin: '0 0 40px 0' }}>
         Hub turns spare screens into a glanceable cockpit. Audio reactive visualizers, system monitor, your apps as tiles —
-        all themed to whatever's playing. Audio just works: Hub captures your system audio (WASAPI loopback), no configuration needed.
+        all themed to whatever's playing. Audio just works out of the box — and you can point the visualizer at a single app instead of the whole mix anytime in Settings.
       </p>
       <div style={{ display: 'flex', gap: 24, justifyContent: 'center', marginTop: 48 }}>
         {[

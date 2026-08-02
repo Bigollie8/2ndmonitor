@@ -10,6 +10,8 @@
 
 mod actions;
 mod audio;
+mod audio_loopback;
+mod audio_source;
 mod claude;
 mod discord;
 mod discord_rpc;
@@ -97,6 +99,9 @@ pub fn run() {
             weather::set_weather_location,
             audio::set_audio_emit_hz,
             audio::set_waveform_enabled,
+            audio::audio_set_source,
+            audio::audio_get_source,
+            audio_source::audio_sources_list,
             presets::presets_list,
             presets::presets_read,
             presets::presets_market_list,

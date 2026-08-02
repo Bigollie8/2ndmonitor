@@ -2,6 +2,10 @@ import { UpdateCheckRow } from './UpdateCheckRow';
 import React, { useCallback, useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { VizMode, AccentTheme, Density, WeatherLocation } from '../types';
+import type { AudioSource } from '../state/audioSource';
+import { effectiveSensitivity, parseSourceKey, sourceKey } from '../state/audioSource';
+import { useAudioSource } from '../state/useAudioSource';
+import type { AudioSourceState, SourceOption } from '../state/useAudioSource';
 import type { GeocodeResult } from '../state/weatherLocation';
 import { ACCENT_PALETTES } from '../data';
 import { useVizStyles } from './useVizStyles';
@@ -39,7 +43,10 @@ export interface VizColorOverride {
 export interface SettingsValues {
   vizMode: VizMode;
   vizArtBg: boolean;
-  vizSensitivity: number;
+  /** What the visualizer listens to — the whole system mix, or one app
+   *  included/excluded. See state/audioSource.ts. */
+  vizAudioSource: AudioSource;
+  vizSensitivityBySource: Record<string, number>;
   vizSmoothing: number;
   vizColorOverride: VizColorOverride;
   lyricsOverlayEnabled: boolean;
@@ -132,6 +139,18 @@ export function SettingsWindow({
   const [activePane, setActivePane] = useState('visualizer');
   const [query, setQuery] = useState('');
   const { styles: vizStyles } = useVizStyles(v.catalogRemoved);
+  const { options: sourceOptions, status: audioSourceStatus } = useAudioSource();
+  // `audio_sources_list` only returns apps currently holding an audio
+  // session, so whatever is presently requested (even a quit app the
+  // visualizer is waiting to reattach to) may be missing from it. Union it
+  // in so the <select> always has a matching option — otherwise its value
+  // matches nothing, `selectedIndex` lands on -1, and the control renders
+  // blank. Falls back to the exe as its own label, same as the status line
+  // below and `describeAudioSource` do for an app with no known name.
+  const requestedExe = v.vizAudioSource.mode !== 'mix' ? v.vizAudioSource.exe : null;
+  const sourceOptionsWithRequested = requestedExe && !sourceOptions.some((o) => o.exe === requestedExe)
+    ? [...sourceOptions, { exe: requestedExe, name: requestedExe, icon: null }]
+    : sourceOptions;
 
   const panes: PaneDef[] = [
     {
@@ -158,13 +177,37 @@ export function SettingsWindow({
           control: <Toggle checked={v.vizArtBg} onChange={(c) => set('vizArtBg', c)} accent={accent} />,
         },
         {
+          id: 'viz-audio-source', label: 'Audio source',
+          hint: 'Which audio the visualizer reacts to',
+          control: (
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
+              <SettingsSelect<string>
+                value={sourceKey(v.vizAudioSource)}
+                options={[
+                  { value: 'mix', label: 'All system audio' },
+                  // Not gated on `supported`: an explicit pick here is exactly
+                  // what re-arms it on the Rust side (`CaptureCmd::SetSource`),
+                  // so disabling these on a sticky `supported: false` would
+                  // remove the only way to ask again.
+                  ...sourceOptionsWithRequested.flatMap((o) => [
+                    { value: `only:${o.exe}`, label: `Only ${o.name}` },
+                    { value: `except:${o.exe}`, label: `Everything except ${o.name}` },
+                  ]),
+                ]}
+                onChange={(key) => set('vizAudioSource', parseSourceKey(key))}
+              />
+              <AudioSourceStatusLine status={audioSourceStatus} options={sourceOptionsWithRequested} />
+            </div>
+          ),
+        },
+        {
           id: 'viz-sensitivity', label: 'Sensitivity',
-          hint: 'Input gain applied to the spectrum before drawing',
+          hint: 'Input gain for the selected source — remembered per source',
           control: (
             <SliderControl
-              value={v.vizSensitivity} min={0.3} max={2.5} step={0.05}
+              value={effectiveSensitivity(v.vizSensitivityBySource, v.vizAudioSource)} min={0.3} max={2.5} step={0.05}
               format={(x) => `${x.toFixed(2)}×`} accent={accent}
-              onChange={(x) => set('vizSensitivity', x)}
+              onChange={(x) => set('vizSensitivityBySource', { ...v.vizSensitivityBySource, [sourceKey(v.vizAudioSource)]: x })}
             />
           ),
         },
@@ -580,12 +623,15 @@ function SettingsSelect<T extends string>({ value, options, onChange }: {
   value: T;
   /** `group` is optional — used by the viz style dropdown to set installed
    *  bundles apart from built-ins under an "Installed" optgroup. Options
-   *  without a group render flat, at top, in array order. */
-  options: { value: T; label: string; group?: string }[];
+   *  without a group render flat, at top, in array order. `disabled` greys
+   *  out an option without removing it — kept generic for whichever caller
+   *  needs it; the audio-source picker deliberately does not use it (see
+   *  the comment at its call site). */
+  options: { value: T; label: string; group?: string; disabled?: boolean }[];
   onChange: (v: T) => void;
 }) {
   const ungrouped = options.filter((o) => !o.group);
-  const groups = new Map<string, { value: T; label: string }[]>();
+  const groups = new Map<string, { value: T; label: string; disabled?: boolean }[]>();
   for (const o of options) {
     if (!o.group) continue;
     const list = groups.get(o.group) ?? [];
@@ -608,14 +654,14 @@ function SettingsSelect<T extends string>({ value, options, onChange }: {
       }}
     >
       {ungrouped.map((o) => (
-        <option key={o.value} value={o.value} style={optionStyle}>
+        <option key={o.value} value={o.value} disabled={o.disabled} style={optionStyle}>
           {o.label}
         </option>
       ))}
       {[...groups.entries()].map(([label, opts]) => (
         <optgroup key={label} label={label} style={optionStyle}>
           {opts.map((o) => (
-            <option key={o.value} value={o.value} style={optionStyle}>
+            <option key={o.value} value={o.value} disabled={o.disabled} style={optionStyle}>
               {o.label}
             </option>
           ))}
@@ -623,6 +669,41 @@ function SettingsSelect<T extends string>({ value, options, onChange }: {
       ))}
     </select>
   );
+}
+
+// ---------------------------------------------------------------------------
+// Audio-source status line — the muted note under the source picker
+// explaining why the active source doesn't match what was asked for. Reads
+// straight off the `audio:source` payload (via useAudioSource); no
+// re-derivation of "is it really live" happens here.
+// ---------------------------------------------------------------------------
+
+function AudioSourceStatusLine({ status, options }: {
+  status: AudioSourceState | null;
+  options: SourceOption[];
+}) {
+  if (!status) return null;
+  if (status.supported === false) {
+    // `reason` carries whatever `audio_loopback::start` actually failed
+    // with — often a transient activation error, not a missing OS feature.
+    // The build-number message is a fallback for when Rust didn't send one,
+    // not an assertion about the cause.
+    return (
+      <div style={{ fontSize: 10.5, color: 'rgba(255,255,255,0.4)', textAlign: 'right' }}>
+        {status.reason ?? 'Per-app audio needs Windows 11 (build 20348+)'}
+      </div>
+    );
+  }
+  if (status.requested.mode !== 'mix' && status.active === 'mix') {
+    const exe = status.requested.exe;
+    const name = options.find((o) => o.exe === exe)?.name ?? exe;
+    return (
+      <div style={{ fontSize: 10.5, color: 'rgba(255,255,255,0.4)', textAlign: 'right' }}>
+        {name} isn't playing — using all system audio
+      </div>
+    );
+  }
+  return null;
 }
 
 function Segmented<T extends string>({ value, options, onChange, accent }: {

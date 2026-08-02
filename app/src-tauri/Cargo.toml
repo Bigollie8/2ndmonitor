@@ -1,6 +1,6 @@
 [package]
 name = "second-monitor-hub"
-version = "0.6.3"
+version = "0.6.4"
 description = "Second-Monitor Hub"
 authors = ["you"]
 edition = "2021"
@@ -43,7 +43,17 @@ urlencoding = "2"
 tokio = { version = "1", features = ["rt", "rt-multi-thread"] }
 
 [target.'cfg(windows)'.dependencies]
+# windows-rs 0.58's #[implement] macro expands to absolute `::windows_core::`
+# paths, so the crate has to be in the extern prelude by that name — a
+# `use windows::core as windows_core` can't satisfy a leading `::`. Pinned to
+# the exact version `windows` 0.58 depends on so cargo unifies them into one
+# copy (two copies would make the generated vtables a type mismatch).
+windows-core = "=0.58.0"
 windows = { version = "0.58", features = [
+    # Needed by audio_loopback.rs: ActivateAudioInterfaceAsync requires us to
+    # implement IActivateAudioInterfaceCompletionHandler, which needs the
+    # #[implement] proc-macro.
+    "implement",
     "Media_Control",
     "Foundation",
     "Foundation_Collections",

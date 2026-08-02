@@ -30,6 +30,9 @@ import {
 } from './state/pomodoro';
 import { TRACKS, ACCENT_PALETTES } from './data';
 import { useTweaks } from './state/useTweaks';
+import type { AudioSource } from './state/audioSource';
+import { describeAudioSource, effectiveSensitivity, migrateSensitivity } from './state/audioSource';
+import { useAudioSource } from './state/useAudioSource';
 import { UpdateToast } from './components/UpdateToast';
 import { useSysmon, useNowPlaying, useSpectrumRef } from './state/tauri';
 import { setWindowHidden } from './state/framePace';
@@ -115,7 +118,13 @@ interface TweakState extends Record<string, unknown> {
   accentTheme: AccentTheme;
   density: Density;
   vizArtBg: boolean;
-  vizSensitivity: number;
+  /** What the visualizer listens to — the whole system mix, or one app
+   *  included/excluded. See state/audioSource.ts. */
+  vizAudioSource: AudioSource;
+  /** Per-source input gain, keyed by `sourceKey(vizAudioSource)`. Replaces
+   *  the old single `vizSensitivity` scalar (migrated in migrateTweaks
+   *  below) so switching sources doesn't clobber a tuned gain. */
+  vizSensitivityBySource: Record<string, number>;
   vizSmoothing: number;
   vizColorOverride: VizColorOverride;
   lyricsOverlayEnabled: boolean;
@@ -172,7 +181,8 @@ const TWEAK_DEFAULTS: TweakState = {
   accentTheme: 'auto',
   density: 'compact',
   vizArtBg: false,
-  vizSensitivity: 1.0,
+  vizAudioSource: { mode: 'mix' },
+  vizSensitivityBySource: {},
   vizSmoothing: 0.0,
   vizColorOverride: { enabled: false, accent: '#a78bfa', accent2: '#ec4899' },
   lyricsOverlayEnabled: true,
@@ -214,6 +224,14 @@ function migrateTweaks(loaded: Record<string, unknown>): Record<string, unknown>
   // trap this wave removed.
   if (typeof loaded.vizMode === 'string') {
     loaded.vizMode = remapRetiredVizMode(loaded.vizMode) ?? loaded.vizMode;
+  }
+  // Audio-source sensitivity (added 2026-08): the old single `vizSensitivity`
+  // scalar becomes the 'mix' entry of the new per-source map, so upgrading
+  // doesn't reset anyone's tuned gain. Runs once — a saved
+  // `vizSensitivityBySource` (even `{}`) means this already happened.
+  if (loaded.vizSensitivityBySource === undefined && loaded.vizSensitivity !== undefined) {
+    loaded.vizSensitivityBySource = migrateSensitivity(loaded.vizSensitivity);
+    delete loaded.vizSensitivity;
   }
   const profilesField = loaded.profiles;
   // True first launch: nothing was loaded from disk at all (no profiles, no
@@ -364,6 +382,9 @@ function migrateTweaks(loaded: Record<string, unknown>): Record<string, unknown>
 
 export default function App() {
   const [t, setTweak, replaceTweaks, tweaksHydrated] = useTweaks<TweakState>(TWEAK_DEFAULTS, { migrate: migrateTweaks });
+  // Gain for whatever vizAudioSource currently points at — falls back to
+  // DEFAULT_SENSITIVITY the first time a given source is picked.
+  const vizSensitivity = effectiveSensitivity(t.vizSensitivityBySource, t.vizAudioSource);
   useEffect(() => {
     // Wait for the disk hydrate before deciding storage is truly empty —
     // seeding off the pre-hydrate defaults would race an existing profile
@@ -464,6 +485,19 @@ export default function App() {
       } catch { /* browser dev — no tauri */ }
     })();
   }, [t.closeToTray]);
+
+  // Push the chosen audio source to Rust whenever it changes. The tweak
+  // store stays the single source of truth; Rust is a follower here — the
+  // real outcome (fell back to mix, unsupported, etc.) comes back on the
+  // `audio:source` event, not from this call, so failures are swallowed.
+  useEffect(() => {
+    (async () => {
+      try {
+        const { invoke } = await import('@tauri-apps/api/core');
+        await invoke('audio_set_source', { source: t.vizAudioSource });
+      } catch { /* browser dev — no tauri, or capture not running yet */ }
+    })();
+  }, [t.vizAudioSource]);
 
   // Boot seeding (Critical 1 of the whole-branch review — see spec §5).
   // `seed_sync` installs every seed bundle shipped in resources that isn't
@@ -776,7 +810,13 @@ export default function App() {
       case 'claude':
         return <ClaudeCodeTile density={t.density} accent={accent} />;
       case 'mixer':
-        return <AudioMixerTile density={t.density} accent={accent} accent2={accent2} spectrumRef={spectrumRef} />;
+        return (
+          <AudioMixerTile
+            density={t.density} accent={accent} accent2={accent2} spectrumRef={spectrumRef}
+            audioSource={t.vizAudioSource}
+            onSetAudioSource={(s) => setTweak('vizAudioSource', s)}
+          />
+        );
       case 'notes':
         return <NotesTile density={t.density} accent={accent} todos={t.todos} setTodos={(next) => setTweak('todos', next)} />;
       case 'sysmon':
@@ -794,7 +834,7 @@ export default function App() {
             spectrumRef={spectrumRef}
             playback={livePlayback}
             showArtBg={t.vizArtBg}
-            sensitivity={t.vizSensitivity}
+            sensitivity={vizSensitivity}
             smoothing={t.vizSmoothing}
             lyricsOverlayEnabled={t.lyricsOverlayEnabled}
             videoEnabled={t.videoEnabled}
@@ -1035,6 +1075,7 @@ export default function App() {
           onSwitcher={() => setShowSwitcher(true)}
           profileName={activeProfile.name}
           tileCount={visibleTileCount}
+          audioSource={t.vizAudioSource}
         />
         {editMode && (
           <EditModeOverlay
@@ -1104,7 +1145,7 @@ export default function App() {
               accent2={vizAccent2}
               spectrumRef={spectrumRef}
               currentMode={t.vizMode}
-              sensitivity={t.vizSensitivity}
+              sensitivity={vizSensitivity}
               smoothing={t.vizSmoothing}
               onPick={(m) => setTweak('vizMode', m)}
               onClose={() => setShowGallery(false)}
@@ -1439,18 +1480,40 @@ function useFrameRate(): number {
 }
 
 function BottomStatus({
-  accent, onSwitcher, profileName, tileCount,
+  accent, onSwitcher, profileName, tileCount, audioSource,
 }: {
   accent: string;
   onSwitcher: () => void;
   profileName: string;
   tileCount: number;
+  audioSource: AudioSource;
 }) {
   // The 1Hz sysmon subscription and rAF frame counter live HERE, not in App:
   // this bar is the only chrome that displays them, and keeping them out of
   // the root means the ~36 tile subtrees no longer reconcile every second.
   const sysmon = useSysmon();
   const fps = useFrameRate();
+  // `audioSource` (the tweak) is the requested source and updates the moment
+  // the user picks one — no round trip needed. `status.active` is the only
+  // thing that has to come from Rust: whether that request is actually live
+  // right now (the app might not be playing anything yet).
+  const { status: audioSourceStatus, options: audioSourceOptions, refresh: refreshAudioSourceOptions } = useAudioSource();
+  // `options` is fetched once on mount, and this bar never unmounts — left
+  // alone, the friendly-name list would be frozen at whatever was playing
+  // at launch (usually nothing) for the rest of the session, so the status
+  // text falls back to the raw exe forever. Re-fetch whenever the app the
+  // capture is actually bound to changes: that's the one moment a new name
+  // might have become resolvable, and it only fires on real transitions
+  // (a fresh app attaching, or a reattach after one quits/relaunches) —
+  // not a polling loop.
+  useEffect(() => {
+    if (audioSourceStatus?.active_exe) refreshAudioSourceOptions();
+  }, [audioSourceStatus?.active_exe, refreshAudioSourceOptions]);
+  const audioSourceWaiting = audioSource.mode !== 'mix' && audioSourceStatus?.active === 'mix';
+  const audioSourceText = describeAudioSource(
+    audioSource,
+    (exe) => audioSourceOptions.find((o) => o.exe === exe)?.name ?? exe,
+  ) + (audioSourceWaiting ? ' (waiting)' : '');
   const app = sysmon.latest.app;
   // GPU spike feed for perf-debug snapshots rides along with the only
   // remaining chrome-level sysmon subscriber.
@@ -1480,7 +1543,7 @@ function BottomStatus({
       <span title="App resident memory">RAM {ramText}</span>
       <span title="App GPU usage (via NVML, NVIDIA only)">GPU {gpuText}</span>
       <span title="Render frame rate" style={{ color: fpsColor }}>{fpsText}</span>
-      <span>Audio: WASAPI loopback</span>
+      <span title="What the visualizer is listening to">Audio: {audioSourceText}</span>
       <div style={{ flex: 1 }} />
       <button onClick={onSwitcher} style={{ background: 'transparent', border: 'none', color: 'rgba(255,255,255,0.45)', fontFamily: 'inherit', fontSize: 'inherit', cursor: 'pointer', padding: 0 }}>{profileName}</button>
       <span style={{ color: 'rgba(255,255,255,0.25)' }}>·</span>

@@ -8,15 +8,21 @@ import {
   mixerControls,
   useMixerState,
 } from '../state/tauri';
+import type { AudioSource } from '../state/audioSource';
+import { sourceKey } from '../state/audioSource';
 import { Slider } from './Slider';
 
 export function AudioMixerTile({
-  density, accent, accent2, spectrumRef,
+  density, accent, accent2, spectrumRef, audioSource, onSetAudioSource,
 }: {
   density: Density;
   accent: string;
   accent2: string;
   spectrumRef?: MutableRefObject<SpectrumState>;
+  /** What the visualizer currently listens to — drives the per-row
+   *  highlight so the shortcut button reflects reality, not just intent. */
+  audioSource: AudioSource;
+  onSetAudioSource: (source: AudioSource) => void;
 }) {
   const state = useMixerState();
   const master = state?.master ?? null;
@@ -45,7 +51,13 @@ export function AudioMixerTile({
       <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
         <MasterRow master={master} accent={accent} accent2={accent2} spectrumRef={spectrumRef} />
         <div style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }} />
-        <SessionList sessions={sessions} accent={accent} accent2={accent2} />
+        <SessionList
+          sessions={sessions}
+          accent={accent}
+          accent2={accent2}
+          audioSource={audioSource}
+          onSetAudioSource={onSetAudioSource}
+        />
       </div>
     </HFTile>
   );
@@ -160,11 +172,13 @@ function MasterRow({
 }
 
 function SessionList({
-  sessions, accent, accent2,
+  sessions, accent, accent2, audioSource, onSetAudioSource,
 }: {
-  sessions: { pid: number; name: string; volume: number; mute: boolean; is_system_sounds: boolean; icon: string | null }[];
+  sessions: { pid: number; name: string; volume: number; mute: boolean; is_system_sounds: boolean; icon: string | null; exe: string | null }[];
   accent: string;
   accent2: string;
+  audioSource: AudioSource;
+  onSetAudioSource: (source: AudioSource) => void;
 }) {
   if (sessions.length === 0) {
     return (
@@ -179,19 +193,30 @@ function SessionList({
   return (
     <div style={{ flex: 1, overflowY: 'auto', padding: '6px 6px 10px', minHeight: 0 }}>
       {sessions.map((s) => (
-        <SessionRow key={s.pid + ':' + s.name} session={s} accent={accent} accent2={accent2} />
+        <SessionRow
+          key={s.pid + ':' + s.name}
+          session={s}
+          accent={accent}
+          accent2={accent2}
+          audioSource={audioSource}
+          onSetAudioSource={onSetAudioSource}
+        />
       ))}
     </div>
   );
 }
 
 function SessionRow({
-  session, accent, accent2,
+  session, accent, accent2, audioSource, onSetAudioSource,
 }: {
-  session: { pid: number; name: string; volume: number; mute: boolean; is_system_sounds: boolean; icon: string | null };
+  session: { pid: number; name: string; volume: number; mute: boolean; is_system_sounds: boolean; icon: string | null; exe: string | null };
   accent: string;
   accent2: string;
+  audioSource: AudioSource;
+  onSetAudioSource: (source: AudioSource) => void;
 }) {
+  const exe = session.exe;
+  const isCurrentSource = exe != null && sourceKey(audioSource) === sourceKey({ mode: 'only', exe });
   return (
     <div style={{
       display: 'flex', alignItems: 'center', gap: 8,
@@ -227,6 +252,13 @@ function SessionRow({
           onCommit={(v) => mixerControls.setSessionVolume(session.pid, v)}
         />
       </div>
+      {exe != null && (
+        <SourceButton
+          active={isCurrentSource}
+          accent={accent}
+          onToggle={() => onSetAudioSource(isCurrentSource ? { mode: 'mix' } : { mode: 'only', exe })}
+        />
+      )}
       <MuteButton
         muted={session.mute}
         disabled={false}
@@ -286,6 +318,29 @@ function hashColor(s: string): string {
   for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619) >>> 0;
   const palette = ['#fb7185', '#60a5fa', '#a78bfa', '#facc15', '#22c55e', '#06b6d4', '#f472b6', '#f97316'];
   return palette[h % palette.length]!;
+}
+
+function SourceButton({
+  active, accent, onToggle,
+}: { active: boolean; accent: string; onToggle: () => void }) {
+  const title = active ? 'Stop visualizing only this app' : 'Visualize only this app';
+  return (
+    <button
+      onClick={onToggle}
+      title={title}
+      aria-label={title}
+      style={{
+        width: 26, height: 26, padding: 0, flexShrink: 0,
+        background: active ? `${accent}22` : 'rgba(255,255,255,0.05)',
+        border: `1px solid ${active ? `${accent}66` : 'rgba(255,255,255,0.08)'}`,
+        color: active ? accent : 'rgba(255,255,255,0.7)',
+        borderRadius: 6,
+        cursor: 'pointer',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        fontSize: 13,
+      }}
+    >🎧</button>
+  );
 }
 
 function MuteButton({
