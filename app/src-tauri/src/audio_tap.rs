@@ -33,8 +33,12 @@
 //! that proves capture actually works, and it is `#[ignore]`d so it only runs
 //! when a human asks for it on a real Mac.
 
-// Wired into the audio supervisor by the next task; until then the module is
-// compiled (so CI type-checks it) but nothing calls it.
+// `audio.rs`'s supervisor drives this module for both of its sources on macOS
+// (a global tap for the mix, a per-process tap for an app), so `start`,
+// `TapTarget`, `sample_rate` and `is_alive` are all live. The blanket allow
+// stays for the FFI scaffolding underneath them — declared entry points and
+// status constants that exist to document the ABI we depend on, whether or not
+// every one is reached on a given path.
 #![allow(dead_code)]
 
 use core_foundation_sys::array::{kCFTypeArrayCallBacks, CFArrayCreate, CFArrayRef};
