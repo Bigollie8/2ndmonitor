@@ -2,9 +2,10 @@
 //!
 //! Connects to Discord's local IPC endpoint — a Named Pipe
 //! (`\\.\pipe\discord-ipc-0`) on Windows, a Unix domain socket
-//! (`$TMPDIR/discord-ipc-0`) on macOS/Linux — performs the IPC handshake +
-//! AUTHENTICATE with our existing OAuth access token, then subscribes to the
-//! events we care about:
+//! (`discord-ipc-0` under `$XDG_RUNTIME_DIR`/`$TMPDIR`/`/tmp`, see
+//! `ipc_path`) on macOS/Linux — performs the IPC handshake + AUTHENTICATE
+//! with our existing OAuth access token, then subscribes to the events we
+//! care about:
 //!
 //!   - NOTIFICATION_CREATE  → live DM / @mention feed (whenever Discord would
 //!     have shown a desktop notification, we get the same payload)
@@ -59,13 +60,19 @@ type Transport = PipeIo;
 type Transport = SocketIo;
 
 /// Where Discord's IPC endpoint lives. Windows: a named pipe. macOS/Linux:
-/// a Unix domain socket under the per-user temp dir (Discord also checks
-/// TMPDIR/XDG_RUNTIME_DIR; TMPDIR is what the macOS client uses).
+/// a Unix domain socket under the per-user temp/runtime dir. Checked in the
+/// same order Discord's own clients use: `XDG_RUNTIME_DIR` (what the Linux
+/// client sets) first, then `TMPDIR` (what the macOS client uses), then
+/// `/tmp`. An empty (as opposed to unset) env var falls through too, so a
+/// set-but-blank `TMPDIR` can't produce a path rooted at `/`.
 #[cfg(windows)]
 fn ipc_path(index: u8) -> String { format!(r"\\.\pipe\discord-ipc-{index}") }
 #[cfg(unix)]
 fn ipc_path(index: u8) -> String {
-    let base = std::env::var("TMPDIR").unwrap_or_else(|_| "/tmp".to_string());
+    let env_dir = |name: &str| std::env::var(name).ok().filter(|s| !s.is_empty());
+    let base = env_dir("XDG_RUNTIME_DIR")
+        .or_else(|| env_dir("TMPDIR"))
+        .unwrap_or_else(|| "/tmp".to_string());
     format!("{}/discord-ipc-{index}", base.trim_end_matches('/'))
 }
 
@@ -820,43 +827,57 @@ impl Drop for EventGuard {
 // ── Unix domain socket transport (macOS/Linux) ───────────────────────────────
 //
 // The Windows overlapped-I/O dance above exists solely because a pending
-// ReadFile blocks a concurrent WriteFile on the same named-pipe handle. Unix
-// domain sockets have no such restriction — a thread blocked in recv() on one
-// end doesn't stop another thread from send()-ing on the same fd — so the
-// plain blocking implementation below is correct as-is. Do not "port" the
-// overlapped-I/O complexity here; it would be solving a problem this
-// transport doesn't have.
+// ReadFile blocks a concurrent WriteFile on the same named-pipe handle. A
+// Unix domain socket has no such restriction at the kernel level — a thread
+// blocked in recv() on one fd doesn't stop another thread from send()-ing on
+// a *different* fd for the same socket. But naively wrapping ONE fd in a
+// single Rust-level `Mutex<UnixStream>` for both read and write would
+// reintroduce the identical hazard one level up: the worker thread spends
+// most of its life blocked inside `read_exact`, holding that lock, so a
+// concurrent `write_frame` from a Tauri command (e.g. SET_VOICE_SETTINGS for
+// mute/deafen) would stall until Discord happens to push the next event —
+// exactly the "mute/deafen didn't work until a message arrived" bug above.
+//
+// `SocketIo` avoids that by holding two independent `try_clone()`d handles —
+// one dedicated to reads, one to writes — each behind its own lock, so a
+// pending read can never block a write (and vice versa). Do not collapse
+// these back into a single handle/lock; that reintroduces the bug this
+// split exists to avoid.
 #[cfg(unix)]
 #[derive(Clone)]
 pub struct SocketIo {
-    stream: Arc<parking_lot::Mutex<std::os::unix::net::UnixStream>>,
-    /// Serializes concurrent writes so frames don't interleave, matching
+    /// Read-only use: only `read_exact` ever locks this.
+    read: Arc<parking_lot::Mutex<std::os::unix::net::UnixStream>>,
+    /// Write-only use: only `write_all` ever locks this. Locking it also
+    /// serializes concurrent writers so frames don't interleave, matching
     /// `PipeIo`'s write_lock.
-    write_lock: Arc<parking_lot::Mutex<()>>,
+    write: Arc<parking_lot::Mutex<std::os::unix::net::UnixStream>>,
 }
 
 #[cfg(unix)]
 impl SocketIo {
     fn open(path: &str) -> Result<Self, String> {
-        let stream = std::os::unix::net::UnixStream::connect(path)
+        let read = std::os::unix::net::UnixStream::connect(path)
             .map_err(|e| format!("connect {path}: {e}"))?;
+        let write = read
+            .try_clone()
+            .map_err(|e| format!("try_clone {path}: {e}"))?;
         Ok(Self {
-            stream: Arc::new(parking_lot::Mutex::new(stream)),
-            write_lock: Arc::new(parking_lot::Mutex::new(())),
+            read: Arc::new(parking_lot::Mutex::new(read)),
+            write: Arc::new(parking_lot::Mutex::new(write)),
         })
     }
 
     fn read_exact(&self, buf: &mut [u8]) -> Result<(), String> {
         use std::io::Read;
-        self.stream.lock().read_exact(buf).map_err(|e| format!("read: {e}"))
+        self.read.lock().read_exact(buf).map_err(|e| format!("read: {e}"))
     }
 
     fn write_all(&self, data: &[u8]) -> Result<(), String> {
         use std::io::Write;
-        let _guard = self.write_lock.lock();
-        let mut s = self.stream.lock();
-        s.write_all(data).map_err(|e| format!("write: {e}"))?;
-        s.flush().map_err(|e| format!("flush: {e}"))
+        let mut w = self.write.lock();
+        w.write_all(data).map_err(|e| format!("write: {e}"))?;
+        w.flush().map_err(|e| format!("flush: {e}"))
     }
 }
 
