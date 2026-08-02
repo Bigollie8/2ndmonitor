@@ -375,12 +375,23 @@ fn rate_status_message(status: u16, body: &str) -> Option<String> {
 /// must treat any `Err` exactly like a missing preview (silent, see the
 /// module comment above) — this function itself has no special-casing for
 /// that; it is ordinary `get_capped` error propagation.
+/// Async + `spawn_blocking`: a sync `#[tauri::command]` runs on the MAIN
+/// thread, and this one does a blocking HTTP GET with a 10s timeout — that
+/// combination freezes the whole UI for the duration of the fetch. Same
+/// conversion as `marketplace_fetch_index` and `marketplace_fetch_preview`
+/// below; the preview command is the one that made this visible (the catalog
+/// mounts hundreds of preview fetches at once), but any of the three blocking
+/// on a slow server stalled the app.
 #[tauri::command]
-pub fn marketplace_fetch_ratings(url: String) -> Result<serde_json::Value, String> {
-    let base = url.trim_end_matches('/');
-    let body_bytes = get_capped(&format!("{base}/ratings"), FETCH_CAP)?;
-    let body = String::from_utf8(body_bytes).map_err(|_| "ratings not UTF-8".to_string())?;
-    serde_json::from_str(&body).map_err(|e| format!("ratings not JSON: {e}"))
+pub async fn marketplace_fetch_ratings(url: String) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let base = url.trim_end_matches('/');
+        let body_bytes = get_capped(&format!("{base}/ratings"), FETCH_CAP)?;
+        let body = String::from_utf8(body_bytes).map_err(|_| "ratings not UTF-8".to_string())?;
+        serde_json::from_str(&body).map_err(|e| format!("ratings not JSON: {e}"))
+    })
+    .await
+    .map_err(|e| format!("fetch task failed: {e}"))?
 }
 
 /// Casts (or replaces — the server's `(bundle_id, user_id)` primary key means
@@ -427,18 +438,23 @@ pub fn marketplace_rate<R: Runtime>(
     Ok(())
 }
 
+/// Async + `spawn_blocking` — see `marketplace_fetch_ratings`'s doc comment.
 #[tauri::command]
-pub fn marketplace_fetch_index(url: String, pubkey: String) -> Result<serde_json::Value, String> {
-    let base = url.trim_end_matches('/');
-    let body_bytes = get_capped(&format!("{base}/index.json"), FETCH_CAP)?;
-    let body = String::from_utf8(body_bytes).map_err(|_| "index not UTF-8".to_string())?;
-    let v: serde_json::Value = serde_json::from_str(&body).map_err(|e| format!("index not JSON: {e}"))?;
-    let sig = v.get("sig").and_then(|s| s.as_str()).ok_or("index missing sig")?;
-    let bundles_str = extract_bundles_str(&body).ok_or("index malformed")?;
-    if !verify_index(bundles_str, sig, &pubkey) {
-        return Err("index signature does not verify — wrong key or tampered index".into());
-    }
-    Ok(v)
+pub async fn marketplace_fetch_index(url: String, pubkey: String) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let base = url.trim_end_matches('/');
+        let body_bytes = get_capped(&format!("{base}/index.json"), FETCH_CAP)?;
+        let body = String::from_utf8(body_bytes).map_err(|_| "index not UTF-8".to_string())?;
+        let v: serde_json::Value = serde_json::from_str(&body).map_err(|e| format!("index not JSON: {e}"))?;
+        let sig = v.get("sig").and_then(|s| s.as_str()).ok_or("index missing sig")?;
+        let bundles_str = extract_bundles_str(&body).ok_or("index malformed")?;
+        if !verify_index(bundles_str, sig, &pubkey) {
+            return Err("index signature does not verify — wrong key or tampered index".into());
+        }
+        Ok(v)
+    })
+    .await
+    .map_err(|e| format!("fetch task failed: {e}"))?
 }
 
 fn content_dir<R: Runtime>(
@@ -746,8 +762,14 @@ pub fn sniff_image(bytes: &[u8]) -> Option<&'static str> {
 /// request path below; an unvalidated version is exactly the kind of
 /// "trusted" string that turns into a request-path or header-injection
 /// primitive the moment a hostile index entry supplies it.
+/// Async + `spawn_blocking` — see `marketplace_fetch_ratings`'s doc comment.
+/// This is the command where sync-on-main-thread actually took the app down:
+/// the Content Library mounts one of these per catalog row, so a catalog with
+/// hundreds of presets queued hundreds of blocking 10s-timeout HTTP fetches
+/// on the main thread and the window stopped responding (2026-08-02 report
+/// from the first outside user).
 #[tauri::command]
-pub fn marketplace_fetch_preview(url: String, id: String, version: String, kind: String) -> Result<String, String> {
+pub async fn marketplace_fetch_preview(url: String, id: String, version: String, kind: String) -> Result<String, String> {
     if !is_safe_id(&id) {
         return Err("invalid bundle id".into());
     }
@@ -757,15 +779,19 @@ pub fn marketplace_fetch_preview(url: String, id: String, version: String, kind:
     if !crate::seed::is_safe_version(&version) {
         return Err("invalid bundle version".into());
     }
-    let base = url.trim_end_matches('/');
+    let base = url.trim_end_matches('/').to_string();
     if !base.starts_with("https://") {
         return Err("marketplace url must be https".into());
     }
-    let endpoint = format!("{base}/bundle/{id}/{version}/preview");
-    let bytes = get_capped(&endpoint, PREVIEW_CAP)?;
-    let mime = sniff_image(&bytes).ok_or("preview is not a PNG or JPEG")?;
-    use base64::{engine::general_purpose::STANDARD, Engine as _};
-    Ok(format!("data:{mime};base64,{}", STANDARD.encode(&bytes)))
+    tauri::async_runtime::spawn_blocking(move || {
+        let endpoint = format!("{base}/bundle/{id}/{version}/preview");
+        let bytes = get_capped(&endpoint, PREVIEW_CAP)?;
+        let mime = sniff_image(&bytes).ok_or("preview is not a PNG or JPEG")?;
+        use base64::{engine::general_purpose::STANDARD, Engine as _};
+        Ok(format!("data:{mime};base64,{}", STANDARD.encode(&bytes)))
+    })
+    .await
+    .map_err(|e| format!("fetch task failed: {e}"))?
 }
 
 #[derive(Serialize)]

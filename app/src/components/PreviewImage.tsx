@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import type { CatalogKind } from '../state/catalog';
 import { previewCacheKey } from './previewCacheKey';
 import { loadPreview, peekPreview } from './previewCache';
@@ -42,7 +42,34 @@ export function PreviewImage({
   const key = previewCacheKey(kind, id, version);
   const [dataUrl, setDataUrl] = useState<string | null>(() => peekPreview(key) ?? null);
 
+  // Fetch only once this frame has actually been near the viewport. The
+  // catalog renders every row it has — hundreds of presets — and before this
+  // gate each mount fired its `marketplace_fetch_preview` immediately, so
+  // opening the Content Library kicked off the ENTIRE catalog's preview
+  // downloads at once (the 2026-08-02 freeze report). `visible` latches: once
+  // a frame has been seen, a later scroll-away doesn't cancel or re-gate its
+  // fetch — the cache already holds (or is filling) its answer.
+  const [visible, setVisible] = useState(false);
+  const frameRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
+    const el = frameRef.current;
+    if (!el) return;
+    if (typeof IntersectionObserver === 'undefined') {
+      setVisible(true);
+      return;
+    }
+    const obs = new IntersectionObserver((entries) => {
+      if (entries.some((e) => e.isIntersecting)) {
+        setVisible(true);
+        obs.disconnect();
+      }
+    }, { rootMargin: '200px' });
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, []);
+
+  useEffect(() => {
+    if (!visible) return;
     const k = previewCacheKey(kind, id, version);
     // Reset synchronously to THIS key's answer the moment the key changes on
     // an already-mounted instance — e.g. `availableVersion` bumping between
@@ -67,14 +94,25 @@ export function PreviewImage({
       if (!cancelled) setDataUrl(result);
     });
     return () => { cancelled = true; };
-  }, [id, version, kind, url]);
+  }, [visible, id, version, kind, url]);
 
-  if (dataUrl == null) return <>{fallback}</>;
+  // The wrapper div exists to give the IntersectionObserver a real box to
+  // watch (the fallback is an inline span centered by the PARENT's flex, so
+  // it can't be observed directly). It fills the parent frame and re-centers
+  // its content the same way every call-site's frame already does, so the
+  // rendered result is visually identical to the pre-gate markup.
   return (
-    <img
-      src={dataUrl}
-      alt=""
-      style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-    />
+    <div
+      ref={frameRef}
+      style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+    >
+      {dataUrl == null ? fallback : (
+        <img
+          src={dataUrl}
+          alt=""
+          style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+        />
+      )}
+    </div>
   );
 }
