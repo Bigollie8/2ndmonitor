@@ -5,6 +5,20 @@ All notable changes to 2ndMonitor are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.6.5] - 2026-08-02
+
+### Fixed
+- The visualizer tile can now be removed in edit mode like any other tile
+  (add it back any time from the content library). It was the one tile
+  with a permanently disabled Remove button
+- The Layers and Properties panels in edit mode can now be dragged out of
+  the way by their headers — they used to sit fixed over the canvas and
+  block moving or resizing any tile underneath them
+
+### Changed
+- Settings → Performance mode now reads battery → balanced → high →
+  uncapped, left to right
+
 ## [0.6.4] - 2026-08-02
 
 ### Added

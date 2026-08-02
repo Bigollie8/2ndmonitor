@@ -340,7 +340,7 @@ export function SettingsWindow({
           control: (
             <Segmented<PerfMode>
               value={v.perfMode}
-              options={['uncapped', 'high', 'balanced', 'battery']}
+              options={['battery', 'balanced', 'high', 'uncapped']}
               onChange={(x) => set('perfMode', x)}
               accent={accent}
             />

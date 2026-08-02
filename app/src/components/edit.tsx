@@ -12,6 +12,7 @@ import {
   updateInstance,
 } from '../state/layout';
 import { TILE_META } from '../state/tileMeta';
+import { usePanelDrag } from './panelDrag';
 import { isBundleTile, bundleIdOf, BUNDLE_TILE_ICON } from '../tiles/tileRegistry';
 import { useTileCatalog } from '../tiles/useTileCatalog';
 
@@ -114,7 +115,7 @@ export function EditModeOverlay({
             onChangeRect={(r) => setRect(selectedInstanceId, r)}
             onReset={() => resetRect(selectedInstanceId)}
             onRemove={
-              onRemove && sel.type !== 'viz'
+              onRemove
                 ? () => {
                     onRemove(selectedInstanceId);
                     const next = tiles.find((t) => t.instanceId !== selectedInstanceId);
@@ -269,8 +270,9 @@ function PropertiesPanel({
   onReset?: () => void;
   onRemove?: () => void;
 }) {
+  const drag = usePanelDrag();
   return (
-    <div style={{
+    <div ref={drag.panelRef} style={{
       position: 'absolute', top: 80, right: 16, width: 280,
       maxHeight: 'calc(100% - 100px)',
       borderRadius: 10,
@@ -278,8 +280,9 @@ function PropertiesPanel({
       border: '1px solid rgba(255,255,255,0.08)',
       boxShadow: '0 12px 40px rgba(0,0,0,0.5)',
       zIndex: 55, overflow: 'hidden', display: 'flex', flexDirection: 'column',
+      ...drag.panelStyle,
     }}>
-      <div style={{ padding: '10px 14px', borderBottom: '1px solid rgba(255,255,255,0.06)', display: 'flex', alignItems: 'center', gap: 8 }}>
+      <div {...drag.handleProps} style={{ padding: '10px 14px', borderBottom: '1px solid rgba(255,255,255,0.06)', display: 'flex', alignItems: 'center', gap: 8, ...drag.handleProps.style }}>
         <div style={{ width: 8, height: 8, background: accent, borderRadius: 2 }} />
         <span style={{ fontSize: 12, fontWeight: 600, color: '#fff' }}>{tile.label}</span>
         <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)', fontFamily: '"JetBrains Mono", ui-monospace, monospace', marginLeft: 'auto' }}>{tile.kind} · {selectedInstanceId.slice(0, 8)}</span>
@@ -307,7 +310,7 @@ function PropertiesPanel({
         <button
           onClick={onRemove}
           disabled={!onRemove}
-          title={onRemove ? 'Remove this tile (add it back from the content library)' : 'The visualizer cannot be removed'}
+          title={onRemove ? 'Remove this tile (add it back from the content library)' : 'This tile cannot be removed here'}
           style={{
             flex: 1, padding: '7px', fontSize: 10.5, fontWeight: 600,
             background: 'rgba(239,68,68,0.1)', color: onRemove ? '#fca5a5' : 'rgba(239,68,68,0.4)',
@@ -385,15 +388,17 @@ function LayersPanel({ accent, selectedInstanceId, setSelectedInstanceId, tiles,
   // A bundle tile (`bundle:<id>`) has no entry in TILE_META — it shares the
   // same fallback glyph the tile registry synthesizes for it.
   const kindIcon = (type: TileType): string => (isBundleTile(type) ? BUNDLE_TILE_ICON : TILE_META[type].icon);
+  const drag = usePanelDrag();
   return (
-    <div style={{
+    <div ref={drag.panelRef} style={{
       position: 'absolute', bottom: 16, left: 16, width: 240,
       borderRadius: 10, overflow: 'hidden',
       background: 'rgba(20,22,28,0.96)', backdropFilter: 'blur(20px)',
       border: '1px solid rgba(255,255,255,0.08)',
       boxShadow: '0 12px 40px rgba(0,0,0,0.5)', zIndex: 55,
+      ...drag.panelStyle,
     }}>
-      <div style={{ padding: '10px 14px', borderBottom: '1px solid rgba(255,255,255,0.06)', display: 'flex', alignItems: 'center', gap: 8 }}>
+      <div {...drag.handleProps} style={{ padding: '10px 14px', borderBottom: '1px solid rgba(255,255,255,0.06)', display: 'flex', alignItems: 'center', gap: 8, ...drag.handleProps.style }}>
         <span style={{ fontSize: 11, fontWeight: 600, color: '#fff' }}>Layers</span>
         <span style={{ fontSize: 9, color: 'rgba(255,255,255,0.4)', fontFamily: '"JetBrains Mono", ui-monospace, monospace', marginLeft: 'auto' }}>{tiles.length} tiles</span>
       </div>
