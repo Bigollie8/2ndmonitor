@@ -5,6 +5,50 @@ All notable changes to 2ndMonitor are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-08-01
+
+### Added
+- Individual MilkDrop presets on the marketplace: ~370 classic presets from
+  the Butterchurn packs (including the never-shipped Extra, Extra2, and MD1
+  collections), each its own one-click install with an auto-captured preview
+  thumbnail — browse them in the Content Library's new "MilkDrop → Presets"
+  section
+- The MilkDrop preset picker gains a "Marketplace" group for installed
+  presets — with name, author, updates, and uninstall via the library —
+  plus a "Get more presets →" link that jumps straight to the marketplace
+  section
+- Installed marketplace presets are real citizens: update detection when a
+  newer version is published, clean uninstall, and they never mix with your
+  hand-dropped files in the `presets/` folder
+
+### Changed
+- The built-in MilkDrop pack slims from 100 bundled presets to a curated
+  12-preset starter pack — everything else (and much more) moved to
+  individual marketplace installs. The MilkDrop code chunk shrinks from
+  889 kB to 295 kB
+- The preset picker's groups are now Originals / Marketplace / Starter pack /
+  Your presets
+
+### Fixed
+- MilkDrop preset loading silently did nothing in dev builds (a React
+  StrictMode double-mount left the surface's mounted-guard permanently
+  false); packaged builds were unaffected
+
+## [0.5.1] - 2026-08-01
+
+### Added
+- Auto-update: the app checks for new releases and offers a one-click
+  "Update & restart" — updates are cryptographically signed, and nothing
+  downloads or installs without your click
+- "Check for updates" button in Settings → System for checking on demand
+- Six original Tron-inspired MilkDrop presets in a new "Originals" group at
+  the top of the preset picker, each with a ◐ toggle between the canonical
+  Tron palette and your theme's accent colors
+
+### Changed
+- This is the first release the app can update itself FROM — anyone on 0.5.0
+  or older needs one last manual install
+
 ## [0.5.0] - 2026-08-01
 
 ### Added

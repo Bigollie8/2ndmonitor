@@ -59,5 +59,14 @@ export function buildRail(items: CatalogItem[]): RailSection[] {
         (i) => visible(i) && i.kind === kind && i.category === cat);
     }
   }
+
+  // MilkDrop presets get one selectable row, not a row per category — unlike
+  // tiles/visualizers, every preset shares the single 'milkdrop' category, so
+  // a per-category breakdown would just be one row repeating the heading.
+  const presets = items.filter((i) => i.kind === 'preset' && visible(i));
+  if (presets.length > 0) {
+    rows.push({ id: 'heading:preset', heading: true, count: presets.length, label: 'MilkDrop', match: () => false });
+    push('preset:all', 'Presets', (i) => visible(i) && i.kind === 'preset');
+  }
   return rows;
 }

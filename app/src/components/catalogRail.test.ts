@@ -68,3 +68,37 @@ test('buildRail: a category heading count excludes removed items too', () => {
   const heading = rail.find((r) => r.id === 'heading:tile');
   assert.equal(heading?.count, 1, 'the tile heading counts only the visible item');
 });
+
+// preset kind — Task 4 admits MilkDrop presets into the rail as one
+// selectable row (not per-category, unlike tiles/visualizers) after the
+// tile/visualizer sections.
+
+test('buildRail: presets present produce a MilkDrop heading and a Presets row with the right count', () => {
+  const rail = buildRail([
+    item({ key: 'preset:a', id: 'a', kind: 'preset', category: 'milkdrop' }),
+    item({ key: 'preset:b', id: 'b', kind: 'preset', category: 'milkdrop' }),
+  ]);
+  const heading = rail.find((r) => r.id === 'heading:preset');
+  assert.ok(heading);
+  assert.equal(heading?.label, 'MilkDrop');
+  assert.equal(heading?.count, 2);
+  const row = rail.find((r) => r.id === 'preset:all');
+  assert.ok(row);
+  assert.equal(row?.label, 'Presets');
+  assert.equal(row?.count, 2);
+});
+
+test('buildRail: a removed preset is excluded from the Presets row and heading count', () => {
+  const rail = buildRail([
+    item({ key: 'preset:a', id: 'a', kind: 'preset', category: 'milkdrop', removed: false }),
+    item({ key: 'preset:b', id: 'b', kind: 'preset', category: 'milkdrop', removed: true }),
+  ]);
+  assert.equal(rail.find((r) => r.id === 'heading:preset')?.count, 1);
+  assert.equal(rail.find((r) => r.id === 'preset:all')?.count, 1);
+});
+
+test('buildRail: no presets means no preset heading or row', () => {
+  const rail = buildRail([item()]);
+  assert.equal(rail.some((r) => r.id === 'preset:all'), false);
+  assert.equal(rail.some((r) => r.id === 'heading:preset'), false);
+});

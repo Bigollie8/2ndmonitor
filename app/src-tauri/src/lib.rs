@@ -54,6 +54,8 @@ pub fn run() {
             None,
         ))
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         // Serves the scripted-visualizer sandbox document with its own CSP
         // header. Must be registered before `build()`: the protocol table is
         // copied onto each pending webview at creation time
@@ -97,6 +99,8 @@ pub fn run() {
             audio::set_waveform_enabled,
             presets::presets_list,
             presets::presets_read,
+            presets::presets_market_list,
+            presets::presets_market_read,
             visualizers::visualizers_list,
             visualizers::visualizers_read,
             visualizers::visualizers_write,

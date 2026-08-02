@@ -47,10 +47,12 @@ test('glue: reuses a window-level visualizer singleton across re-inits, no fresh
     'a reused visualizer still picks up the current init size');
 });
 
-test('milkdrop-code assembles butterchurn + pack + glue via ?raw (source scan — module not importable under node)', () => {
+test('milkdrop-code assembles butterchurn + starter pack + glue via ?raw (source scan — module not importable under node)', () => {
   const src = readApp('components', 'milkdrop-code.ts');
   assert.ok(src.includes("butterchurn/lib/butterchurn.min.js?raw"));
-  assert.ok(src.includes("butterchurn-presets/lib/butterchurnPresets.min.js?raw"));
+  assert.ok(src.includes("./milkdrop-starter-pack.json?raw"), 'full pack replaced by the slimmed starter pack');
+  assert.ok(src.includes('window.butterchurnPresets={getPresets:function(){return ('),
+    'starter pack JSON is wrapped to match the getPresets() surface the glue reads');
   assert.ok(src.includes('MILKDROP_GLUE'));
   assert.ok(src.includes("join('\\n;\\n')"), 'minified UMDs may lack trailing semicolons/newlines');
 });

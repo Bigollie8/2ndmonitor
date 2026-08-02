@@ -125,6 +125,11 @@ commands.allow = [
   "presets_list",
   "presets_read",
 
+  # marketplace-installed milkdrop presets: identity (name/author/version),
+  # list/read for the picker/catalog.
+  "presets_market_list",
+  "presets_market_read",
+
   # installed visualizer bundles, incl. the authoring surface's write path
   # (src/components/{viz-scripted,viz-editor,viz-sandbox-surface,useVizStyles}.tsx).
   "visualizers_list",

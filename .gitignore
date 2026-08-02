@@ -21,6 +21,10 @@ app/src-tauri/gen/
 # Bundle build artifacts
 bundles/dist/
 
+# Extracted MilkDrop marketplace presets (staged for publishing, not committed;
+# see scripts/extract-presets.mjs)
+bundles-presets/
+
 # Internal design references and planning docs (kept local)
 /index.html
 design/

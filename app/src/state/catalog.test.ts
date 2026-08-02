@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   mergeCatalog, catalogKey, planRemoval, restoreDefaults, secretSetupCandidates, applyOptimisticVote,
-  type MergeCatalogArgs, type IndexBundle,
+  type MergeCatalogArgs, type IndexBundle, type InstalledPresetFolder,
 } from './catalog';
 import { TILE_META } from './tileMeta';
 import { BUILTIN_VIZ_STYLES } from '../components/viz-styles';
@@ -17,14 +17,22 @@ const vizFolder = (o: Partial<InstalledVizFolder> = {}): InstalledVizFolder => (
   id: 'aurora', name: 'Aurora', author: 'oli***', version: '1.0.0',
   api: 1, manifest_error: null, source: 'marketplace', ...o,
 });
+const presetFolder = (o: Partial<InstalledPresetFolder> = {}): InstalledPresetFolder => ({
+  id: 'tron-grid', name: 'Tron Grid', author: 'oli***', version: '1.0.0', ...o,
+});
 const idx = (o: Record<string, unknown> = {}) => ({
   id: 'aurora', version: '1.0.0', kind: 'visualizer', name: 'Aurora',
+  author: 'oli***', permissions: [], sha256: 'ab', size: 100, downloads: 40, ...o,
+});
+const presetIdx = (o: Record<string, unknown> = {}) => ({
+  id: 'tron-grid', version: '1.0.0', kind: 'preset', name: 'Tron Grid',
   author: 'oli***', permissions: [], sha256: 'ab', size: 100, downloads: 40, ...o,
 });
 
 const base = (o: Partial<MergeCatalogArgs> = {}): MergeCatalogArgs => ({
   tileMeta: TILE_META, vizStyles: BUILTIN_VIZ_STYLES,
-  installedTiles: [], installedViz: [], index: [], removed: [], needsSetup: [], ratings: {}, ...o,
+  installedTiles: [], installedViz: [], installedPresets: [], index: [], removed: [], needsSetup: [], ratings: {},
+  ...o,
 });
 
 test('mergeCatalog: built-ins appear as first-party or bundle-target items', () => {
@@ -284,6 +292,78 @@ test('applyOptimisticVote: three sequential votes for the same bundle never comp
   assert.ok(Math.abs(rating.avg - 4.0) < 1e-9, `expected avg 4.0, got ${rating.avg}`);
 });
 
+// preset kind — MilkDrop presets admitted into the catalog as their own
+// CatalogKind (Task 4). Same three-pass shape as tile/visualizer: a
+// compile-time table entry doesn't exist for presets (there is no built-in
+// preset table), so pass 1 is skipped; pass 2 is installed preset folders;
+// pass 3 is the signed index, which now includes 'preset'-kind bundles
+// instead of skipping them.
+
+test('mergeCatalog: an index preset entry not installed is available, not installed', () => {
+  const out = mergeCatalog(base({
+    index: [presetIdx({ hasPreview: true })],
+  }));
+  const p = out.find((i) => i.key === 'preset:tron-grid');
+  assert.ok(p);
+  assert.equal(p.kind, 'preset');
+  assert.equal(p.installed, false);
+  assert.equal(p.availableVersion, '1.0.0');
+  assert.equal(p.hasPreview, true);
+  assert.equal(p.category, 'milkdrop');
+});
+
+test('mergeCatalog: an installed preset with a newer index version flags an update and shows the author', () => {
+  const out = mergeCatalog(base({
+    installedPresets: [presetFolder({ version: '1.0.0' })],
+    index: [presetIdx({ version: '1.1.0' })],
+  }));
+  const p = out.find((i) => i.key === 'preset:tron-grid');
+  assert.ok(p);
+  assert.equal(p.installed, true);
+  assert.equal(p.installedVersion, '1.0.0');
+  assert.equal(p.availableVersion, '1.1.0');
+  assert.equal(p.updateAvailable, true);
+  assert.equal(p.description, 'by oli***');
+});
+
+test('mergeCatalog: an installed preset absent from the index still appears (offline case)', () => {
+  const out = mergeCatalog(base({ installedPresets: [presetFolder()] }));
+  const p = out.find((i) => i.key === 'preset:tron-grid');
+  assert.ok(p, 'installed preset survives with no index entry');
+  assert.equal(p.kind, 'preset');
+  assert.equal(p.installed, true);
+  assert.equal(p.category, 'milkdrop');
+});
+
+test('mergeCatalog: a removed preset key still listed in the index is available again — same as any other kind', () => {
+  // Mirrors "a removed key still listed in the index is available again" for
+  // visualizers: pass 2 (installed preset folders) skips removed keys just
+  // like installedFolder does for tiles/viz — real removal already
+  // uninstalls the folder — so what keeps a removed preset browsable is
+  // pass 3 (the index), not pass 2.
+  const out = mergeCatalog(base({
+    removed: ['preset:tron-grid'],
+    index: [presetIdx()],
+  }));
+  const p = out.find((i) => i.key === 'preset:tron-grid');
+  assert.ok(p, 'stays in the output so the Removed rail row has a name to show, and can be reinstalled');
+  assert.equal(p.removed, true);
+  assert.equal(p.installed, false);
+  assert.equal(p.installedVersion, null);
+});
+
+test('mergeCatalog: an installed preset tombstoned before its folder is removed is dropped from pass 2 (matches installedFolder)', () => {
+  // Documents pass 2's `if (removed.has(key)) continue;` — the same skip
+  // installedFolder applies to tile/viz installed folders. With no index
+  // entry to fall back on, the item is simply absent, same as an
+  // installed-only tile/viz folder would be in this situation.
+  const out = mergeCatalog(base({
+    installedPresets: [presetFolder()],
+    removed: ['preset:tron-grid'],
+  }));
+  assert.equal(out.some((i) => i.key === 'preset:tron-grid'), false);
+});
+
 test('catalogKey: composes kind and id', () => {
   assert.equal(catalogKey('tile', 'quote'), 'tile:quote');
   assert.equal(catalogKey('visualizer', 'aurora'), 'visualizer:aurora');
@@ -332,6 +412,16 @@ test('planRemoval: a first-party item skips uninstall and has no dashboard insta
   assert.equal(plan.uninstall, false);
   assert.equal(plan.tombstoneKey, 'visualizer:milkdrop');
   assert.equal(plan.instanceType, null, 'visualizers have no dashboard instance to strip');
+});
+
+test('planRemoval: an installed preset uninstalls and has no dashboard instance type', () => {
+  const out = mergeCatalog(base({ installedPresets: [presetFolder()] }));
+  const item = out.find((i) => i.key === 'preset:tron-grid');
+  assert.ok(item);
+  const plan = planRemoval(item);
+  assert.equal(plan.uninstall, true, 'a real preset folder backs it');
+  assert.equal(plan.tombstoneKey, 'preset:tron-grid');
+  assert.equal(plan.instanceType, null, 'presets have no dashboard instance to strip');
 });
 
 test('planRemoval: a removed-but-index-listed item is idempotent — still no uninstall, same tombstone key', () => {

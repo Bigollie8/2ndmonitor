@@ -1,0 +1,11 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "updater",
+  "description": "Auto-update check/install and app relaunch, restricted to the main webview on a local origin — same fine-grained scoping as `app-commands`, and for the same reason: a `windows: [\"main\"]` grant would also cover the `browser-tile` child webview (an arbitrary user-chosen remote page), and update-install/relaunch must never be reachable from remote content.",
+  "webviews": ["main"],
+  "local": true,
+  "permissions": [
+    "updater:default",
+    "process:allow-restart"
+  ]
+}
