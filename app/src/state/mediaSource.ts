@@ -1,4 +1,5 @@
-/** GSMTC `SourceAppUserModelId` → human-readable platform info.
+/** GSMTC `SourceAppUserModelId` (Windows) / bundle identifier (macOS) →
+ *  human-readable platform info.
  *
  *  AUMIDs vary by install method:
  *   - Spotify desktop: `Spotify.exe`
@@ -10,8 +11,15 @@
  *   - Web playback in Edge: `MSEdge` or `msedge.exe`
  *   - VLC: `vlc.exe`
  *
- *  We normalize via case-insensitive substring match so install variants don't
- *  fall through to "Unknown source". */
+ *  macOS instead reports a bundle identifier, e.g.:
+ *   - Spotify desktop: `com.spotify.client`
+ *   - Apple Music: `com.apple.Music`
+ *   - Chrome: `com.google.Chrome`
+ *   - Safari: `com.apple.Safari`
+ *   - Edge: `com.microsoft.edgemac`
+ *
+ *  We normalize via case-insensitive substring match so install variants and
+ *  both platforms' identifier shapes don't fall through to "Unknown source". */
 
 export type MediaSourceKind =
   | 'spotify'
@@ -49,7 +57,7 @@ const TABLE: { match: RegExp; info: MediaSourceInfo }[] = [
     kind: 'spotify', label: 'Spotify', glyph: '♪', color: '#22c55e',
     hasQueueIntegration: true,
   }},
-  { match: /applemusic|apple\s*music/i, info: {
+  { match: /applemusic|apple\s*music|apple\.music/i, info: {
     kind: 'appleMusic', label: 'Apple Music', glyph: '', color: '#fa233b',
     hasQueueIntegration: false,
   }},
@@ -65,7 +73,7 @@ const TABLE: { match: RegExp; info: MediaSourceInfo }[] = [
     kind: 'amazonMusic', label: 'Amazon Music', glyph: '♫', color: '#00a8e1',
     hasQueueIntegration: false,
   }},
-  { match: /chrome|firefox|msedge|edge|brave|opera/i, info: {
+  { match: /chrome|firefox|msedge|edge|brave|opera|safari/i, info: {
     kind: 'browser', label: 'Browser', glyph: '◐', color: '#60a5fa',
     hasQueueIntegration: false,
   }},

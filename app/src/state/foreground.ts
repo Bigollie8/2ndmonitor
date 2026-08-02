@@ -44,7 +44,14 @@ export function saveUsage(usage: DailyUsage): void {
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify(usage)); } catch { /* ignore */ }
 }
 
-/** Best-guess display name from an executable name. Strips `.exe`, capitalizes. */
+/** Best-guess display name from an executable name. Strips `.exe`, capitalizes.
+ *  On macOS `foreground_get`'s `process_name` is a bundle identifier (e.g.
+ *  "com.spotify.client"), not a Windows executable name — the `.exe` strip
+ *  and the KNOWN map below are both harmless no-ops there (neither matches),
+ *  so this falls through to the generic capitalize-the-string case. That's a
+ *  known, accepted rough edge (shows "Com.spotify.client" rather than
+ *  "Spotify") rather than something this function tries to fix: it has no
+ *  general way to turn an arbitrary bundle id into its marketing name. */
 export function appDisplayName(processName: string): string {
   if (!processName) return 'unknown';
   const stripped = processName.replace(/\.exe$/i, '');

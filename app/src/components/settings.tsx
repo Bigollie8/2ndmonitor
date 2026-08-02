@@ -11,6 +11,7 @@ import { ACCENT_PALETTES } from '../data';
 import { useVizStyles } from './useVizStyles';
 import { defaultBookmarks, type Bookmark } from './browser-player';
 import { isTauri } from '../state/tauri';
+import { IS_MAC } from '../state/platform';
 import {
   LS_URL, LS_PUBKEY, DEFAULT_URL, DEFAULT_PUBKEY, cfgUrl, cfgPubkey, isDefaultServer,
 } from '../state/marketplaceConfig';
@@ -67,9 +68,10 @@ export interface SettingsValues {
 export type SettingsSetter = <K extends keyof SettingsValues>(key: K, value: SettingsValues[K]) => void;
 
 /** Launch-at-startup state backed by the tauri-plugin-autostart registry
- *  entry. The plugin is the source of truth — no Tweaks persistence — so the
- *  toggle always reflects what Windows will actually do at next login.
- *  `enabled === null` means "still loading" (control should be disabled). */
+ *  entry (Windows) / login item (macOS). The plugin is the source of truth
+ *  — no Tweaks persistence — so the toggle always reflects what the OS will
+ *  actually do at next login. `enabled === null` means "still loading"
+ *  (control should be disabled). */
 export function useAutostart(): [boolean | null, (next: boolean) => void] {
   const [enabled, setEnabled] = useState<boolean | null>(null);
   useEffect(() => {
@@ -358,7 +360,9 @@ export function SettingsWindow({
         },
         {
           id: 'system-autostart', label: 'Launch at startup',
-          hint: 'Start the hub automatically when you sign in to Windows',
+          hint: IS_MAC
+            ? 'Start the hub automatically when you sign in'
+            : 'Start the hub automatically when you sign in to Windows',
           control: <AutostartSwitch accent={accent} />,
         },
         {
@@ -690,7 +694,7 @@ function AudioSourceStatusLine({ status, options }: {
     // not an assertion about the cause.
     return (
       <div style={{ fontSize: 10.5, color: 'rgba(255,255,255,0.4)', textAlign: 'right' }}>
-        {status.reason ?? 'Per-app audio needs Windows 11 (build 20348+)'}
+        {status.reason ?? (IS_MAC ? 'Per-app audio needs macOS 14.2 or newer' : 'Per-app audio needs Windows 11 (build 20348+)')}
       </div>
     );
   }

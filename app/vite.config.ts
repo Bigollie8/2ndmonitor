@@ -32,5 +32,10 @@ export default defineConfig({
     __SANDBOX_ORIGIN__: JSON.stringify(
       process?.platform === 'darwin' ? 'vizsandbox://localhost' : 'http://vizsandbox.localhost',
     ),
+    // Build-time platform flag for UI copy/paths (folder hints, settings
+    // strings, ...). Same rationale as __SANDBOX_ORIGIN__ above: every call
+    // site is synchronous render output, so a build-time constant is simpler
+    // than threading an async platform lookup through the component tree.
+    __IS_MAC__: JSON.stringify(process?.platform === 'darwin'),
   },
 });

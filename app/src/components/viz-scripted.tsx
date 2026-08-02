@@ -2,8 +2,16 @@ import React, { lazy, Suspense, useCallback, useEffect, useState } from 'react';
 import type { VizProps } from './viz';
 import { SandboxVizSurface, type ScriptError } from './viz-sandbox-surface';
 import { newVizManifest, NEW_VIZ_CODE } from '../sandbox/template';
+import { IS_MAC } from '../state/platform';
 
 const VizEditor = lazy(() => import('./viz-editor').then((m) => ({ default: m.VizEditor })));
+
+/** Where user-authored visualizer folders live, for the empty-state hint.
+ *  Display text only — see viz-milkdrop.tsx's USER_PRESETS_HINT for the
+ *  presets equivalent. */
+const USER_VISUALIZERS_HINT = IS_MAC
+  ? '~/Library/Application Support/com.secondmonitor.hub/visualizers'
+  : '%APPDATA%\\com.secondmonitor.hub\\visualizers\\';
 
 interface VizFolder {
   id: string;
@@ -110,7 +118,7 @@ function ScriptedSurface(props: VizProps) {
           <div style={{ textAlign: 'center', maxWidth: 420 }}>
             <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 8 }}>Code your own visualizer</div>
             <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.55)', lineHeight: 1.6, marginBottom: 14 }}>
-              Drop a folder in <code style={{ fontSize: 11 }}>%APPDATA%\com.secondmonitor.hub\visualizers\</code> (manifest.json + main.js),
+              Drop a folder in <code style={{ fontSize: 11 }}>{USER_VISUALIZERS_HINT}</code> (manifest.json + main.js),
               or start from the built-in template. Scripts run sandboxed — audio data in, pixels out, nothing else.
             </div>
             <button onClick={createNew} style={{ ...chip, padding: '8px 14px', color: accent, borderColor: `${accent}55` }}>
