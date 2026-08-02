@@ -624,8 +624,9 @@ function SettingsSelect<T extends string>({ value, options, onChange }: {
   /** `group` is optional — used by the viz style dropdown to set installed
    *  bundles apart from built-ins under an "Installed" optgroup. Options
    *  without a group render flat, at top, in array order. `disabled` greys
-   *  out an option without removing it — used by the audio-source picker to
-   *  show per-app choices even when the OS can't support them right now. */
+   *  out an option without removing it — kept generic for whichever caller
+   *  needs it; the audio-source picker deliberately does not use it (see
+   *  the comment at its call site). */
   options: { value: T; label: string; group?: string; disabled?: boolean }[];
   onChange: (v: T) => void;
 }) {
