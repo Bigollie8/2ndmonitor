@@ -1,3 +1,4 @@
+#[cfg(windows)]
 use nvml_wrapper::{enum_wrappers::device::TemperatureSensor, Nvml};
 use parking_lot::Mutex;
 use serde::Serialize;
@@ -6,6 +7,16 @@ use sysinfo::{
     CpuRefreshKind, MemoryRefreshKind, Networks, ProcessRefreshKind, RefreshKind, System,
 };
 use tauri::{AppHandle, Emitter, Manager, Runtime};
+
+/// GPU handle backing `State::nvml`. NVML (NVIDIA Management Library) only
+/// has bindings/drivers on Windows and Linux desktops with NVIDIA GPUs — no
+/// macOS support — so off Windows this collapses to `()` and every GPU
+/// sampler just reports `None`/"n/a", matching how a non-NVIDIA Windows box
+/// already behaves today.
+#[cfg(windows)]
+type GpuHandle = Nvml;
+#[cfg(not(windows))]
+type GpuHandle = ();
 
 // Bytes/sec throughput at which the network sparkline saturates to 1.0.
 // 50 MB/s is the rough ceiling for gigabit Ethernet's user-visible payload.
@@ -51,7 +62,7 @@ pub struct SysmonSample {
 struct State {
     sys: System,
     networks: Networks,
-    nvml: Option<Nvml>,
+    nvml: Option<GpuHandle>,
     /// Microsecond timestamp of the last NVML process-util sample we processed.
     /// Used to ask NVML only for samples newer than this on each tick.
     last_gpu_sample_ts: u64,
@@ -67,7 +78,9 @@ pub fn spawn<R: Runtime>(app: AppHandle<R>) {
     let networks = Networks::new_with_refreshed_list();
 
     // NVML init is best-effort — non-NVIDIA systems just won't have it. The UI
-    // gracefully shows "n/a" in that case.
+    // gracefully shows "n/a" in that case. Off Windows, NVML isn't linked at
+    // all (see `GpuHandle`), so GPU metrics are unconditionally `None`.
+    #[cfg(windows)]
     let nvml = match Nvml::init() {
         Ok(n) => Some(n),
         Err(e) => {
@@ -75,6 +88,8 @@ pub fn spawn<R: Runtime>(app: AppHandle<R>) {
             None
         }
     };
+    #[cfg(not(windows))]
+    let nvml: Option<GpuHandle> = None;
 
     let state = Arc::new(Mutex::new(State { sys, networks, nvml, last_gpu_sample_ts: 0 }));
 
@@ -234,8 +249,9 @@ fn collect_descendants(sys: &System, root: sysinfo::Pid) -> Vec<sysinfo::Pid> {
 /// Returns the summed GPU utilization (in %) across our PIDs since the previous
 /// tick. None when NVML isn't available or no samples were returned. Updates
 /// `last_ts` so the next call only sees fresh samples.
+#[cfg(windows)]
 fn sample_app_gpu(
-    nvml: Option<&Nvml>,
+    nvml: Option<&GpuHandle>,
     our_pids: &[sysinfo::Pid],
     last_ts: &mut u64,
 ) -> Option<f32> {
@@ -270,7 +286,18 @@ fn sample_app_gpu(
     Some((total / count as f64).clamp(0.0, 100.0) as f32)
 }
 
-fn sample_gpu(nvml: Option<&Nvml>) -> (f32, String, String) {
+/// Off Windows, `nvml` is always `None` (see `GpuHandle`) — nothing to sample.
+#[cfg(not(windows))]
+fn sample_app_gpu(
+    _nvml: Option<&GpuHandle>,
+    _our_pids: &[sysinfo::Pid],
+    _last_ts: &mut u64,
+) -> Option<f32> {
+    None
+}
+
+#[cfg(windows)]
+fn sample_gpu(nvml: Option<&GpuHandle>) -> (f32, String, String) {
     let Some(nvml) = nvml else {
         return (0.0, "n/a".into(), "no NVIDIA GPU".into());
     };
@@ -304,6 +331,13 @@ fn sample_gpu(nvml: Option<&Nvml>) -> (f32, String, String) {
         (None, None) => name,
     };
     (norm, pct_text, sub)
+}
+
+/// Off Windows, `nvml` is always `None` (see `GpuHandle`) — report "n/a" the
+/// same way a non-NVIDIA Windows box does.
+#[cfg(not(windows))]
+fn sample_gpu(_nvml: Option<&GpuHandle>) -> (f32, String, String) {
+    (0.0, "n/a".into(), "no NVIDIA GPU".into())
 }
 
 fn fmt_bytes_rate(b: u64) -> String {
