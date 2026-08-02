@@ -636,7 +636,12 @@ export default function App() {
         else if (showSettings) setShowSettings(false);
         else if (showGallery) setShowGallery(false);
         else if (showSwitcher) setShowSwitcher(false);
-        else if (showOnboarding) setShowOnboarding(false);
+        else if (showOnboarding) {
+          // Esc counts as "skip setup" — without marking done, the fresh-install
+          // auto-trigger would re-open onboarding on every launch.
+          setTweak('onboardingDone', true);
+          setShowOnboarding(false);
+        }
         else if (editMode) setEditMode(false);
       }
       else if (!editing && !cmd && e.key === '?') {
