@@ -10,6 +10,7 @@
 
 mod actions;
 mod audio;
+mod audio_source;
 mod claude;
 mod discord;
 mod discord_rpc;
