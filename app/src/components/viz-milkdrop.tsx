@@ -105,9 +105,19 @@ function MilkdropSurface({ accent, accent2, spectrumRef, paused, onOpenLibrary }
     if (toastTimer.current) clearTimeout(toastTimer.current);
     toastTimer.current = setTimeout(() => setToast(''), 4000);
   }, []);
-  useEffect(() => () => {
-    mountedRef.current = false;
-    if (toastTimer.current) clearTimeout(toastTimer.current);
+  useEffect(() => {
+    // Re-arm on every effect run, not just via useRef's initial value:
+    // StrictMode's dev-only mount→cleanup→remount pass runs the cleanup
+    // below on the SAME component instance, and a ref survives that pass —
+    // without this line the ref stays false forever after the remount and
+    // every loadAt walk silently aborts at its mounted guard (dev-only:
+    // packaged builds don't double-mount). Same footgun ContentLibrary's
+    // fetchIndex doc comment describes.
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      if (toastTimer.current) clearTimeout(toastTimer.current);
+    };
   }, []);
 
   const readUserFile = useCallback(async (file: string) => {
