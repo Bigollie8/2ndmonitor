@@ -1,0 +1,29 @@
+name: macOS check
+on:
+  push:
+    branches: [worktree-macos-support]
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+        with: { workspaces: app/src-tauri }
+      - name: Install frontend deps
+        working-directory: app
+        run: npm ci
+      - name: Frontend typecheck + tests
+        working-directory: app
+        run: |
+          npx tsc --noEmit
+          npm test
+      - name: Rust check + tests
+        working-directory: app/src-tauri
+        run: |
+          cargo check --all-targets
+          cargo test
