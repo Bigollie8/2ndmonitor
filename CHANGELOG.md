@@ -5,6 +5,21 @@ All notable changes to 2ndMonitor are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-08-02
+
+### Fixed
+- First-run onboarding never appeared on a truly fresh install — the
+  auto-trigger checked for profiles once at startup, before they were
+  seeded, and never looked again. It now fires as soon as the profile
+  system is ready, and is offered once to existing installs that never
+  got it
+- Fresh installs started with every tile type placed at once (28
+  overlapping tiles). New installs now start with curated layouts —
+  Work: the core eight tiles, Gaming: five, Chill: three — matching what
+  the onboarding profile cards advertise
+- Dismissing onboarding with Esc now counts as "skip setup" instead of
+  silently re-offering it on the next launch
+
 ## [0.6.0] - 2026-08-01
 
 ### Added

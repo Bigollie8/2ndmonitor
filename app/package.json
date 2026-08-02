@@ -1,7 +1,7 @@
 {
   "name": "second-monitor-hub",
   "private": true,
-  "version": "0.6.0",
+  "version": "0.6.1",
   "type": "module",
   "scripts": {
     "gen:sandbox": "tsx scripts/gen-sandbox-html.ts",
