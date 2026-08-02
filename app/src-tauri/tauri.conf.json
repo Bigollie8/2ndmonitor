@@ -41,12 +41,16 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis"],
-    "icon": ["icons/icon.ico"],
+    "targets": ["nsis", "dmg", "app"],
+    "icon": ["icons/icon.ico", "icons/icon.icns"],
     "resources": ["resources/seed/**/*"],
     "createUpdaterArtifacts": true,
     "windows": {
       "webviewInstallMode": { "type": "downloadBootstrapper" }
+    },
+    "macOS": {
+      "infoPlist": "Info.plist",
+      "minimumSystemVersion": "14.2"
     }
   },
   "plugins": {
