@@ -478,6 +478,19 @@ export default function App() {
     })();
   }, [t.closeToTray]);
 
+  // Push the chosen audio source to Rust whenever it changes. The tweak
+  // store stays the single source of truth; Rust is a follower here — the
+  // real outcome (fell back to mix, unsupported, etc.) comes back on the
+  // `audio:source` event, not from this call, so failures are swallowed.
+  useEffect(() => {
+    (async () => {
+      try {
+        const { invoke } = await import('@tauri-apps/api/core');
+        await invoke('audio_set_source', { source: t.vizAudioSource });
+      } catch { /* browser dev — no tauri, or capture not running yet */ }
+    })();
+  }, [t.vizAudioSource]);
+
   // Boot seeding (Critical 1 of the whole-branch review — see spec §5).
   // `seed_sync` installs every seed bundle shipped in resources that isn't
   // already installed and isn't tombstoned, so the base catalog is actually

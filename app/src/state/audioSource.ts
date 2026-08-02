@@ -15,6 +15,16 @@ export function sourceKey(s: AudioSource): string {
   return s.mode === 'mix' ? 'mix' : `${s.mode}:${s.exe}`;
 }
 
+/** Inverse of `sourceKey` — parses a `<select>` option value back into an
+ *  `AudioSource`. An unrecognized key (corrupted storage, future format)
+ *  degrades to `mix` rather than throwing, since this feeds straight into
+ *  UI state on every keystroke of a dropdown. */
+export function parseSourceKey(key: string): AudioSource {
+  if (key.startsWith('only:')) return { mode: 'only', exe: key.slice('only:'.length) };
+  if (key.startsWith('except:')) return { mode: 'except', exe: key.slice('except:'.length) };
+  return { mode: 'mix' };
+}
+
 export function effectiveSensitivity(map: Record<string, number>, s: AudioSource): number {
   const v = map[sourceKey(s)];
   return typeof v === 'number' && Number.isFinite(v) ? v : DEFAULT_SENSITIVITY;

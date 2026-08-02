@@ -3,7 +3,9 @@ import React, { useCallback, useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { VizMode, AccentTheme, Density, WeatherLocation } from '../types';
 import type { AudioSource } from '../state/audioSource';
-import { effectiveSensitivity, sourceKey } from '../state/audioSource';
+import { effectiveSensitivity, parseSourceKey, sourceKey } from '../state/audioSource';
+import { useAudioSource } from '../state/useAudioSource';
+import type { AudioSourceState, SourceOption } from '../state/useAudioSource';
 import type { GeocodeResult } from '../state/weatherLocation';
 import { ACCENT_PALETTES } from '../data';
 import { useVizStyles } from './useVizStyles';
@@ -41,8 +43,8 @@ export interface VizColorOverride {
 export interface SettingsValues {
   vizMode: VizMode;
   vizArtBg: boolean;
-  /** What the visualizer listens to. Source picker UI lands in a later pass;
-   *  this pane still only exposes the sensitivity slider for it. */
+  /** What the visualizer listens to — the whole system mix, or one app
+   *  included/excluded. See state/audioSource.ts. */
   vizAudioSource: AudioSource;
   vizSensitivityBySource: Record<string, number>;
   vizSmoothing: number;
@@ -137,6 +139,11 @@ export function SettingsWindow({
   const [activePane, setActivePane] = useState('visualizer');
   const [query, setQuery] = useState('');
   const { styles: vizStyles } = useVizStyles(v.catalogRemoved);
+  const { options: sourceOptions, status: audioSourceStatus } = useAudioSource();
+  // `supported` defaults true while status is still loading (or outside
+  // Tauri) so the per-app options aren't shown disabled before we actually
+  // know they can't work.
+  const audioSourceSupported = audioSourceStatus?.supported ?? true;
 
   const panes: PaneDef[] = [
     {
@@ -163,8 +170,28 @@ export function SettingsWindow({
           control: <Toggle checked={v.vizArtBg} onChange={(c) => set('vizArtBg', c)} accent={accent} />,
         },
         {
+          id: 'viz-audio-source', label: 'Audio source',
+          hint: 'Which audio the visualizer reacts to',
+          control: (
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
+              <SettingsSelect<string>
+                value={sourceKey(v.vizAudioSource)}
+                options={[
+                  { value: 'mix', label: 'All system audio' },
+                  ...sourceOptions.flatMap((o) => [
+                    { value: `only:${o.exe}`, label: `Only ${o.name}`, disabled: !audioSourceSupported },
+                    { value: `except:${o.exe}`, label: `Everything except ${o.name}`, disabled: !audioSourceSupported },
+                  ]),
+                ]}
+                onChange={(key) => set('vizAudioSource', parseSourceKey(key))}
+              />
+              <AudioSourceStatusLine status={audioSourceStatus} options={sourceOptions} />
+            </div>
+          ),
+        },
+        {
           id: 'viz-sensitivity', label: 'Sensitivity',
-          hint: 'Input gain applied to the spectrum before drawing',
+          hint: 'Input gain for the selected source — remembered per source',
           control: (
             <SliderControl
               value={effectiveSensitivity(v.vizSensitivityBySource, v.vizAudioSource)} min={0.3} max={2.5} step={0.05}
@@ -585,12 +612,14 @@ function SettingsSelect<T extends string>({ value, options, onChange }: {
   value: T;
   /** `group` is optional — used by the viz style dropdown to set installed
    *  bundles apart from built-ins under an "Installed" optgroup. Options
-   *  without a group render flat, at top, in array order. */
-  options: { value: T; label: string; group?: string }[];
+   *  without a group render flat, at top, in array order. `disabled` greys
+   *  out an option without removing it — used by the audio-source picker to
+   *  show per-app choices even when the OS can't support them right now. */
+  options: { value: T; label: string; group?: string; disabled?: boolean }[];
   onChange: (v: T) => void;
 }) {
   const ungrouped = options.filter((o) => !o.group);
-  const groups = new Map<string, { value: T; label: string }[]>();
+  const groups = new Map<string, { value: T; label: string; disabled?: boolean }[]>();
   for (const o of options) {
     if (!o.group) continue;
     const list = groups.get(o.group) ?? [];
@@ -613,14 +642,14 @@ function SettingsSelect<T extends string>({ value, options, onChange }: {
       }}
     >
       {ungrouped.map((o) => (
-        <option key={o.value} value={o.value} style={optionStyle}>
+        <option key={o.value} value={o.value} disabled={o.disabled} style={optionStyle}>
           {o.label}
         </option>
       ))}
       {[...groups.entries()].map(([label, opts]) => (
         <optgroup key={label} label={label} style={optionStyle}>
           {opts.map((o) => (
-            <option key={o.value} value={o.value} style={optionStyle}>
+            <option key={o.value} value={o.value} disabled={o.disabled} style={optionStyle}>
               {o.label}
             </option>
           ))}
@@ -628,6 +657,37 @@ function SettingsSelect<T extends string>({ value, options, onChange }: {
       ))}
     </select>
   );
+}
+
+// ---------------------------------------------------------------------------
+// Audio-source status line — the muted note under the source picker
+// explaining why the active source doesn't match what was asked for. Reads
+// straight off the `audio:source` payload (via useAudioSource); no
+// re-derivation of "is it really live" happens here.
+// ---------------------------------------------------------------------------
+
+function AudioSourceStatusLine({ status, options }: {
+  status: AudioSourceState | null;
+  options: SourceOption[];
+}) {
+  if (!status) return null;
+  if (status.supported === false) {
+    return (
+      <div style={{ fontSize: 10.5, color: 'rgba(255,255,255,0.4)', textAlign: 'right' }}>
+        Per-app audio needs Windows 11 (build 20348+)
+      </div>
+    );
+  }
+  if (status.requested.mode !== 'mix' && status.active === 'mix') {
+    const exe = status.requested.exe;
+    const name = options.find((o) => o.exe === exe)?.name ?? exe;
+    return (
+      <div style={{ fontSize: 10.5, color: 'rgba(255,255,255,0.4)', textAlign: 'right' }}>
+        {name} isn't playing — using all system audio
+      </div>
+    );
+  }
+  return null;
 }
 
 function Segmented<T extends string>({ value, options, onChange, accent }: {

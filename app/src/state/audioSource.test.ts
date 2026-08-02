@@ -1,6 +1,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { sourceKey, effectiveSensitivity, migrateSensitivity, DEFAULT_SENSITIVITY } from './audioSource';
+import { sourceKey, parseSourceKey, effectiveSensitivity, migrateSensitivity, DEFAULT_SENSITIVITY } from './audioSource';
+import type { AudioSource } from './audioSource';
+
+test('parseSourceKey round-trips every source shape', () => {
+  for (const s of [{ mode: 'mix' }, { mode: 'only', exe: 'a.exe' }, { mode: 'except', exe: 'b.exe' }] as AudioSource[]) {
+    assert.deepEqual(parseSourceKey(sourceKey(s)), s);
+  }
+});
 
 test('sourceKey: mode is part of the key, not just the exe', () => {
   assert.equal(sourceKey({ mode: 'mix' }), 'mix');
