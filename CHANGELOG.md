@@ -5,6 +5,17 @@ All notable changes to 2ndMonitor are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.6.3] - 2026-08-02
+
+### Fixed
+- Opening the Content Library froze the app while it downloaded every
+  preview thumbnail in the catalog at once (~370 since the 0.6.0 preset
+  wave) — worse the slower your connection, up to a full lockup. Two
+  causes, both fixed: marketplace fetches ran as blocking network calls
+  on the app's main thread (now async on a worker), and every catalog
+  row fetched its thumbnail immediately on mount (now only rows actually
+  scrolled into view fetch, as you scroll)
+
 ## [0.6.2] - 2026-08-02
 
 ### Changed
