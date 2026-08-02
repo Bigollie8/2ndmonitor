@@ -49,6 +49,33 @@ pub fn target_exe(s: &Source) -> Option<&str> {
     }
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct SourceOption {
+    /// Lowercased executable basename — the stable identity of a source.
+    pub exe: String,
+    /// Friendly name for display, e.g. "Spotify".
+    pub name: String,
+    pub icon: Option<String>,
+}
+
+/// Apps currently holding an audio session, deduped by executable. Drives the
+/// Settings source picker. System-sounds has no executable and is excluded:
+/// there is no process tree to include or exclude.
+#[tauri::command]
+pub fn audio_sources_list() -> Result<Vec<SourceOption>, String> {
+    let sessions = crate::mixer::sessions_snapshot()?;
+    let mut seen = std::collections::HashSet::new();
+    let mut out = Vec::new();
+    for s in sessions {
+        if s.is_system_sounds { continue; }
+        let Some(exe) = s.exe.clone() else { continue };
+        if !seen.insert(exe.clone()) { continue; }
+        out.push(SourceOption { exe, name: s.name, icon: s.icon });
+    }
+    out.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    Ok(out)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Active {
     Mix,

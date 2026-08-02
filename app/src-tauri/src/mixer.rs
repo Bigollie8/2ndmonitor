@@ -44,6 +44,10 @@ pub struct AppSession {
     /// `data:image/png;base64,…` for the exe's shell icon, or null when not
     /// extractable (system-sounds session, vanished process, COM error).
     pub icon: Option<String>,
+    /// Lowercased executable basename (e.g. `"spotify.exe"`), or `None` for
+    /// the system-sounds session / when the process image path couldn't be
+    /// resolved.
+    pub exe: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -156,6 +160,39 @@ fn worker<R: Runtime>(app: AppHandle<R>, rx: Receiver<MixerCmd>) -> Result<(), S
         });
         let _ = app.emit("mixer:state", snap);
     }
+}
+
+/// One-shot session snapshot for callers outside the mixer's own COM worker
+/// (the audio supervisor and the source picker). Initializes COM on the
+/// calling thread, enumerates, and tears down. Costs a few ms; called at most
+/// once every 2 s by the reattach watcher.
+#[cfg(target_os = "windows")]
+pub fn sessions_snapshot() -> Result<Vec<AppSession>, String> {
+    use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_MULTITHREADED};
+    unsafe {
+        let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+        let result = (|| {
+            let en = winimpl::create_enumerator().map_err(|e| e.to_string())?;
+            let snap = winimpl::capture(&en).map_err(|e| e.to_string())?;
+            Ok(snap.sessions)
+        })();
+        CoUninitialize();
+        result
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn sessions_snapshot() -> Result<Vec<AppSession>, String> { Ok(vec![]) }
+
+/// PID of the first live session whose executable basename matches `exe`
+/// (lowercased comparison). `None` when the app isn't producing audio.
+pub fn find_pid_for_exe(exe: &str) -> Option<u32> {
+    let want = exe.to_lowercase();
+    sessions_snapshot()
+        .ok()?
+        .into_iter()
+        .find(|s| s.exe.as_deref().map(|e| e.to_lowercase()) == Some(want.clone()))
+        .map(|s| s.pid)
 }
 
 #[cfg(target_os = "windows")]
@@ -314,6 +351,12 @@ mod winimpl {
         // exe, so skip — the frontend renders a "♪" glyph for it.
         let icon = exe_path.as_deref().and_then(cached_icon_data_url);
 
+        let exe = exe_path
+            .as_deref()
+            .and_then(|p| Path::new(p).file_name())
+            .and_then(|n| n.to_str())
+            .map(|s| s.to_lowercase());
+
         Some((
             priority,
             AppSession {
@@ -323,6 +366,7 @@ mod winimpl {
                 mute,
                 is_system_sounds,
                 icon,
+                exe,
             },
         ))
     }

@@ -121,6 +121,10 @@ commands.allow = [
   "set_audio_emit_hz",
   "set_waveform_enabled",
 
+  # visualizer audio-source picker — apps currently holding a session
+  # (audio_source.rs). No frontend caller yet; wired up in a later task.
+  "audio_sources_list",
+
   # milkdrop presets (src/components/viz-milkdrop.tsx).
   "presets_list",
   "presets_read",

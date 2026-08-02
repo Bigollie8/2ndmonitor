@@ -755,6 +755,8 @@ export interface MixerAppSession {
   is_system_sounds: boolean;
   /** `data:image/png;base64,…` for the exe's shell icon, or null. */
   icon: string | null;
+  /** Lowercased executable basename, or null (system-sounds session). */
+  exe: string | null;
 }
 
 export interface MixerState {
@@ -770,10 +772,10 @@ const MIXER_MOCK: MixerState = {
     { id: 'mock_headset', name: 'Headset (USB)', is_default: false },
   ],
   sessions: [
-    { pid: 0, name: 'System sounds', volume: 0.85, mute: false, is_system_sounds: true, icon: null },
-    { pid: 1234, name: 'Spotify.exe', volume: 0.74, mute: false, is_system_sounds: false, icon: null },
-    { pid: 5678, name: 'chrome.exe', volume: 0.5, mute: false, is_system_sounds: false, icon: null },
-    { pid: 9012, name: 'Discord.exe', volume: 0.4, mute: true, is_system_sounds: false, icon: null },
+    { pid: 0, name: 'System sounds', volume: 0.85, mute: false, is_system_sounds: true, icon: null, exe: null },
+    { pid: 1234, name: 'Spotify.exe', volume: 0.74, mute: false, is_system_sounds: false, icon: null, exe: 'spotify.exe' },
+    { pid: 5678, name: 'chrome.exe', volume: 0.5, mute: false, is_system_sounds: false, icon: null, exe: 'chrome.exe' },
+    { pid: 9012, name: 'Discord.exe', volume: 0.4, mute: true, is_system_sounds: false, icon: null, exe: 'discord.exe' },
   ],
 };
 
