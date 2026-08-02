@@ -18,6 +18,7 @@ import {
   updateInstance,
   remapRetiredTileType,
 } from './state/layout';
+import { seedStarterProfiles, PROFILE_DEFAULT_COLORS } from './state/starterProfiles';
 import { isBundleTile, bundleIdOf } from './tiles/tileRegistry';
 import { useTileCatalog } from './tiles/useTileCatalog';
 import type { Track, Profile, AccentTheme, VizMode, Density, Todo, WeatherLocation } from './types';
@@ -194,7 +195,6 @@ const TWEAK_DEFAULTS: TweakState = {
   catalogRemoved: [],
 };
 
-const PROFILE_DEFAULT_COLORS = ['#a78bfa', '#f59e0b', '#22d3ee', '#22c55e', '#f472b6', '#60a5fa', '#facc15', '#f97316'];
 
 /** Migration: legacy shape (top-level `layout`/`hidden`, no `profiles`) → new
  *  profile-shaped state. Idempotent: returns input unchanged if already migrated. */
@@ -230,20 +230,22 @@ function migrateTweaks(loaded: Record<string, unknown>): Record<string, unknown>
     delete next.layout;
     delete next.hidden;
 
-    const seeded: Profile[] = [
-      migrateLegacyProfileToOrientations({
-        id: newId(), name: 'Work', color: PROFILE_DEFAULT_COLORS[0]!,
-        layout: legacyLayout, hidden: legacyHidden,
-      }),
-      migrateLegacyProfileToOrientations({
-        id: newId(), name: 'Gaming', color: PROFILE_DEFAULT_COLORS[1]!,
-        layout: {}, hidden: {},
-      }),
-      migrateLegacyProfileToOrientations({
-        id: newId(), name: 'Chill', color: PROFILE_DEFAULT_COLORS[2]!,
-        layout: {}, hidden: {},
-      }),
-    ];
+    // Curated starter sets, not the full catalog — seeding with empty
+    // layout/hidden used to place every tile type (28 overlapping tiles).
+    // A user with real legacy layout data keeps it as their Work profile;
+    // Gaming/Chill are always fresh starters either way.
+    const starters = seedStarterProfiles();
+    const hasLegacyLayout = Object.keys(legacyLayout).length > 0 || Object.keys(legacyHidden).length > 0;
+    const seeded: Profile[] = hasLegacyLayout
+      ? [
+          migrateLegacyProfileToOrientations({
+            id: newId(), name: 'Work', color: PROFILE_DEFAULT_COLORS[0]!,
+            layout: legacyLayout, hidden: legacyHidden,
+          }),
+          starters[1]!,
+          starters[2]!,
+        ]
+      : starters;
     next.profiles = seeded;
     next.activeProfileId = seeded[0]!.id;
 
@@ -363,26 +365,31 @@ function migrateTweaks(loaded: Record<string, unknown>): Record<string, unknown>
 export default function App() {
   const [t, setTweak, replaceTweaks, tweaksHydrated] = useTweaks<TweakState>(TWEAK_DEFAULTS, { migrate: migrateTweaks });
   useEffect(() => {
+    // Wait for the disk hydrate before deciding storage is truly empty —
+    // seeding off the pre-hydrate defaults would race an existing profile
+    // list loading from the Tauri file.
+    if (!tweaksHydrated) return;
     if (t.profiles.length > 0 && t.activeProfileId) return;
-    const seeded: Profile[] = [
-      migrateLegacyProfileToOrientations({ id: newId(), name: 'Work',   color: PROFILE_DEFAULT_COLORS[0]!, layout: {}, hidden: {} }),
-      migrateLegacyProfileToOrientations({ id: newId(), name: 'Gaming', color: PROFILE_DEFAULT_COLORS[1]!, layout: {}, hidden: {} }),
-      migrateLegacyProfileToOrientations({ id: newId(), name: 'Chill',  color: PROFILE_DEFAULT_COLORS[2]!, layout: {}, hidden: {} }),
-    ];
+    const seeded = seedStarterProfiles();
     setTweak('profiles', seeded);
     setTweak('activeProfileId', seeded[0]!.id);
-  }, [t.profiles.length, t.activeProfileId, setTweak]);
+  }, [tweaksHydrated, t.profiles.length, t.activeProfileId, setTweak]);
 
+  // First-ever launch: auto-open onboarding once the profile system is ready
+  // and the hydrate settled without onboardingDone. This used to run once on
+  // mount with [] deps — on a fresh install profiles are seeded AFTER mount,
+  // so the check always saw an empty list and onboarding never appeared.
+  // The ref limits the auto-trigger to once per session so a later profiles
+  // change can't re-open it after the user dismissed it with Esc; "Replay
+  // onboarding" in Settings opens it directly and doesn't go through here.
+  const onboardingAutoShownRef = useRef(false);
   useEffect(() => {
-    // First-ever launch: profile system is ready AND user hasn't completed onboarding.
+    if (onboardingAutoShownRef.current || !tweaksHydrated) return;
     if (!t.onboardingDone && t.profiles.length > 0 && t.activeProfileId) {
+      onboardingAutoShownRef.current = true;
       setShowOnboarding(true);
     }
-    // We DO want this to fire whenever onboardingDone toggles to false (e.g., user
-    // clicks "Replay onboarding" in Settings). But auto-trigger only on
-    // initial state where it's already false.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [tweaksHydrated, t.onboardingDone, t.profiles.length, t.activeProfileId]);
   const [manualTrack, setManualTrack] = useState<Track>(TRACKS[0]!);
   const [editMode, setEditMode] = useState(false);
   const [snapEnabled, setSnapEnabled] = useState(true);
