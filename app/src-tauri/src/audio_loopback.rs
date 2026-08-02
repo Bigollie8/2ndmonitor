@@ -23,12 +23,24 @@ const CAPTURE_CHANNELS: u16 = 2;
 
 pub struct ProcessCapture {
     stop: Arc<AtomicBool>,
+    alive: Arc<AtomicBool>,
     handle: Option<std::thread::JoinHandle<()>>,
 }
 
 impl ProcessCapture {
     pub fn sample_rate(&self) -> u32 {
         CAPTURE_SAMPLE_RATE
+    }
+
+    /// False once the pump loop has exited, for *any* reason. A process
+    /// loopback client is invalidated by an endpoint change just like a
+    /// regular one (`AUDCLNT_E_DEVICE_INVALIDATED`), and the pump returns on
+    /// that error — after which the ring buffer simply freezes on its last
+    /// samples and the visualizer locks onto a static frame. The supervisor's
+    /// watcher polls this so a dead capture gets rebuilt instead of silently
+    /// going stale.
+    pub fn is_alive(&self) -> bool {
+        self.alive.load(Ordering::Relaxed)
     }
 }
 
@@ -53,12 +65,18 @@ pub fn start(
 ) -> Result<ProcessCapture, String> {
     let stop = Arc::new(AtomicBool::new(false));
     let stop_thread = stop.clone();
+    let alive = Arc::new(AtomicBool::new(true));
+    let alive_thread = alive.clone();
     // Channel carries the activation result back so `start` reports failure
     // synchronously — the supervisor must know immediately whether to fall
     // back to the mix.
     let (tx, rx) = std::sync::mpsc::channel::<Result<(), String>>();
     let handle = std::thread::spawn(move || {
         let r = unsafe { winimpl::pump(pid, exclude, buffer, ring_cap, stop_thread, &tx) };
+        // Cleared before anything else on the way out, so `is_alive` is false
+        // the moment this capture stops feeding the ring — whether that was a
+        // requested stop or a mid-stream device invalidation.
+        alive_thread.store(false, Ordering::Relaxed);
         if let Err(e) = r {
             // If activation already reported Ok the receiver is gone by now
             // and this send is a no-op; the eprintln is what surfaces a
@@ -70,6 +88,7 @@ pub fn start(
     match rx.recv_timeout(std::time::Duration::from_secs(3)) {
         Ok(Ok(())) => Ok(ProcessCapture {
             stop,
+            alive,
             handle: Some(handle),
         }),
         Ok(Err(e)) => {
