@@ -135,6 +135,10 @@ const K_AUDIO_TAP_PROPERTY_FORMAT: u32 = fourcc(b"tfmt");
 /// `kAudioFormatFlagIsFloat`.
 const FORMAT_FLAG_IS_FLOAT: u32 = 1 << 0;
 
+/// `kAudioHardwareIllegalOperationError` — the HAL's "you are not allowed to do
+/// that", and so the status a denied audio-capture permission surfaces as.
+const K_AUDIO_HARDWARE_ILLEGAL_OPERATION_ERROR: i32 = fourcc(b"nope") as i32;
+
 // Aggregate-device description keys. These are `#define`d string literals in
 // `<CoreAudio/AudioHardware.h>`, not enum constants, so no binding generator
 // produces them — the strings themselves are the ABI.
@@ -145,6 +149,7 @@ const KEY_IS_PRIVATE: &str = "private"; // kAudioAggregateDeviceIsPrivateKey
 const KEY_IS_STACKED: &str = "stacked"; // kAudioAggregateDeviceIsStackedKey
 const KEY_TAP_AUTO_START: &str = "tapautostart"; // kAudioAggregateDeviceTapAutoStartKey
 const KEY_SUBDEVICE_LIST: &str = "subdevices"; // kAudioAggregateDeviceSubDeviceListKey
+const KEY_SUBDEVICE_UID: &str = "uid"; // kAudioSubDeviceUIDKey
 const KEY_TAP_LIST: &str = "taps"; // kAudioAggregateDeviceTapListKey
 const KEY_SUBTAP_UID: &str = "uid"; // kAudioSubTapUIDKey
 const KEY_SUBTAP_DRIFT: &str = "drift"; // kAudioSubTapDriftCompensationKey
@@ -274,6 +279,14 @@ impl Drop for TapCapture {
                         "audio: AudioDeviceDestroyIOProcID failed ({})",
                         status_text(st)
                     );
+                    // Destroying the IOProc is what guarantees no further
+                    // callback can run. If that genuinely failed, the IOProc is
+                    // still registered against `Shared` — releasing it here
+                    // would hand Core Audio a pointer to freed memory. Leak an
+                    // extra strong reference so the allocation outlives the
+                    // process instead. A few hundred bytes lost on a path that
+                    // should never happen is the cheap side of this trade.
+                    std::mem::forget(self.shared.clone());
                 }
             }
             if self.aggregate_id != 0 {
@@ -514,10 +527,21 @@ unsafe fn create_tap(target: &TapTarget) -> Result<AudioObjectID, String> {
             TapTarget::Except(pids) => pids,
         };
 
-        let mut arena = CfArena::default();
-        let numbers: Vec<CFTypeRef> = pids
+        // `CATapDescription.processes` holds `AudioObjectID`s of Core Audio
+        // *process objects*, not `pid_t`s. Both are NSNumbers in an NSArray, so
+        // nothing — not the type system, not `responds_to` — catches the
+        // difference; a raw PID just fails with 'obj!' or, worse, matches
+        // nothing at all, and then `Only` captures silence while `Except`
+        // excludes no one. Translate first.
+        let objects: Vec<AudioObjectID> = pids
             .iter()
-            .map(|pid| arena.number_i32(*pid) as CFTypeRef)
+            .map(|pid| translate_pid(*pid))
+            .collect::<Result<_, _>>()?;
+
+        let mut arena = CfArena::default();
+        let numbers: Vec<CFTypeRef> = objects
+            .iter()
+            .map(|id| arena.number_i32(*id as i32) as CFTypeRef)
             .collect();
         let array = arena.array(&numbers)?;
         // CFArray and NSArray are toll-free bridged, and CFNumber/NSNumber
@@ -567,16 +591,66 @@ unsafe fn create_tap(target: &TapTarget) -> Result<AudioObjectID, String> {
         let st =
             AudioHardwareCreateProcessTap(&*desc as *const AnyObject as *mut AnyObject, &mut tap_id);
         if st != kAudioHardwareNoError as i32 || tap_id == 0 {
+            // Only 'nope' actually means "the system refused you", which is what
+            // a denied audio-capture permission looks like. Blaming permission
+            // for *every* status was actively misleading — a bad-object error
+            // from a malformed process list would have been reported as a
+            // permission denial, sending the user to a settings pane that was
+            // never the problem. `status_text` renders the fourcc either way.
+            if st == K_AUDIO_HARDWARE_ILLEGAL_OPERATION_ERROR {
+                return Err(format!(
+                    "AudioHardwareCreateProcessTap was refused ({}). This is what a denied audio \
+                     capture permission looks like — allow it under System Settings > Privacy & \
+                     Security > Audio Recording (a reset with `tccutil reset AudioCapture` makes \
+                     macOS ask again), then re-select the source.",
+                    status_text(st)
+                ));
+            }
             return Err(format!(
-                "AudioHardwareCreateProcessTap failed ({}). The most likely cause is that audio \
-                 capture permission was denied for this app — allow it under System Settings > \
-                 Privacy & Security > Audio Recording (a reset with `tccutil reset AudioCapture` \
-                 makes macOS ask again), then re-select the source.",
+                "AudioHardwareCreateProcessTap failed ({})",
                 status_text(st)
             ));
         }
         Ok(tap_id)
     })
+}
+
+/// `pid_t` → the `AudioObjectID` of that process's Core Audio process object,
+/// via `kAudioHardwarePropertyTranslatePIDToProcessObject` ('id2p') on the
+/// system object.
+///
+/// **This is the only property read in the file that passes qualifier data.**
+/// Every other one passes `0, null()`; here the PID goes in as the qualifier
+/// and the object id comes back as the value, so do not pattern-match this off
+/// the others.
+///
+/// A process with no audio object — one that has never opened an audio device —
+/// is a normal outcome, not a bug in this code, and says so.
+unsafe fn translate_pid(pid: i32) -> Result<AudioObjectID, String> {
+    let addr = global_address(fourcc(b"id2p"));
+    let mut object: AudioObjectID = 0;
+    let mut size = std::mem::size_of::<AudioObjectID>() as u32;
+    let st = AudioObjectGetPropertyData(
+        kAudioObjectSystemObject,
+        &addr as *const _,
+        std::mem::size_of::<i32>() as u32,
+        &pid as *const i32 as *const c_void,
+        &mut size as *mut _,
+        &mut object as *mut AudioObjectID as *mut c_void,
+    );
+    if st != kAudioHardwareNoError as i32 {
+        return Err(format!(
+            "could not translate pid {pid} to a Core Audio process object ({})",
+            status_text(st)
+        ));
+    }
+    if object == 0 {
+        return Err(format!(
+            "pid {pid} has no Core Audio process object — it is not playing (or has never played) \
+             any audio"
+        ));
+    }
+    Ok(object)
 }
 
 /// Dump the class's `init...` selectors to stderr. Only called when an expected
@@ -619,7 +693,6 @@ unsafe fn create_aggregate_device(tap_id: AudioObjectID) -> Result<AudioObjectID
         (k_subtap_drift, v_subtap_drift),
     ])? as CFTypeRef;
     let tap_list = arena.array(&[sub_tap])? as CFTypeRef;
-    let empty_subdevices = arena.array(&[])? as CFTypeRef;
 
     // A unique UID per aggregate, so two captures (or a stale one the HAL
     // hasn't reaped yet) can never collide on the same device.
@@ -642,7 +715,6 @@ unsafe fn create_aggregate_device(tap_id: AudioObjectID) -> Result<AudioObjectID
     let v_stacked = arena.number_i32(0) as CFTypeRef;
     let k_auto_start = arena.string(KEY_TAP_AUTO_START) as CFTypeRef;
     let v_auto_start = arena.number_i32(1) as CFTypeRef;
-    let k_subdevices = arena.string(KEY_SUBDEVICE_LIST) as CFTypeRef;
     let k_taps = arena.string(KEY_TAP_LIST) as CFTypeRef;
 
     let mut entries: Vec<(CFTypeRef, CFTypeRef)> = vec![
@@ -651,22 +723,36 @@ unsafe fn create_aggregate_device(tap_id: AudioObjectID) -> Result<AudioObjectID
         (k_private, v_private),
         (k_stacked, v_stacked),
         (k_auto_start, v_auto_start),
-        (k_subdevices, empty_subdevices),
         (k_taps, tap_list),
     ];
-    // The aggregate has no sub-devices, so it has no clock of its own; naming
-    // the current default output as the main sub-device gives the IO cycle
-    // something to run off. Best effort — if the UID can't be read we still try,
-    // because an aggregate with a tap list is the only thing we can offer.
+
+    // Two shapes are known to work, and they are not interchangeable in halves:
+    //
+    //   a) main sub-device = the default output's UID, *and* that same device
+    //      present in the sub-device list — the aggregate contains a real
+    //      device, which clocks the IO cycle;
+    //   b) tap list only — no main sub-device and no sub-device list at all,
+    //      leaving the tap itself to drive the cycle.
+    //
+    // Naming a main sub-device that is not in the sub-device list is neither,
+    // and the HAL is entitled to reject it or to build a device with no clock
+    // that never fires a callback. Take (a) when the default output's UID is
+    // readable and fall back to (b) — whole — when it is not.
     match read_default_output_uid() {
         Some(device_uid) => {
             let k_main = arena.string(KEY_MAIN_SUBDEVICE) as CFTypeRef;
             let v_main = arena.string(&device_uid) as CFTypeRef;
+            let k_sub_uid = arena.string(KEY_SUBDEVICE_UID) as CFTypeRef;
+            let v_sub_uid = arena.string(&device_uid) as CFTypeRef;
+            let sub_device = arena.dictionary(&[(k_sub_uid, v_sub_uid)])? as CFTypeRef;
+            let sub_devices = arena.array(&[sub_device])? as CFTypeRef;
+            let k_subdevices = arena.string(KEY_SUBDEVICE_LIST) as CFTypeRef;
             entries.push((k_main, v_main));
+            entries.push((k_subdevices, sub_devices));
         }
         None => eprintln!(
-            "audio: could not read the default output device's UID; the tap's aggregate device \
-             will have no main sub-device"
+            "audio: could not read the default output device's UID; building the tap's aggregate \
+             device with no sub-devices and letting the tap clock it"
         ),
     }
 
@@ -708,9 +794,11 @@ unsafe fn read_tap_uid(tap_id: AudioObjectID) -> Result<String, String> {
     s.ok_or_else(|| "the tap's UID was not decodable as UTF-8".to_string())
 }
 
-/// UID of the current default output device, used as the aggregate's main
-/// sub-device (its clock source). `None` on any failure — the caller treats
-/// that as "carry on without one".
+/// UID of the current default output device. Used twice by the aggregate
+/// description — as the main sub-device *and* as the single entry in the
+/// sub-device list — because those two keys have to agree. `None` on any
+/// failure, which makes the caller switch to the tap-list-only shape rather
+/// than emit half of this one.
 unsafe fn read_default_output_uid() -> Option<String> {
     let addr = global_address(kAudioHardwarePropertyDefaultOutputDevice);
     let mut device: AudioObjectID = 0;
@@ -747,15 +835,24 @@ unsafe fn read_default_output_uid() -> Option<String> {
 }
 
 // ---------------------------------------------------------------------------
-// Sample rate
+// Format and sample rate
 // ---------------------------------------------------------------------------
 
-/// Ask the tap what format it produces, and fall back to the aggregate device's
-/// nominal rate if it won't say.
+/// Read the tap's `AudioStreamBasicDescription`, **require** it to be 32-bit
+/// float, and derive the sample rate from it.
 ///
-/// This is not a formality. `audio.rs` computes its 64 log-spaced band edges
-/// from whatever rate the backend reports, so a wrong number here does not
-/// break anything visibly — it just puts every band at the wrong frequency.
+/// The format check is not optional and has no fallback, because `io_proc`
+/// unconditionally reinterprets `mData` as `*const f32`. If we cannot prove the
+/// tap produces float32 we must not read it at all — the reads stay in bounds
+/// either way (`mDataByteSize` bounds them), but integer samples reinterpreted
+/// as floats are denormal noise, and noise in the FFT is far harder to diagnose
+/// than a refusal at startup that the supervisor turns into a fall-back-to-mix
+/// with a printed reason.
+///
+/// Only the *rate* has a fallback, and only once the format is known good.
+/// That matters: `audio.rs` computes its 64 log-spaced band edges from whatever
+/// rate we report, so a wrong number breaks nothing visibly — it just puts
+/// every band at the wrong frequency.
 unsafe fn resolve_sample_rate(
     tap_id: AudioObjectID,
     aggregate_id: AudioObjectID,
@@ -771,21 +868,32 @@ unsafe fn resolve_sample_rate(
         &mut size as *mut _,
         &mut asbd as *mut AudioStreamBasicDescription as *mut c_void,
     );
-    if st == kAudioHardwareNoError as i32 && asbd.mSampleRate > 0.0 {
-        // The IOProc reads the buffers as f32. If the tap ever reports anything
-        // else, stop here rather than shovelling reinterpreted bytes into the
-        // FFT — garbage bands are harder to diagnose than a refusal.
-        if asbd.mBitsPerChannel != 0 && asbd.mBitsPerChannel != 32 {
-            return Err(format!(
-                "the tap's format is {} bits per channel; this backend only reads 32-bit float",
-                asbd.mBitsPerChannel
-            ));
-        }
-        if asbd.mFormatFlags != 0 && asbd.mFormatFlags & FORMAT_FLAG_IS_FLOAT == 0 {
-            return Err("the tap's format is not floating point; this backend only reads \
-                        32-bit float"
-                .to_string());
-        }
+    if st != kAudioHardwareNoError as i32 {
+        return Err(format!(
+            "could not read the tap's stream format ({}), so there is no way to know how to \
+             interpret its samples",
+            status_text(st)
+        ));
+    }
+    // Both conditions are positive assertions rather than "not obviously
+    // wrong". An earlier version skipped the check when `mFormatFlags == 0`,
+    // which is exactly what a packed-integer descriptor reports — the hole let
+    // through the one case the check existed for.
+    if asbd.mFormatFlags & FORMAT_FLAG_IS_FLOAT == 0 {
+        return Err(format!(
+            "the tap's format is not floating point (flags {:#x}); this backend only reads \
+             32-bit float",
+            asbd.mFormatFlags
+        ));
+    }
+    if asbd.mBitsPerChannel != 32 {
+        return Err(format!(
+            "the tap's format is {} bits per channel; this backend only reads 32-bit float",
+            asbd.mBitsPerChannel
+        ));
+    }
+
+    if asbd.mSampleRate > 0.0 {
         return Ok(asbd.mSampleRate.round() as u32);
     }
 
@@ -802,8 +910,8 @@ unsafe fn resolve_sample_rate(
     );
     if st == kAudioHardwareNoError as i32 && rate > 0.0 {
         eprintln!(
-            "audio: the tap would not report its format; using the aggregate device's nominal \
-             rate of {rate} Hz"
+            "audio: the tap reported no sample rate; using the aggregate device's nominal rate \
+             of {rate} Hz"
         );
         return Ok(rate.round() as u32);
     }
@@ -1109,8 +1217,18 @@ mod tests {
         buffer.lock().clear();
         std::thread::sleep(Duration::from_millis(700));
         let exclusive_peak = peak(&buffer);
+        // Without this, a tap that produces *no samples at all* — the exact
+        // failure this test exists to catch — would satisfy `peak < 0.15`
+        // vacuously and report success. The inclusive half is protected by its
+        // own `> 0.15` assertion; this half needs the liveness check to mean
+        // anything.
+        let exclusive_alive = capture.is_alive();
         println!("peak with our process excluded: {exclusive_peak}");
         drop(capture);
+        assert!(
+            exclusive_alive,
+            "the excluding tap stopped feeding the ring, so a low peak proves nothing"
+        );
         assert!(
             exclusive_peak < 0.15,
             "a tap excluding our own process still heard our tone (peak {exclusive_peak}) — \
