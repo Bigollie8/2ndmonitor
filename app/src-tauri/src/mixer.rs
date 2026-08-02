@@ -1,15 +1,20 @@
-//! Windows audio mixer — master volume, output-device picker, per-app sessions.
+//! Audio mixer — master volume, output-device picker, per-app sessions on
+//! Windows; output-device picker only on macOS (see `macimpl` below for why
+//! master volume and per-app sessions aren't there).
 //!
-//! All COM work runs on a single apartment-threaded worker thread. The frontend
-//! posts setter commands via a static mpsc Sender (kept simple — these fire
-//! a few times per second at most, on slider drag). After every applied command
-//! we re-emit a fresh `mixer:state` snapshot, plus a steady 1 Hz heartbeat so
-//! external changes (Windows volume slider, sessions appearing/disappearing)
-//! show up in the UI within a second.
+//! On Windows, all COM work runs on a single apartment-threaded worker
+//! thread. The frontend posts setter commands via a static mpsc Sender (kept
+//! simple — these fire a few times per second at most, on slider drag).
+//! After every applied command we re-emit a fresh `mixer:state` snapshot,
+//! plus a steady 1 Hz heartbeat so external changes (Windows volume slider,
+//! sessions appearing/disappearing) show up in the UI within a second. The
+//! macOS worker mirrors this same command/snapshot loop (see `macimpl`) minus
+//! the COM apartment dance, which Core Audio's `AudioObject*` calls don't need.
 //!
-//! `IPolicyConfig` (used to switch the default output device) is undocumented
-//! but stable since Vista — same approach SoundSwitch / EarTrumpet use. We
-//! call it via raw vtable indexing so we don't need to declare the interface.
+//! `IPolicyConfig` (used to switch the default output device on Windows) is
+//! undocumented but stable since Vista — same approach SoundSwitch /
+//! EarTrumpet use. We call it via raw vtable indexing so we don't need to
+//! declare the interface.
 
 use parking_lot::{const_mutex, Mutex};
 use serde::Serialize;
@@ -981,9 +986,10 @@ mod macimpl {
         let mut size: u32 = 0;
         let status =
             AudioObjectGetPropertyDataSize(id, &addr as *const _, 0, null(), &mut size as *mut _);
-        // A device that simply has no output-scope streams (e.g. a
-        // microphone) reports this as an error on some devices rather than a
-        // zero size — either way, "no output streams" for our purposes.
+        // An input-only device (e.g. a microphone) is expected to report a
+        // zero-length buffer list for the output scope. Treat a failed size
+        // query the same way defensively — either way there's nothing to
+        // read, and "no output streams" is the correct answer for our filter.
         if status != kAudioHardwareNoError as i32 || size == 0 {
             return Ok(0);
         }
