@@ -440,6 +440,26 @@ fn push_mono(planes: &[(&[f32], usize)], buffer: &Arc<Mutex<Vec<f32>>>, ring_cap
     }
 }
 
+/// Zero every buffer in an output `AudioBufferList`. Unlike the input path this
+/// reads no channel counts and makes no layout assumptions — `mDataByteSize` is
+/// the authority on how much memory is ours to clear, whatever is in it.
+unsafe fn silence_output(list: *mut AudioBufferList) {
+    if list.is_null() {
+        return;
+    }
+    let n = (*list).mNumberBuffers as usize;
+    if n == 0 {
+        return;
+    }
+    let first: *mut AudioBuffer = (*list).mBuffers.as_mut_ptr();
+    for i in 0..n {
+        let b = &*first.add(i);
+        if !b.mData.is_null() && b.mDataByteSize > 0 {
+            std::ptr::write_bytes(b.mData as *mut u8, 0, b.mDataByteSize as usize);
+        }
+    }
+}
+
 /// The IO callback. Runs on Core Audio's real-time thread, so it allocates
 /// nothing, blocks on nothing but the ring's (uncontended, microsecond-scale)
 /// lock, and never unwinds.
@@ -448,10 +468,19 @@ unsafe extern "C" fn io_proc(
     _in_now: *const AudioTimeStamp,
     in_input_data: *const AudioBufferList,
     _in_input_time: *const AudioTimeStamp,
-    _out_output_data: *mut AudioBufferList,
+    out_output_data: *mut AudioBufferList,
     _in_output_time: *const AudioTimeStamp,
     in_client_data: *mut c_void,
 ) -> i32 {
+    // The aggregate device contains the default output as a sub-device, so it
+    // carries that device's *output* streams and hands us buffers for them on
+    // every cycle. We have nothing to play, and an IOProc that leaves output
+    // buffers untouched is relying on the HAL to have zeroed them — if it has
+    // not, whatever was in that memory goes to the speakers. Zero them
+    // ourselves; it is a memset of a few hundred bytes per cycle and it makes
+    // "the visualizer made a noise" impossible by construction.
+    silence_output(out_output_data);
+
     if in_client_data.is_null() {
         return kAudioHardwareNoError as i32;
     }
@@ -530,13 +559,43 @@ unsafe fn create_tap(target: &TapTarget) -> Result<AudioObjectID, String> {
         // `CATapDescription.processes` holds `AudioObjectID`s of Core Audio
         // *process objects*, not `pid_t`s. Both are NSNumbers in an NSArray, so
         // nothing — not the type system, not `responds_to` — catches the
-        // difference; a raw PID just fails with 'obj!' or, worse, matches
+        // difference; a raw PID just fails with '!obj' or, worse, matches
         // nothing at all, and then `Only` captures silence while `Except`
         // excludes no one. Translate first.
-        let objects: Vec<AudioObjectID> = pids
-            .iter()
-            .map(|pid| translate_pid(*pid))
-            .collect::<Result<_, _>>()?;
+        //
+        // A process with no audio object (`Ok(None)`) is not an error, it is an
+        // app that is not currently playing — and the two targets want opposite
+        // things from that:
+        //
+        //   Only  — an empty list would tap nothing, so this must fail and let
+        //           the supervisor fall back to the mix.
+        //   Except — dropping the pid excludes nothing, which is the same
+        //           audio a mix fallback would give, except we keep the tap and
+        //           will exclude the app the moment it starts playing again.
+        //           Failing instead would be strictly worse: the user asks for
+        //           "everything except Spotify" while Spotify is paused, we
+        //           error, and the mix they land on *includes* Spotify as soon
+        //           as it resumes.
+        //
+        // A translation call that actually fails is still fatal on every path —
+        // that means the property read is wrong, and hiding it behind a log
+        // line is how a broken selector survives to ship.
+        let mut objects: Vec<AudioObjectID> = Vec::with_capacity(pids.len());
+        for pid in pids {
+            match translate_pid(*pid)? {
+                Some(object) => objects.push(object),
+                None if matches!(target, TapTarget::Only(_)) => {
+                    return Err(format!(
+                        "pid {pid} has no Core Audio process object — it is not playing (or has \
+                         never played) any audio, so there is nothing to capture"
+                    ));
+                }
+                None => eprintln!(
+                    "audio: pid {pid} has no Core Audio process object (it is not playing right \
+                     now), so it is not in the tap's exclusion list"
+                ),
+            }
+        }
 
         let mut arena = CfArena::default();
         let numbers: Vec<CFTypeRef> = objects
@@ -624,9 +683,11 @@ unsafe fn create_tap(target: &TapTarget) -> Result<AudioObjectID, String> {
 /// and the object id comes back as the value, so do not pattern-match this off
 /// the others.
 ///
-/// A process with no audio object — one that has never opened an audio device —
-/// is a normal outcome, not a bug in this code, and says so.
-unsafe fn translate_pid(pid: i32) -> Result<AudioObjectID, String> {
+/// `Ok(None)` means the translation worked and the answer was "this process has
+/// no audio object" — a normal state for an app that is not playing, which the
+/// caller interprets differently for `Only` than for `Except`. `Err` is
+/// reserved for the property read itself failing.
+unsafe fn translate_pid(pid: i32) -> Result<Option<AudioObjectID>, String> {
     let addr = global_address(fourcc(b"id2p"));
     let mut object: AudioObjectID = 0;
     let mut size = std::mem::size_of::<AudioObjectID>() as u32;
@@ -645,12 +706,9 @@ unsafe fn translate_pid(pid: i32) -> Result<AudioObjectID, String> {
         ));
     }
     if object == 0 {
-        return Err(format!(
-            "pid {pid} has no Core Audio process object — it is not playing (or has never played) \
-             any audio"
-        ));
+        return Ok(None);
     }
-    Ok(object)
+    Ok(Some(object))
 }
 
 /// Dump the class's `init...` selectors to stderr. Only called when an expected
@@ -1114,11 +1172,6 @@ mod tests {
         }
     }
 
-    /// Peak absolute sample currently in the ring.
-    fn peak(buffer: &Arc<Mutex<Vec<f32>>>) -> f32 {
-        buffer.lock().iter().fold(0.0f32, |m, s| m.max(s.abs()))
-    }
-
     /// A 440 Hz sine at 0.25 amplitude out of the default output device, from
     /// *this* process — the signal the tap is supposed to find (and, in the
     /// second half of the test, supposed to miss).
@@ -1175,9 +1228,17 @@ mod tests {
     ///
     /// Note what the second half does *not* assert. "Except us" is not silence:
     /// Spotify, a browser tab, a notification chime may all legitimately be
-    /// playing, so the buffer being non-empty proves nothing either way. The
+    /// playing, so the *contents* of that buffer prove nothing either way. The
     /// assertion is only that *our* 0.25-amplitude tone is absent — which is
     /// why the same threshold is used for both directions.
+    ///
+    /// What it does assert is that samples arrived at all. That check has to be
+    /// on the ring, not on `is_alive()`: `is_alive` reports true for the first
+    /// `STALE_AFTER` (5 s) after `start` regardless of whether a single
+    /// callback has fired, and this test measures at 1.2 s — so it would have
+    /// returned true in both the working and the broken case. A live tap pushes
+    /// digital silence as real zero *samples*, so a non-empty ring is the
+    /// signal that actually distinguishes "quiet" from "dead".
     #[test]
     #[ignore = "needs a real Mac with audio-capture permission granted; run with --ignored"]
     fn tap_hears_our_tone_and_the_exclusion_does_not() {
@@ -1194,16 +1255,24 @@ mod tests {
         std::thread::sleep(Duration::from_millis(500));
         buffer.lock().clear();
         std::thread::sleep(Duration::from_millis(700));
-        let inclusive_peak = peak(&buffer);
-        assert!(
-            capture.is_alive(),
-            "the tap stopped feeding the ring during the test"
-        );
+        let (inclusive_peak, inclusive_samples) = {
+            let buf = buffer.lock();
+            (
+                buf.iter().fold(0.0f32, |m, s| m.max(s.abs())),
+                buf.len(),
+            )
+        };
         println!(
-            "tap sample rate: {} Hz, peak with our process included: {inclusive_peak}",
+            "tap sample rate: {} Hz, {inclusive_samples} samples in 700 ms, peak with our \
+             process included: {inclusive_peak}",
             capture.sample_rate()
         );
         drop(capture);
+        assert!(
+            inclusive_samples > 0,
+            "a tap on our own process delivered no samples at all in 700 ms — the IOProc never \
+             fired, so nothing below this line would have meant anything"
+        );
         assert!(
             inclusive_peak > 0.15,
             "a tap on our own process did not hear our 0.25-amplitude tone (peak {inclusive_peak})"
@@ -1216,18 +1285,28 @@ mod tests {
         std::thread::sleep(Duration::from_millis(500));
         buffer.lock().clear();
         std::thread::sleep(Duration::from_millis(700));
-        let exclusive_peak = peak(&buffer);
-        // Without this, a tap that produces *no samples at all* — the exact
-        // failure this test exists to catch — would satisfy `peak < 0.15`
-        // vacuously and report success. The inclusive half is protected by its
-        // own `> 0.15` assertion; this half needs the liveness check to mean
-        // anything.
-        let exclusive_alive = capture.is_alive();
-        println!("peak with our process excluded: {exclusive_peak}");
+        // The sample count is what makes the peak assertion mean anything. A
+        // tap that produces nothing at all — the exact failure this test exists
+        // to catch — satisfies `peak < 0.15` vacuously, and `is_alive()` cannot
+        // rule it out this early (see the doc comment). The inclusive half is
+        // self-protecting because it asserts a peak is *present*; this half has
+        // to check the ring directly.
+        let (exclusive_peak, exclusive_samples) = {
+            let buf = buffer.lock();
+            (
+                buf.iter().fold(0.0f32, |m, s| m.max(s.abs())),
+                buf.len(),
+            )
+        };
+        println!(
+            "{exclusive_samples} samples in 700 ms, peak with our process excluded: \
+             {exclusive_peak}"
+        );
         drop(capture);
         assert!(
-            exclusive_alive,
-            "the excluding tap stopped feeding the ring, so a low peak proves nothing"
+            exclusive_samples > 0,
+            "the excluding tap delivered no samples at all in 700 ms, so a low peak proves \
+             nothing — it was not capturing"
         );
         assert!(
             exclusive_peak < 0.15,
