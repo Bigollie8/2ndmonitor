@@ -103,10 +103,9 @@ function luminanceStats(octx) {
   return { mean, stddev };
 }
 
-async function captureOne(id) {
+async function captureOne(id, frames) {
   const presetObj = await (await fetch('/preset/' + id)).json();
   visualizer.loadPreset(presetObj, 0); // throws on bad equations — caller catches
-  const frames = 75;
   const { out, octx } = pumpAndCapture(frames);
   const { mean, stddev } = luminanceStats(octx);
   if (mean < 4) throw new Error('rejected: black (mean luminance ' + mean.toFixed(2) + ')');
@@ -121,12 +120,18 @@ async function captureOne(id) {
 (async () => {
   const status = document.getElementById('status');
   const params = new URLSearchParams(location.search);
-  const ids = params.has('all') ? await (await fetch('/list')).json() : [params.get('id')];
+  // ?all=1 (everything), ?ids=a,b,c (subset — e.g. retrying gate rejects with
+  // a longer warmup), or ?id=x. ?frames=N overrides the 75-frame default —
+  // slow-build presets (fractal accumulators, feedback loops) can need 300+.
+  const ids = params.has('all') ? await (await fetch('/list')).json()
+    : params.has('ids') ? params.get('ids').split(',').filter(Boolean)
+    : [params.get('id')];
+  const frames = Math.max(30, Math.min(600, Number(params.get('frames')) || 75));
   const rejected = [];
   let captured = 0;
   for (const id of ids) {
     status.textContent = 'capturing ' + id + ' (' + (captured + rejected.length + 1) + '/' + ids.length + ')…';
-    try { await captureOne(id); captured++; }
+    try { await captureOne(id, frames); captured++; }
     catch (e) {
       const reason = e && e.message ? e.message : String(e);
       rejected.push({ id, reason });
