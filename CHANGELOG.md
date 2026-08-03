@@ -5,6 +5,19 @@ All notable changes to 2ndMonitor are documented here. Format follows
 
 ## [Unreleased]
 
+### Changed
+- The visualizer's audio source is now a strict include list: check up to
+  4 apps and it hears exactly those, mixed together — or all system audio.
+  Pick them in Settings → Visualizer → Audio source, or toggle any app with
+  the headphone button on its Audio Mixer row
+- The 0.6.4 auto-fallback is gone: the visualizer never switches source on
+  its own. A selected app that isn't running contributes silence and the
+  status bar says so ("Spotify (not running)"); it's picked up automatically
+  the moment it starts playing
+- A saved "only <app>" source upgrades to a one-app include list, keeping
+  its tuned sensitivity. "Everything except <app>" has no equivalent in the
+  new model and resets to all system audio
+
 ## [0.6.5] - 2026-08-02
 
 ### Fixed
