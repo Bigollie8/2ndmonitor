@@ -49,3 +49,55 @@ export function worldToLatLon(x: number, y: number, zoom: number): LatLon {
     lon: wrapLon(x / n * 360 - 180),
   };
 }
+
+/** Canvas px of a lat/lon for a view rendered in a w×h viewport. */
+export function project(
+  view: MapViewState, w: number, h: number, lat: number, lon: number,
+): { x: number; y: number } {
+  const c = latLonToWorld(view.center.lat, view.center.lon, view.zoom);
+  const p = latLonToWorld(lat, lon, view.zoom);
+  // Take the shorter way around the antimeridian so markers just past ±180°
+  // don't land a world-width away from the center.
+  const n = TILE_SIZE * Math.pow(2, view.zoom);
+  let dx = p.x - c.x;
+  if (dx > n / 2) dx -= n;
+  if (dx < -n / 2) dx += n;
+  return { x: w / 2 + dx, y: h / 2 + (p.y - c.y) };
+}
+
+/** Canvas px → lat/lon (inverse of project). */
+export function unproject(
+  view: MapViewState, w: number, h: number, x: number, y: number,
+): LatLon {
+  const c = latLonToWorld(view.center.lat, view.center.lon, view.zoom);
+  return worldToLatLon(c.x + (x - w / 2), c.y + (y - h / 2), view.zoom);
+}
+
+/** Pointer-drag pan: the map content follows the pointer, so the center moves
+ *  opposite to the drag delta (canvas px). */
+export function panBy(view: MapViewState, dx: number, dy: number): MapViewState {
+  const c = latLonToWorld(view.center.lat, view.center.lon, view.zoom);
+  return { center: worldToLatLon(c.x - dx, c.y - dy, view.zoom), zoom: view.zoom };
+}
+
+/** Cursor-anchored wheel zoom: the lat/lon under `cursor` stays under it. */
+export function zoomAt(
+  view: MapViewState,
+  zoomDelta: number,
+  cursor: { x: number; y: number },
+  viewport: { w: number; h: number },
+  minZoom: number,
+  maxZoom: number,
+): MapViewState {
+  const newZoom = clampZoom(view.zoom + zoomDelta, minZoom, maxZoom);
+  if (newZoom === view.zoom) return view;
+  const anchor = unproject(view, viewport.w, viewport.h, cursor.x, cursor.y);
+  const a = latLonToWorld(anchor.lat, anchor.lon, newZoom);
+  // Choose the new center so the anchor projects back onto the cursor.
+  const center = worldToLatLon(
+    a.x - (cursor.x - viewport.w / 2),
+    a.y - (cursor.y - viewport.h / 2),
+    newZoom,
+  );
+  return { center, zoom: newZoom };
+}

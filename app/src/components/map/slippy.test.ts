@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {
   TILE_SIZE, MAX_LAT, clampZoom, clampLat, wrapLon,
   latLonToWorld, worldToLatLon,
+  project, unproject, panBy, zoomAt,
 } from './slippy';
 
 const close = (a: number, b: number, eps = 1e-6) =>
@@ -62,4 +63,66 @@ test('clampLat clamps to the Web-Mercator latitude limit', () => {
   assert.equal(clampLat(89), MAX_LAT);
   assert.equal(clampLat(-89), -MAX_LAT);
   assert.equal(clampLat(12.5), 12.5);
+});
+
+const VIEW = { center: { lat: 40, lon: -3 }, zoom: 6 };
+const W = 400, H = 300;
+
+test('project: the view center lands at the canvas center', () => {
+  const p = project(VIEW, W, H, VIEW.center.lat, VIEW.center.lon);
+  close(p.x, W / 2);
+  close(p.y, H / 2);
+});
+
+test('unproject inverts project', () => {
+  const p = project(VIEW, W, H, 48.8584, 2.2945);
+  const back = unproject(VIEW, W, H, p.x, p.y);
+  close(back.lat, 48.8584, 1e-9);
+  close(back.lon, 2.2945, 1e-9);
+});
+
+test('project: takes the short way around the antimeridian', () => {
+  const v = { center: { lat: 0, lon: 179.5 }, zoom: 4 };
+  // -179.5 is 1° east of the center, not 359° west.
+  const p = project(v, W, H, 0, -179.5);
+  close(p.x, W / 2 + (1 / 360) * TILE_SIZE * Math.pow(2, 4), 1e-6);
+});
+
+test('panBy: dragging the map left (negative dx) moves the view east', () => {
+  const next = panBy(VIEW, -10, 0);
+  assert.ok(next.center.lon > VIEW.center.lon);
+  assert.equal(next.zoom, VIEW.zoom);
+});
+
+test('panBy: a drag and its exact inverse return to the same center', () => {
+  const there = panBy(VIEW, 37, -22);
+  const back = panBy(there, -37, 22);
+  close(back.center.lat, VIEW.center.lat, 1e-9);
+  close(back.center.lon, VIEW.center.lon, 1e-9);
+});
+
+test('panBy: center latitude stays inside the Mercator limit', () => {
+  const v = { center: { lat: 84, lon: 0 }, zoom: 2 };
+  const next = panBy(v, 0, 100000);
+  assert.ok(next.center.lat <= MAX_LAT && next.center.lat >= -MAX_LAT);
+});
+
+test('zoomAt: the lat/lon under the cursor stays under the cursor', () => {
+  const cursor = { x: 100, y: 80 };
+  const anchor = unproject(VIEW, W, H, cursor.x, cursor.y);
+  const zoomed = zoomAt(VIEW, 1, cursor, { w: W, h: H }, 4, 12);
+  assert.equal(zoomed.zoom, 7);
+  const p = project(zoomed, W, H, anchor.lat, anchor.lon);
+  close(p.x, cursor.x, 1e-6);
+  close(p.y, cursor.y, 1e-6);
+});
+
+test('zoomAt: clamps to maxZoom', () => {
+  const zoomed = zoomAt(VIEW, 100, { x: 0, y: 0 }, { w: W, h: H }, 4, 12);
+  assert.equal(zoomed.zoom, 12);
+});
+
+test('zoomAt: already at the clamp returns the view unchanged (same object)', () => {
+  const v = { center: { lat: 40, lon: -3 }, zoom: 12 };
+  assert.equal(zoomAt(v, 0.5, { x: 10, y: 10 }, { w: W, h: H }, 4, 12), v);
 });
