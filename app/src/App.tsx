@@ -991,7 +991,17 @@ export default function App() {
       case 'solarFlare':
         return <SolarFlareTile density={t.density} accent={accent} />;
       case 'lightning':
-        return <LightningTile density={t.density} accent={accent} location={t.weatherLocation} />;
+        return (
+          <LightningTile
+            density={t.density}
+            accent={accent}
+            location={t.weatherLocation}
+            config={instance.config as Record<string, unknown> | undefined}
+            setConfig={(next) => updateActiveOrientation({
+              tiles: updateInstance(activeOrientation.tiles, instance.instanceId, { config: next }),
+            })}
+          />
+        );
       case 'aircraft':
         return (
           <AircraftTile
