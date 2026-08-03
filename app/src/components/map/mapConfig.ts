@@ -1,4 +1,5 @@
 import type { MapViewState } from './slippy';
+import { clampZoom, MIN_TILE_Z, MAX_TILE_Z } from './slippy';
 
 /** Parse a persisted `instance.config.mapView` blob. Returns null (meaning
  *  "no override — follow the tile's natural anchor") on anything malformed,
@@ -12,7 +13,7 @@ export function parseMapView(raw: unknown): MapViewState | null {
   const num = (x: unknown): x is number => typeof x === 'number' && Number.isFinite(x);
   if (!num(c.lat) || !num(c.lon) || !num(v.zoom)) return null;
   if (c.lat < -90 || c.lat > 90 || c.lon < -180 || c.lon > 180) return null;
-  return { center: { lat: c.lat, lon: c.lon }, zoom: v.zoom };
+  return { center: { lat: c.lat, lon: c.lon }, zoom: clampZoom(v.zoom, MIN_TILE_Z, MAX_TILE_Z) };
 }
 
 export function serializeMapView(view: MapViewState): { center: { lat: number; lon: number }; zoom: number } {
