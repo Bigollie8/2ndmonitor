@@ -14,11 +14,14 @@ export interface SourceOption {
 }
 
 /** Mirrors Rust's `AudioSourceState` (audio.rs) exactly — note the
- *  snake_case `active_exe`, which crosses the wire as serde emits it. */
+ *  snake_case `live_exes`, which crosses the wire as serde emits it. */
 export interface AudioSourceState {
   requested: AudioSource;
-  active: 'mix' | 'process';
-  active_exe: string | null;
+  /** Which backend family feeds the FFT ring right now. */
+  active: 'mix' | 'apps';
+  /** Selected exes with a live capture attached. A requested exe missing
+   *  here is contributing silence — it isn't running / has no session. */
+  live_exes: string[];
   supported: boolean;
   reason: string | null;
 }

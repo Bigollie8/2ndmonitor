@@ -31,7 +31,7 @@ import {
 import { TRACKS, ACCENT_PALETTES } from './data';
 import { useTweaks } from './state/useTweaks';
 import type { AudioSource } from './state/audioSource';
-import { describeAudioSource, effectiveSensitivity, migrateSensitivity } from './state/audioSource';
+import { describeAudioSource, effectiveSensitivity, migrateAudioSource, migrateSensitivity } from './state/audioSource';
 import { useAudioSource } from './state/useAudioSource';
 import { UpdateToast } from './components/UpdateToast';
 import { useSysmon, useNowPlaying, useSpectrumRef } from './state/tauri';
@@ -118,8 +118,8 @@ interface TweakState extends Record<string, unknown> {
   accentTheme: AccentTheme;
   density: Density;
   vizArtBg: boolean;
-  /** What the visualizer listens to — the whole system mix, or one app
-   *  included/excluded. See state/audioSource.ts. */
+  /** What the visualizer listens to — the whole system mix, or a strict
+   *  include list of up to MAX_AUDIO_APPS apps. See state/audioSource.ts. */
   vizAudioSource: AudioSource;
   /** Per-source input gain, keyed by `sourceKey(vizAudioSource)`. Replaces
    *  the old single `vizSensitivity` scalar (migrated in migrateTweaks
@@ -232,6 +232,17 @@ function migrateTweaks(loaded: Record<string, unknown>): Record<string, unknown>
   if (loaded.vizSensitivityBySource === undefined && loaded.vizSensitivity !== undefined) {
     loaded.vizSensitivityBySource = migrateSensitivity(loaded.vizSensitivity);
     delete loaded.vizSensitivity;
+  }
+  // Audio multiselect (0.6.6): the 0.6.4 single-app source becomes a strict
+  // include list. `only:x` → `apps:[x]`; `except:x` → `mix` (no equivalent —
+  // the changelog notes the downgrade). Saved `only:` sensitivity keys are
+  // respelled `apps:` inside migrateSensitivity. Both migrations are
+  // idempotent, so re-running on already-migrated state is a no-op.
+  if (loaded.vizAudioSource !== undefined) {
+    loaded.vizAudioSource = migrateAudioSource(loaded.vizAudioSource);
+  }
+  if (loaded.vizSensitivityBySource !== undefined) {
+    loaded.vizSensitivityBySource = migrateSensitivity(loaded.vizSensitivityBySource);
   }
   const profilesField = loaded.profiles;
   // True first launch: nothing was loaded from disk at all (no profiles, no
@@ -1506,14 +1517,17 @@ function BottomStatus({
   // might have become resolvable, and it only fires on real transitions
   // (a fresh app attaching, or a reattach after one quits/relaunches) —
   // not a polling loop.
+  const liveExesKey = audioSourceStatus ? audioSourceStatus.live_exes.join('+') : '';
   useEffect(() => {
-    if (audioSourceStatus?.active_exe) refreshAudioSourceOptions();
-  }, [audioSourceStatus?.active_exe, refreshAudioSourceOptions]);
-  const audioSourceWaiting = audioSource.mode !== 'mix' && audioSourceStatus?.active === 'mix';
+    if (liveExesKey) refreshAudioSourceOptions();
+  }, [liveExesKey, refreshAudioSourceOptions]);
+  // "Spotify + Discord", "Spotify (not running)", "all system audio" — the
+  // literal truth, no "(waiting)" states: there is no fallback to wait out.
   const audioSourceText = describeAudioSource(
     audioSource,
     (exe) => audioSourceOptions.find((o) => o.exe === exe)?.name ?? exe,
-  ) + (audioSourceWaiting ? ' (waiting)' : '');
+    audioSourceStatus ? audioSourceStatus.live_exes : null,
+  );
   const app = sysmon.latest.app;
   // GPU spike feed for perf-debug snapshots rides along with the only
   // remaining chrome-level sysmon subscriber.
