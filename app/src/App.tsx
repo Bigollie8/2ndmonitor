@@ -104,6 +104,7 @@ const EnergyTile = lazy(() => import('./components/EnergyTile').then((m) => ({ d
 const DateTimeTile = lazy(() => import('./components/DateTimeTile').then((m) => ({ default: m.DateTimeTile })));
 const DeclarativeTile = lazy(() => import('./components/DeclarativeTile').then((m) => ({ default: m.DeclarativeTile })));
 const MissingTileCard = lazy(() => import('./components/MissingTileCard').then((m) => ({ default: m.MissingTileCard })));
+const MarketView = lazy(() => import('./market/MarketView').then((m) => ({ default: m.MarketView })));
 
 interface VizColorOverride {
   enabled: boolean;
@@ -493,6 +494,9 @@ export default function App() {
   const [showGallery, setShowGallery] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showContentLibrary, setShowContentLibrary] = useState(false);
+  // Market v2's full-bleed store. Deliberately one boolean beside the Content
+  // Library's — the store is a sibling surface, not a mode of that modal.
+  const [showMarket, setShowMarket] = useState(false);
   // Rail row ContentLibrary should open to — e.g. the MilkDrop picker's
   // "browse presets" button (Task 6) opens straight to 'preset:all' instead
   // of the default 'all'. `undefined` means "unset" — every existing opener
@@ -789,7 +793,11 @@ export default function App() {
         })();
       }
       else if (e.key === 'Escape') {
-        if (showShortcuts) setShowShortcuts(false);
+        // The store is the topmost surface and owns its own Esc (it pops one
+        // browse level at a time and closes only at the root — see
+        // MarketView's capture-phase handler), so App must not also act.
+        if (showMarket) { /* MarketView owns Esc */ }
+        else if (showShortcuts) setShowShortcuts(false);
         else if (showContentLibrary) setShowContentLibrary(false);
         else if (showSettings) setShowSettings(false);
         else if (showGallery) setShowGallery(false);
@@ -843,7 +851,8 @@ export default function App() {
   // Hiding does NOT reflow tiles: the bar overlays the same reserved space
   // when revealed (like the Windows taskbar) — CHROME_TOP_PX stays as-is.
   const topBarPinned = shouldPinTopBar({
-    editMode, showSettings, showContentLibrary, showSwitcher, showOnboarding,
+    editMode, showSettings, showContentLibrary: showContentLibrary || showMarket,
+    showSwitcher, showOnboarding,
     showShortcuts, menuOpen: topBarMenuOpen,
   });
   const topBarHidden = t.autoHideTopBar && !topBarPinned && !topBarRevealed;
@@ -992,8 +1001,8 @@ export default function App() {
             onToggleVideo={() => setTweak('videoEnabled', !t.videoEnabled)}
             onNavigate={(url) => setTweak('videoCurrentUrl', url)}
             onExit={() => setTweak('videoEnabled', false)}
-            overlaysOpen={showGallery || editMode || showContentLibrary}
-            paused={(t.videoEnabled && t.videoBookmarks.length > 0) || showGallery || (t.perfMode !== 'uncapped' && livePlayback?.playing !== true)}
+            overlaysOpen={showGallery || editMode || showContentLibrary || showMarket}
+            paused={(t.videoEnabled && t.videoBookmarks.length > 0) || showGallery || showMarket || (t.perfMode !== 'uncapped' && livePlayback?.playing !== true)}
             onConfigure={() => setShowGallery(true)}
             audioDebug={t.audioDebug}
             catalogRemoved={t.catalogRemoved}
@@ -1405,6 +1414,19 @@ export default function App() {
             initialRail={libraryRail}
           />
         )}
+        {showMarket && (
+          <Suspense fallback={null}>
+            <MarketView
+              accent={accent}
+              accent2={vizAccent2}
+              spectrumRef={spectrumRef}
+              catalogRemoved={t.catalogRemoved}
+              setCatalogRemoved={(next) => setTweak('catalogRemoved', next)}
+              onClose={() => setShowMarket(false)}
+              onOpenLibrary={() => { setShowMarket(false); setShowContentLibrary(true); }}
+            />
+          </Suspense>
+        )}
       </div>
 
       {showSettings && (
@@ -1438,6 +1460,7 @@ export default function App() {
           accentLinked={accentLinked}
           trackTitle={track.title}
           onOpenContentLibrary={() => { setShowSettings(false); setShowContentLibrary(true); }}
+          onOpenMarket={() => { setShowSettings(false); setShowMarket(true); }}
           onReplayOnboarding={() => { setShowSettings(false); setShowOnboarding(true); }}
           // Close Settings and drop into edit mode so the empty canvas lands
           // with the "+ Add tile" picker one click away.

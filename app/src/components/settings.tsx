@@ -138,7 +138,7 @@ interface PaneDef {
 
 export function SettingsWindow({
   values: v, set, accent, accent2, accentLinked, trackTitle,
-  onOpenContentLibrary, onReplayOnboarding, onResetLayout, onExportSettings, onImportSettings, onClose,
+  onOpenContentLibrary, onOpenMarket, onReplayOnboarding, onResetLayout, onExportSettings, onImportSettings, onClose,
 }: {
   values: SettingsValues;
   set: SettingsSetter;
@@ -148,6 +148,8 @@ export function SettingsWindow({
   trackTitle: string;
   /** Closes Settings and opens the content library (App owns both). */
   onOpenContentLibrary?: () => void;
+  /** Closes Settings and opens the full-bleed market (App owns both). */
+  onOpenMarket?: () => void;
   onReplayOnboarding: () => void;
   onResetLayout: () => void;
   onExportSettings?: () => void;
@@ -338,6 +340,11 @@ export function SettingsWindow({
           id: 'content-library', label: 'Content library',
           hint: 'Add and remove tiles and visualizers for the active profile from one place — search, categories, and explicit per-item controls.',
           control: <SettingsButton label="Open content library →" onClick={() => onOpenContentLibrary?.()} accent={accent} />,
+        },
+        {
+          id: 'market', label: 'Market',
+          hint: 'Browse the marketplace full-screen — shelves, filters, sorting, and a detail page per bundle. Installing and removing what you already have stays in the content library.',
+          control: <SettingsButton label="Open market →" onClick={() => onOpenMarket?.()} accent={accent} />,
         },
       ],
     },
