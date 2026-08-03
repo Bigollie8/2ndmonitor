@@ -1,25 +1,20 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject } from 'react';
 import {
-  mergeCatalog, catalogKey, planRemoval, restoreDefaults, tileInstanceType, secretSetupCandidates,
-  applyOptimisticVote,
-  type CatalogItem, type IndexBundle, type RatingAgg, type InstalledPresetFolder,
+  planRemoval, restoreDefaults, tileInstanceType, applyOptimisticVote,
+  type CatalogItem, type IndexBundle,
 } from '../state/catalog';
-import { useMarketplaceAuth } from '../state/marketplaceAuth';
 import type { SpectrumState } from '../state/tauri';
 import { withRemoval, withoutRemoval, restoreItem } from '../state/removedContent';
 import { TILE_META } from '../state/tileMeta';
-import { BUILTIN_VIZ_STYLES } from './viz-styles';
-import type { InstalledTileFolder } from '../tiles/tileRegistry';
-import type { InstalledVizFolder } from '../state/contentRegistry';
 import type { TileType, BuiltinTileType } from '../state/layout';
 import { buildRail } from './catalogRail';
 import { filterItems } from '../state/catalogFilter';
+import { useCatalogData } from '../state/useCatalogData';
 import { searchItems } from './catalogSearch';
 import { CatalogCard } from './CatalogCard';
 import { PresetRow } from './PresetRow';
 import { parsePermission } from '../sandbox/manifest';
-import { cfgUrl, cfgPubkey } from '../state/marketplaceConfig';
-import { getSecret, bundleSecretKey } from '../state/secrets';
+import { cfgUrl } from '../state/marketplaceConfig';
 
 const MONO = '"JetBrains Mono", ui-monospace, monospace';
 
@@ -94,38 +89,18 @@ export function ContentLibrary({
    *  category rail's own buttons own `activeId` after that. */
   initialRail?: string;
 }) {
-  const [installedTiles, setInstalledTiles] = useState<InstalledTileFolder[]>([]);
-  const [installedViz, setInstalledViz] = useState<InstalledVizFolder[]>([]);
-  const [installedPresets, setInstalledPresets] = useState<InstalledPresetFolder[]>([]);
-  const [index, setIndex] = useState<IndexBundle[]>([]);
-  // Bundle id -> aggregate rating, from GET /ratings. Starts empty and STAYS
-  // empty on a failed fetch — see fetchRatings below and MergeCatalogArgs.
-  // ratings' doc comment: this is deliberately the same silent-failure
-  // contract as a missing preview image, not a retryable error state like
-  // `indexUnreachable`. The marketplace's public HTTPS route being down as of
-  // this writing (per progress.md) makes this the NORMAL path right now.
-  const [ratings, setRatings] = useState<Record<string, RatingAgg>>({});
-  // This modal's own sign-in status — StarRating's click-to-rate is gated on
-  // it (see StarRating.tsx's ratingDisplay). Settings owns the sign-in FORM;
-  // this is a second, independent `useMarketplaceAuth()` mount that only
-  // ever reads status (its signIn/signOut are unused here) — the hook has no
-  // shared state to desync, each mount just re-asks
-  // `marketplace_session_status` on its own.
-  const { state: authState } = useMarketplaceAuth();
-  const signedIn = authState.status === 'signed-in';
+  // Every piece of catalog loading lives in the shared hook now — two views
+  // (this one and the Market v2 Store) need the identical merged catalog, so
+  // duplicating the fetch/merge here would be two copies to drift.
+  const {
+    items, indexByKey, indexUnreachable, usingCache, retrying: retryingIndex,
+    signedIn, ratings, setRatings, refreshInstalled, retryIndex: handleRetryIndex,
+  } = useCatalogData({ catalogRemoved });
   const [activeId, setActiveId] = useState(initialRail ?? 'all');
   const [query, setQuery] = useState('');
   const [busyKeys, setBusyKeys] = useState<Set<string>>(new Set());
   const [confirming, setConfirming] = useState<{ item: CatalogItem; bundle: IndexBundle } | null>(null);
   const [notice, setNotice] = useState('');
-  // Set when the last index fetch (initial load or Retry) failed. Never a red
-  // error — mergeCatalog already renders a complete catalog from tables plus
-  // installed folders when `index` is `[]` (see state/catalog.ts), so this is
-  // informational, not a failure of the catalog itself. Fixes the real
-  // 2026-07-30 cold-boot incident: a timed-out index fetch showed a red error
-  // banner over an empty grid even though every local item was fine.
-  const [indexUnreachable, setIndexUnreachable] = useState(false);
-  const [retryingIndex, setRetryingIndex] = useState(false);
   const [restoring, setRestoring] = useState(false);
 
   const setBusy = (key: string, busy: boolean) => {
@@ -150,140 +125,6 @@ export function ContentLibrary({
     if (flashTimer.current !== undefined) clearTimeout(flashTimer.current);
   }, []);
 
-  // Re-runnable independently of the index fetch: install/uninstall mutate
-  // folders on disk, and this is the only way ContentLibrary learns about
-  // that (unlike useTileCatalog/useVizStyles it doesn't listen for the
-  // `tiles:changed`/`visualizers:changed` events — it's a one-shot modal, not
-  // a hook shared with the dashboard).
-  const refreshInstalled = useCallback(async () => {
-    const { invoke } = await import('@tauri-apps/api/core');
-    const [tiles, viz, presets] = await Promise.allSettled([
-      invoke<InstalledTileFolder[]>('tiles_list'),
-      invoke<InstalledVizFolder[]>('visualizers_list'),
-      invoke<InstalledPresetFolder[]>('presets_market_list'),
-    ]);
-    if (tiles.status === 'fulfilled') setInstalledTiles(tiles.value);
-    if (viz.status === 'fulfilled') setInstalledViz(viz.value);
-    if (presets.status === 'fulfilled') setInstalledPresets(presets.value);
-  }, []);
-
-  // Fetches the index only — never touches installedTiles/installedViz. This
-  // is deliberately the exact thing the offline notice's Retry button reruns:
-  // a marketplace timeout is a network problem, not a "re-scan disk" problem,
-  // and re-scanning disk on every retry would be wasted work plus a flash of
-  // stale counts in the rail. Returns bundles on success, null on any failure
-  // — it does NOT touch state itself, so callers decide when (or whether) to
-  // apply the result. That split matters under React 18 StrictMode: an effect
-  // that gates a *shared* "am I still mounted" ref would see that ref
-  // flipped false by the dev-only extra mount/cleanup/mount pass before the
-  // fetch resolves, and never recover it — the real, lasting mount's fetch
-  // would silently never apply. A plain per-invocation `cancelled` local (see
-  // the mount effect below) doesn't have that failure mode, because each
-  // effect invocation gets its own fresh closure.
-  const fetchIndex = useCallback(async (): Promise<IndexBundle[] | null> => {
-    try {
-      const { invoke } = await import('@tauri-apps/api/core');
-      const idx = await invoke<{ bundles: IndexBundle[] }>('marketplace_fetch_index', {
-        url: cfgUrl(), pubkey: cfgPubkey(),
-      });
-      return idx.bundles ?? [];
-    } catch {
-      return null;
-    }
-  }, []);
-
-  // Same shape as fetchIndex, and same silent-on-failure contract as
-  // PreviewImage's fetch (spec §9): `null` on any failure — offline, the
-  // marketplace unreachable, a malformed response — and the caller simply
-  // leaves `ratings` at whatever it already was (empty on first load) rather
-  // than surfacing an error. Unlike the index, there is no `ratingsUnreachable`
-  // notice and no Retry button: a missing rating is not worth interrupting a
-  // user over, exactly like a missing preview image.
-  const fetchRatings = useCallback(async (): Promise<Record<string, RatingAgg> | null> => {
-    try {
-      const { invoke } = await import('@tauri-apps/api/core');
-      return await invoke<Record<string, RatingAgg>>('marketplace_fetch_ratings', { url: cfgUrl() });
-    } catch {
-      return null;
-    }
-  }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      await refreshInstalled();
-      if (cancelled) return;
-      // Independent fetches — a slow/failed ratings request must never delay
-      // or block the index (installed folders + index) from rendering.
-      const [bundles, ratingsResult] = await Promise.all([fetchIndex(), fetchRatings()]);
-      if (cancelled) return;
-      if (bundles) { setIndex(bundles); setIndexUnreachable(false); }
-      else setIndexUnreachable(true);
-      if (ratingsResult) setRatings(ratingsResult);
-    })();
-    return () => { cancelled = true; };
-  }, [refreshInstalled, fetchIndex, fetchRatings]);
-
-  // No mount guard here, unlike the effect above — a modal-closed-mid-fetch
-  // race just discards the result into an unmounted component (a dev-only
-  // warning, not a crash), the same tolerance every other mutation in this
-  // file (install/remove/restore) already has.
-  const handleRetryIndex = useCallback(async () => {
-    setRetryingIndex(true);
-    const bundles = await fetchIndex();
-    if (bundles) { setIndex(bundles); setIndexUnreachable(false); }
-    else setIndexUnreachable(true);
-    setRetryingIndex(false);
-  }, [fetchIndex]);
-
-  const indexByKey = useMemo(() => {
-    const m = new Map<string, IndexBundle>();
-    for (const b of index) {
-      m.set(catalogKey(b.kind, b.id), b);
-    }
-    return m;
-  }, [index]);
-
-  // Real "needs setup" answer, scoped to declared SECRETS only. Config is
-  // per-placed-instance (TileCredentialPanel.tsx), so there is no single
-  // catalog-level answer for it without making this component instance-aware
-  // — out of scope here (see the doc comment on MergeCatalogArgs.needsSetup
-  // in state/catalog.ts). Secrets, unlike config, are namespaced per BUNDLE
-  // (bundleSecretKey(bundleId, key) — no instanceId), so they DO have a clean
-  // catalog-level answer: an installed bundle "needs setup" when the index
-  // says it declares a `secret:` permission and that secret has never been
-  // stored.
-  //
-  // Deliberately keyed on installedTiles/installedViz/indexByKey — NOT on
-  // `items` — even though `items` carries `permissions` too: `items` is
-  // itself built from this hook's result (see the `items` memo below), so
-  // depending on `items` here would make every run of this effect produce a
-  // new `items` array next render, re-triggering the effect forever.
-  const [needsSetupKeys, setNeedsSetupKeys] = useState<string[]>([]);
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      const candidates = secretSetupCandidates(installedTiles, installedViz, indexByKey);
-      const results = await Promise.all(candidates.map(async (c) => {
-        const values = await Promise.all(c.secretKeys.map((k) => getSecret(bundleSecretKey(c.bundleId, k))));
-        return values.some((v) => v == null) ? c.key : null;
-      }));
-      if (!cancelled) setNeedsSetupKeys(results.filter((k): k is string => k != null));
-    })();
-    return () => { cancelled = true; };
-  }, [installedTiles, installedViz, indexByKey]);
-
-  const items = useMemo<CatalogItem[]>(() => mergeCatalog({
-    tileMeta: TILE_META,
-    vizStyles: BUILTIN_VIZ_STYLES,
-    installedTiles,
-    installedViz,
-    installedPresets,
-    index,
-    removed: catalogRemoved,
-    needsSetup: needsSetupKeys,
-    ratings,
-  }), [installedTiles, installedViz, installedPresets, index, catalogRemoved, needsSetupKeys, ratings]);
 
   const rail = useMemo(() => buildRail(items), [items]);
   // rail[0] is always the 'all' row (buildRail always pushes it) — a safe
@@ -646,6 +487,33 @@ export function ContentLibrary({
               }}>
                 <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.6)', flex: 1 }}>
                   marketplace unreachable — showing local content
+                </span>
+                <button
+                  onClick={() => void handleRetryIndex()}
+                  disabled={retryingIndex}
+                  style={{
+                    padding: '3px 10px', fontSize: 10.5, fontWeight: 600, borderRadius: 5,
+                    background: 'transparent', color: 'rgba(255,255,255,0.7)',
+                    border: '1px solid rgba(255,255,255,0.15)',
+                    cursor: retryingIndex ? 'not-allowed' : 'pointer',
+                    opacity: retryingIndex ? 0.55 : 1,
+                  }}
+                >{retryingIndex ? 'Retrying…' : 'Retry'}</button>
+              </div>
+            )}
+
+            {/* A cache hit is NOT the unreachable state: the catalog below is
+                the real, signature-verified one, just not fetched a moment
+                ago. Same shape as the notice above so the two never read as
+                different severities. */}
+            {usingCache && !indexUnreachable && (
+              <div style={{
+                display: 'flex', alignItems: 'center', gap: 10,
+                padding: '8px 12px', marginBottom: 12, borderRadius: 8,
+                background: 'rgba(255,255,255,0.045)', border: '1px solid rgba(255,255,255,0.09)',
+              }}>
+                <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.6)', flex: 1 }}>
+                  showing cached catalog — marketplace unreachable
                 </span>
                 <button
                   onClick={() => void handleRetryIndex()}

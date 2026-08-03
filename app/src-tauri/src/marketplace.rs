@@ -438,6 +438,25 @@ pub fn marketplace_rate<R: Runtime>(
     Ok(())
 }
 
+/// Fetches the curated collections — `[{"slug","title","blurb","items":[…]}]`.
+/// Unsigned and public, exactly like `marketplace_fetch_ratings`: browse
+/// garnish, not something a bundle's identity depends on, so it carries no
+/// pubkey and callers treat any `Err` as "no collection shelves" rather than
+/// an error worth surfacing.
+///
+/// Async + `spawn_blocking` — see `marketplace_fetch_ratings`'s doc comment.
+#[tauri::command]
+pub async fn marketplace_fetch_collections(url: String) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let base = url.trim_end_matches('/');
+        let body_bytes = get_capped(&format!("{base}/collections"), FETCH_CAP)?;
+        let body = String::from_utf8(body_bytes).map_err(|_| "collections not UTF-8".to_string())?;
+        serde_json::from_str(&body).map_err(|e| format!("collections not JSON: {e}"))
+    })
+    .await
+    .map_err(|e| format!("fetch task failed: {e}"))?
+}
+
 /// Async + `spawn_blocking` — see `marketplace_fetch_ratings`'s doc comment.
 #[tauri::command]
 pub async fn marketplace_fetch_index(url: String, pubkey: String) -> Result<serde_json::Value, String> {
