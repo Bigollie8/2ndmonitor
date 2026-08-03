@@ -40,6 +40,42 @@ export function formatDateLine(ts: number, locale?: string, timeZone?: string): 
   }).format(ts);
 }
 
+/** Persisted tweak for the platform-wide clock format (0.7.2 §3). */
+export type ClockFormatSetting = 'system' | '12h' | '24h';
+
+/** Resolve the tweak to a concrete hour12 flag. 'system' defers to the OS
+ *  locale via systemHour12(). Tests pass explicit locales. */
+export function resolveHour12(clockFormat: ClockFormatSetting, locale?: string): boolean {
+  if (clockFormat === '12h') return true;
+  if (clockFormat === '24h') return false;
+  return systemHour12(locale);
+}
+
+/** formatClock, split for two-tone clock renders (forecast tile keeps its
+ *  big hh:mm + small accent :ss layout): the hour:minute body and the day
+ *  period ("PM"), null in 24-hour mode. */
+export interface ClockParts { hm: string; dayPeriod: string | null }
+
+export function formatClockParts(ts: number, opts: ClockFormatOptions): ClockParts {
+  const parts = new Intl.DateTimeFormat(opts.locale, {
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: opts.hour12,
+    ...(opts.timeZone ? { timeZone: opts.timeZone } : {}),
+  }).formatToParts(ts);
+  const dayPeriod = parts.find((p) => p.type === 'dayPeriod')?.value ?? null;
+  const hm = parts.filter((p) => p.type !== 'dayPeriod').map((p) => p.value).join('').trim();
+  return { hm, dayPeriod };
+}
+
+/** Compact hourly-strip label from a raw 0-23 hour. 12h mode matches the
+ *  Rust-preformatted shape shipped since 0.5 ("8p", "12a"); 24h zero-pads. */
+export function formatHourLabel(hour: number, hour12: boolean): string {
+  if (!hour12) return String(hour).padStart(2, '0');
+  const suffix = hour >= 12 ? 'p' : 'a';
+  return `${((hour + 11) % 12) + 1}${suffix}`;
+}
+
 /** Instance config for the dateTime tile. `style` exists from day one so a
  *  future analog clock is a config value, not a migration. */
 export interface DateTimeConfig {
