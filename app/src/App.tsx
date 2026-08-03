@@ -985,7 +985,17 @@ export default function App() {
       case 'onThisDay':
         return <OnThisDayTile density={t.density} accent={accent} />;
       case 'iss':
-        return <IssTile density={t.density} accent={accent} location={t.weatherLocation} />;
+        return (
+          <IssTile
+            density={t.density}
+            accent={accent}
+            location={t.weatherLocation}
+            config={instance.config as Record<string, unknown> | undefined}
+            setConfig={(next) => updateActiveOrientation({
+              tiles: updateInstance(activeOrientation.tiles, instance.instanceId, { config: next }),
+            })}
+          />
+        );
       case 'pollen':
         return <PollenTile density={t.density} accent={accent} editing={editMode} location={t.weatherLocation} />;
       case 'solarFlare':
