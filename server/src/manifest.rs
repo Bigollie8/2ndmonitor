@@ -178,6 +178,20 @@ pub fn validate_meta(kind: &str, obj: &serde_json::Map<String, Value>) -> Result
         }
     };
 
+    // Sample payload the capture harness renders this tile against. Shape is
+    // the tile's own business (it is whatever its view.json binds to), so
+    // this validates only that it is an object of sane size. Nothing on the
+    // server consumes it — it exists for scripts/tile-preview-capture.ts,
+    // which needs plausible data to render a declarative tile at all.
+    if let Some(pd) = obj.get("previewData") {
+        if !pd.is_object() {
+            return Err("previewData must be an object".into());
+        }
+        if serde_json::to_string(pd).map(|s| s.len()).unwrap_or(0) > 8192 {
+            return Err("previewData must be at most 8192 bytes".into());
+        }
+    }
+
     Ok(Meta { summary, description, category, tags, icon, changelog, min_app_version })
 }
 

@@ -4,8 +4,32 @@
   "author": "official",
   "version": "1.0.0",
   "api": 1,
-  "permissions": ["net:query1.finance.yahoo.com"],
+  "permissions": [
+    "net:query1.finance.yahoo.com"
+  ],
   "config": [
-    { "key": "symbol", "label": "Ticker symbol (e.g. AAPL)", "type": "text" }
-  ]
+    {
+      "key": "symbol",
+      "label": "Ticker symbol (e.g. AAPL)",
+      "type": "text"
+    }
+  ],
+  "previewData": {
+    "config": {
+      "symbol": "SMPL"
+    },
+    "response": {
+      "chart": {
+        "result": [
+          {
+            "meta": {
+              "symbol": "SMPL",
+              "regularMarketPrice": 123.45,
+              "chartPreviousClose": 120.1
+            }
+          }
+        ]
+      }
+    }
+  }
 }

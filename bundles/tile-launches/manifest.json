@@ -4,5 +4,37 @@
   "author": "official",
   "version": "1.0.0",
   "api": 1,
-  "permissions": ["net:ll.thespacedevs.com"]
+  "permissions": [
+    "net:ll.thespacedevs.com"
+  ],
+  "previewData": {
+    "response": {
+      "results": [
+        {
+          "status": {
+            "abbrev": "Go"
+          },
+          "name": "Sample Rocket | Sample Payload 1",
+          "lsp_name": "Sample Launch Provider",
+          "net": "2026-01-01T12:00Z"
+        },
+        {
+          "status": {
+            "abbrev": "TBD"
+          },
+          "name": "Sample Rocket | Sample Payload 2",
+          "lsp_name": "Sample Launch Provider",
+          "net": "2026-01-04T09:30Z"
+        },
+        {
+          "status": {
+            "abbrev": "Go"
+          },
+          "name": "Sample Rocket | Sample Payload 3",
+          "lsp_name": "Second Sample Provider",
+          "net": "2026-01-07T18:15Z"
+        }
+      ]
+    }
+  }
 }

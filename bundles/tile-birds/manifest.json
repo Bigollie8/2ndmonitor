@@ -4,7 +4,10 @@
   "author": "official",
   "version": "1.0.0",
   "api": 1,
-  "permissions": ["net:api.ebird.org", "secret:ebird_key"],
+  "permissions": [
+    "net:api.ebird.org",
+    "secret:ebird_key"
+  ],
   "secrets": [
     {
       "key": "ebird_key",
@@ -14,8 +17,45 @@
     }
   ],
   "config": [
-    { "key": "lat", "label": "Latitude", "type": "number" },
-    { "key": "lon", "label": "Longitude", "type": "number" },
-    { "key": "radiusKm", "label": "Radius, km (1-50)", "type": "number" }
-  ]
+    {
+      "key": "lat",
+      "label": "Latitude",
+      "type": "number"
+    },
+    {
+      "key": "lon",
+      "label": "Longitude",
+      "type": "number"
+    },
+    {
+      "key": "radiusKm",
+      "label": "Radius, km (1-50)",
+      "type": "number"
+    }
+  ],
+  "previewData": {
+    "config": {
+      "lat": 47.62,
+      "lon": -122.35,
+      "radiusKm": 10
+    },
+    "response": [
+      {
+        "comName": "American Robin",
+        "locName": "Sample Park"
+      },
+      {
+        "comName": "Black-capped Chickadee",
+        "locName": "Sample Wetland"
+      },
+      {
+        "comName": "Northern Flicker",
+        "locName": "Sample Ridge"
+      },
+      {
+        "comName": "Steller's Jay",
+        "locName": "Sample Woods"
+      }
+    ]
+  }
 }

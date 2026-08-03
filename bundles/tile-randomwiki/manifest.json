@@ -4,5 +4,19 @@
   "author": "official",
   "version": "1.0.0",
   "api": 1,
-  "permissions": ["net:en.wikipedia.org"]
+  "permissions": [
+    "net:en.wikipedia.org"
+  ],
+  "previewData": {
+    "response": {
+      "query": {
+        "pages": [
+          {
+            "title": "Sample article",
+            "extract": "This is sample article text standing in for a real Wikipedia extract, so the preview shows the tile's typography and spacing rather than an empty frame."
+          }
+        ]
+      }
+    }
+  }
 }

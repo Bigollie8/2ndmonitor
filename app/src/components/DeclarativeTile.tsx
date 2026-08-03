@@ -403,7 +403,13 @@ function setupHintLine(secrets: SecretDecl[], config: ConfigDecl[]): React.React
 // reaches this scope, so a credential cannot land on screen even if
 // validation were somehow bypassed upstream.
 
-function ViewRenderer({
+/** Exported for `scripts/tile-preview-capture.ts`, which renders a
+ *  declarative tile against sample data to produce its preview image. It is
+ *  the whole render half of this component with none of the fetching, which
+ *  is exactly what a capture harness needs — and rendering through the REAL
+ *  renderer is the point: a second one written for the harness would drift,
+ *  and a preview that does not match the tile is worse than no preview. */
+export function ViewRenderer({
   spec, data, configValues, accent,
 }: { spec: TileViewSpec; data: unknown; configValues: Record<string, unknown>; accent: string }) {
   const selected: unknown = spec.select ? resolvePath(data, spec.select) : data;

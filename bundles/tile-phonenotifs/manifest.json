@@ -4,7 +4,10 @@
   "author": "official",
   "version": "1.0.0",
   "api": 1,
-  "permissions": ["net:ntfy.sh", "secret:ntfy_topic"],
+  "permissions": [
+    "net:ntfy.sh",
+    "secret:ntfy_topic"
+  ],
   "secrets": [
     {
       "key": "ntfy_topic",
@@ -12,5 +15,11 @@
       "kind": "password",
       "help": "A long random topic name — this IS the credential, ntfy has no separate auth. Subscribe to the same topic from the ntfy app on your phone."
     }
-  ]
+  ],
+  "previewData": {
+    "response": {
+      "title": "Sample phone",
+      "message": "Sample notification body, shown to illustrate the layout."
+    }
+  }
 }

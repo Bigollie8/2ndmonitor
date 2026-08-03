@@ -4,7 +4,10 @@
   "author": "official",
   "version": "1.0.0",
   "api": 1,
-  "permissions": ["net:api.github.com", "secret:github_pat"],
+  "permissions": [
+    "net:api.github.com",
+    "secret:github_pat"
+  ],
   "secrets": [
     {
       "key": "github_pat",
@@ -14,6 +17,43 @@
     }
   ],
   "config": [
-    { "key": "user", "label": "GitHub username", "type": "text" }
-  ]
+    {
+      "key": "user",
+      "label": "GitHub username",
+      "type": "text"
+    }
+  ],
+  "previewData": {
+    "config": {
+      "user": "sample-user"
+    },
+    "response": {
+      "items": [
+        {
+          "number": 128,
+          "title": "Sample pull request awaiting review",
+          "user": {
+            "login": "sample-user"
+          },
+          "html_url": "https://example.invalid/pr/128"
+        },
+        {
+          "number": 131,
+          "title": "Another sample pull request",
+          "user": {
+            "login": "second-user"
+          },
+          "html_url": "https://example.invalid/pr/131"
+        },
+        {
+          "number": 134,
+          "title": "A third sample pull request",
+          "user": {
+            "login": "third-user"
+          },
+          "html_url": "https://example.invalid/pr/134"
+        }
+      ]
+    }
+  }
 }
