@@ -533,3 +533,103 @@ test('secretSetupCandidates: a visualizer folder resolves against the visualizer
   assert.equal(out[0]?.key, 'visualizer:aurora');
   assert.deepEqual(out[0]?.secretKeys, ['weather_key']);
 });
+
+// ── Market v2 metadata ───────────────────────────────────────────────────────
+
+// `InstalledTileFolder` (tiles/tileRegistry.ts:19) requires `api` and
+// `manifest_error` as well as the obvious fields — build it fully rather than
+// casting, so a future field addition fails this test instead of hiding in an
+// `as never`.
+const folder = (o: Partial<InstalledTileFolder> = {}): InstalledTileFolder => ({
+  id: 'radar', name: 'Radar', author: 'oli***', version: '1.0.0',
+  api: 1, manifest_error: null, source: 'marketplace', ...o,
+});
+
+test('mergeCatalog: the index wins for descriptive fields, the folder wins for install state', () => {
+  const out = mergeCatalog({
+    tileMeta: {} as Record<never, never> as MergeCatalogArgs['tileMeta'],
+    vizStyles: [],
+    installedTiles: [folder()],
+    installedViz: [],
+    installedPresets: [],
+    index: [{
+      id: 'radar', version: '1.2.0', kind: 'tile', name: 'Radar', author: 'oli***',
+      permissions: [], sha256: 'x', size: 1, downloads: 42,
+      summary: 'Animated precipitation radar',
+      description: 'Long prose from the marketplace.',
+      category: 'weather',
+      tags: ['rain', 'map'],
+      icon: '◈',
+      approvedAt: 1000,
+      mediaCount: 3,
+      featured: true,
+    }],
+    removed: [],
+    needsSetup: [],
+    ratings: {},
+  });
+  const radar = out.find((i) => i.key === 'tile:radar')!;
+
+  // Index wins for description: previously `prev?.description` (the folder's
+  // "by oli***" string) beat it, which is backwards once the index carries
+  // real text.
+  assert.equal(radar.description, 'Long prose from the marketplace.');
+  assert.equal(radar.summary, 'Animated precipitation radar');
+  assert.equal(radar.category, 'weather');
+  assert.deepEqual(radar.tags, ['rain', 'map']);
+  assert.equal(radar.icon, '◈');
+  assert.equal(radar.featured, true);
+  assert.equal(radar.approvedAt, 1000);
+  assert.equal(radar.mediaCount, 3);
+
+  // Folder still wins for install state.
+  assert.equal(radar.installed, true);
+  assert.equal(radar.installedVersion, '1.0.0');
+  assert.equal(radar.updateAvailable, true);
+});
+
+test('mergeCatalog: an index with no metadata falls back to the folder author line', () => {
+  const out = mergeCatalog({
+    tileMeta: {} as Record<never, never> as MergeCatalogArgs['tileMeta'],
+    vizStyles: [],
+    installedTiles: [folder({ id: 'bare', name: 'Bare', author: 'ann***' })],
+    installedViz: [],
+    installedPresets: [],
+    index: [{
+      id: 'bare', version: '1.0.0', kind: 'tile', name: 'Bare', author: 'ann***',
+      permissions: [], sha256: 'x', size: 1, downloads: 0,
+    }],
+    removed: [],
+    needsSetup: [],
+    ratings: {},
+  });
+  const bare = out.find((i) => i.key === 'tile:bare')!;
+  assert.equal(bare.description, 'by ann***', 'an old server supplies nothing; the folder line stands');
+  assert.equal(bare.summary, null);
+  assert.deepEqual(bare.tags, []);
+  assert.equal(bare.mediaCount, 0);
+  assert.equal(bare.featured, false);
+});
+
+test('mergeCatalog: a removed item keeps every new field through the removal pass', () => {
+  const out = mergeCatalog({
+    tileMeta: {} as Record<never, never> as MergeCatalogArgs['tileMeta'],
+    vizStyles: [],
+    installedTiles: [],
+    installedViz: [],
+    installedPresets: [],
+    index: [{
+      id: 'gone', version: '1.0.0', kind: 'tile', name: 'Gone', author: 'x***',
+      permissions: [], sha256: 'x', size: 1, downloads: 5,
+      summary: 'kept', tags: ['a'], icon: '◇', approvedAt: 9, mediaCount: 2,
+    }],
+    removed: ['tile:gone'],
+    needsSetup: [],
+    ratings: {},
+  });
+  const gone = out.find((i) => i.key === 'tile:gone')!;
+  assert.equal(gone.removed, true);
+  assert.equal(gone.summary, 'kept', 'pass 4 spreads, so new fields survive');
+  assert.deepEqual(gone.tags, ['a']);
+  assert.equal(gone.mediaCount, 2);
+});

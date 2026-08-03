@@ -49,6 +49,25 @@ export interface IndexBundle {
    *  older server's index simply omits the column — treated as `false` by
    *  the `=== true` check in pass 3 below, never as "unknown". */
   hasPreview?: boolean;
+  /** Market v2 descriptive metadata. Every field is optional: an older
+   *  server simply omits the key, and the app must degrade rather than
+   *  throw. `null` and `undefined` are treated identically by every
+   *  consumer — the server sends `null` for "set to nothing", an old server
+   *  sends nothing at all, and neither is an error. */
+  summary?: string | null;
+  description?: string | null;
+  category?: string | null;
+  tags?: string[];
+  icon?: string | null;
+  changelog?: string | null;
+  minAppVersion?: string | null;
+  featured?: boolean;
+  /** Unix seconds when this VERSION was approved. Bundle-level published/
+   *  updated dates are derived from the set of versions — see
+   *  state/catalogVersions.ts — not stored. */
+  approvedAt?: number | null;
+  mediaCount?: number;
+  authorDisplay?: string;
 }
 
 export interface CatalogItem {
@@ -92,6 +111,23 @@ export interface CatalogItem {
    *  StarRating.tsx's `ratingDisplay` for the rule that turns this into what
    *  the card shows. */
   rating: RatingAgg | null;
+  /** One-line card copy. `null` for compile-time built-ins (whose `description`
+   *  from TILE_META already serves that role) and for any bundle whose index
+   *  entry predates Market v2. */
+  summary: string | null;
+  tags: string[];
+  /** Declared glyph for a marketplace bundle. `null` for a built-in, whose
+   *  glyph comes from `TILE_META[id].icon` and is looked up by the renderer.
+   *  Note the project rule in state/tileMeta.ts: icons are geometric glyphs,
+   *  never emoji. The server cannot enforce that, so a bundle that declares
+   *  one is a curation problem fixed with an admin PATCH. */
+  icon: string | null;
+  changelog: string | null;
+  minAppVersion: string | null;
+  featured: boolean;
+  approvedAt: number | null;
+  mediaCount: number;
+  authorDisplay: string | null;
 }
 
 /** One installed MilkDrop preset folder, exactly as the Rust command
@@ -139,7 +175,7 @@ export const catalogKey = (kind: CatalogKind, id: string): string => `${kind}:${
 /** Newer-than comparison over dotted numeric versions. Non-numeric segments
  *  compare as 0, so a malformed version never reports an update — failing
  *  closed is right here: a spurious update badge invites a pointless install. */
-function isNewer(available: string, installed: string): boolean {
+export function isNewer(available: string, installed: string): boolean {
   const a = available.split('.').map((s) => Number.parseInt(s, 10) || 0);
   const b = installed.split('.').map((s) => Number.parseInt(s, 10) || 0);
   for (let i = 0; i < Math.max(a.length, b.length); i++) {
@@ -168,6 +204,8 @@ export function mergeCatalog(args: MergeCatalogArgs): CatalogItem[] {
       installed: true, installedVersion: null, availableVersion: null, updateAvailable: false,
       permissions: [], needsSetup: needsSetup.has(key), downloads: null, brokenReason: null,
       removed: false, hasPreview: false, rating: null,
+      summary: null, tags: [], icon: null, changelog: null, minAppVersion: null,
+      featured: false, approvedAt: null, mediaCount: 0, authorDisplay: null,
     });
   }
   for (const s of args.vizStyles) {
@@ -179,6 +217,8 @@ export function mergeCatalog(args: MergeCatalogArgs): CatalogItem[] {
       installed: true, installedVersion: null, availableVersion: null, updateAvailable: false,
       permissions: [], needsSetup: needsSetup.has(key), downloads: null, brokenReason: null,
       removed: false, hasPreview: false, rating: null,
+      summary: null, tags: [], icon: null, changelog: null, minAppVersion: null,
+      featured: false, approvedAt: null, mediaCount: 0, authorDisplay: null,
     });
   }
 
@@ -209,6 +249,10 @@ export function mergeCatalog(args: MergeCatalogArgs): CatalogItem[] {
       downloads: prev?.downloads ?? null,
       brokenReason: f.manifest_error,
       removed: false, hasPreview: false, rating: prev?.rating ?? null,
+      summary: prev?.summary ?? null, tags: prev?.tags ?? [], icon: prev?.icon ?? null,
+      changelog: prev?.changelog ?? null, minAppVersion: prev?.minAppVersion ?? null,
+      featured: prev?.featured ?? false, approvedAt: prev?.approvedAt ?? null,
+      mediaCount: prev?.mediaCount ?? 0, authorDisplay: prev?.authorDisplay ?? null,
     });
   };
   for (const f of args.installedTiles) installedFolder('tile', f, 'integrations');
@@ -233,6 +277,10 @@ export function mergeCatalog(args: MergeCatalogArgs): CatalogItem[] {
       updateAvailable: false,
       permissions: [], needsSetup: false, downloads: prev?.downloads ?? null, brokenReason: null,
       removed: false, hasPreview: false, rating: prev?.rating ?? null,
+      summary: prev?.summary ?? null, tags: prev?.tags ?? [], icon: prev?.icon ?? null,
+      changelog: prev?.changelog ?? null, minAppVersion: prev?.minAppVersion ?? null,
+      featured: prev?.featured ?? false, approvedAt: prev?.approvedAt ?? null,
+      mediaCount: prev?.mediaCount ?? 0, authorDisplay: prev?.authorDisplay ?? null,
     });
   }
 
@@ -249,11 +297,28 @@ export function mergeCatalog(args: MergeCatalogArgs): CatalogItem[] {
     // true` with no installedVersion, and it still ships and works even if
     // the index also lists it — offering "Install" for it would be wrong.
     const installed = prev?.installed ?? false;
+    // Descriptive fields: THE INDEX WINS. Before Market v2 this read
+    // `description: prev?.description ?? (b.author ? `by ${b.author}` : '')`,
+    // which let an installed folder's synthesized "by oli***" string beat the
+    // published description. That was the right call when the index carried
+    // no prose; it is backwards now that it does. Install state below still
+    // comes from the folder.
     put({
       key, kind, id: b.id,
       name: b.name || prev?.name || b.id,
-      description: prev?.description ?? (b.author ? `by ${b.author}` : ''),
-      category: prev?.category ?? (kind === 'tile' ? 'integrations' : kind === 'preset' ? 'milkdrop' : 'ambient'),
+      description: b.description ?? prev?.description ?? (b.author ? `by ${b.author}` : ''),
+      summary: b.summary ?? prev?.summary ?? null,
+      category: (b.category as CatalogItem['category'] | undefined)
+        ?? prev?.category
+        ?? (kind === 'tile' ? 'integrations' : kind === 'preset' ? 'milkdrop' : 'ambient'),
+      tags: b.tags ?? prev?.tags ?? [],
+      icon: b.icon ?? prev?.icon ?? null,
+      changelog: b.changelog ?? prev?.changelog ?? null,
+      minAppVersion: b.minAppVersion ?? prev?.minAppVersion ?? null,
+      featured: b.featured ?? prev?.featured ?? false,
+      approvedAt: b.approvedAt ?? prev?.approvedAt ?? null,
+      mediaCount: b.mediaCount ?? prev?.mediaCount ?? 0,
+      authorDisplay: b.authorDisplay ?? prev?.authorDisplay ?? b.author ?? null,
       source: 'bundle',
       installed,
       installedVersion: prev?.installedVersion ?? null,
