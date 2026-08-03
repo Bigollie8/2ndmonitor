@@ -1574,9 +1574,10 @@ function BottomStatus({
   const sysmon = useSysmon();
   const fps = useFrameRate();
   // `audioSource` (the tweak) is the requested source and updates the moment
-  // the user picks one — no round trip needed. `status.active` is the only
-  // thing that has to come from Rust: whether that request is actually live
-  // right now (the app might not be playing anything yet).
+  // the user picks one — no round trip needed. `status.live_exes` is the
+  // only thing that has to come from Rust: which of the requested app(s), if
+  // any, actually have a live capture right now (an app might be requested
+  // but not yet playing anything).
   const { status: audioSourceStatus, options: audioSourceOptions, refresh: refreshAudioSourceOptions } = useAudioSource();
   // `options` is fetched once on mount, and this bar never unmounts — left
   // alone, the friendly-name list would be frozen at whatever was playing

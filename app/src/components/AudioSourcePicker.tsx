@@ -81,7 +81,7 @@ export function AudioSourcePicker({ value, options, onChange, accent }: {
         <div style={{
           position: 'absolute', right: 0, top: 'calc(100% + 4px)', zIndex: 40,
           minWidth: 220, maxHeight: 260, overflowY: 'auto',
-          background: '#14161c', border: '1px solid rgba(255,255,255,0.1)',
+          background: 'var(--surface-overlay, #14161c)', border: '1px solid rgba(255,255,255,0.1)',
           borderRadius: 8, padding: 4, boxShadow: '0 8px 24px rgba(0,0,0,0.5)',
         }}>
           <PickerRow

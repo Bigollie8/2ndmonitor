@@ -94,6 +94,9 @@ export function MapView({
   const wrapRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const rafRef = useRef(0);
+  // Cleanup for the in-flight drag's window listeners (see onPointerDown),
+  // so an unmount mid-drag doesn't leak them until the next pointerup.
+  const dragCleanupRef = useRef<(() => void) | null>(null);
   // Refs so window/rAF callbacks always see the latest values without rebinding.
   const viewRef = useRef(view); viewRef.current = view;
   const onViewChangeRef = useRef(onViewChange); onViewChangeRef.current = onViewChange;
@@ -211,12 +214,20 @@ export function MapView({
       window.removeEventListener('pointermove', move);
       window.removeEventListener('pointerup', up);
       window.removeEventListener('pointercancel', up);
+      dragCleanupRef.current = null;
     };
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', up);
     window.addEventListener('pointercancel', up);
+    dragCleanupRef.current = up;
     e.preventDefault();
   };
+
+  // Unmount mid-drag: run whatever drag is in flight's own cleanup so the
+  // window listeners it added don't outlive this MapView.
+  useEffect(() => {
+    return () => dragCleanupRef.current?.();
+  }, []);
 
   return (
     <div ref={wrapRef} style={{ position: 'absolute', inset: 0, overflow: 'hidden', background: MAP_BG }}>

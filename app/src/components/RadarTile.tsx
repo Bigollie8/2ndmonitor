@@ -191,7 +191,8 @@ export function RadarTile({ density, accent, location, config, setConfig }: Rada
 }
 
 /** Format frame time as "3:42 PM · -10 min" / "now" relative to the newest
- *  past frame ("now" boundary). */
+ *  past frame ("now" boundary). `frames` only ever holds past frames (see
+ *  `frames` above), so the offset is always ≤ 0 — never a future "+X min". */
 function formatFrameTime(frame: RainViewerFrame, manifest: RainViewerManifest | null): string {
   if (!manifest) return '';
   const dt = new Date(frame.time * 1000);
@@ -200,10 +201,7 @@ function formatFrameTime(frame: RainViewerFrame, manifest: RainViewerManifest | 
   const lastPast = manifest.past[manifest.past.length - 1];
   if (!lastPast) return timeStr;
   const offsetMin = Math.round((frame.time - lastPast.time) / 60);
-  let suffix: string;
-  if (offsetMin === 0) suffix = 'now';
-  else if (offsetMin > 0) suffix = `+${offsetMin} min`;
-  else suffix = `${offsetMin} min`;
+  const suffix = offsetMin === 0 ? 'now' : `${offsetMin} min`;
 
   return `${timeStr} · ${suffix}`;
 }

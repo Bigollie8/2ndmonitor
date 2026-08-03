@@ -107,6 +107,16 @@ test('panBy: center latitude stays inside the Mercator limit', () => {
   assert.ok(next.center.lat <= MAX_LAT && next.center.lat >= -MAX_LAT);
 });
 
+test('panBy: dragging the center across the antimeridian takes the short way', () => {
+  // At z4, one tile-width (256px) of world-px covers 360/16 = 22.5° of lon.
+  // Drag left (negative dx) by enough to push the center past +180 — it
+  // should wrap to a small negative lon, not jump to a huge positive one.
+  const v = { center: { lat: 0, lon: 179.9 }, zoom: 4 };
+  const next = panBy(v, -20, 0);
+  assert.ok(next.center.lon < 0, `expected wrapped negative lon, got ${next.center.lon}`);
+  close(next.center.lon, -178.3421875, 1e-6);
+});
+
 test('zoomAt: the lat/lon under the cursor stays under the cursor', () => {
   const cursor = { x: 100, y: 80 };
   const anchor = unproject(VIEW, W, H, cursor.x, cursor.y);
@@ -120,6 +130,11 @@ test('zoomAt: the lat/lon under the cursor stays under the cursor', () => {
 test('zoomAt: clamps to maxZoom', () => {
   const zoomed = zoomAt(VIEW, 100, { x: 0, y: 0 }, { w: W, h: H }, 4, 12);
   assert.equal(zoomed.zoom, 12);
+});
+
+test('zoomAt: clamps to minZoom', () => {
+  const zoomed = zoomAt(VIEW, -100, { x: 0, y: 0 }, { w: W, h: H }, 4, 12);
+  assert.equal(zoomed.zoom, 4);
 });
 
 test('zoomAt: already at the clamp returns the view unchanged (same object)', () => {
