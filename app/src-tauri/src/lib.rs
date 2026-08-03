@@ -120,6 +120,8 @@ pub fn run() {
             marketplace::marketplace_fetch_index,
             marketplace::marketplace_fetch_index_body,
             marketplace::marketplace_fetch_collections,
+            marketplace::marketplace_fetch_reviews,
+            marketplace::marketplace_post_review,
             marketplace::marketplace_verify_index_body,
             marketplace::marketplace_fetch_preview,
             marketplace::marketplace_fetch_media,

@@ -398,6 +398,74 @@ pub async fn marketplace_fetch_ratings(url: String) -> Result<serde_json::Value,
     .map_err(|e| format!("fetch task failed: {e}"))?
 }
 
+/// Written reviews for one bundle. Unsigned and public, exactly like
+/// `marketplace_fetch_ratings`, and on the same silent-failure contract:
+/// callers treat any `Err` as "no reviews", never as an error worth
+/// interrupting a user over.
+#[tauri::command]
+pub async fn marketplace_fetch_reviews(url: String, id: String) -> Result<serde_json::Value, String> {
+    if !is_safe_id(&id) {
+        return Err("invalid bundle id".into());
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        let base = url.trim_end_matches('/');
+        let endpoint = format!("{base}/reviews?id={id}");
+        let body_bytes = get_capped(&endpoint, FETCH_CAP)?;
+        let body = String::from_utf8(body_bytes).map_err(|_| "reviews not UTF-8".to_string())?;
+        serde_json::from_str(&body).map_err(|e| format!("reviews not JSON: {e}"))
+    })
+    .await
+    .map_err(|e| format!("fetch task failed: {e}"))?
+}
+
+/// Posts (or replaces — the server's `(bundle_id, user_id)` primary key means
+/// a second review from this account REPLACES rather than stacks, see
+/// server/src/reviews.rs) a written review.
+///
+/// The session token is read Rust-side via `secrets::secret_get_inner` and
+/// attached inside `post_capped_json`, exactly as `marketplace_rate` does —
+/// it is never a parameter of this command and never appears in its return.
+///
+/// Unlike the fetch above, a failure here MUST reach the user: they typed
+/// something and deserve to know it did not land.
+#[tauri::command]
+pub fn marketplace_post_review<R: Runtime>(
+    app: AppHandle<R>,
+    url: String,
+    id: String,
+    body: String,
+) -> Result<(), String> {
+    if !is_safe_id(&id) {
+        return Err("invalid bundle id".into());
+    }
+    if body.trim().is_empty() {
+        return Err("review body must not be blank".into());
+    }
+    if body.chars().count() > 1000 {
+        return Err("review must be at most 1000 characters".into());
+    }
+    let raw = crate::secrets::secret_get_inner(&app, SESSION_SECRET_KEY)
+        .ok_or_else(|| "not signed in".to_string())?;
+    let token = serde_json::from_str::<serde_json::Value>(&raw)
+        .ok()
+        .and_then(|v| v.get("token").and_then(|t| t.as_str()).map(str::to_string))
+        .ok_or_else(|| "not signed in".to_string())?;
+
+    let base = url.trim_end_matches('/');
+    let endpoint = format!("{base}/reviews");
+    let payload = serde_json::json!({ "id": id, "body": body });
+    let (status, buf) = post_capped_json(&endpoint, &payload, AUTH_CAP, Some(&token))?;
+    if !(200..300).contains(&status) {
+        let text = String::from_utf8_lossy(&buf).into_owned();
+        return Err(if text.trim().is_empty() {
+            format!("review failed: HTTP {status}")
+        } else {
+            text
+        });
+    }
+    Ok(())
+}
+
 /// Casts (or replaces — the server's `(bundle_id, user_id)` primary key means
 /// a second vote from this account REPLACES rather than stacks, see
 /// server/src/ratings.rs) a 1-5 star vote for `id`.

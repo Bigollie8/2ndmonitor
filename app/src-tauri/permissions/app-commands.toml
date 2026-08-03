@@ -158,6 +158,8 @@ commands.allow = [
   "marketplace_fetch_index_body",
   "marketplace_verify_index_body",
   "marketplace_fetch_collections",
+  "marketplace_fetch_reviews",
+  "marketplace_post_review",
   "marketplace_fetch_preview",
   "marketplace_fetch_media",
   "marketplace_install",
