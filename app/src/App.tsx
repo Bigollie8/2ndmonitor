@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
-import type { TileType, Layout, TileInstance, OrientationLayout, Rect } from './state/layout';
+import type { TileType, BuiltinTileType, Layout, TileInstance, OrientationLayout, Rect } from './state/layout';
 import {
   DEFAULT_LANDSCAPE_LAYOUT,
   DEFAULT_PORTRAIT_LAYOUT,
@@ -17,6 +17,7 @@ import {
   removeTilesOfType,
   updateInstance,
   remapRetiredTileType,
+  repairPileTiles,
 } from './state/layout';
 import { seedStarterProfiles, PROFILE_DEFAULT_COLORS } from './state/starterProfiles';
 import { isBundleTile, bundleIdOf } from './tiles/tileRegistry';
@@ -168,6 +169,11 @@ interface TweakState extends Record<string, unknown> {
    *  which is the tombstone that stops a later seed sync from reinstalling
    *  it. Travels with settings export/import like any other tweak. */
   catalogRemoved: string[];
+  /** One-time pile repair (0.6.7): true once repairPileTiles has run over
+   *  every profile/orientation during tweaks hydration. The repair is
+   *  idempotent by nature; the flag exists so it can never re-fire against
+   *  future false positives. */
+  pileRepaired: boolean;
 }
 
 /** How long the viz surface will wait for boot seeding before giving up and
@@ -212,6 +218,7 @@ const TWEAK_DEFAULTS: TweakState = {
   activeProfileId: '',
   onboardingDone: false,
   catalogRemoved: [],
+  pileRepaired: false,
 };
 
 
@@ -395,6 +402,39 @@ function migrateTweaks(loaded: Record<string, unknown>): Record<string, unknown>
         };
       });
     }
+  }
+
+  // Pile repair (0.6.7 §1): profiles that existed before the 0.6.1 seeding
+  // fix carry junk tiles the old every-type-at-defaults bug materialized —
+  // stacked at their exact default rects, overlapping each other (portrait
+  // was hit worst). Remove every tile matching that pile signature, once,
+  // for every profile and orientation. Must run AFTER the tile-array
+  // migration (it needs `tiles`) and AFTER the retired-type remap (so
+  // retired junk is compared against the shared bundle default rect).
+  // Starter/arranged layouts are untouched by construction — see
+  // repairPileTiles' threshold and signature rules in state/layout.ts.
+  if (!result.pileRepaired) {
+    const profiles = result.profiles as Array<Record<string, unknown>> | undefined;
+    if (profiles) {
+      result.profiles = profiles.map((p) => {
+        const profile = p as Record<string, unknown>;
+        const repairOrientation = (
+          slotRaw: unknown,
+          defaults: Record<BuiltinTileType, Rect>,
+          bundleDefault: Rect,
+        ): unknown => {
+          const slot = slotRaw as { tiles?: TileInstance[] } | undefined;
+          if (!slot?.tiles) return slotRaw;
+          return { ...slot, tiles: repairPileTiles(slot.tiles, defaults, bundleDefault) };
+        };
+        return {
+          ...profile,
+          landscape: repairOrientation(profile.landscape, DEFAULT_LANDSCAPE_LAYOUT, DEFAULT_BUNDLE_TILE_RECT.landscape),
+          portrait: repairOrientation(profile.portrait, DEFAULT_PORTRAIT_LAYOUT, DEFAULT_BUNDLE_TILE_RECT.portrait),
+        };
+      });
+    }
+    result.pileRepaired = true;
   }
 
   return result;
