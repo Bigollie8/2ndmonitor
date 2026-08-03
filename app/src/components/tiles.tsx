@@ -5,6 +5,7 @@ import type { Todo } from '../types';
 import { type Playback, type SpectrumState, mediaControls, useSpotify, useSysmon, type SpotifyTrack } from '../state/tauri';
 import { useLyrics, currentLineIndex } from '../state/lyrics';
 import { mediaSourceFor, type MediaSourceInfo, type MediaSourceKind } from '../state/mediaSource';
+import { tempsToChips, tempsTooltip } from '../state/temps';
 import { Slider } from './Slider';
 
 export function HFTile({
@@ -836,26 +837,47 @@ export function SysMonTile({ density, accent, accent2 }: { density: Density; acc
     </div>
   );
   const top = history.latest.top.slice(0, 4);
+  const tempChips = tempsToChips(history.latest.temps);
   return (
     <HFTile title="System · live" density={density}
             headRight={<span style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)' }}>1Hz</span>}
             style={{ height: '100%' }}>
-      <div style={{ display: 'flex', height: '100%', padding: '8px 0', minHeight: 0 }}>
-        <Cell k="CPU" v={history.latest.cpu_pct_text} sub={history.latest.cpu_sub} data={history.cpu} color={accent} />
-        <Cell k="RAM" v={history.latest.ram_text} sub={history.latest.ram_sub} data={history.ram} color={accent2} />
-        <Cell k="GPU" v={history.latest.gpu_pct_text} sub={history.latest.gpu_sub} data={history.gpu} color="#facc15" />
-        <Cell k="NET" v={history.latest.net_text} sub={history.latest.net_sub} data={history.net} color="#22c55e" />
-        <div style={{ flex: 0.9, display: 'flex', flexDirection: 'column', gap: 4, padding: '0 14px', justifyContent: 'center' }}>
-          <div style={{ fontSize: 9, color: 'rgba(255,255,255,0.4)', textTransform: 'uppercase', letterSpacing: '.08em' }}>Top processes</div>
-          {top.length === 0 && (
-            <div style={{ fontSize: 10.5, fontFamily: '"JetBrains Mono", ui-monospace, monospace', color: 'rgba(255,255,255,0.3)' }}>—</div>
-          )}
-          {top.map((p, i) => (
-            <div key={i} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10.5, fontFamily: '"JetBrains Mono", ui-monospace, monospace', color: i === 1 ? accent : 'rgba(255,255,255,0.7)' }}>
-              <span>{p.name}</span><span>{p.cpu.toFixed(1)}%</span>
-            </div>
-          ))}
+      <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
+        <div style={{ display: 'flex', flex: 1, padding: '8px 0', minHeight: 0 }}>
+          <Cell k="CPU" v={history.latest.cpu_pct_text} sub={history.latest.cpu_sub} data={history.cpu} color={accent} />
+          <Cell k="RAM" v={history.latest.ram_text} sub={history.latest.ram_sub} data={history.ram} color={accent2} />
+          <Cell k="GPU" v={history.latest.gpu_pct_text} sub={history.latest.gpu_sub} data={history.gpu} color="#facc15" />
+          <Cell k="NET" v={history.latest.net_text} sub={history.latest.net_sub} data={history.net} color="#22c55e" />
+          <div style={{ flex: 0.9, display: 'flex', flexDirection: 'column', gap: 4, padding: '0 14px', justifyContent: 'center' }}>
+            <div style={{ fontSize: 9, color: 'rgba(255,255,255,0.4)', textTransform: 'uppercase', letterSpacing: '.08em' }}>Top processes</div>
+            {top.length === 0 && (
+              <div style={{ fontSize: 10.5, fontFamily: '"JetBrains Mono", ui-monospace, monospace', color: 'rgba(255,255,255,0.3)' }}>—</div>
+            )}
+            {top.map((p, i) => (
+              <div key={i} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10.5, fontFamily: '"JetBrains Mono", ui-monospace, monospace', color: i === 1 ? accent : 'rgba(255,255,255,0.7)' }}>
+                <span>{p.name}</span><span>{p.cpu.toFixed(1)}%</span>
+              </div>
+            ))}
+          </div>
         </div>
+        {tempChips.length > 0 && (
+          <div
+            title={tempsTooltip(tempChips)}
+            style={{
+              display: 'flex', alignItems: 'center', flexShrink: 0,
+              padding: '4px 14px 6px', borderTop: '1px solid rgba(255,255,255,0.05)',
+              fontSize: 10, fontFamily: '"JetBrains Mono", ui-monospace, monospace',
+              whiteSpace: 'nowrap', overflow: 'hidden',
+            }}
+          >
+            {tempChips.map((c, i) => (
+              <span key={c.label} style={{ color: c.color }}>
+                {i > 0 && <span style={{ color: 'rgba(255,255,255,0.25)', margin: '0 6px' }}>·</span>}
+                {c.text}
+              </span>
+            ))}
+          </div>
+        )}
       </div>
     </HFTile>
   );
