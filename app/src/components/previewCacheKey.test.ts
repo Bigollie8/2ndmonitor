@@ -14,6 +14,22 @@ test('previewCacheKey: a different version produces a different key — an updat
   assert.notEqual(previewCacheKey('tile', 'tile-quote', '1.0.1'), previewCacheKey('tile', 'tile-quote', '1.0.2'));
 });
 
-test('previewCacheKey: format is kind:id@version', () => {
-  assert.equal(previewCacheKey('visualizer', 'orbit', '2.3.0'), 'visualizer:orbit@2.3.0');
+test('previewCacheKey: format is kind:id@version#idx', () => {
+  assert.equal(previewCacheKey('visualizer', 'orbit', '2.3.0'), 'visualizer:orbit@2.3.0#0');
+});
+
+test('an index distinguishes assets of the same bundle version', () => {
+  assert.notEqual(
+    previewCacheKey('tile', 'radar', '1.0.0', 0),
+    previewCacheKey('tile', 'radar', '1.0.0', 1),
+  );
+});
+
+test('omitting the index means asset 0, so existing call sites keep their keys', () => {
+  assert.equal(previewCacheKey('tile', 'radar', '1.0.0'), previewCacheKey('tile', 'radar', '1.0.0', 0));
+});
+
+test('the key still distinguishes kind, id and version', () => {
+  assert.notEqual(previewCacheKey('tile', 'a', '1.0.0', 0), previewCacheKey('visualizer', 'a', '1.0.0', 0));
+  assert.notEqual(previewCacheKey('tile', 'a', '1.0.0', 0), previewCacheKey('tile', 'a', '1.1.0', 0));
 });

@@ -12,6 +12,11 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import type { CatalogKind } from '../state/catalog';
 
-export function previewCacheKey(kind: CatalogKind, id: string, version: string): string {
-  return `${kind}:${id}@${version}`;
+export function previewCacheKey(
+  kind: CatalogKind, id: string, version: string, idx = 0,
+): string {
+  // Index appended rather than prefixed, and defaulted to 0, so every
+  // existing call site produces the byte-identical key it always did — a
+  // changed key format would silently drop the whole warm cache on upgrade.
+  return `${kind}:${id}@${version}#${idx}`;
 }

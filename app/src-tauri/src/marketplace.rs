@@ -29,6 +29,10 @@ const ZIP_CAP: usize = 4_194_304;
 // consume the same 4 MiB a bundle may. Must stay smaller than ZIP_CAP; see
 // `preview_cap_is_smaller_than_the_bundle_cap` below, which pins that.
 const PREVIEW_CAP: usize = 262_144; // 256 KiB
+/// A media asset may be an animation, which the server caps at 2 MB — see
+/// server/src/media.rs. Still larger than PREVIEW_CAP for exactly that
+/// reason, and still well under ZIP_CAP.
+const MEDIA_CAP: usize = 2 * 1024 * 1024;
 
 /// Mirror of the server's `keys::verify_index` — the signature covers the exact
 /// serialized `bundles` array substring, verified verbatim.
@@ -804,6 +808,24 @@ pub fn sniff_image(bytes: &[u8]) -> Option<&'static str> {
     None
 }
 
+/// Like `sniff_image` but for Market v2's `bundle_media` assets, which may
+/// also be animated: GIF and WebP join PNG/JPEG. Kept SEPARATE from
+/// `sniff_image` deliberately — widening that one would silently let an
+/// animated asset through the legacy `/preview` path too, where every 0.7.x
+/// client expects a still and would render a first frame at best.
+pub fn sniff_media(bytes: &[u8]) -> Option<&'static str> {
+    if let Some(mime) = sniff_image(bytes) {
+        return Some(mime);
+    }
+    if bytes.len() >= 6 && (bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a")) {
+        return Some("image/gif");
+    }
+    if bytes.len() >= 12 && bytes.starts_with(b"RIFF") && &bytes[8..12] == b"WEBP" {
+        return Some("image/webp");
+    }
+    None
+}
+
 /// Fetches a bundle's preview image and hands it to the frontend as an inert
 /// `data:` URL.
 ///
@@ -847,6 +869,45 @@ pub async fn marketplace_fetch_preview(url: String, id: String, version: String,
         let endpoint = format!("{base}/bundle/{id}/{version}/preview");
         let bytes = get_capped(&endpoint, PREVIEW_CAP)?;
         let mime = sniff_image(&bytes).ok_or("preview is not a PNG or JPEG")?;
+        use base64::{engine::general_purpose::STANDARD, Engine as _};
+        Ok(format!("data:{mime};base64,{}", STANDARD.encode(&bytes)))
+    })
+    .await
+    .map_err(|e| format!("fetch task failed: {e}"))?
+}
+
+/// Fetches one `bundle_media` asset by index, as an inert `data:` URL —
+/// exactly the same shape and the same silent-failure contract as
+/// `marketplace_fetch_preview`, which callers treat as "no image".
+///
+/// Index 0 is deliberately NOT routed here by the client (see
+/// PreviewImage.tsx): the server aliases `/preview` to media 0 and falls back
+/// to the legacy blob there, so index 0 must keep taking the preview route or
+/// every pre-Market-v2 bundle loses its image.
+#[tauri::command]
+pub async fn marketplace_fetch_media(
+    url: String,
+    id: String,
+    version: String,
+    idx: u32,
+) -> Result<String, String> {
+    if !is_safe_id(&id) {
+        return Err("invalid bundle id".into());
+    }
+    if !crate::seed::is_safe_version(&version) {
+        return Err("invalid bundle version".into());
+    }
+    if idx > 5 {
+        return Err("invalid media index".into());
+    }
+    let base = url.trim_end_matches('/').to_string();
+    if !base.starts_with("https://") {
+        return Err("marketplace url must be https".into());
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        let endpoint = format!("{base}/bundle/{id}/{version}/media/{idx}");
+        let bytes = get_capped(&endpoint, MEDIA_CAP)?;
+        let mime = sniff_media(&bytes).ok_or("media is not a PNG, JPEG, GIF or WebP")?;
         use base64::{engine::general_purpose::STANDARD, Engine as _};
         Ok(format!("data:{mime};base64,{}", STANDARD.encode(&bytes)))
     })
@@ -1158,6 +1219,33 @@ mod tests {
         assert_eq!(sniff_image(b"<html><body>nope"), None);
         assert_eq!(sniff_image(&[0x89, b'P']), None);
         assert_eq!(sniff_image(&[]), None);
+    }
+
+    #[test]
+    fn sniff_media_accepts_animation_formats_the_still_sniffer_rejects() {
+        // GIF and WebP are media-only: widening sniff_image would let an
+        // animated asset through the legacy /preview path, where a 0.7.x
+        // client expects a still.
+        assert_eq!(sniff_media(b"GIF89a\0\0\0\0"), Some("image/gif"));
+        assert_eq!(sniff_media(b"RIFF\0\0\0\0WEBPVP8 "), Some("image/webp"));
+        assert_eq!(sniff_image(b"GIF89a\0\0\0\0"), None);
+        assert_eq!(sniff_image(b"RIFF\0\0\0\0WEBPVP8 "), None);
+    }
+
+    #[test]
+    fn sniff_media_still_accepts_stills_and_rejects_junk() {
+        assert_eq!(sniff_media(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A, 0, 0]), Some("image/png"));
+        assert_eq!(sniff_media(b"RIFF\0\0\0\0AVI LIST"), None, "a RIFF container that is not WebP");
+        assert_eq!(sniff_media(b"<html>"), None);
+        assert_eq!(sniff_media(&[]), None);
+    }
+
+    #[test]
+    fn media_cap_sits_between_the_preview_and_bundle_caps() {
+        // An animation may be larger than a thumbnail and must still never
+        // reach what a whole bundle may consume.
+        assert!(PREVIEW_CAP < MEDIA_CAP);
+        assert!(MEDIA_CAP < ZIP_CAP);
     }
 
     #[test]

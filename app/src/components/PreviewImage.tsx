@@ -24,11 +24,16 @@ import { loadPreview, peekPreview } from './previewCache';
 // ─────────────────────────────────────────────────────────────────────────────
 
 export function PreviewImage({
-  id, version, kind, url, fallback,
+  id, version, kind, url, fallback, idx = 0,
 }: {
   id: string;
   version: string;
   kind: CatalogKind;
+  /** Which published asset (Market v2's `bundle_media` rows). Defaults to 0,
+   *  which routes to the original `marketplace_fetch_preview` command so
+   *  0.7.x-era behavior — and the server's legacy `preview` blob path — is
+   *  byte-identical. Only `idx > 0` uses the media route. */
+  idx?: number;
   /** Effective marketplace URL — pass `cfgUrl()` (state/marketplaceConfig.ts). */
   url: string;
   /** Shown until the fetch resolves, and permanently if it fails. Never a
@@ -39,7 +44,7 @@ export function PreviewImage({
    *  is in flight. */
   fallback: ReactNode;
 }) {
-  const key = previewCacheKey(kind, id, version);
+  const key = previewCacheKey(kind, id, version, idx);
   const [dataUrl, setDataUrl] = useState<string | null>(() => peekPreview(key) ?? null);
 
   // Fetch only once this frame has actually been near the viewport. The
@@ -70,7 +75,7 @@ export function PreviewImage({
 
   useEffect(() => {
     if (!visible) return;
-    const k = previewCacheKey(kind, id, version);
+    const k = previewCacheKey(kind, id, version, idx);
     // Reset synchronously to THIS key's answer the moment the key changes on
     // an already-mounted instance — e.g. `availableVersion` bumping between
     // index refreshes on the same catalog item. `catalogKey` (state/
@@ -86,7 +91,13 @@ export function PreviewImage({
     let cancelled = false;
     void loadPreview(k, async () => {
       const { invoke } = await import('@tauri-apps/api/core');
-      return invoke<string>('marketplace_fetch_preview', { url, id, version, kind });
+      // idx 0 keeps the original command deliberately: the server aliases
+      // /preview to media index 0 AND falls back to the legacy blob there,
+      // so routing 0 through the media route would lose every pre-Market-v2
+      // bundle's image.
+      return idx === 0
+        ? invoke<string>('marketplace_fetch_preview', { url, id, version, kind })
+        : invoke<string>('marketplace_fetch_media', { url, id, version, idx });
     }).then((result) => {
       // Silent on failure by design (spec §9) — `loadPreview` already
       // recorded it as `null`; a missing/unreachable/malformed preview is
@@ -94,7 +105,7 @@ export function PreviewImage({
       if (!cancelled) setDataUrl(result);
     });
     return () => { cancelled = true; };
-  }, [visible, id, version, kind, url]);
+  }, [visible, id, version, kind, url, idx]);
 
   // The wrapper div exists to give the IntersectionObserver a real box to
   // watch (the fallback is an inline span centered by the PARENT's flex, so

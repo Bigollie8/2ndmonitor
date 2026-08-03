@@ -150,7 +150,16 @@ commands.allow = [
   # marketplace + the capability broker's fetch backend
   # (src/components/{ContentLibrary,PreviewImage,DeclarativeTile,viz-sandbox-surface}.tsx).
   "marketplace_fetch_index",
+  # Market v2: the raw-body fetch feeds the offline index cache, the verify
+  # command re-checks a cached body's signature on read, collections are
+  # unsigned browse data, and media is the indexed asset fetch behind the
+  # detail view's gallery (src/state/{useCatalogData,indexCache}.ts,
+  # src/components/PreviewImage.tsx).
+  "marketplace_fetch_index_body",
+  "marketplace_verify_index_body",
+  "marketplace_fetch_collections",
   "marketplace_fetch_preview",
+  "marketplace_fetch_media",
   "marketplace_install",
   "marketplace_uninstall",
   "broker_fetch",
