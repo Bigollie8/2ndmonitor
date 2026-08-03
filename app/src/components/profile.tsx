@@ -1,7 +1,8 @@
-import { useState } from 'react';
+import React, { useState } from 'react';
 import type { Profile } from '../types';
 import type { TileInstance } from './../state/layout';
 import { newId } from './../state/layout';
+import { buildProfileExport, exportFileName, parseProfileExport, type ParsedProfile } from '../state/profileIO';
 
 const CARD_PALETTE = [
   '#a78bfa', '#f59e0b', '#22d3ee', '#22c55e',
@@ -53,6 +54,59 @@ export function ProfileSwitcher({
     setActiveProfileId(created.id);
   };
 
+  const [importPending, setImportPending] = useState<ParsedProfile | null>(null);
+  const [importError, setImportError] = useState<string | null>(null);
+
+  // Same native save-dialog pathway as Settings → Export (App.tsx
+  // onExportSettings): the Rust `tweaks_export` command. Browser dev has no
+  // Tauri — the invoke rejects and we just log, matching that call site.
+  const exportProfile = async (p: Profile) => {
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      await invoke('tweaks_export', {
+        json: JSON.stringify(buildProfileExport(p)),
+        fileName: exportFileName(p.name),
+      });
+    } catch (err) {
+      console.warn('profile export failed:', err);
+    }
+  };
+
+  // Same native open-dialog pathway as Settings → Import: `tweaks_import`
+  // picks a .json, guarantees it parses to a JSON object (native error
+  // dialog otherwise), and returns the text. Profile-shape validation is
+  // parseProfileExport (state/profileIO.ts). Invalid → inline error only,
+  // nothing changes.
+  const importProfile = async () => {
+    setImportError(null);
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      const text = await invoke<string | null>('tweaks_import');
+      if (!text) return; // picker cancelled, or Rust already showed its error dialog
+      const result = parseProfileExport(JSON.parse(text));
+      if (!result.ok) { setImportError(result.error); return; }
+      setImportPending(result.profile);
+    } catch (err) {
+      console.warn('profile import failed:', err);
+      setImportError('Import needs the desktop app.');
+    }
+  };
+
+  const applyImport = (choice: { mode: 'new' } | { mode: 'overwrite'; profileId: string }) => {
+    if (!importPending) return;
+    if (choice.mode === 'overwrite') {
+      // Keep the id so activeProfileId (and ⌘1/2/3 order) stays valid.
+      setProfiles(profiles.map((p) => (p.id === choice.profileId
+        ? { ...p, name: importPending.name, color: importPending.color, landscape: importPending.landscape, portrait: importPending.portrait }
+        : p)));
+    } else {
+      const created: Profile = { id: newId(), ...importPending };
+      setProfiles([...profiles, created]);
+      setActiveProfileId(created.id);
+    }
+    setImportPending(null);
+  };
+
   return (
     <div onClick={onClose} style={{
       position: 'absolute', inset: 0, zIndex: 80,
@@ -85,6 +139,7 @@ export function ProfileSwitcher({
               onRename={(name) => updateProfile(p.id, { name })}
               onRecolor={(color) => updateProfile(p.id, { color })}
               onDelete={() => deleteProfile(p.id)}
+              onExport={() => { void exportProfile(p); }}
             />
           ))}
           <button onClick={createProfile} style={{
@@ -102,19 +157,36 @@ export function ProfileSwitcher({
           <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.4)', flex: 1 }}>
             Click a card name to rename. Click the swatch to recolor.
           </span>
+          {importError && (
+            <span style={{ fontSize: 12, color: '#fb7185' }}>{importError}</span>
+          )}
+          <button onClick={() => { void importProfile(); }} style={{
+            padding: '10px 16px', fontSize: 12, color: 'rgba(255,255,255,0.7)',
+            background: 'transparent', border: '1px solid rgba(255,255,255,0.15)',
+            borderRadius: 6, cursor: 'pointer',
+          }}>Import profile…</button>
           <button onClick={onClose} style={{
             padding: '10px 16px', fontSize: 12, color: 'rgba(255,255,255,0.5)',
             background: 'transparent', border: '1px solid rgba(255,255,255,0.08)',
             borderRadius: 6, cursor: 'pointer',
           }}>Esc</button>
         </div>
+        {importPending && (
+          <ImportProfileDialog
+            accent={accent}
+            parsed={importPending}
+            profiles={profiles}
+            onApply={applyImport}
+            onCancel={() => setImportPending(null)}
+          />
+        )}
       </div>
     </div>
   );
 }
 
 function ProfileCard({
-  profile, accent, active, canDelete, onSelect, onRename, onRecolor, onDelete,
+  profile, accent, active, canDelete, onSelect, onRename, onRecolor, onDelete, onExport,
 }: {
   profile: Profile;
   accent: string;
@@ -124,6 +196,7 @@ function ProfileCard({
   onRename: (name: string) => void;
   onRecolor: (color: string) => void;
   onDelete: () => void;
+  onExport: () => void;
 }) {
   const [editingName, setEditingName] = useState(false);
   const [draftName, setDraftName] = useState(profile.name);
@@ -201,6 +274,15 @@ function ProfileCard({
             }}>● ACTIVE</span>
           )}
           <button
+            onClick={onExport}
+            title="Export profile to a JSON file (map positions are stripped)"
+            style={{
+              fontSize: 13, padding: '0 4px', lineHeight: 1,
+              background: 'transparent', border: 'none',
+              color: 'rgba(255,255,255,0.45)', cursor: 'pointer',
+            }}
+          >⇩</button>
+          <button
             onClick={onDelete}
             disabled={!canDelete}
             title={canDelete ? 'Delete profile' : 'Cannot delete the only profile'}
@@ -214,6 +296,67 @@ function ProfileCard({
         </div>
         <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.35)', fontFamily: '"JetBrains Mono", ui-monospace, monospace' }}>
           {profile.landscape.tiles.length} tile{profile.landscape.tiles.length === 1 ? '' : 's'}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Small modal offered after a VALID profile file is picked (0.7.1 §3):
+ *  overwrite one existing profile (radio list by name — keeps that profile's
+ *  id) or add as a new profile (fresh id, becomes active). */
+function ImportProfileDialog({ accent, parsed, profiles, onApply, onCancel }: {
+  accent: string;
+  parsed: ParsedProfile;
+  profiles: Profile[];
+  onApply: (choice: { mode: 'new' } | { mode: 'overwrite'; profileId: string }) => void;
+  onCancel: () => void;
+}) {
+  // 'new' or a profile id.
+  const [choice, setChoice] = useState<string>('new');
+  const radioRow: React.CSSProperties = {
+    display: 'flex', gap: 8, alignItems: 'center',
+    fontSize: 12, color: 'rgba(255,255,255,0.8)', cursor: 'pointer',
+  };
+  return (
+    <div onClick={onCancel} style={{
+      position: 'fixed', inset: 0, zIndex: 90,
+      background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(6px)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+    }}>
+      <div onClick={(e) => e.stopPropagation()} style={{
+        width: 380, maxWidth: 'calc(100vw - 48px)', padding: 20, borderRadius: 12,
+        background: 'var(--surface-overlay, rgba(20,22,28,0.96))',
+        border: '1px solid rgba(255,255,255,0.08)',
+        boxShadow: '0 24px 80px rgba(0,0,0,0.6)',
+        display: 'flex', flexDirection: 'column', gap: 10,
+      }}>
+        <div style={{ fontSize: 14, fontWeight: 700, color: '#fff' }}>
+          Import “{parsed.name}”
+        </div>
+        <label style={radioRow}>
+          <input type="radio" name="import-target" checked={choice === 'new'} onChange={() => setChoice('new')} />
+          Add as new profile
+        </label>
+        {profiles.map((p) => (
+          <label key={p.id} style={radioRow}>
+            <input type="radio" name="import-target" checked={choice === p.id} onChange={() => setChoice(p.id)} />
+            Overwrite “{p.name}”
+          </label>
+        ))}
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 6 }}>
+          <button onClick={onCancel} style={{
+            padding: '8px 14px', fontSize: 12, color: 'rgba(255,255,255,0.5)',
+            background: 'transparent', border: '1px solid rgba(255,255,255,0.08)',
+            borderRadius: 6, cursor: 'pointer',
+          }}>Cancel</button>
+          <button
+            onClick={() => onApply(choice === 'new' ? { mode: 'new' } : { mode: 'overwrite', profileId: choice })}
+            style={{
+              padding: '8px 14px', fontSize: 12, fontWeight: 600, borderRadius: 6,
+              background: accent, color: '#000', border: 'none', cursor: 'pointer',
+            }}
+          >Import</button>
         </div>
       </div>
     </div>
