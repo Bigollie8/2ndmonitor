@@ -41,6 +41,7 @@ const isEditableTarget = (t: EventTarget | null): boolean => {
  *  is here is composition and effects. */
 export function MarketView({
   accent, accent2, spectrumRef, catalogRemoved, setCatalogRemoved, onClose, onOpenLibrary,
+  initialFacets,
 }: {
   accent: string;
   accent2: string;
@@ -49,8 +50,18 @@ export function MarketView({
   setCatalogRemoved: (next: string[]) => void;
   onClose: () => void;
   onOpenLibrary: () => void;
+  /** Open straight into a filtered grid instead of Discover — e.g. the
+   *  MilkDrop picker's "browse presets". Read once at mount, like
+   *  `ContentLibrary`'s old `initialRail`: this is the starting point for a
+   *  freshly-opened store, not a controlled value that keeps following the
+   *  prop while the user navigates. */
+  initialFacets?: Facets;
 }) {
-  const [browse, dispatch] = useReducer(browseReducer, INITIAL_BROWSE);
+  const [browse, dispatch] = useReducer(
+    browseReducer,
+    initialFacets,
+    (f) => (f ? { ...INITIAL_BROWSE, view: 'grid' as const, facets: f, sort: 'name' as const } : INITIAL_BROWSE),
+  );
   const data = useCatalogData({ catalogRemoved });
   const [width, setWidth] = useState(() => window.innerWidth);
   useEffect(() => {

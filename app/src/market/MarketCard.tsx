@@ -5,7 +5,7 @@ import { previewSourceFor, canLivePreview } from '../components/previewSource';
 import { PreviewImage } from '../components/PreviewImage';
 import { LivePreview } from '../components/LivePreview';
 import { StarRating } from '../components/StarRating';
-import { catalogCardTags } from '../components/CatalogCard';
+import { catalogCardTags } from '../state/catalogTags';
 import { permissionBadges } from '../state/permissionBadges';
 import { isCompatible } from '../state/appCompat';
 import { cfgUrl } from '../state/marketplaceConfig';

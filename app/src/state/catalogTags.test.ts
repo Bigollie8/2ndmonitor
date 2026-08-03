@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { catalogCardTags } from './CatalogCard';
-import type { CatalogItem } from '../state/catalog';
+import { catalogCardTags } from './catalogTags';
+import type { CatalogItem } from './catalog';
 
 const item = (o: Partial<CatalogItem> = {}): CatalogItem => ({
   key: 'tile:x', kind: 'tile', id: 'x', name: 'X', description: '', category: 'weather',

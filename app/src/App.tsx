@@ -63,7 +63,7 @@ import {
   SysMonTile,
 } from './components/tiles';
 import { EditModeOverlay } from './components/edit';
-import { ContentLibrary } from './components/ContentLibrary';
+import { LibraryView } from './library/LibraryView';
 import { ProfileSwitcher } from './components/profile';
 import { Onboarding } from './components/onboarding';
 import { TileFrame } from './components/TileFrame';
@@ -497,13 +497,12 @@ export default function App() {
   // Market v2's full-bleed store. Deliberately one boolean beside the Content
   // Library's — the store is a sibling surface, not a mode of that modal.
   const [showMarket, setShowMarket] = useState(false);
-  // Rail row ContentLibrary should open to — e.g. the MilkDrop picker's
-  // "browse presets" button (Task 6) opens straight to 'preset:all' instead
-  // of the default 'all'. `undefined` means "unset" — every existing opener
-  // (the header/nav "Library" buttons below) leaves this unset, so they keep
-  // opening to 'all' exactly as before. Reset to `undefined` on close so the
-  // NEXT plain open doesn't inherit a stale rail from whatever last set it.
-  const [libraryRail, setLibraryRail] = useState<string | undefined>();
+  // Set when the Store was opened by a "browse presets" action rather than
+  // plainly — the MilkDrop picker's button. That is a BROWSE action, so it
+  // opens the Store filtered to presets; it only ever lived in the old
+  // catalog modal because that modal was also the browser. Reset on close so
+  // the next plain open starts at Discover.
+  const [marketPresets, setMarketPresets] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
   // Auto-hide top bar (0.6.7 §3). `topBarRevealed` is true while the pointer
   // is holding the bar open — set on reveal-strip or bar pointerenter,
@@ -1006,7 +1005,10 @@ export default function App() {
             onConfigure={() => setShowGallery(true)}
             audioDebug={t.audioDebug}
             catalogRemoved={t.catalogRemoved}
-            onOpenLibrary={(rail) => { setLibraryRail(rail); setShowContentLibrary(true); }}
+            onOpenLibrary={(rail) => {
+              if (rail === 'preset:all') { setMarketPresets(true); setShowMarket(true); }
+              else setShowContentLibrary(true);
+            }}
           />
         );
       case 'streamDeck':
@@ -1397,10 +1399,8 @@ export default function App() {
           </Suspense>
         )}
         {showContentLibrary && (
-          <ContentLibrary
+          <LibraryView
             accent={accent}
-            accent2={vizAccent2}
-            spectrumRef={spectrumRef}
             catalogRemoved={t.catalogRemoved}
             setCatalogRemoved={(next) => setTweak('catalogRemoved', next)}
             onRemoveTileInstances={(type) => setTweak('profiles', t.profiles.map((p) => ({
@@ -1410,8 +1410,7 @@ export default function App() {
             })))}
             onAddTileInstance={addTileInstance}
             onVisualizerRemoved={onVisualizerRemoved}
-            onClose={() => { setShowContentLibrary(false); setLibraryRail(undefined); }}
-            initialRail={libraryRail}
+            onClose={() => setShowContentLibrary(false)}
           />
         )}
         {showMarket && (
@@ -1422,8 +1421,9 @@ export default function App() {
               spectrumRef={spectrumRef}
               catalogRemoved={t.catalogRemoved}
               setCatalogRemoved={(next) => setTweak('catalogRemoved', next)}
-              onClose={() => setShowMarket(false)}
-              onOpenLibrary={() => { setShowMarket(false); setShowContentLibrary(true); }}
+              initialFacets={marketPresets ? { tags: [], kind: 'preset' } : undefined}
+              onClose={() => { setShowMarket(false); setMarketPresets(false); }}
+              onOpenLibrary={() => { setShowMarket(false); setMarketPresets(false); setShowContentLibrary(true); }}
             />
           </Suspense>
         )}
