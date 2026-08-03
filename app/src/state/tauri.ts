@@ -18,6 +18,7 @@ function emptyHistory(): SysmonHistory {
       cpu_sub: '', ram_sub: '', gpu_sub: '', net_sub: '',
       top: [],
       app: null,
+      temps: null,
     },
   };
 }
@@ -47,6 +48,12 @@ function startMockSysmon(onSample: (s: SysmonSample) => void): () => void {
         { name: 'Code.exe', cpu: 4.7 },
       ],
       app: { cpu: 1.5 + Math.random() * 2, ram_mb: 130 + Math.random() * 30, gpu: 2 + Math.random() * 4 },
+      temps: [
+        { label: 'CPU', celsius: 56 + Math.random() * 6 },
+        { label: 'GPU', celsius: 62 + Math.random() * 6 },
+        { label: 'Board', celsius: 41 },
+        { label: 'NVMe', celsius: 47 },
+      ],
     });
   }, 1000);
   return () => clearInterval(id);

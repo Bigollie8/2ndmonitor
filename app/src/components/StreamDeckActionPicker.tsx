@@ -170,7 +170,7 @@ export function StreamDeckActionPicker({
         onClick={(e) => e.stopPropagation()}
         style={{
           width: 'min(440px, 90%)', maxHeight: '85%',
-          background: 'rgba(20,22,28,0.98)', backdropFilter: 'blur(20px)',
+          background: 'var(--surface-overlay, rgba(20,22,28,0.98))', backdropFilter: 'blur(20px)',
           border: '1px solid rgba(255,255,255,0.08)',
           borderRadius: 12, boxShadow: '0 24px 60px rgba(0,0,0,0.5)',
           display: 'flex', flexDirection: 'column', overflow: 'hidden',

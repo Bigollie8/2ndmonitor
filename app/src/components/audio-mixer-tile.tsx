@@ -9,7 +9,7 @@ import {
   useMixerState,
 } from '../state/tauri';
 import type { AudioSource } from '../state/audioSource';
-import { sourceKey } from '../state/audioSource';
+import { MAX_AUDIO_APPS, toggleAppInSource } from '../state/audioSource';
 import { Slider } from './Slider';
 
 export function AudioMixerTile({
@@ -216,7 +216,8 @@ function SessionRow({
   onSetAudioSource: (source: AudioSource) => void;
 }) {
   const exe = session.exe;
-  const isCurrentSource = exe != null && sourceKey(audioSource) === sourceKey({ mode: 'only', exe });
+  const isIncluded = exe != null && audioSource.mode === 'apps' && audioSource.exes.includes(exe);
+  const atCap = !isIncluded && audioSource.mode === 'apps' && audioSource.exes.length >= MAX_AUDIO_APPS;
   const displayName = sessionDisplayName(session);
   return (
     <div style={{
@@ -255,9 +256,10 @@ function SessionRow({
       </div>
       {exe != null && (
         <SourceButton
-          active={isCurrentSource}
+          active={isIncluded}
+          atCap={atCap}
           accent={accent}
-          onToggle={() => onSetAudioSource(isCurrentSource ? { mode: 'mix' } : { mode: 'only', exe })}
+          onToggle={() => onSetAudioSource(toggleAppInSource(audioSource, exe))}
         />
       )}
       <MuteButton
@@ -334,12 +336,20 @@ function hashColor(s: string): string {
 }
 
 function SourceButton({
-  active, accent, onToggle,
-}: { active: boolean; accent: string; onToggle: () => void }) {
-  const title = active ? 'Stop visualizing only this app' : 'Visualize only this app';
+  active, atCap, accent, onToggle,
+}: { active: boolean; atCap: boolean; accent: string; onToggle: () => void }) {
+  // Membership toggle in the visualizer's include set: from mix this starts
+  // the set as [this app]; at the 4-app cap the add is refused, so disable
+  // the button and say why rather than offering a silent no-op.
+  const title = active
+    ? 'Remove this app from the visualizer sources'
+    : atCap
+      ? `Visualizer already has ${MAX_AUDIO_APPS} apps — remove one first`
+      : 'Add this app to the visualizer sources';
   return (
     <button
       onClick={onToggle}
+      disabled={atCap}
       title={title}
       aria-label={title}
       style={{
@@ -348,7 +358,8 @@ function SourceButton({
         border: `1px solid ${active ? `${accent}66` : 'rgba(255,255,255,0.08)'}`,
         color: active ? accent : 'rgba(255,255,255,0.7)',
         borderRadius: 6,
-        cursor: 'pointer',
+        cursor: atCap ? 'not-allowed' : 'pointer',
+        opacity: atCap ? 0.4 : 1,
         display: 'flex', alignItems: 'center', justifyContent: 'center',
         fontSize: 13,
       }}

@@ -12,24 +12,35 @@
 //! smooths each band with peak-hold + decay, and emits an `audio:spectrum`
 //! event for the frontend visualizers.
 //!
-//! Which capture fills that ring buffer is swappable at runtime: either the
-//! system mix (cpal loopback, above) or a single app via WASAPI process
-//! loopback (`audio_loopback`). A supervisor thread owns whichever one is
-//! live — see [`supervisor`] — so exactly one backend writes the ring at any
-//! moment, and the frontend drives it with the `audio_set_source` command.
+//! What fills that FFT ring is swappable at runtime: either the system mix
+//! (cpal loopback, above, which writes the ring directly) or a STRICT
+//! include list of up to `audio_source::MAX_APPS` apps — one WASAPI
+//! process-loopback capture per selected exe (`audio_loopback`), each with
+//! its own ring, drained and summed sample-wise into the FFT ring at every
+//! hop by [`mix_rings`]. A supervisor thread owns whichever backend set is
+//! live — see [`supervisor`] — and the frontend drives it with the
+//! `audio_set_source` command.
 //!
 //! macOS has no cpal equivalent of WASAPI loopback — `build_input_stream` on
 //! an output device opens the *microphone* there — so on macOS **both** roles
 //! are served by Core Audio process taps (`audio_tap`): the system mix is a
-//! global tap that excludes nothing, and a per-app source is a tap on (or
-//! excluding) that app's process. The cpal path below is compiled out
-//! entirely on macOS so it cannot be reached by accident. Everything above
-//! the backend seam — the ring, the FFT, `decide`, the watcher — is shared.
+//! global tap that excludes nothing, and the app include list is ONE tap
+//! whose `TapTarget::Only` names every resolved pid at once. That single tap
+//! writes a single ring, published as the sole entry in [`APP_RINGS`], so
+//! [`mix_rings`] passes it through unchanged and everything above the backend
+//! seam — the silence hop, the sticky flag, the watcher, the events — is
+//! literally the same code on both platforms. Core Audio mixes the selected
+//! processes for us where Windows sums them in `mix_rings`; that is the whole
+//! difference. The cpal path below is compiled out entirely on macOS so it
+//! cannot be reached by accident.
 //!
-//! That supervisor also *watches*: every two seconds it reattaches to the
-//! chosen app as it starts or stops playing, rebuilds a capture the OS
-//! invalidated, and follows a change of default playback device. See
-//! [`Supervisor::tick`].
+//! The supervisor also *watches*: every two seconds it attaches a capture
+//! for a selected app that has gained an audio session, rebuilds captures
+//! the OS invalidated, and (in mix mode) follows a change of default
+//! playback device. It NEVER changes which source is live on its own — a
+//! selected app that isn't running simply contributes silence, and all
+//! selected apps silent means the visualizer idles. The 0.6.4 auto-fallback
+//! state machine is gone. See [`Supervisor::tick`].
 
 #[cfg(not(target_os = "macos"))]
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
@@ -46,7 +57,7 @@ use std::{
 };
 use tauri::{AppHandle, Emitter, Runtime};
 
-use crate::audio_source::{decide, target_exe, Active, Source};
+use crate::audio_source::{match_sessions, Source};
 
 const FFT_SIZE: usize = 2048;
 const SPECTRUM_BANDS: usize = 64;
@@ -133,33 +144,36 @@ enum CaptureCmd {
 /// process-lifetime static, so it never goes back to `None`).
 static CMD_TX: Mutex<Option<mpsc::Sender<CaptureCmd>>> = Mutex::new(None);
 
-/// Point the visualizer at the system mix, one app, or everything-but-one-app.
+/// Point the visualizer at the system mix or a strict include list of apps.
 /// Returns as soon as the request is queued — the swap itself happens on the
-/// supervisor thread and its outcome arrives as an `audio:source` event,
-/// because falling back to the mix (app not playing, old Windows) is a normal
-/// result, not an error.
+/// supervisor thread and its outcome (which selected apps actually have live
+/// captures) arrives as an `audio:source` event. Async per the repo rule for
+/// new/changed commands: never block the main thread from a command.
 #[tauri::command]
-pub fn audio_set_source(source: Source) -> Result<(), String> {
+pub async fn audio_set_source(source: Source) -> Result<(), String> {
     let guard = CMD_TX.lock();
     let tx = guard.as_ref().ok_or("audio capture not running")?;
     tx.send(CaptureCmd::SetSource(source))
         .map_err(|e| e.to_string())
 }
 
-/// What the frontend is told about the capture after every swap.
+/// What the frontend is told about the capture after every swap. Mirrored by
+/// `AudioSourceState` in `app/src/state/useAudioSource.ts`.
 #[derive(Clone, Serialize)]
 pub struct AudioSourceState {
     pub requested: Source,
-    /// "mix" | "process" — what is really feeding the ring buffer now. If the
+    /// "mix" | "apps" — which backend family is feeding the FFT ring. If the
     /// mix itself could not be opened this still reads "mix" (nothing is
-    /// feeding the ring) and `reason` says why; the frontend contract is
-    /// deliberately two-valued.
+    /// feeding the ring) and `reason` says why.
     pub active: &'static str,
-    /// The app being listened to (or excluded); `None` whenever the mix is live.
-    pub active_exe: Option<String>,
+    /// Selected exes with a live capture attached right now. A requested exe
+    /// missing from this list is contributing silence — it has no audio
+    /// session ("not running" in the UI). Always empty in mix mode.
+    pub live_exes: Vec<String>,
     /// False once a process activation has failed — usually a Windows build
-    /// without process loopback, which is why the UI stops offering it. Not a
-    /// permanent verdict: an explicit `audio_set_source` re-arms it and tries
+    /// without process loopback. Not a permanent verdict: an explicit
+    /// `audio_set_source`, or a watcher rebuild triggered by real change (a
+    /// dead capture, a session appearing or moving), re-arms it and tries
     /// again, since the same `Err` covers transient failures too.
     pub supported: bool,
     pub reason: Option<String>,
@@ -171,28 +185,87 @@ pub struct AudioSourceState {
 /// where things stand would clobber a persisted per-app source.
 static LAST_STATE: Mutex<Option<AudioSourceState>> = Mutex::new(None);
 
+/// The per-app capture rings while `Source::Apps` is live — what
+/// `process_loop` drains and sums into the FFT ring at every hop. Holds one
+/// entry per SELECTED exe (capture attached or not: a writer-less ring just
+/// reads as silence), so a non-empty list is also how `process_loop` knows it
+/// is in apps mode and must keep the window sliding with synthesized silence
+/// when nothing plays. Empty in mix mode, where cpal writes the FFT ring
+/// directly. Only Arc handles are cloned out — the lock is held for
+/// microseconds.
+static APP_RINGS: Mutex<Vec<Arc<Mutex<Vec<f32>>>>> = Mutex::new(Vec::new());
+
 /// Current capture state. Pure read — never touches the capture.
 ///
 /// Before the supervisor's first swap (a window of a few ms at startup) this
 /// reports the state it is about to establish: the system mix, nothing wrong.
 #[tauri::command]
-pub fn audio_get_source() -> AudioSourceState {
+pub async fn audio_get_source() -> AudioSourceState {
     LAST_STATE.lock().clone().unwrap_or(AudioSourceState {
         requested: Source::Mix,
         active: "mix",
-        active_exe: None,
+        live_exes: Vec::new(),
         supported: true,
         reason: None,
     })
 }
 
-/// Whichever capture currently owns the ring buffer. Exactly one may exist at
-/// a time — Windows will not hand out a second loopback client for the same
-/// target while the first lives — and this enum is what enforces that.
-/// `cpal::Stream` is `!Send`, so `Live` never leaves the supervisor thread.
-///
-/// The `cpal::Stream` payload is held purely for its `Drop` — reading it is
-/// never the point, staying alive (and then not) is — hence the allow.
+/// One selected exe's slot in apps mode. The ring exists for the slot's whole
+/// life; `cap` is `None` while the app has no audio session, in which case
+/// the ring stays empty and the hop mix reads that as silence — attaching
+/// later is the watcher's job, switching source is nobody's.
+#[cfg(not(target_os = "macos"))]
+struct AppCapture {
+    exe: String,
+    ring: Arc<Mutex<Vec<f32>>>,
+    cap: Option<(u32, crate::audio_loopback::ProcessCapture)>,
+    /// Session pid observed for this exe at the last build or watcher pass —
+    /// tracked whether or not a capture is attached. This is what lets the
+    /// watcher tell "the same session is still there" (no evidence, no retry)
+    /// from "a session appeared or moved" (evidence of change, which re-arms
+    /// a failed `supported` for exactly one rebuild attempt). Bounds retries
+    /// on an unsupported OS to one per session transition, never per tick.
+    seen_pid: Option<u32>,
+}
+
+/// One selected app's slot in macOS apps mode. Carries no capture of its own:
+/// a Core Audio tap takes the whole pid list at once, so the *set* of slots
+/// with a pid is what gets built into one `TapTarget::Only`, and there is no
+/// per-slot ring to hold either (see [`TapApps::ring`]).
+#[cfg(target_os = "macos")]
+struct AppSlot {
+    exe: String,
+    /// The pid this slot contributed to the live tap, or `None` if it was not
+    /// in it (no process object at build time, or the build failed). This is
+    /// the macOS analogue of `AppCapture::cap` — what `emit` reports as live
+    /// and what the watcher compares against the current session.
+    tapped_pid: Option<u32>,
+    /// Same role, same rules, same rationale as `AppCapture::seen_pid`.
+    seen_pid: Option<u32>,
+}
+
+/// macOS apps mode: N selected apps, one tap, one ring.
+#[cfg(target_os = "macos")]
+struct TapApps {
+    /// One per selected exe, in request order, capped at
+    /// `audio_source::MAX_APPS` by the `Source` deserializer.
+    slots: Vec<AppSlot>,
+    /// The single ring the tap writes — Core Audio has already mixed the
+    /// tapped processes into it. Created and published for the whole life of
+    /// apps mode *whether or not a tap exists*, because a non-empty
+    /// `APP_RINGS` is how `process_loop` knows to keep the window sliding
+    /// with synthesized silence. With no tap it simply stays empty, which is
+    /// exactly what a Windows slot with `cap: None` looks like.
+    ring: Arc<Mutex<Vec<f32>>>,
+    /// `None` when no selected app had a process object to tap, or when the
+    /// tap could not be created. Held purely for its `Drop` — hence the allow
+    /// on `Live`.
+    tap: Option<crate::audio_tap::TapCapture>,
+}
+
+/// Whichever backend set currently feeds the FFT. `cpal::Stream` is `!Send`,
+/// so `Live` never leaves the supervisor thread. The stream payload is held
+/// purely for its `Drop` — hence the allow.
 #[allow(dead_code)]
 enum Live {
     None,
@@ -201,31 +274,30 @@ enum Live {
     /// existence is not evidence that anything is being captured.
     #[cfg(not(target_os = "macos"))]
     Mix(cpal::Stream, Arc<AtomicBool>),
-    #[cfg(not(target_os = "macos"))]
-    Process(crate::audio_loopback::ProcessCapture),
-    /// macOS's single backend, covering *both* roles: a global tap for the
-    /// system mix and a per-process tap for an app. There is no second variant
-    /// because there is no second mechanism — which role a live tap was built
-    /// for is recorded in `Supervisor::active`, exactly as it is on Windows.
+    /// The macOS mix: a global tap that excludes nothing. `TapCapture` carries
+    /// its own liveness (callback progress), so there is no separate flag.
     #[cfg(target_os = "macos")]
-    Tap(crate::audio_tap::TapCapture),
+    Mix(crate::audio_tap::TapCapture),
+    /// One entry per selected exe, in request order, capped at
+    /// `audio_source::MAX_APPS` by the `Source` deserializer.
+    #[cfg(not(target_os = "macos"))]
+    Apps(Vec<AppCapture>),
+    #[cfg(target_os = "macos")]
+    Apps(TapApps),
 }
 
 struct Supervisor<R: Runtime> {
     app: AppHandle<R>,
+    /// The FFT ring. Mix mode: cpal writes it directly. Apps mode: only the
+    /// hop mix in `process_loop` writes it (via `APP_RINGS`).
     buffer: Arc<Mutex<Vec<f32>>>,
     live: Live,
-    /// What `live` actually ended up being, which is not always what `decide`
-    /// asked for — a failed activation lands on `Mix`. Compared against the
-    /// new decision to keep `apply` idempotent.
-    active: Option<Active>,
     requested: Source,
-    active_exe: Option<String>,
     supported: bool,
     reason: Option<String>,
-    /// Id of the default render endpoint as of the last swap — what the live
-    /// capture is bound to. `None` when it could not be read (no audio device,
-    /// COM unavailable), which is a value the watcher compares like any other.
+    /// Id of the default render endpoint as of the last swap — what a live
+    /// mix capture is bound to. `None` when it could not be read (no audio
+    /// device, COM unavailable), which the watcher compares like any value.
     endpoint_id: Option<String>,
 }
 
@@ -245,9 +317,7 @@ fn supervisor<R: Runtime>(
         app,
         buffer,
         live: Live::None,
-        active: None,
         requested: Source::Mix,
-        active_exe: None,
         supported: true,
         reason: None,
         endpoint_id: None,
@@ -259,22 +329,16 @@ fn supervisor<R: Runtime>(
     loop {
         match rx.recv_timeout(WATCH_INTERVAL) {
             Ok(CaptureCmd::SetSource(s)) => {
-                // An explicit request re-arms per-app capture. `supported` is a
-                // hint learned from one failed activation, and `start` returns
-                // Err for plenty of transient reasons (Initialize against a
-                // device being switched, the activation deadline, a busy
-                // machine timing out) that have nothing to do with the Windows
-                // build lacking process loopback. Suppressing retries forever
-                // on that evidence would turn a UI hint into a permanent
-                // feature lockout with no way back. So: the sticky bit only
-                // suppresses *automatic* re-attempts (a watcher tick), never a
-                // user asking for it again.
-                //
-                // This is exactly why the watcher must call `sup.apply` itself
-                // rather than post a `SetSource` to this channel: a tick routed
-                // through here would re-arm the flag every two seconds and
-                // retry activation forever on a machine that genuinely cannot
-                // do process loopback.
+                // An explicit request re-arms per-app capture. `supported` is
+                // a hint learned from one failed activation, and `start`
+                // returns Err for plenty of transient reasons that have
+                // nothing to do with the Windows build lacking process
+                // loopback. The sticky bit only suppresses *automatic*
+                // re-attempts (a watcher tick), never a user asking again —
+                // which is also why the watcher calls `sup.apply` directly
+                // instead of posting to this channel: a tick routed through
+                // here would re-arm the flag every two seconds and retry
+                // activation forever on a machine that cannot do it.
                 sup.supported = true;
                 sup.apply(s);
             }
@@ -287,296 +351,399 @@ fn supervisor<R: Runtime>(
 }
 
 impl<R: Runtime> Supervisor<R> {
-    /// Swap to whatever `requested` implies right now, then report. Idempotent:
-    /// re-applying the source that is already live and healthy re-emits the
-    /// state without touching the capture, so callers may call it freely.
+    /// Tear down whatever is live and build what `requested` calls for.
+    /// Deliberately NOT incremental: attaching one app rebuilds all of them.
+    /// A rebuild costs a sub-second gap in the spectrum at most once per
+    /// watcher tick, and one build path means one teardown ordering to get
+    /// right. It never falls back: a selected app that can't be captured
+    /// stays selected and silent.
     fn apply(&mut self, requested: Source) {
         self.requested = requested;
-        let active = self.decision_now();
+        self.reason = None;
 
-        // Why we are not on the requested source, if we are not. Computed from
-        // the decision rather than the swap, so the skip path below reports the
-        // same thing a fresh swap would.
-        let mut reason = match (&self.requested, active) {
-            (Source::Mix, _) | (_, Active::Process { .. }) => None,
-            (_, Active::Mix) if !self.supported => {
-                Some("per-app capture could not be started on this machine".to_string())
-            }
-            (_, Active::Mix) => target_exe(&self.requested)
-                .map(|t| format!("{t} has no audio session right now")),
-        };
-
-        if self.active == Some(active) && self.live_matches(active) {
-            // Already exactly here, and the backend is still running. Emit
-            // anyway: a caller re-asserting its source wants the state back.
-            self.reason = reason;
-            self.emit();
-            return;
-        }
-
-        // Drop the old backend *first*, and completely. `ProcessCapture::drop`
-        // joins a pump thread that blocks on `buffer.lock()`, so this must
-        // happen while we hold no ring lock — and the new backend must not be
-        // built until the old one has stopped writing. Written as an explicit
-        // `drop` so the ordering survives future edits to this function.
+        // Teardown ordering matters:
+        // 1. Unpublish the rings so the hop mix stops draining them.
+        // 2. Drop every old backend completely — `ProcessCapture::drop`
+        //    joins a pump thread that takes its ring lock, so no ring lock
+        //    may be held here, and Windows will not hand out a second
+        //    loopback client for a target while the first lives.
+        // 3. Clear the FFT ring while nothing is writing it, so the first
+        //    window after the swap can't straddle two backends at two rates.
+        APP_RINGS.lock().clear();
         drop(std::mem::replace(&mut self.live, Live::None));
-        self.active = None;
-
         {
-            // Nothing is capturing at this instant, which is the only safe
-            // moment to touch the ring. Clearing it stops the first FFT window
-            // after the swap from straddling two backends at two sample rates.
-            // Scoped so the lock is released before anything is constructed.
-            let mut buf = self.buffer.lock();
-            buf.clear();
+            self.buffer.lock().clear();
         }
 
-        let mut exe: Option<String> = None;
-        let (live, settled, rate) = match active {
-            Active::Mix => {
-                let (live, rate) = open_mix_or_none(&self.buffer, &mut reason);
-                (live, Active::Mix, rate)
+        match self.requested.clone() {
+            Source::Mix => {
+                let (live, rate) = open_mix_or_none(&self.buffer, &mut self.reason);
+                SAMPLE_RATE.store(rate, Ordering::Relaxed);
+                self.live = live;
             }
-            Active::Process { pid, exclude } => {
-                match open_process_capture(pid, exclude, &self.buffer) {
-                    Ok((live, rate)) => {
-                        exe = target_exe(&self.requested).map(str::to_string);
-                        (live, active, rate)
-                    }
-                    Err(e) => {
-                        eprintln!("audio: process capture failed, falling back to mix: {e}");
-                        // Reported to the UI, and it stops *automatic* retries
-                        // (see the branch above). Cleared again by the next
-                        // explicit request, because this Err is not proof the
-                        // machine can't do process loopback at all.
-                        self.supported = false;
-                        reason = Some(e);
-                        let (live, rate) = open_mix_or_none(&self.buffer, &mut reason);
-                        (live, Active::Mix, rate)
-                    }
-                }
+            Source::Apps { exes } => {
+                let sessions = session_pairs();
+                let pids = match_sessions(&exes, &sessions);
+                // Snapshot the sticky flag for this whole build: one exe's
+                // failed activation must never skip its sibling slots in the
+                // same build. The bit set inside governs *future automatic*
+                // attempts, not this one.
+                let can_try = self.supported;
+                let (live, rings, rate) = self.build_apps(exes, pids, can_try);
+                // Publish EVERY selected ring, attached or not — a non-empty
+                // list is also how process_loop knows it's in apps mode (see
+                // APP_RINGS).
+                *APP_RINGS.lock() = rings;
+                SAMPLE_RATE.store(rate, Ordering::Relaxed);
+                self.live = live;
             }
-        };
+        }
 
-        self.live = live;
-        self.active = Some(settled);
-        // Read *after* the backend is up, so a device switch that raced this
-        // build is seen as a difference on the next tick instead of being
-        // baked in as "what we're bound to". Refreshed on every swap, process
-        // captures included: they die on an endpoint change too, and the mix
-        // stream we fall back to must not inherit a stale id.
+        // Read *after* the backends are up, so a device switch that raced
+        // this build is seen as a difference on the next tick instead of
+        // being baked in as "what we're bound to".
         self.endpoint_id = crate::mixer::default_endpoint_id().ok();
-        // Must happen on *every* swap, including the fallback paths: the FFT's
-        // band edges are derived from this, so a stale value silently misplaces
-        // every frequency band.
-        SAMPLE_RATE.store(rate, Ordering::Relaxed);
-        self.active_exe = exe;
-        self.reason = reason;
         self.emit();
     }
 
-    /// Which backend `requested` implies *right now*, i.e. what `apply` would
-    /// settle on if it ran this instant.
+    /// Build the apps-mode backend for `exes` / their currently-resolved
+    /// `pids`. Returns the live backend, the rings to publish (one per
+    /// selected exe on Windows, exactly one shared tap ring on macOS) and the
+    /// sample rate to pin. Sets `self.supported` / `self.reason` on failure —
+    /// `can_try` is the caller's snapshot of the flag so one failing slot can
+    /// never skip its siblings in the same build.
     ///
-    /// "App not running" is decided here, by the session lookup — NOT by
-    /// `audio_loopback::start` failing. Activating against a stale or bogus PID
-    /// succeeds and then yields silence forever, so a missing session must be
-    /// caught before we ever try.
-    ///
-    /// Costs a COM session enumeration (a few ms) whenever the requested source
-    /// names an app, and nothing at all for `Mix` — `target_exe` is `None`, so
-    /// `find_pid_for_exe` is never called.
-    fn decision_now(&self) -> Active {
-        let pid = target_exe(&self.requested).and_then(crate::mixer::find_pid_for_exe);
-        if self.supported {
-            decide(&self.requested, pid)
-        } else {
-            // Activation failed the last time it was asked for, so automatic
-            // re-attempts (a watcher tick) stop here rather than tearing down a
-            // working mix stream on every poll. An explicit `audio_set_source`
-            // clears this first, so the user is never locked out.
-            Active::Mix
+    /// Windows: one WASAPI process-loopback client per selected exe, summed
+    /// by `mix_rings` at every hop.
+    #[cfg(not(target_os = "macos"))]
+    fn build_apps(
+        &mut self,
+        exes: Vec<String>,
+        pids: Vec<Option<u32>>,
+        can_try: bool,
+    ) -> (Live, Vec<Arc<Mutex<Vec<f32>>>>, u32) {
+        let mut caps: Vec<AppCapture> = Vec::with_capacity(exes.len());
+        for (exe, pid) in exes.into_iter().zip(pids) {
+            let ring = Arc::new(Mutex::new(Vec::with_capacity(RING_CAP)));
+            let cap = match pid {
+                Some(pid) if can_try => {
+                    match crate::audio_loopback::start(pid, false, ring.clone(), RING_CAP) {
+                        Ok(c) => {
+                            eprintln!("audio: process loopback on {exe} (pid {pid})");
+                            Some((pid, c))
+                        }
+                        Err(e) => {
+                            eprintln!("audio: process capture for {exe} failed: {e}");
+                            // Suppresses the watcher's *attach* trigger until
+                            // an explicit audio_set_source or a
+                            // change-triggered rebuild re-arms it (see `tick`
+                            // and the note in `supervisor`). NO fallback: the
+                            // exe just stays silent.
+                            self.supported = false;
+                            // First failure wins — later slots in the same
+                            // build must not clobber the reason the user is
+                            // shown.
+                            if self.reason.is_none() {
+                                self.reason = Some(e);
+                            }
+                            None
+                        }
+                    }
+                }
+                // No session (app not running / not playing): the slot
+                // contributes silence until the watcher sees a session and
+                // rebuilds. This is a fact, not an error.
+                _ => None,
+            };
+            caps.push(AppCapture { exe, ring, cap, seen_pid: pid });
         }
+        let rings = caps.iter().map(|c| c.ring.clone()).collect();
+        // Pin the FFT rate: process loopback always delivers at
+        // CAPTURE_SAMPLE_RATE regardless of the endpoint.
+        (
+            Live::Apps(caps),
+            rings,
+            crate::audio_loopback::CAPTURE_SAMPLE_RATE,
+        )
     }
 
-    /// One watcher pass. Runs on the supervisor thread every `WATCH_INTERVAL`,
-    /// and calls `apply` **directly** — never through `CaptureCmd::SetSource`,
-    /// which would re-arm the sticky `supported` flag and retry a hopeless
-    /// activation forever (see the note in `supervisor`).
-    ///
-    /// Three things can have changed since the last tick:
-    /// 1. the default playback device (rebind — nothing follows it for us),
-    /// 2. the live backend died (an invalidated endpoint leaves the object
-    ///    intact and the ring frozen, so only `live_matches` can tell),
-    /// 3. the chosen app started, stopped, or restarted under a new pid.
-    ///
-    /// Anything else must produce no event and no churn: this runs forever, on
-    /// every machine, whether or not the feature is used.
+    /// macOS: a Core Audio tap takes the whole pid list at once, so the entire
+    /// include list is ONE tap, one ring, one Core-Audio-side mix. The ring is
+    /// created and published whether or not the tap could be built, so
+    /// `process_loop` stays in apps mode and keeps the window sliding with
+    /// synthesized silence — the same thing a Windows build of nothing but
+    /// unattached slots produces.
+    #[cfg(target_os = "macos")]
+    fn build_apps(
+        &mut self,
+        exes: Vec<String>,
+        pids: Vec<Option<u32>>,
+        can_try: bool,
+    ) -> (Live, Vec<Arc<Mutex<Vec<f32>>>>, u32) {
+        use crate::audio_tap::TapTarget;
+
+        let ring = Arc::new(Mutex::new(Vec::with_capacity(RING_CAP)));
+        let mut slots: Vec<AppSlot> = exes
+            .into_iter()
+            .zip(pids.iter().copied())
+            .map(|(exe, seen_pid)| AppSlot { exe, tapped_pid: None, seen_pid })
+            .collect();
+
+        // Which slots have something tappable right now. Converted fallibly
+        // rather than with `as`: the wrap `as` would do turns an out-of-range
+        // value into a *negative* pid_t, which names a process group — a tap
+        // on the wrong thing is far worse than a slot that stays silent.
+        let targets: Vec<(usize, u32, i32)> = pids
+            .iter()
+            .enumerate()
+            .filter_map(|(i, p)| p.map(|pid| (i, pid)))
+            .filter_map(|(i, pid)| match i32::try_from(pid) {
+                Ok(t) => Some((i, pid, t)),
+                Err(_) => {
+                    eprintln!("audio: pid {pid} is not a valid pid_t, skipping");
+                    None
+                }
+            })
+            .collect();
+
+        let mut tap = None;
+        // Keep the previous rate when nothing is capturing, so process_loop
+        // doesn't churn its band edges over a ring carrying only silence —
+        // same reasoning as `open_mix_or_none`'s failure arm.
+        let mut rate = SAMPLE_RATE.load(Ordering::Relaxed);
+        if can_try && !targets.is_empty() {
+            let pid_ts: Vec<i32> = targets.iter().map(|(_, _, t)| *t).collect();
+            match crate::audio_tap::start(TapTarget::Only(pid_ts), ring.clone(), RING_CAP) {
+                Ok(cap) => {
+                    rate = cap.sample_rate();
+                    for (i, pid, _) in &targets {
+                        slots[*i].tapped_pid = Some(*pid);
+                        eprintln!("audio: Core Audio tap includes {} (pid {pid})", slots[*i].exe);
+                    }
+                    eprintln!("audio: Core Audio tap on {} app(s) @ {rate} Hz", targets.len());
+                    tap = Some(cap);
+                }
+                Err(e) => {
+                    eprintln!("audio: process tap failed: {e}");
+                    // One tap covers every selected app, so a failure here is
+                    // the whole include list going silent — but it is still
+                    // only a *hint*, cleared by an explicit audio_set_source
+                    // or a change-triggered rebuild, exactly as on Windows.
+                    self.supported = false;
+                    if self.reason.is_none() {
+                        self.reason = Some(e);
+                    }
+                }
+            }
+        }
+
+        (Live::Apps(TapApps { slots, ring: ring.clone(), tap }), vec![ring], rate)
+    }
+
+    /// One watcher pass, every `WATCH_INTERVAL`, on the supervisor thread.
+    /// Attach / rebuild ONLY — it never changes which source family is live
+    /// (no fallback, ever), and it calls `apply` directly rather than posting
+    /// a `SetSource`, which would re-arm the sticky `supported` flag on every
+    /// quiet tick and retry a hopeless activation forever. Re-arming here
+    /// happens only on real evidence of change (a dead capture, a session
+    /// appearing or moving) — see the `stale` handling below.
     fn tick(&mut self) {
-        // (1) Follow the default endpoint. One enumerator + GetId, no session
-        // walk — cheap enough to pay unconditionally, which matters because a
-        // per-app request whose app is silent is *also* sitting on a mix
-        // stream. Skipped while a process capture is live: that one is torn
-        // down and rebuilt by (2) below when the endpoint change kills it, and
-        // rebuilding it here as well would double the interruption.
-        #[cfg(not(target_os = "macos"))]
-        let process_capture_live = matches!(self.live, Live::Process(_));
-        // Not skipped on macOS, for a reason specific to how a tap is built:
-        // its aggregate device names the *current* default output as its main
-        // sub-device, so a device switch has to rebuild it whichever role it is
-        // serving. There is also no separate per-app backend here to leave
-        // alone — one `Live::Tap` covers both — so nothing can be interrupted
-        // twice by letting this branch handle it.
-        #[cfg(target_os = "macos")]
-        let process_capture_live = false;
-        if !process_capture_live {
+        let stale = if matches!(self.live, Live::Apps(_)) {
+            self.apps_stale()
+        } else {
+            // Mix mode (or nothing open): follow the default endpoint and
+            // rebuild a dead stream — unchanged 0.6.4 behavior. The
+            // `Live::None` guard means a machine with no audio device
+            // stays quiet instead of failing to open the mix every 2 s.
             let now_id = crate::mixer::default_endpoint_id().ok();
-            if now_id != self.endpoint_id {
+            let endpoint_moved = now_id != self.endpoint_id;
+            let mix_died = self.mix_died();
+            if endpoint_moved {
                 eprintln!("audio: default output device changed, rebinding capture");
-                // `apply` is idempotent and the old stream has usually not
-                // errored *yet*, so it would take the skip path and leave us on
-                // the dead endpoint. Clearing the settled decision is what
-                // forces the rebuild; `apply` then refreshes `endpoint_id`,
-                // `SAMPLE_RATE` (a new endpoint may run at a different rate)
-                // and emits.
-                self.active = None;
-                self.apply(self.requested.clone());
-                return;
             }
-        }
-
-        if matches!(self.requested, Source::Mix) {
-            // The feature is unused, so there is no app to look for and no
-            // session enumeration to pay for. One case still needs handling:
-            // the mix stream died without the endpoint id changing (device
-            // disabled and re-enabled, driver restart). That costs only the
-            // atomic below, and the guard means a machine with no audio device
-            // at all (`Live::None`) stays quiet instead of failing to open the
-            // mix every two seconds.
-            #[cfg(not(target_os = "macos"))]
-            let mix_stopped = matches!(&self.live, Live::Mix(_, alive) if !alive.load(Ordering::Relaxed));
-            // Same question, asked of the tap that is playing the mix's role.
-            // `Live::None` (the tap could not be created at all) stays quiet
-            // here on both platforms — see the guard's rationale above.
-            #[cfg(target_os = "macos")]
-            let mix_stopped = matches!(&self.live, Live::Tap(cap) if !cap.is_alive());
-            if mix_stopped {
+            if mix_died {
                 eprintln!("audio: mix capture stopped, rebuilding");
-                self.apply(Source::Mix);
             }
-            return;
+            endpoint_moved || mix_died
+        };
+        if stale {
+            // A rebuild triggered by real evidence of change (a dead capture,
+            // a session appearing or moving) is a fresh start for per-app
+            // activation: re-arm the sticky flag so a transient failure is
+            // retried on this pass instead of sticking until the user
+            // re-touches the picker. Bounded on a truly unsupported OS: the
+            // rebuilt slots record `seen_pid`, so an unchanged session
+            // produces no further evidence and no further retries.
+            if matches!(self.live, Live::Apps(_)) {
+                self.supported = true;
+            }
+            self.apply(self.requested.clone());
         }
-
-        // (2) + (3): has the decision changed, or has the backend behind it
-        // stopped? Identical to `apply`'s own skip condition, deliberately —
-        // asking `apply` and letting it no-op would re-emit an `audio:source`
-        // event every two seconds for a frontend with nothing to learn.
-        let want = self.decision_now();
-        // `Live::None` means the mix itself could not be opened. While that is
-        // still the decision (the app is silent), re-applying every two seconds
-        // would just re-fail, re-log and re-emit; the endpoint check above is
-        // what notices a device worth retrying for, and an explicit source
-        // change always retries from scratch. Same reasoning as the `Mix`
-        // branch above, which is why that one only rebuilds a *dead stream*.
-        if want == Active::Mix && matches!(self.live, Live::None) {
-            return;
-        }
-        if self.active == Some(want) && self.live_matches(want) {
-            return;
-        }
-        self.apply(self.requested.clone());
     }
 
-    /// Is the live backend the one `active` calls for, and *still capturing*?
+    /// Is a live mix backend dead? cpal keeps handing back a `Stream` object
+    /// that feeds nothing, so on Windows the answer is the `err_fn` flag; on
+    /// macOS it is the tap's own callback-progress liveness. `Live::None`
+    /// (nothing opened at all) answers `false` on both — see the guard's
+    /// rationale in `tick`.
+    #[cfg(not(target_os = "macos"))]
+    fn mix_died(&self) -> bool {
+        matches!(&self.live, Live::Mix(_, alive) if !alive.load(Ordering::Relaxed))
+    }
+
+    #[cfg(target_os = "macos")]
+    fn mix_died(&self) -> bool {
+        matches!(&self.live, Live::Mix(cap) if !cap.is_alive())
+    }
+
+    /// Apps-mode staleness. Rebuild when reality drifted from what we built: a
+    /// capture died (an endpoint change kills per-app captures too), a session
+    /// moved to a new pid (app restarted), or a silent slot's app now has a
+    /// session. One session snapshot for all slots. Anything else must produce
+    /// no churn and no event.
+    #[cfg(not(target_os = "macos"))]
+    fn apps_stale(&mut self) -> bool {
+        let sessions = session_pairs();
+        let Live::Apps(caps) = &mut self.live else { return false };
+        let exes: Vec<String> = caps.iter().map(|c| c.exe.clone()).collect();
+        let pids = match_sessions(&exes, &sessions);
+        let supported = self.supported;
+        let mut stale = false;
+        for (c, now_pid) in caps.iter_mut().zip(pids) {
+            // Session-transition EVIDENCE, computed before (and independent
+            // of) the `supported` gate — a new or moved session must count
+            // exactly once even after a failed activation, or
+            // `supported = false` becomes circular: no rebuild, so no re-arm,
+            // so no rebuild.
+            let changed = now_pid != c.seen_pid;
+            stale |= match &c.cap {
+                Some((pid, cap)) => !cap.is_alive() || now_pid != Some(*pid),
+                // A silent slot warrants a build when a session is there and
+                // either activation is believed to work, or the session is NEW
+                // evidence (appeared / moved) — the transition that re-arms a
+                // failed `supported` below.
+                None => now_pid.is_some() && (supported || changed),
+            };
+            // Track even when nothing rebuilds, so "the same session still
+            // sitting there" never reads as evidence twice: on an unsupported
+            // OS a continuously-running app yields `changed == false` on every
+            // later tick, bounding retries to one per genuine session
+            // transition.
+            c.seen_pid = now_pid;
+        }
+        stale
+    }
+
+    /// Same question on macOS, asked of one tap covering every slot. Two
+    /// differences from the Windows arm, both forced by the mechanism:
     ///
-    /// Liveness is checked on both backends, not just the process one. Either
-    /// client is invalidated by a default-device change
-    /// (`AUDCLNT_E_DEVICE_INVALIDATED`); a dead one leaves the object intact
-    /// and the ring frozen on its last samples. If this returned `true` for a
-    /// dead stream, `apply` would take the skip path and the user re-selecting
-    /// the same source — their only recovery affordance — would be a silent
-    /// no-op.
-    fn live_matches(&self, active: Active) -> bool {
-        match (&self.live, active) {
-            #[cfg(not(target_os = "macos"))]
-            (Live::Mix(_, alive), Active::Mix) => alive.load(Ordering::Relaxed),
-            #[cfg(not(target_os = "macos"))]
-            (Live::Process(cap), Active::Process { .. }) => cap.is_alive(),
-            // One tap serves both roles, so this arm answers only the liveness
-            // half of the question. That is not a hole: every caller pairs this
-            // with `self.active == Some(active)`, which is what distinguishes a
-            // global tap from a per-app one — and a role change always goes
-            // through `apply`, which rebuilds unconditionally when `active`
-            // differs.
-            #[cfg(target_os = "macos")]
-            (Live::Tap(cap), _) => cap.is_alive(),
-            _ => false,
+    /// * liveness is a property of the tap, not of a slot, so a dead tap makes
+    ///   every attached slot stale at once;
+    /// * a default-output change has to be checked *here* as well as in mix
+    ///   mode, because the tap's aggregate device names the current default
+    ///   output as its main sub-device. Windows doesn't need this — its
+    ///   process-loopback clients are invalidated by the switch and show up as
+    ///   `!is_alive()` — but a tap on a stale aggregate can keep firing.
+    #[cfg(target_os = "macos")]
+    fn apps_stale(&mut self) -> bool {
+        let sessions = session_pairs();
+        let now_endpoint = crate::mixer::default_endpoint_id().ok();
+        let Live::Apps(apps) = &mut self.live else { return false };
+        let exes: Vec<String> = apps.slots.iter().map(|s| s.exe.clone()).collect();
+        let pids = match_sessions(&exes, &sessions);
+        let supported = self.supported;
+        let tap_dead = apps.tap.as_ref().is_some_and(|t| !t.is_alive());
+        let mut stale = tap_dead;
+        for (s, now_pid) in apps.slots.iter_mut().zip(pids) {
+            let changed = now_pid != s.seen_pid;
+            stale |= match s.tapped_pid {
+                Some(pid) => now_pid != Some(pid),
+                None => now_pid.is_some() && (supported || changed),
+            };
+            s.seen_pid = now_pid;
+        }
+        if tap_dead {
+            eprintln!("audio: process tap stopped, rebuilding");
+        }
+        if now_endpoint != self.endpoint_id {
+            eprintln!("audio: default output device changed, rebuilding the process tap");
+            stale = true;
+        }
+        stale
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    fn live_exes(&self) -> Vec<String> {
+        match &self.live {
+            Live::Apps(caps) => caps
+                .iter()
+                .filter(|c| c.cap.is_some())
+                .map(|c| c.exe.clone())
+                .collect(),
+            _ => Vec::new(),
+        }
+    }
+
+    /// A slot is live when it made it into the tap — the macOS analogue of
+    /// `cap.is_some()`. `tapped_pid` is only ever set for slots the tap was
+    /// actually built with, so a failed tap reports nothing live, exactly as a
+    /// Windows build whose every activation failed does.
+    #[cfg(target_os = "macos")]
+    fn live_exes(&self) -> Vec<String> {
+        match &self.live {
+            Live::Apps(apps) => apps
+                .slots
+                .iter()
+                .filter(|s| s.tapped_pid.is_some())
+                .map(|s| s.exe.clone())
+                .collect(),
+            _ => Vec::new(),
         }
     }
 
     fn emit(&self) {
+        let (active, live_exes): (&'static str, Vec<String>) = match &self.live {
+            Live::Apps(_) => ("apps", self.live_exes()),
+            _ => ("mix", Vec::new()),
+        };
         let state = AudioSourceState {
             requested: self.requested.clone(),
-            active: match self.live {
-                #[cfg(not(target_os = "macos"))]
-                Live::Process(_) => "process",
-                // The tap object alone cannot say which role it serves, so the
-                // settled decision does. `apply` only stores `Active::Process`
-                // once the per-app tap actually started, so this reports
-                // "process" under exactly the conditions the Windows arm does.
-                #[cfg(target_os = "macos")]
-                Live::Tap(_) if matches!(self.active, Some(Active::Process { .. })) => "process",
-                _ => "mix",
-            },
-            active_exe: self.active_exe.clone(),
+            active,
+            live_exes,
             supported: self.supported,
             reason: self.reason.clone(),
         };
-        // Recorded before it is emitted, so `audio_get_source` can never report
-        // something older than what a listener has already seen.
+        // Recorded before it is emitted, so `audio_get_source` can never
+        // report something older than what a listener has already seen.
         *LAST_STATE.lock() = Some(state.clone());
         let _ = self.app.emit("audio:source", state);
     }
 }
 
-/// Start the per-app backend for `pid`. The two platforms reach the same
-/// contract by different mechanisms — WASAPI process loopback on Windows, a
-/// Core Audio process tap on macOS — and both report activation failure
-/// synchronously so `apply` can fall back to the mix without waiting.
+/// (exe, pid) pairs for every session that has an executable, lowercased —
+/// the shape `match_sessions` consumes. One COM snapshot per call (a few ms,
+/// paid at most once per watcher tick / apply).
 #[cfg(not(target_os = "macos"))]
-fn open_process_capture(
-    pid: u32,
-    exclude: bool,
-    buffer: &Arc<Mutex<Vec<f32>>>,
-) -> Result<(Live, u32), String> {
-    let cap = crate::audio_loopback::start(pid, exclude, buffer.clone(), RING_CAP)?;
-    let rate = cap.sample_rate();
-    eprintln!("audio: process loopback on pid {pid} (exclude={exclude}) @ {rate} Hz");
-    Ok((Live::Process(cap), rate))
+fn session_pairs() -> Vec<(String, u32)> {
+    crate::mixer::sessions_snapshot()
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|s| s.exe.map(|e| (e.to_lowercase(), s.pid)))
+        .collect()
 }
 
+/// The macOS inventory `match_sessions` reduces: (lowercased bundle id, pid)
+/// for every app holding a Core Audio *process object*. That list plays
+/// exactly the role a Windows session snapshot does — see
+/// `mixer::AudioApp` for why it is not an `NSWorkspace` scan — so
+/// "absent from here" means "not playing yet, keep watching", never an error.
 #[cfg(target_os = "macos")]
-fn open_process_capture(
-    pid: u32,
-    exclude: bool,
-    buffer: &Arc<Mutex<Vec<f32>>>,
-) -> Result<(Live, u32), String> {
-    use crate::audio_tap::TapTarget;
-    // `find_pid_for_exe` sourced this pid from the Core Audio process object
-    // list, so it always fits. Converted fallibly rather than with `as`
-    // because the wrap `as` would do turns an out-of-range value into a
-    // *negative* pid_t, which names a process group — a tap on the wrong thing
-    // is far worse than a refusal the supervisor turns into a mix fallback.
-    let pid_t = i32::try_from(pid).map_err(|_| format!("pid {pid} is not a valid pid_t"))?;
-    let target = if exclude {
-        TapTarget::Except(vec![pid_t])
-    } else {
-        TapTarget::Only(vec![pid_t])
-    };
-    let cap = crate::audio_tap::start(target, buffer.clone(), RING_CAP)?;
-    let rate = cap.sample_rate();
-    eprintln!("audio: Core Audio tap on pid {pid} (exclude={exclude}) @ {rate} Hz");
-    Ok((Live::Tap(cap), rate))
+fn session_pairs() -> Vec<(String, u32)> {
+    crate::mixer::audio_process_apps()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|a| (a.bundle_id, a.pid))
+        .collect()
 }
 
 /// Open the system-mix capture, or give up and leave the ring unfed. Failing
@@ -622,7 +789,7 @@ fn open_mix_or_none(
         Ok(cap) => {
             let rate = cap.sample_rate();
             eprintln!("audio: Core Audio tap on the system mix @ {rate} Hz");
-            (Live::Tap(cap), rate)
+            (Live::Mix(cap), rate)
         }
         Err(e) => {
             eprintln!("audio: mix capture unavailable: {e}");
@@ -630,6 +797,8 @@ fn open_mix_or_none(
                 Some(prev) => format!("{prev}; mix capture unavailable: {e}"),
                 None => format!("mix capture unavailable: {e}"),
             });
+            // Rate is meaningless with nothing capturing; keep the last one so
+            // process_loop doesn't churn its band edges over a dead ring.
             (Live::None, SAMPLE_RATE.load(Ordering::Relaxed))
         }
     }
@@ -797,6 +966,34 @@ fn process_loop<R: Runtime>(
             smoothed.iter_mut().for_each(|v| *v = 0.0); // stale peaks belong to the old rate
         }
 
+        // Apps mode: one hop of mixing. Drain whatever every per-app capture
+        // pushed since the last tick and append the sample-wise sum to the
+        // FFT ring. When nothing arrived at all — every selected app silent,
+        // paused, or not running — append one hop of synthesized silence
+        // instead, so the window keeps sliding and the spectrum decays to
+        // zero; a frozen ring would replay the last real window forever.
+        // Empty list = mix mode (cpal writes the ring directly): this whole
+        // block then costs one uncontended lock.
+        let rings: Vec<Arc<Mutex<Vec<f32>>>> = APP_RINGS.lock().clone();
+        if !rings.is_empty() {
+            let drained: Vec<Vec<f32>> = rings
+                .iter()
+                .map(|r| std::mem::take(&mut *r.lock()))
+                .collect();
+            let mixed = mix_rings(&drained);
+            let mut buf = buffer.lock();
+            if mixed.is_empty() {
+                let hop = ((rate / hz.max(1) as f32) as usize).max(1);
+                buf.extend(std::iter::repeat(0.0f32).take(hop));
+            } else {
+                buf.extend_from_slice(&mixed);
+            }
+            if buf.len() > RING_CAP {
+                let drop_n = buf.len() - RING_CAP;
+                buf.drain(..drop_n);
+            }
+        }
+
         // Snapshot the most-recent FFT_SIZE samples without holding the lock
         // across the FFT itself — keeps capture-callback contention minimal.
         let have_window = {
@@ -894,9 +1091,34 @@ fn log_band_edges(bands: usize, max_bin: usize, sample_rate: f32, fmin: f32, fma
     edges
 }
 
+/// Sample-wise sum of the per-app captures for one FFT hop. Each input Vec is
+/// everything one capture pushed since the last hop (already mono, all pinned
+/// to `audio_loopback::CAPTURE_SAMPLE_RATE`); runs are aligned at the front
+/// and shorter runs are padded with silence, so an app that produced nothing
+/// (paused, muted, not running) simply contributes zeros. Clamped to [-1, 1]
+/// so four loud apps can't blow past full scale into the FFT. Pure — the
+/// caller drains each capture's ring and hands the drained Vecs here.
+///
+/// Cross-app alignment is deliberately loose: packet timing can skew apps by
+/// up to one hop (~30 ms) relative to each other, which is invisible in a
+/// spectrum display and avoids per-capture timestamp bookkeeping.
+pub fn mix_rings(drained: &[Vec<f32>]) -> Vec<f32> {
+    let len = drained.iter().map(|d| d.len()).max().unwrap_or(0);
+    let mut out = vec![0.0f32; len];
+    for d in drained {
+        for (i, s) in d.iter().enumerate() {
+            out[i] += *s;
+        }
+    }
+    for s in out.iter_mut() {
+        *s = s.clamp(-1.0, 1.0);
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
-    use super::sample_to_byte;
+    use super::{mix_rings, sample_to_byte};
 
     #[test]
     fn silence_maps_to_center() {
@@ -909,5 +1131,38 @@ mod tests {
         assert_eq!(sample_to_byte(-1.5), 1);
         assert_eq!(sample_to_byte(1.0), 255);
         assert_eq!(sample_to_byte(-1.0), 1);
+    }
+
+    // -- mix_rings: the per-hop sample-wise sum of the per-app captures ----
+    // Values are chosen to be exact in binary floating point (quarters and
+    // halves) so equality assertions are legitimate.
+
+    #[test]
+    fn mix_sums_two_runs_sample_wise() {
+        assert_eq!(mix_rings(&[vec![0.25, 0.5], vec![0.25, -0.25]]), vec![0.5, 0.25]);
+    }
+
+    #[test]
+    fn mix_pads_shorter_runs_with_silence() {
+        // The app that produced less audio this hop contributes silence for
+        // the remainder — never stretched, never resampled.
+        assert_eq!(mix_rings(&[vec![0.5, 0.5, 0.5], vec![0.5]]), vec![1.0, 0.5, 0.5]);
+    }
+
+    #[test]
+    fn mix_clamps_to_unit_range() {
+        assert_eq!(mix_rings(&[vec![0.75], vec![0.75]]), vec![1.0]);
+        assert_eq!(mix_rings(&[vec![-0.75], vec![-0.75]]), vec![-1.0]);
+    }
+
+    #[test]
+    fn mix_of_single_run_passes_through() {
+        assert_eq!(mix_rings(&[vec![0.25, -0.5]]), vec![0.25, -0.5]);
+    }
+
+    #[test]
+    fn mix_of_nothing_is_nothing() {
+        assert_eq!(mix_rings(&[]), Vec::<f32>::new());
+        assert_eq!(mix_rings(&[vec![], vec![]]), Vec::<f32>::new());
     }
 }

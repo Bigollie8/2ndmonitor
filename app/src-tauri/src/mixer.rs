@@ -276,30 +276,25 @@ pub fn default_endpoint_id() -> Result<String, String> {
     Err("default endpoint id is Windows-only".to_string())
 }
 
-/// PID of the first live session whose executable basename matches `exe`
-/// (lowercased comparison). `None` when the app isn't producing audio.
-#[cfg(not(target_os = "macos"))]
-pub fn find_pid_for_exe(exe: &str) -> Option<u32> {
-    let want = exe.to_lowercase();
-    sessions_snapshot()
-        .ok()?
-        .into_iter()
-        .find(|s| s.exe.as_deref().map(|e| e.to_lowercase()) == Some(want.clone()))
-        .map(|s| s.pid)
-}
-
 /// An app that currently owns a Core Audio *process object* — the macOS
-/// analogue of holding a Windows audio session, and the same signal
-/// `audio_source::decide` reads it as: "this app is available to capture right
-/// now". A process object appears when an app first touches the audio HAL and
-/// survives it pausing, which matches how the Windows side keeps non-expired
-/// sessions.
+/// analogue of holding a Windows audio session, and read as exactly the same
+/// signal: "this app is available to capture right now". A process object
+/// appears when an app first touches the audio HAL and survives it pausing,
+/// which matches how the Windows side keeps non-expired sessions.
+///
+/// Deliberately *not* sourced from a plain `NSWorkspace.runningApplications`
+/// scan. `audio::session_pairs` reads a pid here as "attachable right now",
+/// and a tap on a pid with no Core Audio process object fails — which would
+/// trip the sticky `supported` flag and stop the 2 s watcher from ever
+/// reattaching when the app does start playing. Filtering through the
+/// process-object list keeps "absent" meaning "not playing yet, keep
+/// watching", exactly as the Windows session snapshot does.
 #[cfg(target_os = "macos")]
 #[derive(Debug, Clone)]
 pub struct AudioApp {
     /// Lowercased bundle identifier (`com.spotify.client`). Plays exactly the
     /// role the lowercased exe basename plays on Windows: it is what
-    /// `SourceOption.exe` carries, what `Source::{Only,Except}.exe` stores, and
+    /// `SourceOption.exe` carries, what `Source::Apps.exes` stores, and
     /// therefore what the per-source sensitivity key is built from — so it must
     /// be normalized here, since bundle ids are *not* reliably lowercase
     /// (`com.apple.Music`).
@@ -309,31 +304,13 @@ pub struct AudioApp {
 }
 
 /// Apps with a Core Audio process object, deduped by bundle id. Drives both
-/// the source picker and `find_pid_for_exe` below, so the picker can never
-/// offer something the supervisor then fails to resolve.
+/// the source picker and `audio::session_pairs`, so the picker can never offer
+/// something the supervisor then fails to resolve.
 #[cfg(target_os = "macos")]
 pub fn audio_process_apps() -> Result<Vec<AudioApp>, String> {
     macimpl::audio_process_apps()
 }
 
-/// PID of the app whose bundle identifier matches `exe`, case-insensitively.
-/// `None` when the app isn't running or hasn't touched the audio HAL.
-///
-/// Deliberately *not* a plain `NSWorkspace.runningApplications` scan. `decide`
-/// reads a `Some` here as "attachable right now", and a tap on a pid with no
-/// Core Audio process object fails — which would trip the sticky `supported`
-/// flag and stop the 2 s watcher from ever reattaching when the app does start
-/// playing. Filtering through the process-object list keeps `None` meaning
-/// "not playing yet, keep watching", exactly as the Windows session lookup does.
-#[cfg(target_os = "macos")]
-pub fn find_pid_for_exe(exe: &str) -> Option<u32> {
-    let want = exe.to_lowercase();
-    audio_process_apps()
-        .ok()?
-        .into_iter()
-        .find(|a| a.bundle_id == want)
-        .map(|a| a.pid)
-}
 
 #[cfg(target_os = "windows")]
 mod winimpl {

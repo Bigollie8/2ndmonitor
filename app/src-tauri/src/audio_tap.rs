@@ -191,9 +191,19 @@ pub enum TapTarget {
     /// there is no separate "tap everything" constructor, and a tap excluding
     /// the empty set *is* the system mix.
     AllProcesses,
-    /// Only these processes.
+    /// Only these processes — one tap for the whole `Source::Apps` include
+    /// list. Core Audio mixes them for us, which is why macOS needs one tap
+    /// where Windows needs one process-loopback client per app.
     Only(Vec<i32>),
     /// Everything except these processes.
+    ///
+    /// NOT reachable from the product model: 0.6.6 replaced
+    /// `Source::{Only,Except}` with a strict include list, and `audio.rs`
+    /// never constructs this. It stays because it is this module's own
+    /// vocabulary — `AllProcesses` *is* `Except([])` at the Core Audio
+    /// layer (see `create_tap`) — and because the hardware tone test uses it
+    /// to prove the exclusion axis of the selector actually works. Do not
+    /// resurface it as a user-facing source without a product decision.
     Except(Vec<i32>),
 }
 

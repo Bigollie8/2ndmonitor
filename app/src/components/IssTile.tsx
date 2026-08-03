@@ -1,18 +1,28 @@
-import React from 'react';
+import React, { useEffect, useRef } from 'react';
 import { HFTile } from './tiles';
+import { MapView, RecenterButton, type ProjectFn } from './map/MapView';
+import { useMapView } from './map/useMapView';
 import { distanceKm, fetchIssPosition } from '../state/iss';
 import { usePoll } from '../state/usePoll';
 import type { Density, WeatherLocation } from '../types';
 
 const REFRESH_MS = 15 * 1000;
+const MAP_MIN_ZOOM = 1;
+const MAP_MAX_ZOOM = 6;
+const MAP_DEFAULT_ZOOM = 2;
+/** Ground-track points kept (spec: trail grows from positions accumulated
+ *  while polling — no orbit propagation). 240 × 15s ≈ the last hour. */
+const TRAIL_MAX = 240;
 
 export interface IssTileProps {
   density: Density;
   accent: string;
   location: WeatherLocation;
+  config: Record<string, unknown> | undefined;
+  setConfig: (next: Record<string, unknown>) => void;
 }
 
-export function IssTile({ density, accent, location }: IssTileProps) {
+export function IssTile({ density, accent, location, config, setConfig }: IssTileProps) {
   const { data: pos } = usePoll(
     async () => {
       // fetchIssPosition returns null on failure; usePoll drives backoff off
@@ -26,8 +36,70 @@ export function IssTile({ density, accent, location }: IssTileProps) {
     [],
   );
 
+  // Ground track accumulated while the tile runs. A ref, not state — the tile
+  // re-renders on every poll anyway, and the overlay reads it at draw time.
+  const trailRef = useRef<Array<{ lat: number; lon: number }>>([]);
+  useEffect(() => {
+    if (!pos) return;
+    const trail = trailRef.current;
+    const last = trail[trail.length - 1];
+    if (last && last.lat === pos.lat && last.lon === pos.lon) return;
+    trail.push({ lat: pos.lat, lon: pos.lon });
+    if (trail.length > TRAIL_MAX) trail.shift();
+  }, [pos]);
+
   const distance = pos ? distanceKm(pos.lat, pos.lon, location.lat, location.lon) : null;
   const inEclipse = pos?.visibility === 'eclipsed';
+
+  // Anchor is the live ISS position — with no user override the view follows
+  // the station across the world map.
+  const { view, overridden, onViewChange, recenter } = useMapView({
+    anchor: pos ? { lat: pos.lat, lon: pos.lon } : { lat: 0, lon: 0 },
+    defaultZoom: MAP_DEFAULT_ZOOM,
+    minZoom: MAP_MIN_ZOOM,
+    maxZoom: MAP_MAX_ZOOM,
+    config,
+    setConfig,
+  });
+
+  const drawIss = (ctx: CanvasRenderingContext2D, projectPt: ProjectFn) => {
+    // Trail, oldest → newest, alpha ramping toward the head. Segments that
+    // jump the antimeridian are skipped (project takes the short way around,
+    // so a >180° lon jump would draw a line across the whole map).
+    const trail = trailRef.current;
+    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = accent;
+    for (let i = 1; i < trail.length; i++) {
+      const a = trail[i - 1];
+      const b = trail[i];
+      if (Math.abs(b.lon - a.lon) > 180) continue;
+      const pa = projectPt(a.lat, a.lon);
+      const pb = projectPt(b.lat, b.lon);
+      ctx.globalAlpha = 0.15 + 0.6 * (i / trail.length);
+      ctx.beginPath();
+      ctx.moveTo(pa.x, pa.y);
+      ctx.lineTo(pb.x, pb.y);
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+    // User pin.
+    const home = projectPt(location.lat, location.lon);
+    ctx.fillStyle = 'rgba(255,255,255,0.7)';
+    ctx.beginPath();
+    ctx.arc(home.x, home.y, 3, 0, Math.PI * 2);
+    ctx.fill();
+    // ISS glyph at the current position.
+    if (pos) {
+      const pt = projectPt(pos.lat, pos.lon);
+      ctx.shadowColor = accent;
+      ctx.shadowBlur = 10;
+      ctx.fillStyle = accent;
+      ctx.beginPath();
+      ctx.arc(pt.x, pt.y, 5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.shadowBlur = 0;
+    }
+  };
 
   const headRight = (
     <span style={{
@@ -43,50 +115,19 @@ export function IssTile({ density, accent, location }: IssTileProps) {
         display: 'flex', flexDirection: 'column',
         overflow: 'hidden',
       }}>
-        {/* Equirectangular projection: lon -180..180 → 0..100% x, lat -90..90 → 0..100% y (inverted) */}
+        {/* World map with the accumulated ground track */}
         <div style={{
-          flex: 1, minHeight: 0, position: 'relative',
-          background: 'radial-gradient(ellipse at 30% 30%, rgba(96,165,250,0.10) 0%, rgba(8,9,12,0.8) 60%)',
+          flex: 1, minHeight: 0, position: 'relative', overflow: 'hidden',
           borderBottom: '1px solid rgba(255,255,255,0.05)',
         }}>
-          {/* Equator + prime meridian guides */}
-          <div style={{
-            position: 'absolute', left: 0, right: 0, top: '50%',
-            height: 1, background: 'rgba(255,255,255,0.06)',
-          }} />
-          <div style={{
-            position: 'absolute', top: 0, bottom: 0, left: '50%',
-            width: 1, background: 'rgba(255,255,255,0.06)',
-          }} />
-          {/* User pin */}
-          <div style={{
-            position: 'absolute',
-            left: `${(location.lon + 180) / 360 * 100}%`,
-            top: `${(90 - location.lat) / 180 * 100}%`,
-            width: 8, height: 8, borderRadius: 999,
-            background: 'rgba(255,255,255,0.7)',
-            transform: 'translate(-50%, -50%)',
-            boxShadow: '0 0 6px rgba(255,255,255,0.6)',
-          }} title={location.label} />
-          {/* ISS pin */}
-          {pos && (
-            <div style={{
-              position: 'absolute',
-              left: `${(pos.lon + 180) / 360 * 100}%`,
-              top: `${(90 - pos.lat) / 180 * 100}%`,
-              width: 12, height: 12, borderRadius: 999,
-              background: accent,
-              transform: 'translate(-50%, -50%)',
-              boxShadow: `0 0 12px ${accent}, 0 0 4px ${accent}`,
-              transition: 'left 0.5s linear, top 0.5s linear',
-            }}>
-              <div style={{
-                position: 'absolute', inset: -6,
-                borderRadius: 999, border: `2px solid ${accent}55`,
-                animation: 'iss-pulse 2s ease-out infinite',
-              }} />
-            </div>
-          )}
+          <MapView
+            view={view}
+            onViewChange={onViewChange}
+            minZoom={MAP_MIN_ZOOM}
+            maxZoom={MAP_MAX_ZOOM}
+            overlay={drawIss}
+          />
+          {overridden && <RecenterButton accent={accent} onClick={recenter} />}
         </div>
         {/* Stats row */}
         <div style={{
@@ -110,7 +151,6 @@ export function IssTile({ density, accent, location }: IssTileProps) {
           )}
         </div>
       </div>
-      <style>{`@keyframes iss-pulse { 0% { transform: scale(1); opacity: 1; } 100% { transform: scale(2.4); opacity: 0; } }`}</style>
     </HFTile>
   );
 }

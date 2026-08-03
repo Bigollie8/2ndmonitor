@@ -489,7 +489,7 @@ function PresetPicker({ library, failures, currentKey, accent, onPick, onClose, 
         onClick={(e) => e.stopPropagation()}
         style={{
           position: 'absolute', right: 10, bottom: 40, width: 300, maxHeight: '70%',
-          overflowY: 'auto', background: 'rgba(10,11,16,0.96)',
+          overflowY: 'auto', background: 'var(--surface-overlay, rgba(10,11,16,0.96))',
           border: '1px solid rgba(255,255,255,0.1)', borderRadius: 10,
           boxShadow: '0 16px 48px rgba(0,0,0,0.6)',
         }}

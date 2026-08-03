@@ -28,10 +28,6 @@ pub struct ProcessCapture {
 }
 
 impl ProcessCapture {
-    pub fn sample_rate(&self) -> u32 {
-        CAPTURE_SAMPLE_RATE
-    }
-
     /// False once the pump loop has exited, for *any* reason. A process
     /// loopback client is invalidated by an endpoint change just like a
     /// regular one (`AUDCLNT_E_DEVICE_INVALIDATED`), and the pump returns on

@@ -3,7 +3,8 @@ import React, { useCallback, useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { VizMode, AccentTheme, Density, WeatherLocation } from '../types';
 import type { AudioSource } from '../state/audioSource';
-import { effectiveSensitivity, parseSourceKey, sourceKey } from '../state/audioSource';
+import { effectiveSensitivity, sourceKey } from '../state/audioSource';
+import { AudioSourcePicker } from './AudioSourcePicker';
 import { useAudioSource } from '../state/useAudioSource';
 import type { AudioSourceState, SourceOption } from '../state/useAudioSource';
 import type { GeocodeResult } from '../state/weatherLocation';
@@ -60,6 +61,10 @@ export interface SettingsValues {
   videoEnabled: boolean;
   videoBookmarks: Bookmark[];
   closeToTray: boolean;
+  /** Liquid glass — translucent surfaces + acrylic. See state/theme.ts. */
+  glassEnabled: boolean;
+  /** 0–100; 0 = clear glass, 100 = most opaque frosted. */
+  glassStrength: number;
   /** The catalog removal list — see state/removedContent.ts. Needed here
    *  because the Visualizer pane's style dropdown is a picker. */
   catalogRemoved: string[];
@@ -142,18 +147,6 @@ export function SettingsWindow({
   const [query, setQuery] = useState('');
   const { styles: vizStyles } = useVizStyles(v.catalogRemoved);
   const { options: sourceOptions, status: audioSourceStatus } = useAudioSource();
-  // `audio_sources_list` only returns apps currently holding an audio
-  // session, so whatever is presently requested (even a quit app the
-  // visualizer is waiting to reattach to) may be missing from it. Union it
-  // in so the <select> always has a matching option — otherwise its value
-  // matches nothing, `selectedIndex` lands on -1, and the control renders
-  // blank. Falls back to the exe as its own label, same as the status line
-  // below and `describeAudioSource` do for an app with no known name.
-  const requestedExe = v.vizAudioSource.mode !== 'mix' ? v.vizAudioSource.exe : null;
-  const sourceOptionsWithRequested = requestedExe && !sourceOptions.some((o) => o.exe === requestedExe)
-    ? [...sourceOptions, { exe: requestedExe, name: requestedExe, icon: null }]
-    : sourceOptions;
-
   const panes: PaneDef[] = [
     {
       id: 'visualizer', icon: '◢', title: 'Visualizer',
@@ -180,25 +173,20 @@ export function SettingsWindow({
         },
         {
           id: 'viz-audio-source', label: 'Audio source',
-          hint: 'Which audio the visualizer reacts to',
+          hint: 'Which apps the visualizer reacts to — up to 4, or the whole mix',
           control: (
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
-              <SettingsSelect<string>
-                value={sourceKey(v.vizAudioSource)}
-                options={[
-                  { value: 'mix', label: 'All system audio' },
-                  // Not gated on `supported`: an explicit pick here is exactly
-                  // what re-arms it on the Rust side (`CaptureCmd::SetSource`),
-                  // so disabling these on a sticky `supported: false` would
-                  // remove the only way to ask again.
-                  ...sourceOptionsWithRequested.flatMap((o) => [
-                    { value: `only:${o.exe}`, label: `Only ${o.name}` },
-                    { value: `except:${o.exe}`, label: `Everything except ${o.name}` },
-                  ]),
-                ]}
-                onChange={(key) => set('vizAudioSource', parseSourceKey(key))}
+              {/* Not gated on `supported`: an explicit pick is exactly what
+                  re-arms per-app capture on the Rust side, so disabling the
+                  picker on a sticky `supported: false` would remove the only
+                  way to ask again. */}
+              <AudioSourcePicker
+                value={v.vizAudioSource}
+                options={sourceOptions}
+                onChange={(s) => set('vizAudioSource', s)}
+                accent={accent}
               />
-              <AudioSourceStatusLine status={audioSourceStatus} options={sourceOptionsWithRequested} />
+              <AudioSourceStatusLine status={audioSourceStatus} options={sourceOptions} />
             </div>
           ),
         },
@@ -290,6 +278,23 @@ export function SettingsWindow({
             />
           ),
         },
+        {
+          id: 'appearance-glass', label: 'Liquid glass',
+          hint: 'See the desktop through the app (Windows acrylic). Adds GPU cost on top of the visualizer and can stutter while dragging the window.',
+          control: <Toggle checked={v.glassEnabled} onChange={(c) => set('glassEnabled', c)} accent={accent} />,
+        },
+        {
+          id: 'appearance-glass-strength', label: 'Glass strength',
+          hint: '0 = clear glass, 100 = opaque frosted',
+          control: (
+            <SliderControl
+              value={v.glassStrength} min={0} max={100} step={1}
+              format={(x) => `${Math.round(x)}`}
+              accent={accent}
+              onChange={(x) => set('glassStrength', x)}
+            />
+          ),
+        },
       ],
     },
     {
@@ -342,7 +347,7 @@ export function SettingsWindow({
           control: (
             <Segmented<PerfMode>
               value={v.perfMode}
-              options={['uncapped', 'high', 'balanced', 'battery']}
+              options={['battery', 'balanced', 'high', 'uncapped']}
               onChange={(x) => set('perfMode', x)}
               accent={accent}
             />
@@ -444,7 +449,7 @@ export function SettingsWindow({
       <div style={{
         width: 820, maxWidth: '90%', maxHeight: '85vh',
         display: 'flex', flexDirection: 'column',
-        background: 'rgba(20,22,28,0.98)',
+        background: 'var(--surface-overlay, rgba(20,22,28,0.98))',
         border: '1px solid rgba(255,255,255,0.08)',
         borderRadius: 12,
         boxShadow: '0 24px 60px rgba(0,0,0,0.5)',
@@ -698,14 +703,16 @@ function AudioSourceStatusLine({ status, options }: {
       </div>
     );
   }
-  if (status.requested.mode !== 'mix' && status.active === 'mix') {
-    const exe = status.requested.exe;
-    const name = options.find((o) => o.exe === exe)?.name ?? exe;
-    return (
-      <div style={{ fontSize: 10.5, color: 'rgba(255,255,255,0.4)', textAlign: 'right' }}>
-        {name} isn't playing — using all system audio
-      </div>
-    );
+  if (status.requested.mode === 'apps') {
+    const missing = status.requested.exes.filter((exe) => !status.live_exes.includes(exe));
+    if (missing.length > 0) {
+      const names = missing.map((exe) => options.find((o) => o.exe === exe)?.name ?? exe).join(', ');
+      return (
+        <div style={{ fontSize: 10.5, color: 'rgba(255,255,255,0.4)', textAlign: 'right' }}>
+          {names} {missing.length === 1 ? "isn't" : "aren't"} playing — contributing silence until it starts
+        </div>
+      );
+    }
   }
   return null;
 }

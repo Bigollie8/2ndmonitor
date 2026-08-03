@@ -59,6 +59,8 @@ export interface SysmonSample {
   net_sub: string;
   top: { name: string; cpu: number }[];
   app: AppMetrics | null;
+  /** Per-part temperatures (CPU/GPU/Board/drives). null when no sensor source. */
+  temps: { label: string; celsius: number }[] | null;
 }
 
 export interface SysmonHistory {

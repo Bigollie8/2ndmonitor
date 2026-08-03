@@ -61,7 +61,7 @@ export function ProfileSwitcher({
     }}>
       <div onClick={(e) => e.stopPropagation()} style={{
         width: 1600, padding: 48, borderRadius: 18,
-        background: 'rgba(15,17,22,0.95)',
+        background: 'var(--surface-overlay, rgba(15,17,22,0.95))',
         border: '1px solid rgba(255,255,255,0.08)',
         boxShadow: '0 40px 100px rgba(0,0,0,0.6)',
         maxHeight: 'calc(100vh - 120px)', overflow: 'auto',

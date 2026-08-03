@@ -98,7 +98,7 @@ export function BrowserPlayer({ enabled, currentUrl, bookmarks, onNavigate, onEx
   });
 
   return (
-    <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', background: '#06070a' }}>
+    <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', background: 'var(--surface-canvas, #06070a)' }}>
       <ChromeBar onHome={() => onNavigate(null)} onExit={onExit} />
       <div ref={bodyRef} style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
         {currentUrl === null && (
@@ -169,7 +169,7 @@ function ChromeBar({ onHome, onExit }: {
     <div style={{
       height: 36, flexShrink: 0,
       borderBottom: '1px solid rgba(255,255,255,0.06)',
-      background: 'rgba(8,9,12,0.85)', backdropFilter: 'blur(10px)',
+      background: 'var(--surface-chrome, rgba(8,9,12,0.85))', backdropFilter: 'blur(10px)',
       display: 'flex', alignItems: 'center', gap: 6, padding: '0 10px',
     }}>
       <button onClick={onHome} style={btn} title="Home">🏠</button>

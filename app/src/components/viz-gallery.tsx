@@ -61,7 +61,7 @@ export function VizGallery({
   return (
     <div onClick={onClose} style={{
       position: 'absolute', inset: 0, zIndex: 90,
-      background: 'rgba(6,7,10,0.92)', backdropFilter: 'blur(20px)',
+      background: 'var(--surface-overlay, rgba(6,7,10,0.92))', backdropFilter: 'blur(20px)',
       overflowY: 'auto',
     }}>
       <div onClick={(e) => e.stopPropagation()} style={{
@@ -70,7 +70,7 @@ export function VizGallery({
         <div style={{
           position: 'sticky', top: 0, zIndex: 5,
           padding: '20px 0', marginBottom: 20,
-          background: 'rgba(6,7,10,0.85)', backdropFilter: 'blur(20px)',
+          background: 'var(--surface-chrome, rgba(6,7,10,0.85))', backdropFilter: 'blur(20px)',
           borderBottom: '1px solid rgba(255,255,255,0.05)',
           display: 'flex', alignItems: 'center', gap: 24,
         }}>

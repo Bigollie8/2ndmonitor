@@ -31,10 +31,11 @@ import {
 import { TRACKS, ACCENT_PALETTES } from './data';
 import { useTweaks } from './state/useTweaks';
 import type { AudioSource } from './state/audioSource';
-import { describeAudioSource, effectiveSensitivity, migrateSensitivity } from './state/audioSource';
+import { describeAudioSource, effectiveSensitivity, migrateAudioSource, migrateSensitivity } from './state/audioSource';
 import { useAudioSource } from './state/useAudioSource';
 import { UpdateToast } from './components/UpdateToast';
 import { useSysmon, useNowPlaying, useSpectrumRef } from './state/tauri';
+import { applySurfaces, computeSurfaces, glassTintAlpha, DEFAULT_GLASS_STRENGTH } from './state/theme';
 import { setWindowHidden } from './state/framePace';
 import { VizHero, setVizDprCap, setVizMaxFps, getVizMaxFps } from './components/viz';
 import * as perfDebug from './perf/debug';
@@ -107,8 +108,8 @@ interface TweakState extends Record<string, unknown> {
   accentTheme: AccentTheme;
   density: Density;
   vizArtBg: boolean;
-  /** What the visualizer listens to — the whole system mix, or one app
-   *  included/excluded. See state/audioSource.ts. */
+  /** What the visualizer listens to — the whole system mix, or a strict
+   *  include list of up to MAX_AUDIO_APPS apps. See state/audioSource.ts. */
   vizAudioSource: AudioSource;
   /** Per-source input gain, keyed by `sourceKey(vizAudioSource)`. Replaces
    *  the old single `vizSensitivity` scalar (migrated in migrateTweaks
@@ -138,6 +139,12 @@ interface TweakState extends Record<string, unknown> {
   /** When true, the window close button hides to the system tray instead of
    *  quitting the app. Quit is then only available from the tray menu. */
   closeToTray: boolean;
+  /** Liquid glass: translucent surfaces + Windows acrylic behind the
+   *  transparent window. Off by default — glass off must render
+   *  pixel-identical to pre-0.6.6 (see state/theme.ts). */
+  glassEnabled: boolean;
+  /** 0–100. 0 = clear glass (acrylic cleared), 100 = most opaque frosted. */
+  glassStrength: number;
   todos: Todo[];
   weatherLocation: WeatherLocation;
   pomodoro: { state: PomodoroState; settings: PomodoroSettings };
@@ -182,6 +189,8 @@ const TWEAK_DEFAULTS: TweakState = {
   perfDebug: false,
   audioDebug: false,
   closeToTray: true,
+  glassEnabled: false,
+  glassStrength: DEFAULT_GLASS_STRENGTH,
   todos: [],
   weatherLocation: { label: 'Knoxville, TN', lat: 35.9606, lon: -83.9207 },
   pomodoro: {
@@ -221,6 +230,17 @@ function migrateTweaks(loaded: Record<string, unknown>): Record<string, unknown>
   if (loaded.vizSensitivityBySource === undefined && loaded.vizSensitivity !== undefined) {
     loaded.vizSensitivityBySource = migrateSensitivity(loaded.vizSensitivity);
     delete loaded.vizSensitivity;
+  }
+  // Audio multiselect (0.6.6): the 0.6.4 single-app source becomes a strict
+  // include list. `only:x` → `apps:[x]`; `except:x` → `mix` (no equivalent —
+  // the changelog notes the downgrade). Saved `only:` sensitivity keys are
+  // respelled `apps:` inside migrateSensitivity. Both migrations are
+  // idempotent, so re-running on already-migrated state is a no-op.
+  if (loaded.vizAudioSource !== undefined) {
+    loaded.vizAudioSource = migrateAudioSource(loaded.vizAudioSource);
+  }
+  if (loaded.vizSensitivityBySource !== undefined) {
+    loaded.vizSensitivityBySource = migrateSensitivity(loaded.vizSensitivityBySource);
   }
   const profilesField = loaded.profiles;
   // True first launch: nothing was loaded from disk at all (no profiles, no
@@ -474,6 +494,28 @@ export default function App() {
       } catch { /* browser dev — no tauri */ }
     })();
   }, [t.closeToTray]);
+
+  // Liquid glass: stamp the surface tokens on :root immediately (cheap — this
+  // is what makes the strength slider feel live) and mirror the acrylic state
+  // to the OS, debounced so a slider drag doesn't spam DWM once per
+  // pointermove. Runs on mount too, so a persisted glass-on state is applied
+  // right after tweaks hydrate (there is a brief opaque first paint before
+  // hydration flips glassEnabled — acceptable, it matches today's boot frame).
+  useEffect(() => {
+    applySurfaces(computeSurfaces(t.glassEnabled, t.glassStrength));
+    const timer = setTimeout(() => {
+      void (async () => {
+        try {
+          const { invoke } = await import('@tauri-apps/api/core');
+          await invoke('set_glass', {
+            enabled: t.glassEnabled,
+            tintAlpha: glassTintAlpha(t.glassStrength),
+          });
+        } catch { /* browser dev — no tauri */ }
+      })();
+    }, 150);
+    return () => clearTimeout(timer);
+  }, [t.glassEnabled, t.glassStrength]);
 
   // Push the chosen audio source to Rust whenever it changes. The tweak
   // store stays the single source of truth; Rust is a follower here — the
@@ -864,6 +906,10 @@ export default function App() {
             density={t.density}
             accent={accent}
             location={t.weatherLocation}
+            config={instance.config as Record<string, unknown> | undefined}
+            setConfig={(next) => updateActiveOrientation({
+              tiles: updateInstance(activeOrientation.tiles, instance.instanceId, { config: next }),
+            })}
           />
         );
       case 'pomodoro':
@@ -959,15 +1005,45 @@ export default function App() {
       case 'onThisDay':
         return <OnThisDayTile density={t.density} accent={accent} />;
       case 'iss':
-        return <IssTile density={t.density} accent={accent} location={t.weatherLocation} />;
+        return (
+          <IssTile
+            density={t.density}
+            accent={accent}
+            location={t.weatherLocation}
+            config={instance.config as Record<string, unknown> | undefined}
+            setConfig={(next) => updateActiveOrientation({
+              tiles: updateInstance(activeOrientation.tiles, instance.instanceId, { config: next }),
+            })}
+          />
+        );
       case 'pollen':
         return <PollenTile density={t.density} accent={accent} editing={editMode} location={t.weatherLocation} />;
       case 'solarFlare':
         return <SolarFlareTile density={t.density} accent={accent} />;
       case 'lightning':
-        return <LightningTile density={t.density} accent={accent} location={t.weatherLocation} />;
+        return (
+          <LightningTile
+            density={t.density}
+            accent={accent}
+            location={t.weatherLocation}
+            config={instance.config as Record<string, unknown> | undefined}
+            setConfig={(next) => updateActiveOrientation({
+              tiles: updateInstance(activeOrientation.tiles, instance.instanceId, { config: next }),
+            })}
+          />
+        );
       case 'aircraft':
-        return <AircraftTile density={t.density} accent={accent} location={t.weatherLocation} />;
+        return (
+          <AircraftTile
+            density={t.density}
+            accent={accent}
+            location={t.weatherLocation}
+            config={instance.config as Record<string, unknown> | undefined}
+            setConfig={(next) => updateActiveOrientation({
+              tiles: updateInstance(activeOrientation.tiles, instance.instanceId, { config: next }),
+            })}
+          />
+        );
       case 'activeWindow':
         return <ActiveWindowTile density={t.density} accent={accent} />;
       case 'docker':
@@ -1020,10 +1096,14 @@ export default function App() {
   };
 
   return (
-    <div style={{ width: '100vw', height: '100vh', background: '#000', overflow: 'hidden' }}>
+    <div style={{ width: '100vw', height: '100vh', background: 'transparent', overflow: 'hidden' }}>
+      {/* ^ was '#000' — always covered by the opaque canvas below when glass
+          is off, so 'transparent' is pixel-identical; with glass on it must
+          not block the desktop. The canvas div is the ONE layer that carries
+          --surface-canvas (stacking it twice would double-darken the glass). */}
       <div data-canvas-root style={{
         width: '100%', height: '100%',
-        background: '#06070a', position: 'relative', overflow: 'hidden',
+        background: 'var(--surface-canvas, #06070a)', position: 'relative', overflow: 'hidden',
       }}>
         <TopChrome
           accent={accent} editMode={editMode} setEditMode={setEditMode}
@@ -1265,7 +1345,7 @@ function TopChrome({ accent, editMode, setEditMode, profiles, activeProfileId, s
   return (
     <div style={{
       position: 'absolute', top: 0, left: 0, right: 0, height: 56,
-      background: 'rgba(8,9,12,0.85)', backdropFilter: 'blur(10px)',
+      background: 'var(--surface-chrome, rgba(8,9,12,0.85))', backdropFilter: 'blur(10px)',
       borderBottom: '1px solid rgba(255,255,255,0.05)',
       display: 'flex', alignItems: 'center', padding: '0 18px', gap: 16, zIndex: 10,
     }}>
@@ -1321,7 +1401,7 @@ function TopChrome({ accent, editMode, setEditMode, profiles, activeProfileId, s
         {menuOpen && (
           <div style={{
             position: 'absolute', top: 'calc(100% + 6px)', right: 0, minWidth: 190,
-            background: 'rgba(20,22,28,0.96)', border: '1px solid rgba(255,255,255,0.08)',
+            background: 'var(--surface-overlay, rgba(20,22,28,0.96))', border: '1px solid rgba(255,255,255,0.08)',
             borderRadius: 8, padding: 4, zIndex: 30,
             boxShadow: '0 12px 40px rgba(0,0,0,0.5)',
           }}>
@@ -1371,7 +1451,7 @@ function ThemeToast({ accent, title }: { accent: string; title: string }) {
       position: 'absolute', top: 64, left: '50%', transform: 'translateX(-50%)',
       zIndex: 11, pointerEvents: 'none',
       fontSize: 10, color: accent, padding: '4px 10px',
-      background: 'rgba(8,9,12,0.85)', backdropFilter: 'blur(8px)',
+      background: 'var(--surface-chrome, rgba(8,9,12,0.85))', backdropFilter: 'blur(8px)',
       borderRadius: 5, border: `1px solid ${accent}44`,
       boxShadow: `0 4px 18px rgba(0,0,0,0.4), 0 0 12px ${accent}22`,
       letterSpacing: '.05em', whiteSpace: 'nowrap',
@@ -1407,7 +1487,7 @@ function ShortcutsOverlay({ accent, onClose }: { accent: string; onClose: () => 
         onClick={(e) => e.stopPropagation()}
         style={{
           width: 420, maxWidth: 'calc(100vw - 48px)',
-          background: 'rgba(20,22,28,0.96)', border: '1px solid rgba(255,255,255,0.08)',
+          background: 'var(--surface-overlay, rgba(20,22,28,0.96))', border: '1px solid rgba(255,255,255,0.08)',
           borderRadius: 12, padding: '18px 20px 10px',
           boxShadow: '0 24px 80px rgba(0,0,0,0.6)',
         }}
@@ -1483,9 +1563,10 @@ function BottomStatus({
   const sysmon = useSysmon();
   const fps = useFrameRate();
   // `audioSource` (the tweak) is the requested source and updates the moment
-  // the user picks one — no round trip needed. `status.active` is the only
-  // thing that has to come from Rust: whether that request is actually live
-  // right now (the app might not be playing anything yet).
+  // the user picks one — no round trip needed. `status.live_exes` is the
+  // only thing that has to come from Rust: which of the requested app(s), if
+  // any, actually have a live capture right now (an app might be requested
+  // but not yet playing anything).
   const { status: audioSourceStatus, options: audioSourceOptions, refresh: refreshAudioSourceOptions } = useAudioSource();
   // `options` is fetched once on mount, and this bar never unmounts — left
   // alone, the friendly-name list would be frozen at whatever was playing
@@ -1495,14 +1576,17 @@ function BottomStatus({
   // might have become resolvable, and it only fires on real transitions
   // (a fresh app attaching, or a reattach after one quits/relaunches) —
   // not a polling loop.
+  const liveExesKey = audioSourceStatus ? audioSourceStatus.live_exes.join('+') : '';
   useEffect(() => {
-    if (audioSourceStatus?.active_exe) refreshAudioSourceOptions();
-  }, [audioSourceStatus?.active_exe, refreshAudioSourceOptions]);
-  const audioSourceWaiting = audioSource.mode !== 'mix' && audioSourceStatus?.active === 'mix';
+    if (liveExesKey) refreshAudioSourceOptions();
+  }, [liveExesKey, refreshAudioSourceOptions]);
+  // "Spotify + Discord", "Spotify (not running)", "all system audio" — the
+  // literal truth, no "(waiting)" states: there is no fallback to wait out.
   const audioSourceText = describeAudioSource(
     audioSource,
     (exe) => audioSourceOptions.find((o) => o.exe === exe)?.name ?? exe,
-  ) + (audioSourceWaiting ? ' (waiting)' : '');
+    audioSourceStatus ? audioSourceStatus.live_exes : null,
+  );
   const app = sysmon.latest.app;
   // GPU spike feed for perf-debug snapshots rides along with the only
   // remaining chrome-level sysmon subscriber.
@@ -1522,7 +1606,7 @@ function BottomStatus({
   return (
     <div style={{
       position: 'absolute', bottom: 0, left: 0, right: 0, height: 32,
-      background: 'rgba(8,9,12,0.85)', backdropFilter: 'blur(10px)',
+      background: 'var(--surface-chrome, rgba(8,9,12,0.85))', backdropFilter: 'blur(10px)',
       borderTop: '1px solid rgba(255,255,255,0.05)',
       display: 'flex', alignItems: 'center', padding: '0 18px', gap: 18, zIndex: 10,
       fontSize: 10.5, color: 'rgba(255,255,255,0.45)', fontFamily: '"JetBrains Mono", ui-monospace, monospace',
