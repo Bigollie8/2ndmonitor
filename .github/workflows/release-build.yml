@@ -30,12 +30,27 @@
 #     "darwin-universal" is kept alongside purely for human readers.
 #   * A failure on one leg must not suppress the OTHER platform's entry. The
 #     job runs whether or not `build` succeeded and composes the platform map
-#     from whichever .sig files actually made it onto the release: a missing
-#     platform is a warning and an omission, an ambiguous match is still a
-#     hard error, and only an empty map fails the job. A manifest with one
-#     working platform beats no manifest at all — without this, a transient
-#     macOS toolchain error would 404 every existing *Windows* user's update
-#     check.
+#     from whichever .sig files actually made it onto the release. A manifest
+#     with one working platform beats no manifest at all — without this, a
+#     transient macOS toolchain error would 404 every existing *Windows*
+#     user's update check.
+#
+#     But "missing platform" is only tolerable when that platform's leg is
+#     KNOWN to have failed, which the leg itself reports by uploading a
+#     `leg-<platform>` marker artifact as its last step. A leg that SUCCEEDED
+#     and still produced no matching .sig means our glob has drifted from what
+#     the bundler names the updater artifact, and silently omitting the
+#     platform then strands every one of its existing clients on their
+#     installed version with a green pipeline and no other signal. That is a
+#     hard error. (`needs.build.result` cannot express this: a matrix
+#     collapses to one result, so a macOS failure would mask a Windows drift.)
+#     Under tauri-action's own includeUpdaterJson the filename could not
+#     drift, because it generated the manifest from the artifact it had just
+#     built; splitting the manifest out is what created this exposure.
+#
+#     So: ambiguous match => hard error; zero matches on a successful leg =>
+#     hard error; zero matches on a failed leg => warn and omit; empty map =>
+#     hard error.
 #
 # Coexists with announce-release.yml on the same tag: this one publishes the
 # artifacts, that one posts to Discord. First live run: the v0.5.1 tag —
@@ -129,6 +144,35 @@ jobs:
             exit 1
           fi
 
+      # Proof that THIS leg completed every step above, including the upload.
+      # publish-manifest needs it to tell two cases apart that look identical
+      # from the release's asset list:
+      #
+      #   leg failed, no .sig        -> already reported by the failed job;
+      #                                 omit the platform and warn.
+      #   leg SUCCEEDED, no .sig     -> our glob no longer matches what the
+      #                                 bundler names its updater artifact.
+      #                                 Nothing else reports this, and the
+      #                                 result is a manifest that silently
+      #                                 strands every existing client on that
+      #                                 platform. Hard error.
+      #
+      # `needs.build.result` cannot make that distinction: a matrix collapses
+      # to ONE result, so a macOS failure would mask a Windows filename drift.
+      # A step is skipped once an earlier step in the job fails, so reaching
+      # this one is itself the proof — there is no `if:` to get wrong.
+      - name: Record a successful leg
+        shell: bash
+        run: |
+          mkdir -p leg
+          echo "${{ matrix.platform }}" > leg/ok
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: leg-${{ matrix.platform }}
+          path: leg/ok
+          retention-days: 1
+
   publish-manifest:
     needs: build
     # Runs even when a leg failed (fail-fast is off, so the other leg still
@@ -140,6 +184,15 @@ jobs:
     permissions:
       contents: write
     steps:
+      # Which legs actually finished. A leg that failed uploaded no marker.
+      # No `name:` filter, so zero matches is a warning here, not a failure —
+      # both legs failing is handled downstream by the empty-map check.
+      - name: Collect successful-leg markers
+        uses: actions/download-artifact@v4
+        with:
+          path: legs
+          pattern: leg-*
+
       # No checkout needed: this job only talks to the GitHub Release API via
       # `gh`/`jq`, both preinstalled on the runner image.
       - name: Compose and publish merged updater manifest
@@ -184,6 +237,16 @@ jobs:
             exit 1
           fi
 
+          # Did each leg finish? Written as an artifact by the build job's last
+          # step, so its presence means that platform built AND uploaded. `if`
+          # blocks rather than `[ -f x ] && flag=true`, which would trip the
+          # `set -e` above when the file is absent.
+          win_built=false
+          mac_built=false
+          if [ -f legs/leg-windows-latest/ok ]; then win_built=true; fi
+          if [ -f legs/leg-macos-latest/ok ]; then mac_built=true; fi
+          echo "build legs: windows=${win_built} macos=${mac_built}"
+
           version="${TAG#v}"
           pub_date=$(date -u +"%Y-%m-%dT%H:%M:%S.%3NZ")
           base_url="https://github.com/${GH_REPO}/releases/download/${TAG}"
@@ -196,8 +259,11 @@ jobs:
             platforms=$(jq -n --argjson p "$platforms" \
               --arg sig "$win_sig" --arg url "${base_url}/${win_asset}" \
               '$p + { "windows-x86_64": { signature: $sig, url: $url } }')
+          elif [ "$win_built" = true ]; then
+            echo "::error::the Windows build leg SUCCEEDED but no *-setup.exe.sig asset is on release $TAG. The updater artifact's filename has drifted from this glob (a productName change, a bundler rename, or createUpdaterArtifacts being turned off). Refusing to publish a latest.json without windows-x86_64: every existing Windows client's update check would die with TargetsNotFound([\"windows-x86_64\"])."
+            exit 1
           else
-            echo "::warning::no Windows updater artifact on release $TAG — omitting windows-x86_64 from latest.json. Windows clients will not see this version as an update."
+            echo "::warning::no Windows updater artifact on release $TAG and the Windows leg did not finish — omitting windows-x86_64 from latest.json. Windows clients will not see this version as an update."
           fi
 
           if [ "${#mac_matches[@]}" -eq 1 ]; then
@@ -215,8 +281,11 @@ jobs:
                  "darwin-x86_64":   { signature: $sig, url: $url },
                  "darwin-universal": { signature: $sig, url: $url }
                }')
+          elif [ "$mac_built" = true ]; then
+            echo "::error::the macOS build leg SUCCEEDED but no *.app.tar.gz.sig asset is on release $TAG. The updater artifact's filename has drifted from this glob. Refusing to publish a latest.json without the darwin-* entries: every existing Mac client's update check would die with TargetsNotFound([\"darwin-aarch64\"])."
+            exit 1
           else
-            echo "::warning::no macOS updater artifact on release $TAG — omitting the darwin-* entries from latest.json. Mac clients will not see this version as an update."
+            echo "::warning::no macOS updater artifact on release $TAG and the macOS leg did not finish — omitting the darwin-* entries from latest.json. Mac clients will not see this version as an update."
           fi
 
           if [ "$(jq -r 'length' <<<"$platforms")" -eq 0 ]; then
