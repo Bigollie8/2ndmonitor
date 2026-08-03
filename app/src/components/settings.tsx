@@ -8,6 +8,7 @@ import { AudioSourcePicker } from './AudioSourcePicker';
 import { useAudioSource } from '../state/useAudioSource';
 import type { AudioSourceState, SourceOption } from '../state/useAudioSource';
 import type { GeocodeResult } from '../state/weatherLocation';
+import { redactLocation, REDACTED_TEXT } from '../state/streamer';
 import { ACCENT_PALETTES } from '../data';
 import { useVizStyles } from './useVizStyles';
 import { defaultBookmarks, type Bookmark } from './browser-player';
@@ -347,6 +348,7 @@ export function SettingsWindow({
               current={v.weatherLocation}
               onPick={(loc) => set('weatherLocation', loc)}
               accent={accent}
+              streamer={v.streamerMode}
             />
           ),
         },
@@ -982,10 +984,12 @@ function MarketplaceServerEditor({ accent }: { accent: string }) {
 // Weather location search.
 // ---------------------------------------------------------------------------
 
-function SettingsWeatherSearch({ current, onPick, accent }: {
+function SettingsWeatherSearch({ current, onPick, accent, streamer }: {
   current: WeatherLocation;
   onPick: (loc: WeatherLocation) => void;
   accent: string;
+  /** While on: label masked, input read-only (0.7.1 §2). */
+  streamer: boolean;
 }) {
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<GeocodeResult[]>([]);
@@ -1014,11 +1018,12 @@ function SettingsWeatherSearch({ current, onPick, accent }: {
     <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
       <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.55)', display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
         <span>Current</span>
-        <span style={{ fontFamily: MONO, fontSize: 10.5, color: accent }}>{current.label}</span>
+        <span style={{ fontFamily: MONO, fontSize: 10.5, color: accent }}>{redactLocation(current.label, streamer)}</span>
       </div>
       <input
-        type="text" value={query}
-        onChange={(e) => setQuery(e.target.value)}
+        type="text" value={streamer ? REDACTED_TEXT : query}
+        readOnly={streamer}
+        onChange={(e) => { if (!streamer) setQuery(e.target.value); }}
         placeholder="Search a city…"
         spellCheck={false}
         style={{
@@ -1027,9 +1032,14 @@ function SettingsWeatherSearch({ current, onPick, accent }: {
           borderRadius: 6, color: '#fff', outline: 'none',
         }}
       />
+      {streamer && (
+        <div style={{ fontSize: 10.5, color: 'rgba(255,255,255,0.4)' }}>
+          Turn off streamer mode to edit your location.
+        </div>
+      )}
       {loading && <div style={{ fontSize: 10.5, color: 'rgba(255,255,255,0.4)' }}>Searching…</div>}
       {err && <div style={{ fontSize: 10.5, color: '#fb7185' }}>{err}</div>}
-      {results.length > 0 && (
+      {!streamer && results.length > 0 && (
         <div style={{
           display: 'flex', flexDirection: 'column', gap: 2,
           background: 'rgba(0,0,0,0.25)', border: HAIRLINE, borderRadius: 6, padding: 4,

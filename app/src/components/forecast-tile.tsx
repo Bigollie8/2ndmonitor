@@ -2,8 +2,9 @@ import { useEffect, useState } from 'react';
 import { HFTile } from './tiles';
 import type { Density } from '../types';
 import { type Weather, useWeather } from '../state/tauri';
+import { redactLocation } from '../state/streamer';
 
-export function NowAndForecastTile({ density, accent, accent2 }: { density: Density; accent: string; accent2: string }) {
+export function NowAndForecastTile({ density, accent, accent2, streamer = false }: { density: Density; accent: string; accent2: string; streamer?: boolean }) {
   const weather = useWeather();
   const [time, setTime] = useState(() => new Date());
   useEffect(() => {
@@ -23,7 +24,7 @@ export function NowAndForecastTile({ density, accent, accent2 }: { density: Dens
       density={density}
       headRight={
         <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)' }}>
-          {weather?.location ?? 'Knoxville, TN'}
+          {redactLocation(weather?.location ?? 'Knoxville, TN', streamer)}
         </span>
       }
       style={{ height: '100%' }}

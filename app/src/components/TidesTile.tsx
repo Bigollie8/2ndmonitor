@@ -8,6 +8,7 @@ import {
 } from '../state/tides';
 import { usePoll } from '../state/usePoll';
 import type { Density } from '../types';
+import { redactLocation } from '../state/streamer';
 
 const REFRESH_MS = 30 * 60 * 1000; // tides are predicted, not live — half-hour refresh is plenty
 
@@ -17,9 +18,11 @@ export interface TidesTileProps {
   editing: boolean;
   config: Record<string, unknown> | undefined;
   setConfig: (next: Record<string, unknown>) => void;
+  /** Streamer mode (0.7.1 §2): masks the NOAA station label/id. */
+  streamer?: boolean;
 }
 
-export function TidesTile({ density, accent, editing, config, setConfig }: TidesTileProps) {
+export function TidesTile({ density, accent, editing, config, setConfig, streamer = false }: TidesTileProps) {
   const parsed = useMemo(() => parseTidesConfig(config), [config]);
   const [now, setNow] = useState<number>(() => Date.now());
 
@@ -58,7 +61,7 @@ export function TidesTile({ density, accent, editing, config, setConfig }: Tides
       <span style={{
         fontSize: 10, color: 'rgba(255,255,255,0.55)',
         fontFamily: '"JetBrains Mono", ui-monospace, monospace',
-      }}>{parsed.stationLabel || parsed.stationId || 'no station'}</span>
+      }}>{redactLocation(parsed.stationLabel || parsed.stationId || 'no station', streamer)}</span>
     </div>
   );
 

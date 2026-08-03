@@ -21,6 +21,7 @@ import {
 } from './state/layout';
 import { seedStarterProfiles, PROFILE_DEFAULT_COLORS } from './state/starterProfiles';
 import { shouldPinTopBar } from './state/topBar';
+import { redactLocation } from './state/streamer';
 import { isBundleTile, bundleIdOf } from './tiles/tileRegistry';
 import { useTileCatalog } from './tiles/useTileCatalog';
 import type { Track, Profile, AccentTheme, VizMode, Density, Todo, WeatherLocation } from './types';
@@ -920,6 +921,13 @@ export default function App() {
     updateActiveOrientation({ tiles: [] });
   };
 
+  // Streamer mode (0.7.1 §2): every location-aware tile gets this instead of
+  // the raw saved location. lat/lon are byte-identical (fetches and usePoll
+  // deps unaffected) — only the human-readable label is masked.
+  const displayLocation: WeatherLocation = t.streamerMode
+    ? { ...t.weatherLocation, label: redactLocation(t.weatherLocation.label, true) }
+    : t.weatherLocation;
+
   const renderTile = (instance: TileInstance) => {
     switch (instance.type) {
       case 'discord':
@@ -941,7 +949,7 @@ export default function App() {
       case 'sysmon':
         return <SysMonTile density={t.density} accent={accent} accent2={accent2} />;
       case 'clock':
-        return <NowAndForecastTile density={t.density} accent={accent} accent2={accent2} />;
+        return <NowAndForecastTile density={t.density} accent={accent} accent2={accent2} streamer={t.streamerMode} />;
       case 'viz':
         return (
           <VizHero
@@ -993,7 +1001,7 @@ export default function App() {
           <RadarTile
             density={t.density}
             accent={accent}
-            location={t.weatherLocation}
+            location={displayLocation}
             config={instance.config as Record<string, unknown> | undefined}
             setConfig={(next) => updateActiveOrientation({
               tiles: updateInstance(activeOrientation.tiles, instance.instanceId, { config: next }),
@@ -1018,7 +1026,7 @@ export default function App() {
           <SunTile
             density={t.density}
             accent={accent}
-            location={t.weatherLocation}
+            location={displayLocation}
           />
         );
       case 'aurora':
@@ -1026,7 +1034,7 @@ export default function App() {
           <AuroraTile
             density={t.density}
             accent={accent}
-            location={t.weatherLocation}
+            location={displayLocation}
           />
         );
       case 'airQuality':
@@ -1034,7 +1042,7 @@ export default function App() {
           <AirQualityTile
             density={t.density}
             accent={accent}
-            location={t.weatherLocation}
+            location={displayLocation}
           />
         );
       case 'stocks':
@@ -1060,6 +1068,7 @@ export default function App() {
             setConfig={(next) => updateActiveOrientation({
               tiles: updateInstance(activeOrientation.tiles, instance.instanceId, { config: next }),
             })}
+            streamer={t.streamerMode}
           />
         );
       case 'streamChat':
@@ -1098,7 +1107,7 @@ export default function App() {
           <IssTile
             density={t.density}
             accent={accent}
-            location={t.weatherLocation}
+            location={displayLocation}
             config={instance.config as Record<string, unknown> | undefined}
             setConfig={(next) => updateActiveOrientation({
               tiles: updateInstance(activeOrientation.tiles, instance.instanceId, { config: next }),
@@ -1107,7 +1116,7 @@ export default function App() {
           />
         );
       case 'pollen':
-        return <PollenTile density={t.density} accent={accent} editing={editMode} location={t.weatherLocation} />;
+        return <PollenTile density={t.density} accent={accent} editing={editMode} location={displayLocation} />;
       case 'solarFlare':
         return <SolarFlareTile density={t.density} accent={accent} />;
       case 'lightning':
@@ -1115,7 +1124,7 @@ export default function App() {
           <LightningTile
             density={t.density}
             accent={accent}
-            location={t.weatherLocation}
+            location={displayLocation}
             config={instance.config as Record<string, unknown> | undefined}
             setConfig={(next) => updateActiveOrientation({
               tiles: updateInstance(activeOrientation.tiles, instance.instanceId, { config: next }),
@@ -1128,7 +1137,7 @@ export default function App() {
           <AircraftTile
             density={t.density}
             accent={accent}
-            location={t.weatherLocation}
+            location={displayLocation}
             config={instance.config as Record<string, unknown> | undefined}
             setConfig={(next) => updateActiveOrientation({
               tiles: updateInstance(activeOrientation.tiles, instance.instanceId, { config: next }),
