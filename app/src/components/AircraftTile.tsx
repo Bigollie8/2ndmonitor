@@ -90,7 +90,7 @@ export function AircraftTile({ density, accent, location, config, setConfig, red
       fontSize: 10,
       color: error ? '#fca5a5' : 'rgba(255,255,255,0.55)',
       fontFamily: '"JetBrains Mono", ui-monospace, monospace',
-    }} title={error ?? undefined}>
+    }} title={redacted ? undefined : (error ?? undefined)}>
       {loading ? '…' : error ? 'OpenSky error' : `${planes.length} · ${redactLocation(`${RADIUS_KM} km`, redacted)}`}
     </span>
   );

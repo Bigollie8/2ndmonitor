@@ -86,7 +86,7 @@ export function TidesTile({ density, accent, editing, config, setConfig, streame
             background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)',
             borderRadius: 5,
           }}>
-            {error}
+            {streamer ? 'Request failed' : error}
           </div>
         )}
         {parsed.stationId && data && !error && upcoming.length === 0 && (
