@@ -1107,10 +1107,14 @@ export default function App() {
   };
 
   return (
-    <div style={{ width: '100vw', height: '100vh', background: '#000', overflow: 'hidden' }}>
+    <div style={{ width: '100vw', height: '100vh', background: 'transparent', overflow: 'hidden' }}>
+      {/* ^ was '#000' — always covered by the opaque canvas below when glass
+          is off, so 'transparent' is pixel-identical; with glass on it must
+          not block the desktop. The canvas div is the ONE layer that carries
+          --surface-canvas (stacking it twice would double-darken the glass). */}
       <div data-canvas-root style={{
         width: '100%', height: '100%',
-        background: '#06070a', position: 'relative', overflow: 'hidden',
+        background: 'var(--surface-canvas, #06070a)', position: 'relative', overflow: 'hidden',
       }}>
         <TopChrome
           accent={accent} editMode={editMode} setEditMode={setEditMode}
@@ -1352,7 +1356,7 @@ function TopChrome({ accent, editMode, setEditMode, profiles, activeProfileId, s
   return (
     <div style={{
       position: 'absolute', top: 0, left: 0, right: 0, height: 56,
-      background: 'rgba(8,9,12,0.85)', backdropFilter: 'blur(10px)',
+      background: 'var(--surface-chrome, rgba(8,9,12,0.85))', backdropFilter: 'blur(10px)',
       borderBottom: '1px solid rgba(255,255,255,0.05)',
       display: 'flex', alignItems: 'center', padding: '0 18px', gap: 16, zIndex: 10,
     }}>
@@ -1408,7 +1412,7 @@ function TopChrome({ accent, editMode, setEditMode, profiles, activeProfileId, s
         {menuOpen && (
           <div style={{
             position: 'absolute', top: 'calc(100% + 6px)', right: 0, minWidth: 190,
-            background: 'rgba(20,22,28,0.96)', border: '1px solid rgba(255,255,255,0.08)',
+            background: 'var(--surface-overlay, rgba(20,22,28,0.96))', border: '1px solid rgba(255,255,255,0.08)',
             borderRadius: 8, padding: 4, zIndex: 30,
             boxShadow: '0 12px 40px rgba(0,0,0,0.5)',
           }}>
@@ -1458,7 +1462,7 @@ function ThemeToast({ accent, title }: { accent: string; title: string }) {
       position: 'absolute', top: 64, left: '50%', transform: 'translateX(-50%)',
       zIndex: 11, pointerEvents: 'none',
       fontSize: 10, color: accent, padding: '4px 10px',
-      background: 'rgba(8,9,12,0.85)', backdropFilter: 'blur(8px)',
+      background: 'var(--surface-chrome, rgba(8,9,12,0.85))', backdropFilter: 'blur(8px)',
       borderRadius: 5, border: `1px solid ${accent}44`,
       boxShadow: `0 4px 18px rgba(0,0,0,0.4), 0 0 12px ${accent}22`,
       letterSpacing: '.05em', whiteSpace: 'nowrap',
@@ -1494,7 +1498,7 @@ function ShortcutsOverlay({ accent, onClose }: { accent: string; onClose: () => 
         onClick={(e) => e.stopPropagation()}
         style={{
           width: 420, maxWidth: 'calc(100vw - 48px)',
-          background: 'rgba(20,22,28,0.96)', border: '1px solid rgba(255,255,255,0.08)',
+          background: 'var(--surface-overlay, rgba(20,22,28,0.96))', border: '1px solid rgba(255,255,255,0.08)',
           borderRadius: 12, padding: '18px 20px 10px',
           boxShadow: '0 24px 80px rgba(0,0,0,0.6)',
         }}
@@ -1612,7 +1616,7 @@ function BottomStatus({
   return (
     <div style={{
       position: 'absolute', bottom: 0, left: 0, right: 0, height: 32,
-      background: 'rgba(8,9,12,0.85)', backdropFilter: 'blur(10px)',
+      background: 'var(--surface-chrome, rgba(8,9,12,0.85))', backdropFilter: 'blur(10px)',
       borderTop: '1px solid rgba(255,255,255,0.05)',
       display: 'flex', alignItems: 'center', padding: '0 18px', gap: 18, zIndex: 10,
       fontSize: 10.5, color: 'rgba(255,255,255,0.45)', fontFamily: '"JetBrains Mono", ui-monospace, monospace',
