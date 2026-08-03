@@ -169,6 +169,10 @@ interface TweakState extends Record<string, unknown> {
    *  the mouse hits the top edge. Pinned open while any bar-anchored overlay
    *  is up — see state/topBar.ts. Off by default. */
   autoHideTopBar: boolean;
+  /** Streamer mode (0.7.1 §2): hides maps and location text so a screenshare
+   *  can't reveal where you are. Pure presentation — data, settings, and
+   *  polling are untouched. Off by default. */
+  streamerMode: boolean;
 }
 
 /** How long the viz surface will wait for boot seeding before giving up and
@@ -215,6 +219,7 @@ const TWEAK_DEFAULTS: TweakState = {
   catalogRemoved: [],
   pileRepaired: false,
   autoHideTopBar: false,
+  streamerMode: false,
 };
 
 
@@ -1201,6 +1206,8 @@ export default function App() {
       }}>
         <TopChrome
           accent={accent} editMode={editMode} setEditMode={setEditMode}
+          streamerMode={t.streamerMode}
+          setStreamerMode={(b) => setTweak('streamerMode', b)}
           hidden={topBarHidden}
           onBarEnter={() => setTopBarRevealed(true)}
           onBarLeave={() => setTopBarRevealed(false)}
@@ -1261,6 +1268,7 @@ export default function App() {
           profileName={activeProfile.name}
           tileCount={visibleTileCount}
           audioSource={t.vizAudioSource}
+          streamer={t.streamerMode}
         />
         {editMode && (
           <EditModeOverlay
@@ -1406,10 +1414,14 @@ export default function App() {
   );
 }
 
-function TopChrome({ accent, editMode, setEditMode, profiles, activeProfileId, setActiveProfileId, onSwitcher, onOnboarding, onSettings, onShortcuts, hidden, onBarEnter, onBarLeave, onMenuOpenChange }: {
+function TopChrome({ accent, editMode, setEditMode, streamerMode, setStreamerMode, profiles, activeProfileId, setActiveProfileId, onSwitcher, onOnboarding, onSettings, onShortcuts, hidden, onBarEnter, onBarLeave, onMenuOpenChange }: {
   accent: string;
   editMode: boolean;
   setEditMode: (b: boolean) => void;
+  /** Streamer mode quick toggle (0.7.1 §2) — active state uses the accent
+   *  like the Edit button. */
+  streamerMode: boolean;
+  setStreamerMode: (b: boolean) => void;
   profiles: Profile[];
   activeProfileId: string;
   setActiveProfileId: (id: string) => void;
@@ -1545,6 +1557,16 @@ function TopChrome({ accent, editMode, setEditMode, profiles, activeProfileId, s
           fontWeight: 500, letterSpacing: '.03em',
         }}>⌘E</span>
       </button>
+      <button
+        onClick={() => setStreamerMode(!streamerMode)}
+        title="Streamer mode — hide location data"
+        style={{
+          ...ghostButton, padding: '5px 9px',
+          background: streamerMode ? accent : 'transparent',
+          color: streamerMode ? '#000' : 'rgba(255,255,255,0.7)',
+          border: streamerMode ? '1px solid transparent' : '1px solid rgba(255,255,255,0.1)',
+        }}
+      >⊘</button>
       <button onClick={onSettings} title="Settings (⌘,)" style={{ ...ghostButton, padding: '5px 9px' }}>⚙</button>
       <div ref={menuRef} style={{ position: 'relative' }}>
         <button
@@ -1707,13 +1729,15 @@ function useFrameRate(): number {
 }
 
 function BottomStatus({
-  accent, onSwitcher, profileName, tileCount, audioSource,
+  accent, onSwitcher, profileName, tileCount, audioSource, streamer,
 }: {
   accent: string;
   onSwitcher: () => void;
   profileName: string;
   tileCount: number;
   audioSource: AudioSource;
+  /** Streamer-mode indicator chip (0.7.1 §2). */
+  streamer: boolean;
 }) {
   // The 1Hz sysmon subscription and rAF frame counter live HERE, not in App:
   // this bar is the only chrome that displays them, and keeping them out of
@@ -1770,6 +1794,12 @@ function BottomStatus({
       fontSize: 10.5, color: 'rgba(255,255,255,0.45)', fontFamily: '"JetBrains Mono", ui-monospace, monospace',
     }}>
       <span style={{ color: accent }}>● {tileCount} tile{tileCount === 1 ? '' : 's'}</span>
+      {streamer && (
+        <span style={{
+          color: accent, padding: '1px 7px', borderRadius: 4,
+          background: `${accent}15`, border: `1px solid ${accent}44`,
+        }}>streamer</span>
+      )}
       <span title="App CPU usage">CPU {cpuText}</span>
       <span title="App resident memory">RAM {ramText}</span>
       <span title="App GPU usage (via NVML, NVIDIA only)">GPU {gpuText}</span>

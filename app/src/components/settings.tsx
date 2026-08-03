@@ -67,6 +67,8 @@ export interface SettingsValues {
   glassStrength: number;
   /** Auto-hide top bar — slides away until the mouse hits the top edge. */
   autoHideTopBar: boolean;
+  /** Streamer mode — hides maps and location details in every tile. */
+  streamerMode: boolean;
   /** The catalog removal list — see state/removedContent.ts. Needed here
    *  because the Visualizer pane's style dropdown is a picker. */
   catalogRemoved: string[];
@@ -301,6 +303,11 @@ export function SettingsWindow({
           id: 'appearance-autohide-topbar', label: 'Auto-hide top bar',
           hint: 'Slides away until you move the mouse to the top edge',
           control: <Toggle checked={v.autoHideTopBar} onChange={(c) => set('autoHideTopBar', c)} accent={accent} />,
+        },
+        {
+          id: 'appearance-streamer', label: 'Streamer mode',
+          hint: "Hides maps and location details so screenshares can't reveal where you are",
+          control: <Toggle checked={v.streamerMode} onChange={(c) => set('streamerMode', c)} accent={accent} />,
         },
       ],
     },
