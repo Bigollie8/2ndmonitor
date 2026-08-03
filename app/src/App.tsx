@@ -886,6 +886,10 @@ export default function App() {
             density={t.density}
             accent={accent}
             location={t.weatherLocation}
+            config={instance.config as Record<string, unknown> | undefined}
+            setConfig={(next) => updateActiveOrientation({
+              tiles: updateInstance(activeOrientation.tiles, instance.instanceId, { config: next }),
+            })}
           />
         );
       case 'pomodoro':

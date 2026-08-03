@@ -58,14 +58,9 @@ function isFrame(x: unknown): x is RainViewerFrame {
 }
 
 /** Build the radar overlay tile URL for a specific frame.
- *  Color scheme `1` is "Original" (classic green/yellow/red — high contrast on
- *  dark basemap). Variant `1_1`: smooth + show snow. */
+ *  Color scheme `2` is "Universal Blue" — reads cleanly over the CARTO
+ *  dark_matter basemap the shared MapView renders. Variant `1_1`: smooth +
+ *  show snow. */
 export function radarTileUrl(host: string, path: string, z: number, x: number, y: number): string {
-  return `${host}${path}/256/${z}/${x}/${y}/1/1_1.png`;
-}
-
-/** Build the basemap tile URL (CartoDB Voyager — colorful streets/labels,
- *  good contrast for radar overlay; public CORS, no key). */
-export function basemapTileUrl(z: number, x: number, y: number): string {
-  return `https://basemaps.cartocdn.com/rastertiles/voyager/${z}/${x}/${y}.png`;
+  return `${host}${path}/256/${z}/${x}/${y}/2/1_1.png`;
 }
