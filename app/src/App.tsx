@@ -20,6 +20,7 @@ import {
   repairPileTiles,
 } from './state/layout';
 import { seedStarterProfiles, PROFILE_DEFAULT_COLORS } from './state/starterProfiles';
+import { shouldPinTopBar } from './state/topBar';
 import { isBundleTile, bundleIdOf } from './tiles/tileRegistry';
 import { useTileCatalog } from './tiles/useTileCatalog';
 import type { Track, Profile, AccentTheme, VizMode, Density, Todo, WeatherLocation } from './types';
@@ -174,6 +175,10 @@ interface TweakState extends Record<string, unknown> {
    *  idempotent by nature; the flag exists so it can never re-fire against
    *  future false positives. */
   pileRepaired: boolean;
+  /** Auto-hide top bar (0.6.7): the top chrome slides up out of view until
+   *  the mouse hits the top edge. Pinned open while any bar-anchored overlay
+   *  is up — see state/topBar.ts. Off by default. */
+  autoHideTopBar: boolean;
 }
 
 /** How long the viz surface will wait for boot seeding before giving up and
@@ -219,6 +224,7 @@ const TWEAK_DEFAULTS: TweakState = {
   onboardingDone: false,
   catalogRemoved: [],
   pileRepaired: false,
+  autoHideTopBar: false,
 };
 
 
@@ -487,6 +493,14 @@ export default function App() {
   // NEXT plain open doesn't inherit a stale rail from whatever last set it.
   const [libraryRail, setLibraryRail] = useState<string | undefined>();
   const [showShortcuts, setShowShortcuts] = useState(false);
+  // Auto-hide top bar (0.6.7 §3). `topBarRevealed` is true while the pointer
+  // is holding the bar open — set on reveal-strip or bar pointerenter,
+  // cleared on bar pointerleave.
+  const [topBarRevealed, setTopBarRevealed] = useState(false);
+  // Mirror of TopChrome's LOCAL ⋯-menu open state, reported up via
+  // onMenuOpenChange. The pin decision (state/topBar.ts) composes App-level
+  // overlay flags with this bar-local one; App owns the composed decision.
+  const [topBarMenuOpen, setTopBarMenuOpen] = useState(false);
   const [selectedInstanceId, setSelectedInstanceId] = useState<string>('');
   // Transient "theme synced" toast: holds the track title being announced, or
   // null when hidden. Set by the effect below when accent is track-linked and
@@ -812,6 +826,14 @@ export default function App() {
   const canvas = useCanvas();
 
   const overlaysOpen = editMode || showSwitcher || showOnboarding;
+  // Pin/hide decision for the auto-hiding top bar. Pinned ⇒ never hidden.
+  // Hiding does NOT reflow tiles: the bar overlays the same reserved space
+  // when revealed (like the Windows taskbar) — CHROME_TOP_PX stays as-is.
+  const topBarPinned = shouldPinTopBar({
+    editMode, showSettings, showContentLibrary, showSwitcher, showOnboarding,
+    showShortcuts, menuOpen: topBarMenuOpen,
+  });
+  const topBarHidden = t.autoHideTopBar && !topBarPinned && !topBarRevealed;
   const fallbackProfile = useMemo<Profile>(() => ({
     id: '_fallback', name: 'Default', color: '#a78bfa',
     landscape: { tiles: ALL_TILE_TYPES.map((type) => ({ instanceId: newId(), type, rect: DEFAULT_LANDSCAPE_LAYOUT[type] })) },
@@ -1173,6 +1195,10 @@ export default function App() {
       }}>
         <TopChrome
           accent={accent} editMode={editMode} setEditMode={setEditMode}
+          hidden={topBarHidden}
+          onBarEnter={() => setTopBarRevealed(true)}
+          onBarLeave={() => setTopBarRevealed(false)}
+          onMenuOpenChange={setTopBarMenuOpen}
           profiles={t.profiles}
           activeProfileId={t.activeProfileId}
           setActiveProfileId={(id) => setTweak('activeProfileId', id)}
@@ -1181,6 +1207,19 @@ export default function App() {
           onSettings={() => setShowSettings(true)}
           onShortcuts={() => setShowShortcuts(true)}
         />
+        {topBarHidden && (
+          // 4px reveal strip (0.6.7 §3): invisible, sits at the very top edge
+          // ONLY while the bar is hidden. Hovering it reveals the bar; it
+          // unmounts whenever the bar is visible so it can never block the
+          // bar's own top edge.
+          <div
+            onPointerEnter={() => setTopBarRevealed(true)}
+            style={{
+              position: 'fixed', top: 0, left: 0, right: 0, height: 4,
+              zIndex: 40, background: 'transparent', pointerEvents: 'auto',
+            }}
+          />
+        )}
         {accentLinked && !showOnboarding && themeToast !== null && (
           <ThemeToast accent={accent} title={themeToast} />
         )}
@@ -1356,7 +1395,7 @@ export default function App() {
   );
 }
 
-function TopChrome({ accent, editMode, setEditMode, profiles, activeProfileId, setActiveProfileId, onSwitcher, onOnboarding, onSettings, onShortcuts }: {
+function TopChrome({ accent, editMode, setEditMode, profiles, activeProfileId, setActiveProfileId, onSwitcher, onOnboarding, onSettings, onShortcuts, hidden, onBarEnter, onBarLeave, onMenuOpenChange }: {
   accent: string;
   editMode: boolean;
   setEditMode: (b: boolean) => void;
@@ -1367,6 +1406,15 @@ function TopChrome({ accent, editMode, setEditMode, profiles, activeProfileId, s
   onOnboarding: () => void;
   onSettings: () => void;
   onShortcuts: () => void;
+  /** Auto-hide (0.6.7 §3): when true the bar translates up out of view.
+   *  App owns the decision — see topBarHidden in App(). */
+  hidden: boolean;
+  /** Pointer entered/left the bar — App sets/clears topBarRevealed. */
+  onBarEnter: () => void;
+  onBarLeave: () => void;
+  /** Reports the bar-LOCAL ⋯-menu state up so App's pin logic
+   *  (state/topBar.ts) can hold the bar open while the menu is up. */
+  onMenuOpenChange: (open: boolean) => void;
 }) {
   const visibleProfiles = profiles.slice(0, 4);
   const overflow = Math.max(0, profiles.length - visibleProfiles.length);
@@ -1395,6 +1443,13 @@ function TopChrome({ accent, editMode, setEditMode, profiles, activeProfileId, s
     };
   }, [menuOpen]);
 
+  // Surface menuOpen to App (see the onMenuOpenChange prop doc). Effect, not
+  // call-site wrapping: the menu closes from three places (toggle button,
+  // outside pointerdown, Esc) and this catches all of them.
+  useEffect(() => {
+    onMenuOpenChange(menuOpen);
+  }, [menuOpen, onMenuOpenChange]);
+
   const ghostButton: React.CSSProperties = {
     padding: '5px 10px', fontSize: 11, borderRadius: 6,
     background: 'transparent', color: 'rgba(255,255,255,0.7)',
@@ -1409,11 +1464,13 @@ function TopChrome({ accent, editMode, setEditMode, profiles, activeProfileId, s
   };
 
   return (
-    <div style={{
+    <div onPointerEnter={onBarEnter} onPointerLeave={onBarLeave} style={{
       position: 'absolute', top: 0, left: 0, right: 0, height: 56,
       background: 'var(--surface-chrome, rgba(8,9,12,0.85))', backdropFilter: 'blur(10px)',
       borderBottom: '1px solid rgba(255,255,255,0.05)',
       display: 'flex', alignItems: 'center', padding: '0 18px', gap: 16, zIndex: 10,
+      transform: hidden ? 'translateY(-100%)' : 'translateY(0)',
+      transition: 'transform 150ms ease',
     }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
         <div style={{ width: 16, height: 16, borderRadius: 5, background: `linear-gradient(135deg, ${accent}, ${accent}99)`, boxShadow: `0 0 12px ${accent}66` }} />
