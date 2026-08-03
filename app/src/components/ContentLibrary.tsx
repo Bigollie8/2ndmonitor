@@ -13,6 +13,7 @@ import type { InstalledTileFolder } from '../tiles/tileRegistry';
 import type { InstalledVizFolder } from '../state/contentRegistry';
 import type { TileType, BuiltinTileType } from '../state/layout';
 import { buildRail } from './catalogRail';
+import { filterItems } from '../state/catalogFilter';
 import { searchItems } from './catalogSearch';
 import { CatalogCard } from './CatalogCard';
 import { PresetRow } from './PresetRow';
@@ -21,6 +22,11 @@ import { cfgUrl, cfgPubkey } from '../state/marketplaceConfig';
 import { getSecret, bundleSecretKey } from '../state/secrets';
 
 const MONO = '"JetBrains Mono", ui-monospace, monospace';
+
+/** The running app version, used only for the `incompatible` facet. A
+ *  constant here for now; Phase 2 Task 10 replaces it with the real value the
+ *  shared data hook reads from Tauri. */
+const APP_VERSION = '0.8.0';
 
 /** Human phrasing for a permission string, shown in the install confirm
  *  dialog. */
@@ -283,7 +289,10 @@ export function ContentLibrary({
   // rail[0] is always the 'all' row (buildRail always pushes it) — a safe
   // fallback if the active row's count dropped to zero and it disappeared.
   const active = rail.find((r) => r.id === activeId && !r.heading) ?? rail[0];
-  const filtered = useMemo(() => items.filter(active.match), [items, active]);
+  const filtered = useMemo(
+    () => filterItems(items, active.facets, APP_VERSION),
+    [items, active],
+  );
   // Search is scoped to the active rail slice on purpose — a result surfacing
   // from a category the user didn't select would be confusing. The "search
   // all content" button below (setActiveId('all')) is the explicit, opt-in

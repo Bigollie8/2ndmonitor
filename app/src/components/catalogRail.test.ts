@@ -99,6 +99,17 @@ test('buildRail: a removed preset is excluded from the Presets row and heading c
   assert.equal(rail.find((r) => r.id === 'preset:all')?.count, 1);
 });
 
+test('buildRail: rows emit facets rather than predicates', () => {
+  const rail = buildRail([item({ category: 'weather' })]);
+  const weather = rail.find((r) => r.id === 'tile:weather')!;
+  assert.equal(weather.facets.kind, 'tile');
+  assert.equal(weather.facets.category, 'weather');
+
+  const installed = buildRail([item({ installed: true })]).find((r) => r.id === 'installed')!;
+  assert.equal(installed.facets.installed, true);
+  assert.equal(installed.facets.category, undefined, 'a state row must not pin a category');
+});
+
 test('buildRail: no presets means no preset heading or row', () => {
   const rail = buildRail([item()]);
   assert.equal(rail.some((r) => r.id === 'preset:all'), false);

@@ -8,6 +8,7 @@
 // component that renders these rows.
 // ─────────────────────────────────────────────────────────────────────────────
 import type { CatalogItem, CatalogKind } from '../state/catalog';
+import { filterItems, EMPTY_FACETS, type Facets } from '../state/catalogFilter';
 
 export interface RailSection {
   id: string;
@@ -15,7 +16,10 @@ export interface RailSection {
   count: number;
   /** Heading rows are not selectable. */
   heading?: boolean;
-  match: (i: CatalogItem) => boolean;
+  /** What selecting this row asks for. Replaces the old `match` predicate:
+   *  a facet record intersects with whatever else the user has chosen, a
+   *  closure could only ever replace it. */
+  facets: Facets;
 }
 
 const CATEGORY_LABELS: Record<string, string> = {
@@ -24,49 +28,56 @@ const CATEGORY_LABELS: Record<string, string> = {
   spectrum: 'Spectrum', wave: 'Waveform', scene: 'Scenes', engine: 'Engines',
 };
 
-/** Every row except "Removed" excludes a tombstoned item — `mergeCatalog`
+/** Counts are computed through `filterItems` itself, so a row's number can
+ *  never disagree with what selecting that row actually shows — the failure
+ *  mode a separate counting predicate invites. `appVersion` is threaded in
+ *  only because `filterItems` needs it for the `incompatible` facet, which no
+ *  rail row uses.
+ *
+ *  Every row except "Removed" excludes a tombstoned item — `mergeCatalog`
  *  keeps removed items in its output (flagged, not dropped, see catalog.ts's
  *  pass 4) purely so this row can name them; letting them leak into "All" or
- *  a category count would double the meaning of those numbers. */
-const visible = (i: CatalogItem) => !i.removed;
-
-export function buildRail(items: CatalogItem[]): RailSection[] {
+ *  a category count would double the meaning of those numbers. That rule now
+ *  lives in `filterItems` rather than a local `visible` helper. */
+export function buildRail(items: CatalogItem[], appVersion = '0.0.0'): RailSection[] {
   const rows: RailSection[] = [];
-  const push = (id: string, label: string, match: (i: CatalogItem) => boolean) => {
-    const count = items.filter(match).length;
-    if (count > 0 || id === 'all') rows.push({ id, label, count, match });
+  const push = (id: string, label: string, facets: Facets) => {
+    const count = filterItems(items, facets, appVersion).length;
+    if (count > 0 || id === 'all') rows.push({ id, label, count, facets });
   };
 
-  push('all', 'All', visible);
-  push('installed', 'Installed', (i) => visible(i) && i.installed);
-  push('updates', 'Updates', (i) => visible(i) && i.updateAvailable);
-  push('needs-setup', 'Needs setup', (i) => visible(i) && i.installed && i.needsSetup);
+  push('all', 'All', EMPTY_FACETS);
+  push('installed', 'Installed', { ...EMPTY_FACETS, installed: true });
+  push('updates', 'Updates', { ...EMPTY_FACETS, updates: true });
+  push('needs-setup', 'Needs setup', { ...EMPTY_FACETS, needsSetup: true });
   // Only row that selects removed items — Critical 2's per-item restore
   // surface. Gated to non-zero by `push`'s own rule (every row but 'all'
   // hides at count 0), so this row is simply absent when nothing is removed.
-  push('removed', 'Removed', (i) => i.removed);
+  push('removed', 'Removed', { ...EMPTY_FACETS, removed: true });
 
   for (const kind of ['tile', 'visualizer'] as CatalogKind[]) {
-    const ofKind = items.filter((i) => i.kind === kind && visible(i));
+    const ofKind = filterItems(items, { ...EMPTY_FACETS, kind }, appVersion);
     if (ofKind.length === 0) continue;
     rows.push({
       id: `heading:${kind}`, heading: true, count: ofKind.length,
-      label: kind === 'tile' ? 'Tiles' : 'Visualizers', match: () => false,
+      label: kind === 'tile' ? 'Tiles' : 'Visualizers', facets: EMPTY_FACETS,
     });
     const cats = [...new Set(ofKind.map((i) => i.category))].sort();
     for (const cat of cats) {
-      push(`${kind}:${cat}`, CATEGORY_LABELS[cat] ?? cat,
-        (i) => visible(i) && i.kind === kind && i.category === cat);
+      push(`${kind}:${cat}`, CATEGORY_LABELS[cat] ?? cat, { ...EMPTY_FACETS, kind, category: cat });
     }
   }
 
   // MilkDrop presets get one selectable row, not a row per category — unlike
   // tiles/visualizers, every preset shares the single 'milkdrop' category, so
   // a per-category breakdown would just be one row repeating the heading.
-  const presets = items.filter((i) => i.kind === 'preset' && visible(i));
+  const presets = filterItems(items, { ...EMPTY_FACETS, kind: 'preset' }, appVersion);
   if (presets.length > 0) {
-    rows.push({ id: 'heading:preset', heading: true, count: presets.length, label: 'MilkDrop', match: () => false });
-    push('preset:all', 'Presets', (i) => visible(i) && i.kind === 'preset');
+    rows.push({
+      id: 'heading:preset', heading: true, count: presets.length,
+      label: 'MilkDrop', facets: EMPTY_FACETS,
+    });
+    push('preset:all', 'Presets', { ...EMPTY_FACETS, kind: 'preset' });
   }
   return rows;
 }
