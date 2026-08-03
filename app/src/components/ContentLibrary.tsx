@@ -13,25 +13,10 @@ import { useCatalogData } from '../state/useCatalogData';
 import { searchItems } from './catalogSearch';
 import { CatalogCard } from './CatalogCard';
 import { PresetRow } from './PresetRow';
-import { parsePermission } from '../sandbox/manifest';
+import { describePermission } from '../state/permissionBadges';
 import { cfgUrl } from '../state/marketplaceConfig';
 
 const MONO = '"JetBrains Mono", ui-monospace, monospace';
-
-/** The running app version, used only for the `incompatible` facet. A
- *  constant here for now; Phase 2 Task 10 replaces it with the real value the
- *  shared data hook reads from Tauri. */
-const APP_VERSION = '0.8.0';
-
-/** Human phrasing for a permission string, shown in the install confirm
- *  dialog. */
-function describePermission(p: string): string {
-  const parsed = parsePermission(p);
-  if (!parsed.ok) return p;
-  if (parsed.perm.kind === 'net') return `Access the internet at ${parsed.perm.host}`;
-  if (parsed.perm.kind === 'secret') return `Store a credential named "${parsed.perm.key}"`;
-  return `Run the app command "${parsed.perm.command}"`;
-}
 
 /** The unified content catalog: a fixed-width category rail with live counts
  *  (from `buildRail`, a pure function — see catalogRail.ts) and a card grid
@@ -95,6 +80,7 @@ export function ContentLibrary({
   const {
     items, indexByKey, indexUnreachable, usingCache, retrying: retryingIndex,
     signedIn, ratings, setRatings, refreshInstalled, retryIndex: handleRetryIndex,
+    appVersion,
   } = useCatalogData({ catalogRemoved });
   const [activeId, setActiveId] = useState(initialRail ?? 'all');
   const [query, setQuery] = useState('');
@@ -131,8 +117,8 @@ export function ContentLibrary({
   // fallback if the active row's count dropped to zero and it disappeared.
   const active = rail.find((r) => r.id === activeId && !r.heading) ?? rail[0];
   const filtered = useMemo(
-    () => filterItems(items, active.facets, APP_VERSION),
-    [items, active],
+    () => filterItems(items, active.facets, appVersion),
+    [items, active, appVersion],
   );
   // Search is scoped to the active rail slice on purpose — a result surfacing
   // from a category the user didn't select would be confusing. The "search
