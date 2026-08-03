@@ -370,6 +370,9 @@ export interface DayForecast {
 
 export interface HourForecast {
   time: string;
+  /** Raw 0-23 hour (0.7.2 additive). Absent on payloads from an older backend
+   *  — consumers fall back to the preformatted `time`. */
+  hour?: number;
   temp_f: number;
   code: number;
   icon: string;

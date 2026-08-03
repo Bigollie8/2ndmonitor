@@ -23,6 +23,7 @@ export function EditModeOverlay({
   snap, setSnap,
   profileName,
   catalogRemoved,
+  topInsetPx,
 }: {
   accent: string;
   accent2: string;
@@ -44,6 +45,8 @@ export function EditModeOverlay({
   profileName: string;
   /** The catalog removal list — see state/removedContent.ts. */
   catalogRemoved: string[];
+  /** Top reserved band in px — 0 when auto-hide frees the space (0.7.2 §2). */
+  topInsetPx: number;
 }) {
   const [showGuides, setShowGuides] = useState(true);
   const [showGrid, setShowGrid] = useState(true);
@@ -77,7 +80,7 @@ export function EditModeOverlay({
   const sel = tileMap[selectedInstanceId] ?? (tiles[0] ? { rect: tiles[0].rect, label: labelFor(tiles[0].type), type: tiles[0].type } : undefined);
 
   const setRect = (instanceId: string, r: Rect) =>
-    setTiles(updateInstance(tiles, instanceId, { rect: clampRectFrac(r, canvas) }));
+    setTiles(updateInstance(tiles, instanceId, { rect: clampRectFrac(r, canvas, topInsetPx) }));
 
   const resetRect = (instanceId: string) => {
     const inst = getInstance(tiles, instanceId);

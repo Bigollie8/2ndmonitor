@@ -3,16 +3,23 @@ import { HFTile } from './tiles';
 import type { Density } from '../types';
 import { type Weather, useWeather } from '../state/tauri';
 import { redactLocation } from '../state/streamer';
+import { formatClockParts, formatHourLabel } from '../state/dateTime';
+import { formatTemp, type TempUnit } from '../state/units';
 
-export function NowAndForecastTile({ density, accent, accent2, streamer = false }: { density: Density; accent: string; accent2: string; streamer?: boolean }) {
+export function NowAndForecastTile({ density, accent, accent2, streamer = false, hour12, tempUnit }: {
+  density: Density; accent: string; accent2: string; streamer?: boolean;
+  /** Resolved platform clock format (0.7.2 §3) — resolveHour12 in App. */
+  hour12: boolean;
+  /** Resolved platform temperature unit — resolveTempUnit in App. */
+  tempUnit: TempUnit;
+}) {
   const weather = useWeather();
   const [time, setTime] = useState(() => new Date());
   useEffect(() => {
     const id = setInterval(() => setTime(new Date()), 1000);
     return () => clearInterval(id);
   }, []);
-  const hh = String(time.getHours()).padStart(2, '0');
-  const mm = String(time.getMinutes()).padStart(2, '0');
+  const clock = formatClockParts(time.getTime(), { hour12 });
   const ss = String(time.getSeconds()).padStart(2, '0');
   const dateLabel = time.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
 
@@ -44,12 +51,18 @@ export function NowAndForecastTile({ density, accent, accent2, streamer = false 
                   fontSize: 52, fontWeight: 700,
                   fontFamily: '"JetBrains Mono", ui-monospace, monospace',
                   letterSpacing: '-0.04em', lineHeight: 0.9, color: '#fff',
-                }}>{hh}:{mm}</span>
+                }}>{clock.hm}</span>
                 <span style={{
                   fontSize: 22, fontWeight: 500,
                   fontFamily: '"JetBrains Mono", ui-monospace, monospace',
                   color: accent, lineHeight: 1,
                 }}>:{ss}</span>
+                {clock.dayPeriod && (
+                  <span style={{
+                    fontSize: 15, fontWeight: 600, lineHeight: 1,
+                    color: 'rgba(255,255,255,0.55)',
+                  }}>{clock.dayPeriod}</span>
+                )}
               </div>
               <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.6)', marginTop: 6 }}>
                 {dateLabel} · Week {weekNumber(time)}
@@ -82,13 +95,13 @@ export function NowAndForecastTile({ density, accent, accent2, streamer = false 
                     fontFamily: '"JetBrains Mono", ui-monospace, monospace',
                     lineHeight: 0.9, letterSpacing: '-0.04em',
                   }}>
-                    {Math.round(weather.current_temp_f)}°
+                    {formatTemp(weather.current_temp_f, 'f', tempUnit)}
                   </span>
                 </div>
                 <div style={{ textAlign: 'right' }}>
                   <div style={{ fontSize: 13, color: '#fff', fontWeight: 500 }}>{weather.current_label}</div>
                   <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.55)' }}>
-                    feels {Math.round(weather.feels_like_f)}°
+                    feels {formatTemp(weather.feels_like_f, 'f', tempUnit)}
                   </div>
                 </div>
               </>
@@ -110,7 +123,7 @@ export function NowAndForecastTile({ density, accent, accent2, streamer = false 
           overflow: 'hidden',
         }}>
           {(weather?.hourly ?? Array.from({ length: 12 }, () => null)).slice(0, 12).map((h, i) => (
-            <HourlyCell key={i} hour={h} accent={accent2} isNow={i === 0} />
+            <HourlyCell key={i} hour={h} accent={accent2} isNow={i === 0} hour12={hour12} tempUnit={tempUnit} />
           ))}
         </div>
 
@@ -122,7 +135,7 @@ export function NowAndForecastTile({ density, accent, accent2, streamer = false 
           flexShrink: 0,
         }}>
           {(weather?.forecast ?? Array.from({ length: 7 }, () => null)).map((d, i) => (
-            <ForecastDay key={i} day={d} accent={accent} isFirst={i === 0} />
+            <ForecastDay key={i} day={d} accent={accent} isFirst={i === 0} tempUnit={tempUnit} />
           ))}
         </div>
       </div>
@@ -131,11 +144,13 @@ export function NowAndForecastTile({ density, accent, accent2, streamer = false 
 }
 
 function HourlyCell({
-  hour, accent, isNow,
+  hour, accent, isNow, hour12, tempUnit,
 }: {
   hour: import('../state/tauri').HourForecast | null;
   accent: string;
   isNow: boolean;
+  hour12: boolean;
+  tempUnit: TempUnit;
 }) {
   const showRain = (hour?.precip_pct ?? 0) >= 20;
   return (
@@ -153,13 +168,13 @@ function HourlyCell({
         textTransform: 'uppercase', letterSpacing: '.06em',
         fontFamily: '"JetBrains Mono", ui-monospace, monospace',
       }}>
-        {isNow ? 'NOW' : (hour?.time ?? '—')}
+        {isNow ? 'NOW' : hourLabelOf(hour, hour12)}
       </span>
       <span style={{ fontSize: 18, lineHeight: 1 }}>{hour?.icon ?? '·'}</span>
       <span style={{
         fontSize: 11, fontWeight: 700, color: '#fff',
         fontFamily: '"JetBrains Mono", ui-monospace, monospace',
-      }}>{hour ? `${Math.round(hour.temp_f)}°` : '—'}</span>
+      }}>{hour ? formatTemp(hour.temp_f, 'f', tempUnit) : '—'}</span>
       {showRain && hour && (
         <span style={{
           fontSize: 8, color: '#60a5fa',
@@ -168,6 +183,13 @@ function HourlyCell({
       )}
     </div>
   );
+}
+
+/** Hourly-strip label. `hour.hour` is the 0.7.2 additive raw hour — fall back
+ *  to the Rust-preformatted 12h label when the payload predates it. */
+function hourLabelOf(hour: import('../state/tauri').HourForecast | null, hour12: boolean): string {
+  if (!hour) return '—';
+  return typeof hour.hour === 'number' ? formatHourLabel(hour.hour, hour12) : hour.time;
 }
 
 function Stat({ icon, label, value }: { icon: string; label: string; value: string }) {
@@ -181,11 +203,12 @@ function Stat({ icon, label, value }: { icon: string; label: string; value: stri
 }
 
 function ForecastDay({
-  day, accent, isFirst,
+  day, accent, isFirst, tempUnit,
 }: {
   day: import('../state/tauri').DayForecast | null;
   accent: string;
   isFirst: boolean;
+  tempUnit: TempUnit;
 }) {
   return (
     <div style={{
@@ -203,10 +226,10 @@ function ForecastDay({
       <span style={{ fontSize: 22, lineHeight: 1 }}>{day?.icon ?? '·'}</span>
       <div style={{ display: 'flex', gap: 6, alignItems: 'baseline', fontFamily: '"JetBrains Mono", ui-monospace, monospace' }}>
         <span style={{ fontSize: 12, fontWeight: 700, color: '#fff' }}>
-          {day ? `${Math.round(day.high_f)}°` : '—'}
+          {day ? formatTemp(day.high_f, 'f', tempUnit) : '—'}
         </span>
         <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)' }}>
-          {day ? `${Math.round(day.low_f)}°` : ''}
+          {day ? formatTemp(day.low_f, 'f', tempUnit) : ''}
         </span>
       </div>
     </div>

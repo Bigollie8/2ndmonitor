@@ -5,6 +5,13 @@ import {
   TEMP_OK_COLOR, TEMP_WARN_COLOR, TEMP_HOT_COLOR,
 } from './temps';
 
+test('tempsToChips converts to °F when asked (payload stays °C)', () => {
+  const chips = tempsToChips([{ label: 'CPU', celsius: 100 }], 'f');
+  assert.equal(chips[0]!.text, 'CPU 212°F');
+  // color thresholds keep judging the raw °C value
+  assert.equal(chips[0]!.color, TEMP_HOT_COLOR);
+});
+
 test('tempColor thresholds: ok up to 85, amber above 85, red above 95', () => {
   assert.equal(tempColor(58), TEMP_OK_COLOR);
   assert.equal(tempColor(85), TEMP_OK_COLOR);
@@ -22,7 +29,7 @@ test('tempsToChips renders rounded chips in payload order', () => {
   ]);
   assert.deepEqual(
     chips.map((c) => c.text),
-    ['CPU 58°', 'GPU 64°', 'Board 41°', 'NVMe 47°'],
+    ['CPU 58°C', 'GPU 64°C', 'Board 41°C', 'NVMe 47°C'],
   );
   assert.equal(chips[1]!.color, TEMP_OK_COLOR);
 });

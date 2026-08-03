@@ -3,6 +3,8 @@ import React, { useCallback, useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { VizMode, AccentTheme, Density, WeatherLocation } from '../types';
 import type { AudioSource } from '../state/audioSource';
+import type { ClockFormatSetting } from '../state/dateTime';
+import type { TempUnitSetting } from '../state/units';
 import { effectiveSensitivity, sourceKey } from '../state/audioSource';
 import { AudioSourcePicker } from './AudioSourcePicker';
 import { useAudioSource } from '../state/useAudioSource';
@@ -70,6 +72,10 @@ export interface SettingsValues {
   autoHideTopBar: boolean;
   /** Streamer mode — hides maps and location details in every tile. */
   streamerMode: boolean;
+  /** Platform-wide clock format — every clock in the app (0.7.2 §3). */
+  clockFormat: ClockFormatSetting;
+  /** Platform-wide temperature unit — weather tiles + temps strip (0.7.2 §3). */
+  tempUnit: TempUnitSetting;
   /** The catalog removal list — see state/removedContent.ts. Needed here
    *  because the Visualizer pane's style dropdown is a picker. */
   catalogRemoved: string[];
@@ -284,6 +290,19 @@ export function SettingsWindow({
           ),
         },
         {
+          id: 'appearance-clock-format', label: 'Time format',
+          hint: 'Every clock in the app — System follows your OS locale',
+          control: (
+            <Segmented<ClockFormatSetting>
+              value={v.clockFormat}
+              options={['system', '12h', '24h']}
+              labels={{ system: 'System' }}
+              onChange={(x) => set('clockFormat', x)}
+              accent={accent}
+            />
+          ),
+        },
+        {
           id: 'appearance-glass', label: 'Liquid glass',
           hint: 'See the desktop through the app (Windows acrylic). Adds GPU cost on top of the visualizer and can stutter while dragging the window.',
           control: <Toggle checked={v.glassEnabled} onChange={(c) => set('glassEnabled', c)} accent={accent} />,
@@ -349,6 +368,19 @@ export function SettingsWindow({
               onPick={(loc) => set('weatherLocation', loc)}
               accent={accent}
               streamer={v.streamerMode}
+            />
+          ),
+        },
+        {
+          id: 'weather-temp-unit', label: 'Temperature',
+          hint: 'Weather tiles and the temps strip — System resolves by locale',
+          control: (
+            <Segmented<TempUnitSetting>
+              value={v.tempUnit}
+              options={['system', 'f', 'c']}
+              labels={{ system: 'System', f: '°F', c: '°C' }}
+              onChange={(x) => set('tempUnit', x)}
+              accent={accent}
             />
           ),
         },
@@ -733,11 +765,13 @@ function AudioSourceStatusLine({ status, options }: {
   return null;
 }
 
-function Segmented<T extends string>({ value, options, onChange, accent }: {
+function Segmented<T extends string>({ value, options, onChange, accent, labels }: {
   value: T;
   options: T[];
   onChange: (v: T) => void;
   accent: string;
+  /** Optional per-option display text (e.g. 'f' → '°F'). Defaults to the raw value. */
+  labels?: Partial<Record<T, string>>;
 }) {
   return (
     <div style={{
@@ -757,7 +791,7 @@ function Segmented<T extends string>({ value, options, onChange, accent }: {
               color: active ? accent : 'rgba(255,255,255,0.55)',
               fontWeight: active ? 600 : 400, cursor: 'pointer', lineHeight: 1.3,
             }}
-          >{o}</button>
+          >{labels?.[o] ?? o}</button>
         );
       })}
     </div>

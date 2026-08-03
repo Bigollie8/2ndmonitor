@@ -6,6 +6,7 @@ import {
   currentSunPhase,
   solarTimes,
 } from '../state/solar';
+import { formatClock } from '../state/dateTime';
 import type { Density, WeatherLocation } from '../types';
 
 const PHASE_META: Record<SunPhase, { label: string; icon: string; color: string }> = {
@@ -21,9 +22,10 @@ export interface SunTileProps {
   density: Density;
   accent: string;
   location: WeatherLocation;
+  hour12: boolean;
 }
 
-export function SunTile({ density, accent, location }: SunTileProps) {
+export function SunTile({ density, accent, location, hour12 }: SunTileProps) {
   // Re-render every minute. Real time math comes from Date.now().
   const [, setTick] = useState(0);
   useEffect(() => {
@@ -59,13 +61,13 @@ export function SunTile({ density, accent, location }: SunTileProps) {
         gap: 4, padding: '4px 2px',
         width: '100%', height: '100%',
       }}>
-        <Row icon="↑" label="Sunrise" time={fmtTime(times.sunrise)} accent={accent} />
-        <Row icon="↓" label="Sunset"  time={fmtTime(times.sunset)}  accent={accent} />
+        <Row icon="↑" label="Sunrise" time={fmtTime(times.sunrise, hour12)} accent={accent} />
+        <Row icon="↓" label="Sunset"  time={fmtTime(times.sunset, hour12)}  accent={accent} />
         <Divider />
-        <Row icon="🌅" label="Golden AM" time={fmtRange(times.sunrise, times.morningGoldenEnd)} subtle />
-        <Row icon="🌇" label="Golden PM" time={fmtRange(times.eveningGoldenStart, times.sunset)} subtle />
+        <Row icon="🌅" label="Golden AM" time={fmtRange(times.sunrise, times.morningGoldenEnd, hour12)} subtle />
+        <Row icon="🌇" label="Golden PM" time={fmtRange(times.eveningGoldenStart, times.sunset, hour12)} subtle />
         <Divider />
-        <Row icon="☀" label="Solar noon" time={fmtTime(times.solarNoon)} subtle />
+        <Row icon="☀" label="Solar noon" time={fmtTime(times.solarNoon, hour12)} subtle />
         <NextEventLine now={now} times={times} />
       </div>
     </HFTile>
@@ -141,16 +143,14 @@ function nextEvent(now: Date, times: SolarTimes): { label: string; at: Date } | 
   return best;
 }
 
-function fmtTime(d: Date | null): string {
+function fmtTime(d: Date | null, hour12: boolean): string {
   if (!d) return '—';
-  return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  return formatClock(d.getTime(), { hour12 });
 }
 
-function fmtRange(a: Date | null, b: Date | null): string {
+function fmtRange(a: Date | null, b: Date | null, hour12: boolean): string {
   if (!a || !b) return '—';
-  const sa = a.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
-  const sb = b.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
-  return `${sa} → ${sb}`;
+  return `${formatClock(a.getTime(), { hour12 })} → ${formatClock(b.getTime(), { hour12 })}`;
 }
 
 function fmtMinutes(mins: number): string {

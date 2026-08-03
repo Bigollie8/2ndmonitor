@@ -25,3 +25,40 @@ test('lonLatToTileXY: Knoxville TN (-83.92, 35.96) at z=6 → (17, 25)', () => {
   // y from standard slippy formula = 25
   assert.deepEqual(lonLatToTileXY(-83.92, 35.96, 6), { x: 17, y: 25 });
 });
+
+// ── Radar loop controls (0.7.2 §1) ──────────────────────────────────────────
+import { parseRadarConfig, radarFrameSlice, RADAR_SPEED_MS } from './rainviewer';
+
+test('parseRadarConfig: defaults on garbage or absence', () => {
+  const fallback = { windowMin: 60, speed: 'normal' };
+  assert.deepEqual(parseRadarConfig(undefined), fallback);
+  assert.deepEqual(parseRadarConfig(null), fallback);
+  assert.deepEqual(parseRadarConfig('fast'), fallback);
+  assert.deepEqual(parseRadarConfig({ windowMin: 45, speed: 'ludicrous' }), fallback);
+});
+
+test('parseRadarConfig: valid values pass, fields fall back independently', () => {
+  assert.deepEqual(parseRadarConfig({ windowMin: 30, speed: 'fast' }), { windowMin: 30, speed: 'fast' });
+  assert.deepEqual(parseRadarConfig({ windowMin: 120 }), { windowMin: 120, speed: 'normal' });
+  assert.deepEqual(parseRadarConfig({ speed: 'slow' }), { windowMin: 60, speed: 'slow' });
+});
+
+test('parseRadarConfig: tolerates the shared map-view keys in the same blob', () => {
+  assert.deepEqual(
+    parseRadarConfig({ mapView: { lat: 1, lon: 2, zoom: 7 }, windowMin: 120, speed: 'slow' }),
+    { windowMin: 120, speed: 'slow' },
+  );
+});
+
+test('radarFrameSlice: windowMin/10 + 1 frames off the tail', () => {
+  const past = Array.from({ length: 13 }, (_, i) => i); // full RainViewer manifest
+  assert.deepEqual(radarFrameSlice(past, 30), [9, 10, 11, 12]);           // 4 frames
+  assert.equal(radarFrameSlice(past, 60).length, 7);                      // last hour
+  assert.deepEqual(radarFrameSlice(past, 120), past);                     // everything the API has
+  assert.deepEqual(radarFrameSlice([1, 2, 3], 120), [1, 2, 3]);           // short manifest survives
+  assert.deepEqual(radarFrameSlice([], 30), []);
+});
+
+test('RADAR_SPEED_MS: slow/normal/fast cadence', () => {
+  assert.deepEqual(RADAR_SPEED_MS, { slow: 1200, normal: 800, fast: 500 });
+});
