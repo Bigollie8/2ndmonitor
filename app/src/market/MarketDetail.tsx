@@ -1,4 +1,4 @@
-import type { MutableRefObject } from 'react';
+import { useState, type MutableRefObject } from 'react';
 import type { CatalogItem } from '../state/catalog';
 import type { SpectrumState } from '../state/tauri';
 import type { BundleHistory } from '../state/catalogVersions';
@@ -8,6 +8,9 @@ import { StarRating } from '../components/StarRating';
 import { PermissionList } from './PermissionList';
 import { InstallButton } from './InstallButton';
 import { MediaGallery } from './MediaGallery';
+import { ReviewList } from './ReviewList';
+import { ReviewForm } from './ReviewForm';
+import { authorLabelOf } from '../state/authorIndex';
 import { glyphFor } from './MarketCard';
 
 const MONO = '"JetBrains Mono", ui-monospace, monospace';
@@ -33,6 +36,7 @@ const dateOf = (sec: number | null): string =>
 export function MarketDetail({
   item, history, accent, accent2, spectrumRef, appVersion, glyph: tileGlyph,
   busy, disabled, signedIn, ratingBusy, onRate, onInstall, onOpenLibrary, onTag,
+  onAuthor, onReviewError,
 }: {
   item: CatalogItem;
   history: BundleHistory | undefined;
@@ -49,7 +53,12 @@ export function MarketDetail({
   onInstall: () => void;
   onOpenLibrary: () => void;
   onTag: (tag: string) => void;
+  onAuthor: (author: string) => void;
+  /** A failed review post is flashed by the shell, unlike a failed fetch. */
+  onReviewError: (message: string) => void;
 }) {
+  const [reviewKey, setReviewKey] = useState(0);
+  const authorLabel = authorLabelOf(item);
   const glyph = glyphFor(item, tileGlyph);
   const fallbackContent = (
     <span style={{ fontSize: 56, fontWeight: 700, color: `${accent}cc` }}>{glyph}</span>
@@ -93,11 +102,22 @@ export function MarketDetail({
         </span>
       </div>
 
-      {item.authorDisplay && (
+      {/* Linked only where there is an author to link to: a first-party
+          built-in has no publisher, so no link is offered rather than one
+          leading to an empty page. */}
+      {authorLabel ? (
+        <button
+          onClick={() => onAuthor(authorLabel)}
+          style={{
+            background: 'transparent', border: 'none', padding: 0, marginTop: 3, cursor: 'pointer',
+            fontSize: 11, fontFamily: MONO, color: accent, textAlign: 'left',
+          }}
+        >by {authorLabel} ›</button>
+      ) : item.authorDisplay ? (
         <div style={{ fontSize: 11, fontFamily: MONO, color: 'rgba(255,255,255,0.4)', marginTop: 3 }}>
           by {item.authorDisplay}
         </div>
-      )}
+      ) : null}
 
       {item.summary && (
         <div style={{ fontSize: 12.5, color: 'rgba(255,255,255,0.72)', marginTop: 10, lineHeight: 1.45 }}>
@@ -178,6 +198,19 @@ export function MarketDetail({
             No published version history.
           </div>
         )}
+      </Section>
+
+      <Section title="Reviews">
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <ReviewForm
+            bundleId={item.id}
+            accent={accent}
+            signedIn={signedIn}
+            onPosted={() => setReviewKey((n) => n + 1)}
+            onError={onReviewError}
+          />
+          <ReviewList bundleId={item.id} accent={accent} reloadKey={reviewKey} />
+        </div>
       </Section>
 
       <Section title="Details">

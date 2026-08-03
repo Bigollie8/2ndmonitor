@@ -22,6 +22,11 @@ import { FilterChips } from './FilterChips';
 import { MarketGrid } from './MarketGrid';
 import { MarketShelf } from './MarketShelf';
 import { MarketDetail } from './MarketDetail';
+import { CollectionDetail } from './CollectionDetail';
+import { AuthorPage } from './AuthorPage';
+import { MultiInstallDialog } from './MultiInstallDialog';
+import { authorIndexOf } from '../state/authorIndex';
+import { planMultiInstall, type InstallPlan } from '../state/installPlan';
 
 const MONO = '"JetBrains Mono", ui-monospace, monospace';
 
@@ -157,6 +162,21 @@ export function MarketView({
     ? data.items.find((i) => i.key === browse.selectedKey)
     : undefined;
 
+  const authorIndex = useMemo(() => authorIndexOf(data.items), [data.items]);
+
+  const collection = browse.collectionSlug
+    ? data.collections.find((c) => c.slug === browse.collectionSlug)
+    : undefined;
+  // Declared order, never re-sorted: curation is the whole contribution a
+  // collection makes over a facet.
+  const collectionItems = useMemo(() => {
+    if (!collection) return [];
+    const byId = new Map(data.items.map((i) => [i.id, i]));
+    return collection.items
+      .map((id) => byId.get(id))
+      .filter((i): i is CatalogItem => i != null && !i.removed);
+  }, [collection, data.items]);
+
   const glyphOf = useCallback((item: CatalogItem): string | null => (
     item.kind === 'tile' && Object.prototype.hasOwnProperty.call(TILE_META, item.id)
       ? TILE_META[item.id as keyof typeof TILE_META].icon
@@ -201,6 +221,52 @@ export function MarketView({
     if (bundle.permissions.length > 0) setConfirming({ item, bundle });
     else void runInstall(item, bundle);
   }, [data.indexByKey, runInstall, flash]);
+
+  // ── multi-install ─────────────────────────────────────────────────────────
+
+  const [multiPlan, setMultiPlan] = useState<InstallPlan | null>(null);
+  const [multiBusy, setMultiBusy] = useState(false);
+  const [multiProgress, setMultiProgress] = useState('');
+
+  const runMultiInstall = useCallback(async (plan: InstallPlan) => {
+    setMultiBusy(true);
+    const done: string[] = [];
+    const failed: string[] = [];
+    try {
+      // Sequentially, NOT concurrently: the busy lock exists to serialize
+      // tombstone writes (each install computes its next removal list from
+      // state captured at call time), and firing five at once defeats it.
+      for (let i = 0; i < plan.toInstall.length; i++) {
+        const { item } = plan.toInstall[i];
+        setMultiProgress(`${i + 1} of ${plan.toInstall.length}`);
+        const bundle = data.indexByKey.get(item.key);
+        if (!bundle) { failed.push(item.name); continue; }
+        try {
+          const { invoke } = await import('@tauri-apps/api/core');
+          await invoke('marketplace_install', {
+            url: cfgUrl(), id: bundle.id, version: bundle.version,
+            sha256: bundle.sha256, kind: bundle.kind,
+          });
+          setCatalogRemoved(withoutRemoval(catalogRemoved, item.key));
+          if (item.kind === 'preset') window.dispatchEvent(new Event('market-presets:changed'));
+          done.push(item.name);
+        } catch {
+          failed.push(item.name);
+        }
+      }
+      await data.refreshInstalled();
+    } finally {
+      setMultiBusy(false);
+      setMultiProgress('');
+      setMultiPlan(null);
+    }
+    // Report what actually happened rather than a blanket success: a bulk
+    // action that half-worked and said "Installed" is worse than one that
+    // says "Installed 3 of 5 — Radar and Pollen failed."
+    flash(failed.length === 0
+      ? `Installed ${done.length}`
+      : `Installed ${done.length} of ${done.length + failed.length} — ${failed.join(', ')} failed`);
+  }, [data, catalogRemoved, setCatalogRemoved, flash]);
 
   const handleRate = useCallback(async (item: CatalogItem, stars: number) => {
     const bundleId = item.id;
@@ -325,7 +391,16 @@ export function MarketView({
           key={s.id}
           shelf={s}
           cardMin={layout.cardMin}
-          onSeeAll={() => dispatch({ type: 'open-shelf', facets: s.facets, sort: s.sort })}
+          onSeeAll={() => {
+            // A collection shelf opens its curated PAGE, not a facet grid —
+            // its membership is a hand-picked list, which no facet can
+            // express. Every other shelf declares facets that can.
+            if (s.id.startsWith('collection:')) {
+              dispatch({ type: 'open-collection', slug: s.id.slice('collection:'.length) });
+            } else {
+              dispatch({ type: 'open-shelf', facets: s.facets, sort: s.sort });
+            }
+          }}
           onOpen={(item) => dispatch({ type: 'open-detail', key: item.key })}
           {...cardProps}
         />
@@ -350,6 +425,8 @@ export function MarketView({
       onInstall={() => handleInstall(selected)}
       onOpenLibrary={onOpenLibrary}
       onTag={(tag) => dispatch({ type: 'toggle-tag', tag })}
+      onAuthor={(author) => dispatch({ type: 'open-author', author })}
+      onReviewError={flash}
     />
   ) : (
     <div style={{ padding: 18, fontSize: 11.5, color: 'rgba(255,255,255,0.45)' }}>
@@ -373,7 +450,27 @@ export function MarketView({
       : <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>{detailBody}</div>)
     : browse.view === 'discover'
       ? discoverBody
-      : <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>{gridBody}</div>;
+      : browse.view === 'collection'
+        ? (
+          <CollectionDetail
+            collection={collection}
+            items={collectionItems}
+            cardMin={layout.cardMin}
+            onInstallAll={() => setMultiPlan(planMultiInstall(collectionItems, data.appVersion))}
+            onOpen={(item) => dispatch({ type: 'open-detail', key: item.key })}
+            {...cardProps}
+          />
+        )
+        : browse.view === 'author'
+          ? (
+            <AuthorPage
+              summary={browse.author ? authorIndex.get(browse.author) : undefined}
+              cardMin={layout.cardMin}
+              onOpen={(item) => dispatch({ type: 'open-detail', key: item.key })}
+              {...cardProps}
+            />
+          )
+          : <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>{gridBody}</div>;
 
   return (
     <div style={{
@@ -452,6 +549,17 @@ export function MarketView({
           background: 'rgba(20,22,28,0.96)', color: 'rgba(255,255,255,0.85)',
           border: '1px solid rgba(255,255,255,0.12)',
         }}>{notice}</div>
+      )}
+
+      {multiPlan && (
+        <MultiInstallDialog
+          plan={multiPlan}
+          accent={accent}
+          busy={multiBusy}
+          progress={multiProgress}
+          onCancel={() => setMultiPlan(null)}
+          onConfirm={() => void runMultiInstall(multiPlan)}
+        />
       )}
 
       {/* Install confirm — lifted from ContentLibrary with its gating rule
