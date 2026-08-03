@@ -13,7 +13,7 @@ pub mod ratings;
 pub mod state;
 pub mod submit;
 
-use axum::routing::post;
+use axum::routing::{patch, post};
 use axum::{routing::get, Json, Router};
 use parking_lot::Mutex;
 use serde_json::json;
@@ -36,6 +36,7 @@ pub fn router(state: AppState) -> Router {
         .route("/admin", get(admin::page))
         .route("/admin/queue", get(admin::queue))
         .route("/admin/decide", post(admin::decide))
+        .route("/admin/bundles/:id/:version", patch(admin::patch_bundle))
         .route("/index.json", get(index::index_json))
         .route("/bundle/:id/:version", get(index::download))
         .route("/bundle/:id/:version/preview", get(index::preview))

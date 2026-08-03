@@ -3,9 +3,10 @@
 //! there is no default credential. A human always clicks approve: the AI
 //! report shown alongside each pending bundle is advisory only.
 
+use crate::manifest::validate_meta;
 use crate::state::AppState;
 use crate::submit::zip_bundle;
-use axum::extract::State;
+use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::Html;
 use axum::Json;
@@ -108,9 +109,13 @@ pub async fn decide(
             _ => "main.js",
         };
         let (zip, sha, size) = zip_bundle(&manifest, payload_name, code.as_deref().unwrap_or("{}"));
+        // `created_at` is submit time; the store's New and Recently-updated
+        // shelves need approval time, which is a different instant and can be
+        // much later.
         db.execute(
-            "UPDATE bundles SET status='approved', zip=?1, sha256=?2, size=?3, review_note=?4 WHERE id=?5 AND version=?6",
-            rusqlite::params![zip, sha, size, body.note, body.id, body.version],
+            "UPDATE bundles SET status='approved', zip=?1, sha256=?2, size=?3, review_note=?4, approved_at=?5
+             WHERE id=?6 AND version=?7",
+            rusqlite::params![zip, sha, size, body.note, crate::db::now(), body.id, body.version],
         )
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     } else {
@@ -120,6 +125,104 @@ pub async fn decide(
         )
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     }
+    Ok(Json(json!({ "ok": true })))
+}
+
+/// Shared admin guard for the modules split out of this one (media,
+/// collections, review moderation). Same rule as `require_admin`: no
+/// ADMIN_TOKEN configured means every admin route refuses, with no default
+/// credential.
+pub fn require_admin_pub(state: &AppState, headers: &HeaderMap) -> Result<(), StatusCode> {
+    require_admin(state, headers)
+}
+
+/// Admin metadata correction. This is how the bundles published before Market
+/// v2 get real metadata: it writes ONLY descriptive columns, never `zip`,
+/// `sha256`, `size` or `status`, so nothing is re-signed and no client
+/// re-downloads anything.
+///
+/// Update semantics, chosen so a partial backfill run is safe to repeat: an
+/// ABSENT key leaves the column untouched; a key set to `""` clears it to
+/// NULL. Without the second rule there would be no way to undo a bad backfill
+/// short of touching the database by hand.
+pub async fn patch_bundle(
+    State(state): State<AppState>,
+    Path((id, version)): Path<(String, String)>,
+    headers: HeaderMap,
+    Json(body): Json<Value>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    require_admin(&state, &headers).map_err(|s| (s, "admin token required".to_string()))?;
+    let obj = body
+        .as_object()
+        .ok_or((StatusCode::BAD_REQUEST, "body must be a JSON object".to_string()))?;
+
+    let db = state.db.lock();
+    let kind: String = db
+        .query_row(
+            "SELECT kind FROM bundles WHERE id = ?1 AND version = ?2",
+            rusqlite::params![id, version],
+            |r| r.get(0),
+        )
+        .map_err(|_| (StatusCode::NOT_FOUND, "no such bundle version".to_string()))?;
+
+    // Validate exactly what a submission would have to satisfy, minus the
+    // "must not be blank" rule — here a blank string is the documented
+    // clear-to-NULL signal, so blanks are stripped out before validation and
+    // applied as explicit NULLs afterwards.
+    let mut to_clear: Vec<&str> = Vec::new();
+    let mut to_validate = serde_json::Map::new();
+    for key in ["summary", "description", "category", "tags", "icon", "changelog", "minAppVersion"] {
+        match obj.get(key) {
+            None => {}
+            Some(Value::String(s)) if s.is_empty() => to_clear.push(key),
+            Some(v) => {
+                to_validate.insert(key.to_string(), v.clone());
+            }
+        }
+    }
+    let meta = validate_meta(&kind, &to_validate).map_err(|e| (StatusCode::BAD_REQUEST, e))?;
+
+    let apply = |column: &str, value: Option<String>| -> Result<(), (StatusCode, String)> {
+        db.execute(
+            &format!("UPDATE bundles SET {column} = ?1 WHERE id = ?2 AND version = ?3"),
+            rusqlite::params![value, id, version],
+        )
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        Ok(())
+    };
+
+    if to_validate.contains_key("summary") { apply("summary", meta.summary.clone())?; }
+    if to_validate.contains_key("description") { apply("description", meta.description.clone())?; }
+    if to_validate.contains_key("category") { apply("category", meta.category.clone())?; }
+    if to_validate.contains_key("icon") { apply("icon", meta.icon.clone())?; }
+    if to_validate.contains_key("changelog") { apply("changelog", meta.changelog.clone())?; }
+    if to_validate.contains_key("minAppVersion") {
+        apply("min_app_version", meta.min_app_version.clone())?;
+    }
+    if to_validate.contains_key("tags") {
+        apply("tags", Some(serde_json::to_string(&meta.tags).unwrap()))?;
+    }
+
+    for key in to_clear {
+        match key {
+            // `tags` is NOT NULL; clearing it means the empty array, not NULL.
+            "tags" => apply("tags", Some("[]".to_string()))?,
+            "minAppVersion" => apply("min_app_version", None)?,
+            other => apply(other, None)?,
+        }
+    }
+
+    if let Some(f) = obj.get("featured") {
+        let on = f
+            .as_bool()
+            .ok_or((StatusCode::BAD_REQUEST, "featured must be a boolean".to_string()))?;
+        db.execute(
+            "UPDATE bundles SET featured = ?1 WHERE id = ?2 AND version = ?3",
+            rusqlite::params![if on { 1 } else { 0 }, id, version],
+        )
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    }
+
     Ok(Json(json!({ "ok": true })))
 }
 

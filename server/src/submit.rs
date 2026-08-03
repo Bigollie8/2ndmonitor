@@ -176,16 +176,26 @@ pub async fn submit(
         None => None,
     };
 
+    let tags_json = serde_json::to_string(&validated.meta.tags).unwrap();
+    // Presets auto-approve here rather than through admin `decide`, so this is
+    // the only place their approval instant can be recorded. Every other kind
+    // is stamped in `admin::decide`.
+    let approved_at = if auto_approve { Some(now()) } else { None };
+
     {
         let db = state.db.lock();
         let inserted = db.execute(
-            "INSERT OR IGNORE INTO bundles (id, version, kind, name, author_id, status, permissions, manifest, code, sha256, size, zip, created_at, preview)
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14)",
+            "INSERT OR IGNORE INTO bundles (id, version, kind, name, author_id, status, permissions, manifest, code, sha256, size, zip, created_at, preview,
+                 summary, description, category, tags, icon, changelog, min_app_version, approved_at)
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22)",
             rusqlite::params![
                 validated.id, validated.version, body.kind, validated.name, author_id,
                 status, perms_json, body.manifest,
                 if body.kind == "preset" { None::<String> } else { Some(payload.clone()) },
-                sha, size, zip, now(), preview
+                sha, size, zip, now(), preview,
+                validated.meta.summary, validated.meta.description, validated.meta.category,
+                tags_json, validated.meta.icon, validated.meta.changelog,
+                validated.meta.min_app_version, approved_at
             ],
         ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
         if inserted == 0 {
