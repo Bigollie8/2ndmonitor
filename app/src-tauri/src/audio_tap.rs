@@ -15,7 +15,11 @@
 //!   IOProc; `start` does all of its work synchronously on the caller's thread,
 //!   so it already reports activation failure synchronously without needing a
 //!   channel to carry the result back. The *contract* `audio.rs`'s supervisor
-//!   depends on (fail fast, fall back to the mix) is the same.
+//!   depends on — fail fast, so the swap can settle its state and emit one
+//!   `audio:source` event without waiting — is the same. Note there is no
+//!   fallback to fail *into*: 0.6.6 deleted the auto-fallback state machine,
+//!   so a refused per-app tap leaves the selected apps silent and the sticky
+//!   `supported` flag cleared, never a silently-substituted system mix.
 //! * `is_alive` therefore can't key off "the pump returned". It keys off
 //!   IOProc progress instead: Core Audio clocks the IO cycle off the aggregate
 //!   device's main sub-device, so callbacks keep arriving whether or not the
@@ -231,6 +235,12 @@ pub struct TapCapture {
     /// doing one relaxed increment and nothing else.
     liveness: Mutex<(u64, Instant)>,
     sample_rate: u32,
+    /// The pids this tap was actually built with — a SUBSET of what `start`
+    /// was asked for, because an app that stopped playing between the caller's
+    /// session snapshot and `create_tap` has no process object to tap. The
+    /// supervisor reports these as its live apps, so it must read them from
+    /// here rather than from what it requested.
+    included_pids: Vec<i32>,
     tap_id: AudioObjectID,
     aggregate_id: AudioObjectID,
     proc_id: AudioDeviceIOProcID,
@@ -242,6 +252,13 @@ impl TapCapture {
     /// for a 44.1 kHz tap would silently misplace every band.
     pub fn sample_rate(&self) -> u32 {
         self.sample_rate
+    }
+
+    /// The pids actually in this tap. May be shorter than what `start` was
+    /// asked for — see [`TapCapture::included_pids`]'s field docs. Callers that
+    /// report "which apps are live" MUST use this and not their request.
+    pub fn included_pids(&self) -> &[i32] {
+        &self.included_pids
     }
 
     /// False once the IOProc has stopped feeding the ring, for any reason.
@@ -339,8 +356,10 @@ impl Drop for TapCapture {
 
 /// Build a tap for `target` and start feeding `buffer`. Returns once the tap,
 /// the aggregate device and the IOProc all exist and are running, or with the
-/// first failure — the supervisor needs to know synchronously whether to fall
-/// back to the system mix.
+/// first failure — the supervisor needs the outcome synchronously so one
+/// `apply` can settle its state and emit exactly one `audio:source` event.
+/// An `Err` is NOT a request to substitute the mix (0.6.6 has no fallback);
+/// it clears the sticky `supported` flag and the selected apps stay silent.
 pub fn start(
     target: TapTarget,
     buffer: Arc<Mutex<Vec<f32>>>,
@@ -353,7 +372,7 @@ pub fn start(
         return Err("a tap on an empty process list would capture nothing".to_string());
     }
     unsafe {
-        let tap_id = create_tap(&target)?;
+        let (tap_id, included_pids) = create_tap(&target)?;
 
         let aggregate_id = match create_aggregate_device(tap_id) {
             Ok(id) => id,
@@ -410,6 +429,7 @@ pub fn start(
             alive: AtomicBool::new(true),
             liveness: Mutex::new((0, Instant::now())),
             sample_rate,
+            included_pids,
             tap_id,
             aggregate_id,
             proc_id,
@@ -565,7 +585,12 @@ unsafe extern "C" fn io_proc(
 const CA_TAP_UNMUTED: isize = 0;
 
 /// Build the `CATapDescription` and hand it to `AudioHardwareCreateProcessTap`.
-unsafe fn create_tap(target: &TapTarget) -> Result<AudioObjectID, String> {
+///
+/// Returns the tap plus **the pids that actually made it into it** — which is
+/// not always every pid asked for, see the translation note below. The caller
+/// reports those as the live ones; anything dropped is an app that stopped
+/// playing between the session snapshot and this call.
+unsafe fn create_tap(target: &TapTarget) -> Result<(AudioObjectID, Vec<i32>), String> {
     // Objective-C convenience constructors return autoreleased objects; without
     // a pool on this thread they would leak (and log about it).
     autoreleasepool(|_| {
@@ -590,37 +615,50 @@ unsafe fn create_tap(target: &TapTarget) -> Result<AudioObjectID, String> {
         // excludes no one. Translate first.
         //
         // A process with no audio object (`Ok(None)`) is not an error, it is an
-        // app that is not currently playing — and the two targets want opposite
-        // things from that:
+        // app that is not currently playing. Both targets DROP it and carry on;
+        // only the failure mode of dropping *everything* differs:
         //
-        //   Only  — an empty list would tap nothing, so this must fail and let
-        //           the supervisor fall back to the mix.
-        //   Except — dropping the pid excludes nothing, which is the same
-        //           audio a mix fallback would give, except we keep the tap and
-        //           will exclude the app the moment it starts playing again.
-        //           Failing instead would be strictly worse: the user asks for
-        //           "everything except Spotify" while Spotify is paused, we
-        //           error, and the mix they land on *includes* Spotify as soon
-        //           as it resumes.
+        //   Only  — a tap on an empty list would capture nothing while looking
+        //           alive, so an empty result is a hard error. A partial result
+        //           is not: the apps that are playing get tapped and the caller
+        //           is told which, so one app quitting in the race window
+        //           between the session snapshot and this call costs that app's
+        //           slot and nothing else. Failing the whole build instead was
+        //           a real bug — 0.6.6 has no mix fallback, so the supervisor
+        //           would set `supported = false`, hold no tap, and then find
+        //           nothing stale on any later watcher tick (an app that never
+        //           stopped playing produces no session-transition evidence),
+        //           leaving every selected app silent until the user re-touched
+        //           the picker.
+        //   Except — dropping the pid excludes nothing, and an empty list is
+        //           meaningful there: it is exactly the system mix. Failing
+        //           would be strictly worse — the user asks for "everything
+        //           except Spotify" while Spotify is paused, we error, and the
+        //           mix they land on *includes* Spotify as soon as it resumes.
         //
         // A translation call that actually fails is still fatal on every path —
         // that means the property read is wrong, and hiding it behind a log
         // line is how a broken selector survives to ship.
         let mut objects: Vec<AudioObjectID> = Vec::with_capacity(pids.len());
+        let mut kept: Vec<i32> = Vec::with_capacity(pids.len());
         for pid in pids {
             match translate_pid(*pid)? {
-                Some(object) => objects.push(object),
-                None if matches!(target, TapTarget::Only(_)) => {
-                    return Err(format!(
-                        "pid {pid} has no Core Audio process object — it is not playing (or has \
-                         never played) any audio, so there is nothing to capture"
-                    ));
+                Some(object) => {
+                    objects.push(object);
+                    kept.push(*pid);
                 }
                 None => eprintln!(
                     "audio: pid {pid} has no Core Audio process object (it is not playing right \
-                     now), so it is not in the tap's exclusion list"
+                     now), so it is not in the tap"
                 ),
             }
+        }
+        if objects.is_empty() && matches!(target, TapTarget::Only(_)) {
+            return Err(
+                "none of the selected apps has a Core Audio process object — none of them is \
+                 playing (or has ever played) any audio, so there is nothing to capture"
+                    .to_string(),
+            );
         }
 
         let mut arena = CfArena::default();
@@ -696,7 +734,7 @@ unsafe fn create_tap(target: &TapTarget) -> Result<AudioObjectID, String> {
                 status_text(st)
             ));
         }
-        Ok(tap_id)
+        Ok((tap_id, kept))
     })
 }
 

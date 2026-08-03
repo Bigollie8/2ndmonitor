@@ -186,13 +186,23 @@ pub struct AudioSourceState {
 static LAST_STATE: Mutex<Option<AudioSourceState>> = Mutex::new(None);
 
 /// The per-app capture rings while `Source::Apps` is live — what
-/// `process_loop` drains and sums into the FFT ring at every hop. Holds one
-/// entry per SELECTED exe (capture attached or not: a writer-less ring just
-/// reads as silence), so a non-empty list is also how `process_loop` knows it
-/// is in apps mode and must keep the window sliding with synthesized silence
-/// when nothing plays. Empty in mix mode, where cpal writes the FFT ring
-/// directly. Only Arc handles are cloned out — the lock is held for
-/// microseconds.
+/// `process_loop` drains and sums into the FFT ring at every hop. A non-empty
+/// list is also how `process_loop` knows it is in apps mode and must keep the
+/// window sliding with synthesized silence when nothing plays. Empty in mix
+/// mode, where the mix backend writes the FFT ring directly. Only Arc handles
+/// are cloned out — the lock is held for microseconds.
+///
+/// How many entries depends on the backend, and nothing downstream cares:
+/// `mix_rings` sums whatever it is given.
+///
+/// * Windows — one entry per SELECTED exe, capture attached or not (a
+///   writer-less ring just reads as silence), because each app is its own
+///   WASAPI process-loopback client.
+/// * macOS — exactly ONE entry regardless of how many apps are selected, and
+///   present even when no tap could be built. A Core Audio tap takes the whole
+///   pid list and mixes them itself, so there is one ring; publishing it
+///   unconditionally is what keeps `process_loop` in apps mode (and the
+///   spectrum decaying to zero rather than freezing) when nothing is playing.
 static APP_RINGS: Mutex<Vec<Arc<Mutex<Vec<f32>>>>> = Mutex::new(Vec::new());
 
 /// Current capture state. Pure read — never touches the capture.
@@ -263,9 +273,12 @@ struct TapApps {
     tap: Option<crate::audio_tap::TapCapture>,
 }
 
-/// Whichever backend set currently feeds the FFT. `cpal::Stream` is `!Send`,
-/// so `Live` never leaves the supervisor thread. The stream payload is held
-/// purely for its `Drop` — hence the allow.
+/// Whichever backend set currently feeds the FFT. Never leaves the supervisor
+/// thread — on Windows it *cannot*, since `cpal::Stream` is `!Send`; on macOS
+/// the payload is a `TapCapture`, which `audio_tap` statically asserts is
+/// `Send + Sync`, so there the confinement is a design choice (one owner, one
+/// teardown ordering) rather than a type-system guarantee. The backend payload
+/// is held purely for its `Drop` — hence the allow.
 #[allow(dead_code)]
 enum Live {
     None,
@@ -516,11 +529,37 @@ impl<R: Runtime> Supervisor<R> {
             match crate::audio_tap::start(TapTarget::Only(pid_ts), ring.clone(), RING_CAP) {
                 Ok(cap) => {
                     rate = cap.sample_rate();
-                    for (i, pid, _) in &targets {
-                        slots[*i].tapped_pid = Some(*pid);
-                        eprintln!("audio: Core Audio tap includes {} (pid {pid})", slots[*i].exe);
+                    // Read back what the tap was ACTUALLY built with, never
+                    // what we asked for. `create_tap` drops a pid whose app
+                    // stopped playing in the race window between
+                    // `session_pairs()` above and the translation inside — so
+                    // assuming every requested pid made it would report an app
+                    // as live in `live_exes` when it is contributing nothing.
+                    let included = cap.included_pids();
+                    for (i, pid, pid_t) in &targets {
+                        if included.contains(pid_t) {
+                            slots[*i].tapped_pid = Some(*pid);
+                            eprintln!(
+                                "audio: Core Audio tap includes {} (pid {pid})",
+                                slots[*i].exe
+                            );
+                        } else {
+                            // Not an error and not sticky: the slot simply
+                            // contributes silence, and the watcher reattaches
+                            // it when a session reappears — the same thing a
+                            // Windows slot with no session does.
+                            eprintln!(
+                                "audio: {} (pid {pid}) stopped playing before the tap was built; \
+                                 it contributes silence until it starts again",
+                                slots[*i].exe
+                            );
+                        }
                     }
-                    eprintln!("audio: Core Audio tap on {} app(s) @ {rate} Hz", targets.len());
+                    eprintln!(
+                        "audio: Core Audio tap on {} of {} selected app(s) @ {rate} Hz",
+                        included.len(),
+                        targets.len()
+                    );
                     tap = Some(cap);
                 }
                 Err(e) => {
@@ -652,7 +691,16 @@ impl<R: Runtime> Supervisor<R> {
     #[cfg(target_os = "macos")]
     fn apps_stale(&mut self) -> bool {
         let sessions = session_pairs();
-        let now_endpoint = crate::mixer::default_endpoint_id().ok();
+        // Only an Ok read counts as a device switch, and only against a
+        // baseline we actually have. The mix-mode branch compares
+        // `.ok()` Options because that is what main does and Windows must not
+        // change; here a spurious Err would be *compounding* — each false hit
+        // both rebuilds the tap and re-arms the sticky `supported` flag — so
+        // an unreadable endpoint is treated as "no news", not as a switch.
+        let endpoint_moved = match (crate::mixer::default_endpoint_id(), &self.endpoint_id) {
+            (Ok(now), Some(prev)) => &now != prev,
+            _ => false,
+        };
         let Live::Apps(apps) = &mut self.live else { return false };
         let exes: Vec<String> = apps.slots.iter().map(|s| s.exe.clone()).collect();
         let pids = match_sessions(&exes, &sessions);
@@ -670,7 +718,7 @@ impl<R: Runtime> Supervisor<R> {
         if tap_dead {
             eprintln!("audio: process tap stopped, rebuilding");
         }
-        if now_endpoint != self.endpoint_id {
+        if endpoint_moved {
             eprintln!("audio: default output device changed, rebuilding the process tap");
             stale = true;
         }
@@ -1097,12 +1145,20 @@ fn log_band_edges(bands: usize, max_bin: usize, sample_rate: f32, fmin: f32, fma
 }
 
 /// Sample-wise sum of the per-app captures for one FFT hop. Each input Vec is
-/// everything one capture pushed since the last hop (already mono, all pinned
-/// to `audio_loopback::CAPTURE_SAMPLE_RATE`); runs are aligned at the front
-/// and shorter runs are padded with silence, so an app that produced nothing
-/// (paused, muted, not running) simply contributes zeros. Clamped to [-1, 1]
-/// so four loud apps can't blow past full scale into the FFT. Pure — the
-/// caller drains each capture's ring and hands the drained Vecs here.
+/// everything one capture pushed since the last hop, already mono and all at
+/// one common rate — `audio_loopback::CAPTURE_SAMPLE_RATE` (48 kHz) on
+/// Windows, where every process-loopback client is pinned to it; on macOS
+/// there is only ever ONE input, running at whatever rate the tap negotiated
+/// with the current output device (often 44.1 kHz), so "common" is trivially
+/// true and this degenerates to a clamped pass-through. Whatever the rate,
+/// `SAMPLE_RATE` carries it and `process_loop` derives its band edges from
+/// that, never from a constant here.
+///
+/// Runs are aligned at the front and shorter runs are padded with silence, so
+/// an app that produced nothing (paused, muted, not running) simply
+/// contributes zeros. Clamped to [-1, 1] so four loud apps can't blow past
+/// full scale into the FFT. Pure — the caller drains each capture's ring and
+/// hands the drained Vecs here.
 ///
 /// Cross-app alignment is deliberately loose: packet timing can skew apps by
 /// up to one hop (~30 ms) relative to each other, which is invisible in a
