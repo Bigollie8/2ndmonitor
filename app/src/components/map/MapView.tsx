@@ -253,6 +253,7 @@ export function RecenterButton({ accent, onClick }: { accent: string; onClick: (
       style={{
         position: 'absolute', top: 6, right: 6, zIndex: 2,
         padding: '3px 8px', fontSize: 10, fontWeight: 600, borderRadius: 5,
+        // stays opaque-dark: floats over map canvas (glass Sweep Map exclusion)
         background: 'rgba(8,9,12,0.78)', color: accent,
         border: `1px solid ${accent}55`, cursor: 'pointer',
       }}

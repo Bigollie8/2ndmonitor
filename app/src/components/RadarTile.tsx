@@ -133,6 +133,7 @@ export function RadarTile({ density, accent, location, config, setConfig }: Rada
             <div style={{
               position: 'absolute', inset: 0,
               display: 'flex', alignItems: 'center', justifyContent: 'center',
+              // stays opaque-dark: floats over map canvas (glass Sweep Map exclusion)
               background: 'rgba(8,9,12,0.6)',
               fontSize: 11, color: 'rgba(255,255,255,0.55)',
               pointerEvents: 'none',
@@ -144,6 +145,7 @@ export function RadarTile({ density, accent, location, config, setConfig }: Rada
             <div style={{
               position: 'absolute', inset: 0,
               display: 'flex', alignItems: 'center', justifyContent: 'center',
+              // stays opaque-dark: floats over map canvas (glass Sweep Map exclusion)
               background: 'rgba(8,9,12,0.6)',
               fontSize: 11, color: 'rgba(255,255,255,0.55)',
               pointerEvents: 'none',
