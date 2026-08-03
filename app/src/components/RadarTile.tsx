@@ -7,16 +7,16 @@ import {
   type RainViewerManifest,
   fetchRainViewerManifest,
   radarTileUrl,
+  parseRadarConfig,
+  radarFrameSlice,
+  RADAR_SPEED_MS,
+  type RadarSpeed,
 } from '../state/rainviewer';
 import { usePoll } from '../state/usePoll';
 import { formatClock } from '../state/dateTime';
 import type { Density, WeatherLocation } from '../types';
 
-const FRAME_INTERVAL_MS = 500;
 const MANIFEST_REFRESH_MS = 5 * 60 * 1000;
-/** RainViewer past frames arrive at 10-min cadence — the last 7 cover the
- *  last hour (spec: play button animates the last hour). */
-const LAST_HOUR_FRAMES = 7;
 /** Spec: radar frames overlay at a fixed 0.7 opacity. */
 const RADAR_OPACITY = 0.7;
 const MAP_MIN_ZOOM = 3;
@@ -41,6 +41,9 @@ export function RadarTile({ density, accent, location, config, setConfig, redact
   const [playing, setPlaying] = useState<boolean>(false);
   const [scrubbing, setScrubbing] = useState<boolean>(false);
 
+  const radarCfg = parseRadarConfig(config);
+  const [hovered, setHovered] = useState(false);
+
   // Manifest fetch: on mount + every 5 minutes. Returns null on failure —
   // throw so usePoll backs off and keeps the last good manifest visible.
   const { data: manifest } = usePoll(
@@ -53,10 +56,10 @@ export function RadarTile({ density, accent, location, config, setConfig, redact
     [],
   );
 
-  /** The last hour of past frames, oldest → newest (newest = "now"). */
+  /** The configured loop window of past frames, oldest → newest. */
   const frames: RainViewerFrame[] = useMemo(
-    () => (manifest ? manifest.past.slice(-LAST_HOUR_FRAMES) : []),
-    [manifest],
+    () => (manifest ? radarFrameSlice(manifest.past, radarCfg.windowMin) : []),
+    [manifest, radarCfg.windowMin],
   );
 
   const currentFrame = frames[frameIndex];
@@ -83,15 +86,14 @@ export function RadarTile({ density, accent, location, config, setConfig, redact
     const id = setInterval(() => {
       if (document.hidden) return;
       setFrameIndex((i) => (i + 1) % frames.length);
-    }, FRAME_INTERVAL_MS);
+    }, RADAR_SPEED_MS[radarCfg.speed]);
     return () => clearInterval(id);
-  }, [playing, scrubbing, frames.length]);
+  }, [playing, scrubbing, frames.length, radarCfg.speed]);
 
-  // Snap to the latest frame when a new manifest arrives.
+  // Snap to the newest frame when a new manifest arrives or the window changes.
   useEffect(() => {
-    if (!manifest) return;
-    setFrameIndex(Math.max(0, Math.min(LAST_HOUR_FRAMES, manifest.past.length) - 1));
-  }, [manifest?.generated]);
+    setFrameIndex(Math.max(0, frames.length - 1));
+  }, [manifest?.generated, frames.length]);
 
   const headRight = (
     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -101,7 +103,7 @@ export function RadarTile({ density, accent, location, config, setConfig, redact
       }}>{location.label}</span>
       <button
         onClick={() => setPlaying((p) => !p)}
-        title={playing ? 'Pause' : 'Play the last hour'}
+        title={playing ? 'Pause' : `Play the last ${radarCfg.windowMin === 30 ? '30 minutes' : radarCfg.windowMin === 60 ? 'hour' : '2 hours'}`}
         style={{
           padding: '4px 10px', fontSize: 11, fontWeight: 600, borderRadius: 5,
           background: playing ? `${accent}22` : 'rgba(255,255,255,0.05)',
@@ -119,10 +121,13 @@ export function RadarTile({ density, accent, location, config, setConfig, redact
 
   return (
     <HFTile title="Weather radar" headRight={headRight} accent={accent} density={density} style={{ height: '100%' }}>
-      <div style={{
-        display: 'flex', flexDirection: 'column',
-        width: '100%', height: '100%', minHeight: 0,
-      }}>
+      <div
+        onMouseEnter={() => setHovered(true)}
+        onMouseLeave={() => setHovered(false)}
+        style={{
+          display: 'flex', flexDirection: 'column',
+          width: '100%', height: '100%', minHeight: 0,
+        }}>
         {/* Pannable/zoomable map with the radar frame composited at 0.7. */}
         <div style={{ flex: 1, minHeight: 0, position: 'relative', borderRadius: 6, overflow: 'hidden' }}>
           <MapView
@@ -167,13 +172,33 @@ export function RadarTile({ density, accent, location, config, setConfig, redact
             display: 'flex', alignItems: 'center', gap: 10,
             padding: '6px 4px 0',
           }}>
-            <span style={{
+            <span data-testid="radar-frame-time" style={{
               fontSize: 10, color: 'rgba(255,255,255,0.6)',
               fontFamily: '"JetBrains Mono", ui-monospace, monospace',
               flexShrink: 0, minWidth: 110,
             }}>
               {formatFrameTime(currentFrame, manifest, hour12)}
             </span>
+            {hovered && (
+              <>
+                <FooterSeg<'30' | '60' | '120'>
+                  value={String(radarCfg.windowMin) as '30' | '60' | '120'}
+                  options={['30', '60', '120']}
+                  labels={{ '30': '30m', '60': '1h', '120': '2h' }}
+                  onChange={(o) => setConfig({ ...(config ?? {}), windowMin: Number(o) })}
+                  accent={accent}
+                  testId="radar-window"
+                />
+                <FooterSeg<RadarSpeed>
+                  value={radarCfg.speed}
+                  options={['slow', 'normal', 'fast']}
+                  labels={{ slow: '0.5×', normal: '1×', fast: '1.5×' }}
+                  onChange={(s) => setConfig({ ...(config ?? {}), speed: s })}
+                  accent={accent}
+                  testId="radar-speed"
+                />
+              </>
+            )}
             <input
               type="range"
               min={0}
@@ -209,4 +234,41 @@ function formatFrameTime(frame: RainViewerFrame, manifest: RainViewerManifest | 
   const suffix = offsetMin === 0 ? 'now' : `${offsetMin} min`;
 
   return `${timeStr} · ${suffix}`;
+}
+
+/** Tiny inline segmented control for the tile footer (0.7.2 §1). Settings'
+ *  Segmented isn't exported and is styled for the settings window. */
+function FooterSeg<T extends string>({ value, options, labels, onChange, accent, testId }: {
+  value: T;
+  options: T[];
+  labels: Record<T, string>;
+  onChange: (v: T) => void;
+  accent: string;
+  testId: string;
+}) {
+  return (
+    <div data-testid={testId} style={{
+      display: 'flex', gap: 2, padding: 1, borderRadius: 5, flexShrink: 0,
+      background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.06)',
+    }}>
+      {options.map((o) => {
+        const active = o === value;
+        return (
+          <button
+            key={o}
+            onClick={() => onChange(o)}
+            style={{
+              padding: '2px 6px', fontSize: 9, borderRadius: 4,
+              fontFamily: '"JetBrains Mono", ui-monospace, monospace',
+              fontWeight: active ? 600 : 400,
+              background: active ? `${accent}22` : 'transparent',
+              border: active ? `1px solid ${accent}44` : '1px solid transparent',
+              color: active ? accent : 'rgba(255,255,255,0.5)',
+              cursor: 'pointer',
+            }}
+          >{labels[o]}</button>
+        );
+      })}
+    </div>
+  );
 }
