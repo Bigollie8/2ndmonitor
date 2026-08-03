@@ -2,13 +2,12 @@ import type { MutableRefObject } from 'react';
 import type { CatalogItem } from '../state/catalog';
 import type { SpectrumState } from '../state/tauri';
 import type { BundleHistory } from '../state/catalogVersions';
-import { previewSourceFor, canLivePreview } from '../components/previewSource';
-import { PreviewImage } from '../components/PreviewImage';
+import { canLivePreview } from '../components/previewSource';
 import { LivePreview } from '../components/LivePreview';
 import { StarRating } from '../components/StarRating';
-import { cfgUrl } from '../state/marketplaceConfig';
 import { PermissionList } from './PermissionList';
 import { InstallButton } from './InstallButton';
+import { MediaGallery } from './MediaGallery';
 import { glyphFor } from './MarketCard';
 
 const MONO = '"JetBrains Mono", ui-monospace, monospace';
@@ -55,16 +54,6 @@ export function MarketDetail({
   const fallbackContent = (
     <span style={{ fontSize: 56, fontWeight: 700, color: `${accent}cc` }}>{glyph}</span>
   );
-  const previewSrc = previewSourceFor(item, tileGlyph);
-  const baselineContent = previewSrc.kind === 'image' && item.availableVersion != null ? (
-    <PreviewImage
-      id={item.id}
-      version={item.availableVersion}
-      kind={item.kind}
-      url={cfgUrl()}
-      fallback={fallbackContent}
-    />
-  ) : fallbackContent;
   // Auto-mounted, unlike a card's hover-gated preview: this is ONE sandbox
   // for one item the user deliberately opened, not six speculative ones. The
   // finding-31 rule is about ambient mounting, not about live rendering.
@@ -72,22 +61,28 @@ export function MarketDetail({
 
   return (
     <div style={{ padding: 18, overflowY: 'auto', flex: 1 }}>
-      <div style={{
-        aspectRatio: '16 / 9', borderRadius: 12, overflow: 'hidden',
-        background: `linear-gradient(135deg, ${accent}22, ${accent}08)`,
-        border: `1px solid ${accent}2a`,
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-      }}>
-        {live ? (
+      {/* The live render sits BESIDE the gallery, never in place of it: they
+          answer different questions ("what does this do on my machine" vs
+          "what did the author intend to show"), and an uninstalled bundle has
+          only the gallery. */}
+      <MediaGallery item={item} accent={accent} fallback={fallbackContent} />
+
+      {live && (
+        <div style={{
+          aspectRatio: '16 / 9', borderRadius: 12, overflow: 'hidden', marginTop: 10,
+          background: `linear-gradient(135deg, ${accent}22, ${accent}08)`,
+          border: `1px solid ${accent}2a`,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+        }}>
           <LivePreview
             bundleId={item.id}
             accent={accent}
             accent2={accent2}
             spectrumRef={spectrumRef}
-            fallback={baselineContent}
+            fallback={fallbackContent}
           />
-        ) : baselineContent}
-      </div>
+        </div>
+      )}
 
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginTop: 14 }}>
         <span style={{ fontSize: 18, fontWeight: 700, color: 'rgba(255,255,255,0.95)' }}>
