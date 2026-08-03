@@ -5,6 +5,24 @@ All notable changes to 2ndMonitor are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.6.7] - 2026-08-03
+
+### Added
+- **F11 fullscreen**: F11 toggles true fullscreen — the Windows taskbar
+  disappears on that monitor. Press F11 again to leave; the app always
+  starts windowed. Listed in the "?" shortcuts overlay
+- **Auto-hide top bar**: a new Settings → Appearance toggle slides the top
+  bar out of view until you move the mouse to the top edge. It stays put
+  while edit mode, settings, or any other bar-anchored overlay is open.
+  Off by default
+
+### Fixed
+- **Leftover tile piles**: profiles created before 0.6.1 could carry a
+  stack of overlapping tiles that an old defaults bug materialized —
+  especially in portrait. A one-time repair now removes tiles that are
+  still at their exact default position and overlapping another tile.
+  Anything removed can be re-added from the content library
+
 ## [0.6.6] - 2026-08-03
 
 ### Added
