@@ -24,7 +24,7 @@ export function HFTile({
   const D = getDensity(density);
   return (
     <div onClick={onClick} style={{
-      background: 'rgba(22,24,30,0.78)',
+      background: 'var(--surface-tile, rgba(22,24,30,0.78))',
       backdropFilter: 'blur(20px) saturate(140%)',
       WebkitBackdropFilter: 'blur(20px) saturate(140%)',
       border: '1px solid rgba(255,255,255,0.06)',
