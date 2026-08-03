@@ -93,7 +93,7 @@ export function UpdateToast({ accent }: { accent: string }) {
   return (
     <div style={{
       position: 'fixed', right: 16, bottom: 44, zIndex: 60, width: 280,
-      background: 'rgba(10,11,15,0.92)', backdropFilter: 'blur(12px)',
+      background: 'var(--surface-chrome, rgba(10,11,15,0.92))', backdropFilter: 'blur(12px)',
       border: '1px solid rgba(255,255,255,0.09)', borderRadius: 10,
       padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 8,
     }}>

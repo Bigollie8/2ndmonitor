@@ -1,47 +1,39 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { HFTile } from './tiles';
+import { MapView, RecenterButton } from './map/MapView';
+import { useMapView } from './map/useMapView';
 import {
   type RainViewerFrame,
   type RainViewerManifest,
-  basemapTileUrl,
   fetchRainViewerManifest,
   radarTileUrl,
 } from '../state/rainviewer';
 import { usePoll } from '../state/usePoll';
 import type { Density, WeatherLocation } from '../types';
 
-const RADAR_Z = 7;
 const FRAME_INTERVAL_MS = 500;
 const MANIFEST_REFRESH_MS = 5 * 60 * 1000;
-
-/** 2×2 tile grid centered on a lat/lon. Returns the four tile coordinates
- *  (top-left, top-right, bottom-left, bottom-right). User's exact position
- *  ends up close to the geometric center of the rendered grid. */
-function centeredTileGrid(lat: number, lon: number, z: number): Array<{ x: number; y: number }> {
-  const n = 1 << z;
-  const xFrac = (lon + 180) / 360 * n;
-  const latRad = lat * Math.PI / 180;
-  const yFrac = (1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2 * n;
-  // Top-left tile: pick so user is closest to grid center. floor(x - 0.5) does this.
-  const tx0 = Math.floor(xFrac - 0.5);
-  const ty0 = Math.floor(yFrac - 0.5);
-  return [
-    { x: tx0,     y: ty0     },
-    { x: tx0 + 1, y: ty0     },
-    { x: tx0,     y: ty0 + 1 },
-    { x: tx0 + 1, y: ty0 + 1 },
-  ];
-}
+/** RainViewer past frames arrive at 10-min cadence — the last 7 cover the
+ *  last hour (spec: play button animates the last hour). */
+const LAST_HOUR_FRAMES = 7;
+/** Spec: radar frames overlay at a fixed 0.7 opacity. */
+const RADAR_OPACITY = 0.7;
+const MAP_MIN_ZOOM = 3;
+const MAP_MAX_ZOOM = 12;
+const MAP_DEFAULT_ZOOM = 7;
 
 export interface RadarTileProps {
   density: Density;
   accent: string;
   location: WeatherLocation;
+  config: Record<string, unknown> | undefined;
+  setConfig: (next: Record<string, unknown>) => void;
 }
 
-export function RadarTile({ density, accent, location }: RadarTileProps) {
+export function RadarTile({ density, accent, location, config, setConfig }: RadarTileProps) {
   const [frameIndex, setFrameIndex] = useState<number>(0);
-  const [playing, setPlaying] = useState<boolean>(true);
+  // Spec: latest frame by default; the play button starts the animation.
+  const [playing, setPlaying] = useState<boolean>(false);
   const [scrubbing, setScrubbing] = useState<boolean>(false);
 
   // Manifest fetch: on mount + every 5 minutes. Returns null on failure —
@@ -56,19 +48,31 @@ export function RadarTile({ density, accent, location }: RadarTileProps) {
     [],
   );
 
+  /** The last hour of past frames, oldest → newest (newest = "now"). */
   const frames: RainViewerFrame[] = useMemo(
-    () => (manifest ? [...manifest.past, ...manifest.nowcast] : []),
+    () => (manifest ? manifest.past.slice(-LAST_HOUR_FRAMES) : []),
     [manifest],
-  );
-
-  const tileGrid = useMemo(
-    () => centeredTileGrid(location.lat, location.lon, RADAR_Z),
-    [location.lat, location.lon],
   );
 
   const currentFrame = frames[frameIndex];
 
-  // Auto-advance frames when playing AND not scrubbing
+  const { view, overridden, onViewChange, recenter } = useMapView({
+    anchor: { lat: location.lat, lon: location.lon },
+    defaultZoom: MAP_DEFAULT_ZOOM,
+    minZoom: MAP_MIN_ZOOM,
+    maxZoom: MAP_MAX_ZOOM,
+    config,
+    setConfig,
+  });
+
+  const overlayTileUrl = useMemo(() => {
+    if (!manifest || !currentFrame) return null;
+    const host = manifest.host;
+    const path = currentFrame.path;
+    return (z: number, x: number, y: number) => radarTileUrl(host, path, z, x, y);
+  }, [manifest, currentFrame]);
+
+  // Auto-advance frames when playing AND not scrubbing.
   useEffect(() => {
     if (!playing || scrubbing || frames.length === 0) return;
     const id = setInterval(() => {
@@ -78,11 +82,10 @@ export function RadarTile({ density, accent, location }: RadarTileProps) {
     return () => clearInterval(id);
   }, [playing, scrubbing, frames.length]);
 
-  // Reset frame index near "now" (last past frame) when manifest changes
+  // Snap to the latest frame when a new manifest arrives.
   useEffect(() => {
     if (!manifest) return;
-    const lastPast = manifest.past.length - 1;
-    setFrameIndex(Math.max(0, lastPast));
+    setFrameIndex(Math.max(0, Math.min(LAST_HOUR_FRAMES, manifest.past.length) - 1));
   }, [manifest?.generated]);
 
   const headRight = (
@@ -93,7 +96,7 @@ export function RadarTile({ density, accent, location }: RadarTileProps) {
       }}>{location.label}</span>
       <button
         onClick={() => setPlaying((p) => !p)}
-        title={playing ? 'Pause' : 'Play'}
+        title={playing ? 'Pause' : 'Play the last hour'}
         style={{
           padding: '4px 10px', fontSize: 11, fontWeight: 600, borderRadius: 5,
           background: playing ? `${accent}22` : 'rgba(255,255,255,0.05)',
@@ -115,80 +118,44 @@ export function RadarTile({ density, accent, location }: RadarTileProps) {
         display: 'flex', flexDirection: 'column',
         width: '100%', height: '100%', minHeight: 0,
       }}>
-        {/* Map area: square 2×2 tile grid centered on user, letterboxed to fit
-         *  whatever non-square space the tile rect provides. The square sizes
-         *  itself to min(parentWidth, parentHeight) via container query units
-         *  — `aspect-ratio` alone won't shrink the box when only height is
-         *  constrained, which leaves the grid distorted. */}
-        <div style={{
-          flex: 1, minHeight: 0, position: 'relative',
-          containerType: 'size',
-          display: 'grid', placeItems: 'center',
-          overflow: 'hidden',
-        }}>
-          <div style={{
-            width: 'min(100cqw, 100cqh)',
-            height: 'min(100cqw, 100cqh)',
-            display: 'grid',
-            gridTemplateColumns: '1fr 1fr',
-            gridTemplateRows: '1fr 1fr',
-            gap: 0,
-            borderRadius: 6, overflow: 'hidden',
-            position: 'relative',
-          }}>
-            {tileGrid.map((tile) => (
-              <div key={`${tile.x},${tile.y}`} style={{ position: 'relative', overflow: 'hidden' }}>
-                <img
-                  src={basemapTileUrl(RADAR_Z, tile.x, tile.y)}
-                  alt=""
-                  style={{
-                    position: 'absolute', inset: 0,
-                    width: '100%', height: '100%',
-                    objectFit: 'fill',
-                    pointerEvents: 'none',
-                  }}
-                />
-                {manifest && currentFrame && (
-                  <img
-                    src={radarTileUrl(manifest.host, currentFrame.path, RADAR_Z, tile.x, tile.y)}
-                    alt=""
-                    style={{
-                      position: 'absolute', inset: 0,
-                      width: '100%', height: '100%',
-                      objectFit: 'fill',
-                      pointerEvents: 'none',
-                      imageRendering: 'pixelated',
-                    }}
-                  />
-                )}
-              </div>
-            ))}
-            {!manifest && (
-              <div style={{
-                position: 'absolute', inset: 0,
-                gridColumn: '1 / -1', gridRow: '1 / -1',
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                background: 'rgba(8,9,12,0.6)',
-                fontSize: 11, color: 'rgba(255,255,255,0.55)',
-              }}>
-                Loading radar…
-              </div>
-            )}
-            {manifest && !hasFrames && (
-              <div style={{
-                position: 'absolute', inset: 0,
-                gridColumn: '1 / -1', gridRow: '1 / -1',
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                background: 'rgba(8,9,12,0.6)',
-                fontSize: 11, color: 'rgba(255,255,255,0.55)',
-              }}>
-                No radar data available
-              </div>
-            )}
-          </div>
+        {/* Pannable/zoomable map with the radar frame composited at 0.7. */}
+        <div style={{ flex: 1, minHeight: 0, position: 'relative', borderRadius: 6, overflow: 'hidden' }}>
+          <MapView
+            view={view}
+            onViewChange={onViewChange}
+            minZoom={MAP_MIN_ZOOM}
+            maxZoom={MAP_MAX_ZOOM}
+            overlayTileUrl={overlayTileUrl}
+            overlayTileAlpha={RADAR_OPACITY}
+          />
+          {overridden && <RecenterButton accent={accent} onClick={recenter} />}
+          {!manifest && (
+            <div style={{
+              position: 'absolute', inset: 0,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              // stays opaque-dark: floats over map canvas (glass Sweep Map exclusion)
+              background: 'rgba(8,9,12,0.6)',
+              fontSize: 11, color: 'rgba(255,255,255,0.55)',
+              pointerEvents: 'none',
+            }}>
+              Loading radar…
+            </div>
+          )}
+          {manifest && !hasFrames && (
+            <div style={{
+              position: 'absolute', inset: 0,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              // stays opaque-dark: floats over map canvas (glass Sweep Map exclusion)
+              background: 'rgba(8,9,12,0.6)',
+              fontSize: 11, color: 'rgba(255,255,255,0.55)',
+              pointerEvents: 'none',
+            }}>
+              No radar data available
+            </div>
+          )}
         </div>
 
-        {/* Footer: timestamp + slider */}
+        {/* Footer: timestamp + scrub slider over the last hour */}
         {hasFrames && currentFrame && (
           <div style={{
             display: 'flex', alignItems: 'center', gap: 10,
@@ -223,21 +190,18 @@ export function RadarTile({ density, accent, location }: RadarTileProps) {
   );
 }
 
-/** Format frame time as "3:42 PM · -10 min" / "now" / "+10 min" relative to
- *  the manifest's "now" boundary (last past frame). */
+/** Format frame time as "3:42 PM · -10 min" / "now" relative to the newest
+ *  past frame ("now" boundary). `frames` only ever holds past frames (see
+ *  `frames` above), so the offset is always ≤ 0 — never a future "+X min". */
 function formatFrameTime(frame: RainViewerFrame, manifest: RainViewerManifest | null): string {
   if (!manifest) return '';
   const dt = new Date(frame.time * 1000);
   const timeStr = dt.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
 
-  // Last past frame = "now". Compute offset in minutes.
   const lastPast = manifest.past[manifest.past.length - 1];
   if (!lastPast) return timeStr;
   const offsetMin = Math.round((frame.time - lastPast.time) / 60);
-  let suffix: string;
-  if (offsetMin === 0) suffix = 'now';
-  else if (offsetMin > 0) suffix = `+${offsetMin} min`;
-  else suffix = `${offsetMin} min`;
+  const suffix = offsetMin === 0 ? 'now' : `${offsetMin} min`;
 
   return `${timeStr} · ${suffix}`;
 }

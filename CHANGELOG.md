@@ -5,6 +5,37 @@ All notable changes to 2ndMonitor are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.6.6] - 2026-08-03
+
+### Added
+- **Liquid glass**: an optional translucent look where your desktop shows
+  through the app (Windows acrylic). Toggle it in Settings → Appearance and
+  set the strength — 0 is clear glass, 100 is fully frosted. Off by default
+  and pixel-identical to before when off
+- **Real maps**: the aircraft radar, weather radar, lightning, and ISS tiles
+  now plot on an actual pannable, zoomable dark map (drag to pan, scroll to
+  zoom). Each tile remembers its view, and a recenter button appears whenever
+  you've panned away. Weather radar overlays live RainViewer precipitation
+  with a play button that animates the last hour; the ISS tile draws the
+  station's ground track as it moves
+- **System temps**: the system monitor shows per-part temperatures — CPU,
+  GPU, board, and drives — with amber/red warnings when parts run hot. Full
+  detail comes from LibreHardwareMonitor when it's running; without it you
+  get what the hardware exposes natively
+
+### Changed
+- The visualizer's audio source is now a strict include list: check up to
+  4 apps and it hears exactly those, mixed together — or all system audio.
+  Pick them in Settings → Visualizer → Audio source, or toggle any app with
+  the headphone button on its Audio Mixer row
+- The 0.6.4 auto-fallback is gone: the visualizer never switches source on
+  its own. A selected app that isn't running contributes silence and the
+  status bar says so ("Spotify (not running)"); it's picked up automatically
+  the moment it starts playing
+- A saved "only <app>" source upgrades to a one-app include list, keeping
+  its tuned sensitivity. "Everything except <app>" has no equivalent in the
+  new model and resets to all system audio
+
 ## [0.6.5] - 2026-08-02
 
 ### Fixed

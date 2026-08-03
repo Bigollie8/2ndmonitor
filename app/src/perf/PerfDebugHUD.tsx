@@ -79,7 +79,7 @@ export function PerfDebugHUD() {
         overflowY: 'auto',
         zIndex: 9999,
         padding: 10,
-        background: 'rgba(8,9,12,0.92)',
+        background: 'var(--surface-chrome, rgba(8,9,12,0.92))',
         backdropFilter: 'blur(8px)',
         border: '1px solid rgba(255,255,255,0.12)',
         borderRadius: 8,

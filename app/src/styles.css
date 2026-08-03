@@ -12,6 +12,14 @@ html, body {
   -webkit-font-smoothing: antialiased;
 }
 
+/* Liquid glass: state/theme.ts stamps data-glass="1" on <html> when glass is
+   on; the page background then gets out of the way so the transparent Tauri
+   window shows the desktop. No attribute = the exact #000 above, as always. */
+html[data-glass='1'],
+html[data-glass='1'] body {
+  background: transparent;
+}
+
 #root {
   width: 100vw;
   height: 100vh;

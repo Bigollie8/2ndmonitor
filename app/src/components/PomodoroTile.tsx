@@ -258,7 +258,7 @@ function SettingsPopover({
       onClick={(e) => e.stopPropagation()}
       style={{
         position: 'absolute', top: 0, right: 0, bottom: 0, left: 0,
-        background: 'rgba(8,9,12,0.96)', backdropFilter: 'blur(8px)',
+        background: 'var(--surface-chrome, rgba(8,9,12,0.96))', backdropFilter: 'blur(8px)',
         border: '1px solid rgba(255,255,255,0.08)',
         borderRadius: 8, zIndex: 5,
         display: 'flex', flexDirection: 'column',

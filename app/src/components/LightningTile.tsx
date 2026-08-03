@@ -1,5 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { HFTile } from './tiles';
+import { MapView, RecenterButton, type ProjectFn } from './map/MapView';
+import { useMapView } from './map/useMapView';
 import { type BlitzortungStatus, type LightningStrike, connectBlitzortung } from '../state/blitzortung';
 import { distanceKm } from '../state/iss';
 import { TileError } from './tileStates';
@@ -11,18 +13,23 @@ const RADIUS_KM = 800;
 const MAX_STRIKES = 80;
 /** A strike fades out over this duration. */
 const FADE_MS = 60 * 60 * 1000;
+const MAP_MIN_ZOOM = 3;
+const MAP_MAX_ZOOM = 10;
+const MAP_DEFAULT_ZOOM = 5;
 
 export interface LightningTileProps {
   density: Density;
   accent: string;
   location: WeatherLocation;
+  config: Record<string, unknown> | undefined;
+  setConfig: (next: Record<string, unknown>) => void;
 }
 
 interface RecentStrike extends LightningStrike {
   distance: number;
 }
 
-export function LightningTile({ density, accent, location }: LightningTileProps) {
+export function LightningTile({ density, accent, location, config, setConfig }: LightningTileProps) {
   const [strikes, setStrikes] = useState<RecentStrike[]>([]);
   // Starts 'connecting': the effect below connects on mount, and starting at
   // 'disconnected' would flash the error state for one frame before it runs.
@@ -65,6 +72,38 @@ export function LightningTile({ density, accent, location }: LightningTileProps)
   const fresh = strikes.filter((s) => now - s.timeMs < FADE_MS);
   const closest = fresh[0];
 
+  const { view, overridden, onViewChange, recenter } = useMapView({
+    anchor: { lat: location.lat, lon: location.lon },
+    defaultZoom: MAP_DEFAULT_ZOOM,
+    minZoom: MAP_MIN_ZOOM,
+    maxZoom: MAP_MAX_ZOOM,
+    config,
+    setConfig,
+  });
+
+  const drawStrikes = (ctx: CanvasRenderingContext2D, projectPt: ProjectFn) => {
+    // Center dot (user).
+    const home = projectPt(location.lat, location.lon);
+    ctx.fillStyle = 'rgba(255,255,255,0.6)';
+    ctx.beginPath();
+    ctx.arc(home.x, home.y, 3, 0, Math.PI * 2);
+    ctx.fill();
+    // Strikes: yellow dots fading (and losing glow) with age.
+    for (const s of fresh) {
+      const ageRatio = Math.min(1, (now - s.timeMs) / FADE_MS);
+      const pt = projectPt(s.lat, s.lon);
+      ctx.globalAlpha = 1 - ageRatio;
+      ctx.shadowColor = '#facc15';
+      ctx.shadowBlur = 6 * (1 - ageRatio);
+      ctx.fillStyle = '#facc15';
+      ctx.beginPath();
+      ctx.arc(pt.x, pt.y, 3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+    ctx.shadowBlur = 0;
+  };
+
   const headRight = (
     <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
       <span style={{
@@ -82,56 +121,16 @@ export function LightningTile({ density, accent, location }: LightningTileProps)
         display: 'flex', flexDirection: 'column',
         overflow: 'hidden',
       }}>
-        {/* Spatial scatter — circular plot around user, lat/lon mapped via
-         *  equirectangular within the radius. */}
-        <div style={{
-          flex: 1, minHeight: 0, position: 'relative',
-          background: 'radial-gradient(circle at 50% 50%, rgba(250,204,21,0.04) 0%, rgba(8,9,12,0.85) 70%)',
-        }}>
-          {/* Range rings */}
-          {[0.33, 0.66, 1.0].map((r) => (
-            <div key={r} style={{
-              position: 'absolute', left: '50%', top: '50%',
-              width: `${r * 90}%`, aspectRatio: '1 / 1',
-              borderRadius: '50%',
-              border: '1px solid rgba(255,255,255,0.06)',
-              transform: 'translate(-50%, -50%)',
-              pointerEvents: 'none',
-            }} />
-          ))}
-          {/* Center dot (user) */}
-          <div style={{
-            position: 'absolute', left: '50%', top: '50%',
-            width: 6, height: 6, borderRadius: 999,
-            background: 'rgba(255,255,255,0.6)',
-            transform: 'translate(-50%, -50%)',
-          }} />
-          {/* Strikes */}
-          {fresh.map((s) => {
-            const ageRatio = Math.min(1, (now - s.timeMs) / FADE_MS);
-            const opacity = 1 - ageRatio;
-            const dx = (s.lon - location.lon) * Math.cos(location.lat * Math.PI / 180);
-            const dy = (location.lat - s.lat);
-            // 1 deg lat ≈ 111 km — scale so RADIUS_KM == 50% (one ring radius)
-            const SCALE = 50 / (RADIUS_KM / 111);
-            const xPct = 50 + dx * SCALE;
-            const yPct = 50 + dy * SCALE;
-            return (
-              <div
-                key={s.timeNs}
-                style={{
-                  position: 'absolute',
-                  left: `${xPct}%`, top: `${yPct}%`,
-                  width: 6, height: 6, borderRadius: 999,
-                  background: '#facc15',
-                  opacity,
-                  boxShadow: `0 0 ${6 * (1 - ageRatio)}px #facc15`,
-                  transform: 'translate(-50%, -50%)',
-                  pointerEvents: 'none',
-                }}
-              />
-            );
-          })}
+        {/* Real slippy map with age-faded strike dots */}
+        <div style={{ flex: 1, minHeight: 0, position: 'relative', overflow: 'hidden' }}>
+          <MapView
+            view={view}
+            onViewChange={onViewChange}
+            minZoom={MAP_MIN_ZOOM}
+            maxZoom={MAP_MAX_ZOOM}
+            overlay={drawStrikes}
+          />
+          {overridden && <RecenterButton accent={accent} onClick={recenter} />}
           {status.kind === 'disconnected' && (
             <TileError
               line="Lightning feed disconnected."

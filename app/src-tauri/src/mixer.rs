@@ -231,17 +231,6 @@ pub fn default_endpoint_id() -> Result<String, String> {
     Err("default endpoint id is Windows-only".to_string())
 }
 
-/// PID of the first live session whose executable basename matches `exe`
-/// (lowercased comparison). `None` when the app isn't producing audio.
-pub fn find_pid_for_exe(exe: &str) -> Option<u32> {
-    let want = exe.to_lowercase();
-    sessions_snapshot()
-        .ok()?
-        .into_iter()
-        .find(|s| s.exe.as_deref().map(|e| e.to_lowercase()) == Some(want.clone()))
-        .map(|s| s.pid)
-}
-
 #[cfg(target_os = "windows")]
 mod winimpl {
     use super::{AppSession, MasterState, MixerCmd, MixerSnapshot, OutputDevice};

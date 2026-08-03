@@ -1,6 +1,6 @@
 [package]
 name = "second-monitor-hub"
-version = "0.6.5"
+version = "0.6.6"
 description = "Second-Monitor Hub"
 authors = ["you"]
 edition = "2021"
@@ -43,6 +43,11 @@ urlencoding = "2"
 tokio = { version = "1", features = ["rt", "rt-multi-thread"] }
 
 [target.'cfg(windows)'.dependencies]
+# Liquid glass (0.6.6): runtime acrylic behind the transparent main window.
+window-vibrancy = "0.6"
+# Temps (temps.rs): LibreHardwareMonitor sensors + ACPI thermal zone over WMI.
+# Serde-based deserialization of query rows is built into the crate.
+wmi = "0.15"
 # windows-rs 0.58's #[implement] macro expands to absolute `::windows_core::`
 # paths, so the crate has to be in the extern prelude by that name — a
 # `use windows::core as windows_core` can't satisfy a leading `::`. Pinned to

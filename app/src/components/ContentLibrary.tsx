@@ -525,7 +525,7 @@ export function ContentLibrary({
         onClick={(e) => e.stopPropagation()}
         style={{
           width: 'min(920px, 92%)', maxHeight: '82%',
-          background: 'rgba(20,22,28,0.98)', backdropFilter: 'blur(20px)',
+          background: 'var(--surface-overlay, rgba(20,22,28,0.98))', backdropFilter: 'blur(20px)',
           border: '1px solid rgba(255,255,255,0.08)',
           borderRadius: 12, boxShadow: '0 24px 60px rgba(0,0,0,0.5)',
           display: 'flex', flexDirection: 'column', overflow: 'hidden',
@@ -826,7 +826,7 @@ export function ContentLibrary({
             }}
           >
             <div onClick={(e) => e.stopPropagation()} style={{
-              width: 420, background: 'rgba(14,16,22,0.98)',
+              width: 420, background: 'var(--surface-overlay, rgba(14,16,22,0.98))',
               border: '1px solid rgba(255,255,255,0.12)', borderRadius: 12, padding: 20,
             }}>
               <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 4 }}>

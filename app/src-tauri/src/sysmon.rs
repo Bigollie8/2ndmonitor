@@ -46,6 +46,9 @@ pub struct SysmonSample {
     /// This app's own resource usage — surfaced in the bottom status bar so the
     /// user can see its impact at a glance. None on rare boot races.
     pub app: Option<AppMetrics>,
+    /// Per-part temperatures (CPU/GPU/Board/drives), refreshed every 5 s by
+    /// temps.rs. None when no sensor source is available at all.
+    pub temps: Option<Vec<crate::temps::TempReading>>,
 }
 
 struct State {
@@ -180,6 +183,16 @@ fn collect(state: &Arc<Mutex<State>>) -> SysmonSample {
     // ── GPU (NVIDIA via NVML, best-effort) ──────────────────────────────────
     let (gpu_norm, gpu_pct_text, gpu_sub) = sample_gpu(s.nvml.as_ref());
 
+    // ── Temps (LHM over WMI → NVML/ACPI fallback; 5 s cache in temps.rs) ────
+    // Safe to call here: collect() runs on the dedicated sampler thread
+    // spawned above, never on the main thread or inside a command.
+    let gpu_temp_c = s
+        .nvml
+        .as_ref()
+        .and_then(|n| n.device_by_index(0).ok())
+        .and_then(|d| d.temperature(TemperatureSensor::Gpu).ok());
+    let temps = crate::temps::sample(gpu_temp_c);
+
     // ── Net (sysinfo Networks, summed across interfaces) ────────────────────
     s.networks.refresh();
     let mut down_bps: u64 = 0;
@@ -210,6 +223,7 @@ fn collect(state: &Arc<Mutex<State>>) -> SysmonSample {
         net_sub,
         top,
         app: app_metrics,
+        temps,
     }
 }
 
