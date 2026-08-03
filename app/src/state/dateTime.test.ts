@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { formatClock, formatDateLine, parseDateTimeConfig, systemHour12, resolveHour12, formatClockParts, formatHourLabel } from './dateTime';
+import { formatClock, formatDateLine, parseDateTimeConfig, systemHour12, resolveHour12, formatClockParts, formatHourLabel, handAngles } from './dateTime';
 
 // 2026-08-03T14:05:09Z — a Monday.
 const TS = Date.UTC(2026, 7, 3, 14, 5, 9);
@@ -42,7 +42,7 @@ test('parseDateTimeConfig: fallback on garbage', () => {
   assert.deepEqual(parseDateTimeConfig(undefined), fallback);
   assert.deepEqual(parseDateTimeConfig(null), fallback);
   assert.deepEqual(parseDateTimeConfig('digital'), fallback);
-  assert.deepEqual(parseDateTimeConfig({ style: 'analog', seconds: true }), fallback);
+  assert.deepEqual(parseDateTimeConfig({ style: 'wooden', seconds: true }), { style: 'digital', seconds: true });
   assert.deepEqual(parseDateTimeConfig({ seconds: 'yes' }), fallback);
 });
 
@@ -76,4 +76,21 @@ test('formatHourLabel: 12h matches the Rust "8p" shape, 24h zero-pads', () => {
   assert.equal(formatHourLabel(8, false), '08');
   assert.equal(formatHourLabel(20, false), '20');
   assert.equal(formatHourLabel(0, false), '00');
+});
+
+test('parseDateTimeConfig: all three styles are valid (0.7.2 §4)', () => {
+  assert.deepEqual(parseDateTimeConfig({ style: 'minimal' }), { style: 'minimal', seconds: false });
+  assert.deepEqual(parseDateTimeConfig({ style: 'analog', seconds: true }), { style: 'analog', seconds: true });
+  assert.deepEqual(parseDateTimeConfig({ style: 'digital', seconds: true }), { style: 'digital', seconds: true });
+});
+
+test('handAngles: hand math at fixed instants (UTC)', () => {
+  // 03:00:00 → hour hand at 90°, others at 0
+  assert.deepEqual(handAngles(Date.UTC(2026, 0, 1, 3, 0, 0), 'UTC'), { hour: 90, minute: 0, second: 0 });
+  // 12:00:00 → all hands at 12
+  assert.deepEqual(handAngles(Date.UTC(2026, 0, 1, 12, 0, 0), 'UTC'), { hour: 0, minute: 0, second: 0 });
+  // 18:30:15 → hour 6*30 + 30*0.5 = 195; minute 30*6 + 15*0.1 = 181.5; second 90
+  assert.deepEqual(handAngles(Date.UTC(2026, 0, 1, 18, 30, 15), 'UTC'), { hour: 195, minute: 181.5, second: 90 });
+  // midnight → hour 0 (h23 cycle, never 24)
+  assert.deepEqual(handAngles(Date.UTC(2026, 0, 1, 0, 0, 0), 'UTC'), { hour: 0, minute: 0, second: 0 });
 });
