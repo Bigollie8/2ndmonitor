@@ -28,9 +28,11 @@ export interface RadarTileProps {
   location: WeatherLocation;
   config: Record<string, unknown> | undefined;
   setConfig: (next: Record<string, unknown>) => void;
+  /** Streamer mode (0.7.1 §2): blanks the map — see MapView.redacted. */
+  redacted?: boolean;
 }
 
-export function RadarTile({ density, accent, location, config, setConfig }: RadarTileProps) {
+export function RadarTile({ density, accent, location, config, setConfig, redacted = false }: RadarTileProps) {
   const [frameIndex, setFrameIndex] = useState<number>(0);
   // Spec: latest frame by default; the play button starts the animation.
   const [playing, setPlaying] = useState<boolean>(false);
@@ -127,6 +129,7 @@ export function RadarTile({ density, accent, location, config, setConfig }: Rada
             maxZoom={MAP_MAX_ZOOM}
             overlayTileUrl={overlayTileUrl}
             overlayTileAlpha={RADAR_OPACITY}
+            redacted={redacted}
           />
           {overridden && <RecenterButton accent={accent} onClick={recenter} />}
           {!manifest && (

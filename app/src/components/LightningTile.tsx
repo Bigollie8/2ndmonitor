@@ -23,13 +23,15 @@ export interface LightningTileProps {
   location: WeatherLocation;
   config: Record<string, unknown> | undefined;
   setConfig: (next: Record<string, unknown>) => void;
+  /** Streamer mode (0.7.1 §2): blanks the map — see MapView.redacted. */
+  redacted?: boolean;
 }
 
 interface RecentStrike extends LightningStrike {
   distance: number;
 }
 
-export function LightningTile({ density, accent, location, config, setConfig }: LightningTileProps) {
+export function LightningTile({ density, accent, location, config, setConfig, redacted = false }: LightningTileProps) {
   const [strikes, setStrikes] = useState<RecentStrike[]>([]);
   // Starts 'connecting': the effect below connects on mount, and starting at
   // 'disconnected' would flash the error state for one frame before it runs.
@@ -129,6 +131,7 @@ export function LightningTile({ density, accent, location, config, setConfig }: 
             minZoom={MAP_MIN_ZOOM}
             maxZoom={MAP_MAX_ZOOM}
             overlay={drawStrikes}
+            redacted={redacted}
           />
           {overridden && <RecenterButton accent={accent} onClick={recenter} />}
           {status.kind === 'disconnected' && (

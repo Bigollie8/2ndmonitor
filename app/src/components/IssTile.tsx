@@ -20,9 +20,11 @@ export interface IssTileProps {
   location: WeatherLocation;
   config: Record<string, unknown> | undefined;
   setConfig: (next: Record<string, unknown>) => void;
+  /** Streamer mode (0.7.1 §2): blanks the map — see MapView.redacted. */
+  redacted?: boolean;
 }
 
-export function IssTile({ density, accent, location, config, setConfig }: IssTileProps) {
+export function IssTile({ density, accent, location, config, setConfig, redacted = false }: IssTileProps) {
   const { data: pos } = usePoll(
     async () => {
       // fetchIssPosition returns null on failure; usePoll drives backoff off
@@ -126,6 +128,7 @@ export function IssTile({ density, accent, location, config, setConfig }: IssTil
             minZoom={MAP_MIN_ZOOM}
             maxZoom={MAP_MAX_ZOOM}
             overlay={drawIss}
+            redacted={redacted}
           />
           {overridden && <RecenterButton accent={accent} onClick={recenter} />}
         </div>

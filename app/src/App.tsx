@@ -998,6 +998,7 @@ export default function App() {
             setConfig={(next) => updateActiveOrientation({
               tiles: updateInstance(activeOrientation.tiles, instance.instanceId, { config: next }),
             })}
+            redacted={t.streamerMode}
           />
         );
       case 'pomodoro':
@@ -1102,6 +1103,7 @@ export default function App() {
             setConfig={(next) => updateActiveOrientation({
               tiles: updateInstance(activeOrientation.tiles, instance.instanceId, { config: next }),
             })}
+            redacted={t.streamerMode}
           />
         );
       case 'pollen':
@@ -1118,6 +1120,7 @@ export default function App() {
             setConfig={(next) => updateActiveOrientation({
               tiles: updateInstance(activeOrientation.tiles, instance.instanceId, { config: next }),
             })}
+            redacted={t.streamerMode}
           />
         );
       case 'aircraft':
@@ -1130,6 +1133,7 @@ export default function App() {
             setConfig={(next) => updateActiveOrientation({
               tiles: updateInstance(activeOrientation.tiles, instance.instanceId, { config: next }),
             })}
+            redacted={t.streamerMode}
           />
         );
       case 'activeWindow':
