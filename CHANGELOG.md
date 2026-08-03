@@ -5,6 +5,8 @@ All notable changes to 2ndMonitor are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.6.6] - 2026-08-03
+
 ### Added
 - **Liquid glass**: an optional translucent look where your desktop shows
   through the app (Windows acrylic). Toggle it in Settings → Appearance and
