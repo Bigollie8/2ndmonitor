@@ -82,6 +82,10 @@ export interface MapViewProps {
   /** Optional raster overlay (radar frames), same slippy grid as the base. */
   overlayTileUrl?: ((z: number, x: number, y: number) => string) | null;
   overlayTileAlpha?: number;
+  /** Streamer mode (0.7.1 §2): when true, draw NO base tiles, fetch nothing,
+   *  and skip the overlay callback + raster overlay entirely — just the dark
+   *  canvas and a centered "Hidden in streamer mode" label. */
+  redacted?: boolean;
 }
 
 /** Canvas slippy map. Fills its nearest positioned ancestor. Pointer-drag
@@ -89,7 +93,7 @@ export interface MapViewProps {
  *  components/panelDrag.ts), wheel zooms anchored at the cursor, and all
  *  redraws are rAF-batched. */
 export function MapView({
-  view, onViewChange, minZoom, maxZoom, overlay, overlayTileUrl, overlayTileAlpha = 0.7,
+  view, onViewChange, minZoom, maxZoom, overlay, overlayTileUrl, overlayTileAlpha = 0.7, redacted = false,
 }: MapViewProps) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -103,6 +107,7 @@ export function MapView({
   const overlayRef = useRef(overlay); overlayRef.current = overlay;
   const overlayTileUrlRef = useRef(overlayTileUrl); overlayTileUrlRef.current = overlayTileUrl;
   const overlayTileAlphaRef = useRef(overlayTileAlpha); overlayTileAlphaRef.current = overlayTileAlpha;
+  const redactedRef = useRef(redacted); redactedRef.current = redacted;
 
   const drawRef = useRef<() => void>(() => {});
   drawRef.current = () => {
@@ -124,6 +129,9 @@ export function MapView({
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.fillStyle = MAP_BG;
     ctx.fillRect(0, 0, w, h);
+    // Redacted: dark canvas only. Returning before visibleTiles means no
+    // getTile call, so nothing is fetched — not merely not drawn.
+    if (redactedRef.current) return;
     const v = viewRef.current;
     const tiles = visibleTiles(v, w, h);
     const schedule = scheduleDraw;
@@ -250,6 +258,22 @@ export function MapView({
       }}>
         © OpenStreetMap © CARTO
       </div>
+      {redacted && (
+        <div style={{
+          position: 'absolute', inset: 0,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          pointerEvents: 'none', userSelect: 'none',
+        }}>
+          <span style={{
+            fontSize: 11, lineHeight: 1.4, letterSpacing: 0.2,
+            color: 'rgba(255,255,255,0.45)',
+            background: 'rgba(0,0,0,0.35)',
+            padding: '2px 8px', borderRadius: 3,
+          }}>
+            Hidden in streamer mode
+          </span>
+        </div>
+      )}
     </div>
   );
 }

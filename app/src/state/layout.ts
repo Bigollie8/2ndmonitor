@@ -17,7 +17,8 @@ export type BuiltinTileType =
   | 'homeAssistant'
   | 'scratchpad' | 'onThisDay'
   | 'iss' | 'pollen'
-  | 'solarFlare' | 'lightning' | 'aircraft' | 'activeWindow' | 'docker' | 'energy';
+  | 'solarFlare' | 'lightning' | 'aircraft' | 'activeWindow' | 'docker' | 'energy'
+  | 'dateTime';
 
 /** A tile that can be placed on a dashboard: a built-in, or an installed
  *  marketplace bundle. Bundle ids are namespaced so they can never collide
@@ -37,6 +38,7 @@ export const ALL_TILE_TYPES: BuiltinTileType[] = [
   'scratchpad', 'onThisDay',
   'iss', 'pollen',
   'solarFlare', 'lightning', 'aircraft', 'activeWindow', 'docker', 'energy',
+  'dateTime',
 ];
 
 export interface Rect { x: number; y: number; w: number; h: number }
@@ -175,6 +177,7 @@ export const DEFAULT_LANDSCAPE_LAYOUT: Record<BuiltinTileType, Rect> = {
   activeWindow: { x: 0.27, y: 0.55, w: 0.13, h: 0.20 },
   docker: { x: 0.40, y: 0.55, w: 0.30, h: 0.18 },
   energy: { x: 0.72, y: 0.36, w: 0.20, h: 0.18 },
+  dateTime: { x: 0.40, y: 0.36, w: 0.30, h: 0.18 },
 };
 
 // Portrait template. Single column from top to bottom: viz dominates, then
@@ -246,6 +249,7 @@ export const DEFAULT_PORTRAIT_LAYOUT: Record<BuiltinTileType, Rect> = {
   activeWindow: { x: 0.05, y: 0.30, w: 0.90, h: 0.18 },
   docker: { x: 0.05, y: 0.30, w: 0.90, h: 0.18 },
   energy: { x: 0.05, y: 0.30, w: 0.90, h: 0.14 },
+  dateTime: { x: 0.05, y: 0.30, w: 0.90, h: 0.14 },
 };
 
 /** An installed bundle tile has no compile-time entry in the default-layout

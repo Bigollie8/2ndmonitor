@@ -12,6 +12,10 @@ mod actions;
 mod audio;
 mod audio_loopback;
 mod audio_source;
+/// Core Audio process taps — the macOS counterpart to `audio_loopback`'s
+/// WASAPI process loopback.
+#[cfg(target_os = "macos")]
+mod audio_tap;
 mod claude;
 mod discord;
 mod discord_rpc;

@@ -95,18 +95,22 @@ pub fn source_key(s: &Source) -> String {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct SourceOption {
-    /// Lowercased executable basename — the stable identity of a source.
+    /// The stable identity of a source: a lowercased executable basename on
+    /// Windows (`spotify.exe`), a lowercased bundle identifier on macOS
+    /// (`com.spotify.client`). Nothing above this line inspects its shape —
+    /// it is matched, keyed and round-tripped as an opaque string on both
+    /// platforms (see `bundle_ids_behave_exactly_like_exe_names` below).
     pub exe: String,
     /// Friendly name for display, e.g. "Spotify".
     pub name: String,
     pub icon: Option<String>,
 }
 
-/// Apps currently holding an audio session, deduped by executable. Drives
-/// the source picker. System-sounds has no executable and is excluded:
-/// there is no process tree to include.
-#[tauri::command]
-pub fn audio_sources_list() -> Result<Vec<SourceOption>, String> {
+/// Apps currently holding an audio session, deduped by executable. System
+/// -sounds has no executable and is excluded: there is no process tree to
+/// include.
+#[cfg(not(target_os = "macos"))]
+fn source_options() -> Result<Vec<SourceOption>, String> {
     let sessions = crate::mixer::sessions_snapshot()?;
     let mut seen = std::collections::HashSet::new();
     let mut out = Vec::new();
@@ -116,6 +120,25 @@ pub fn audio_sources_list() -> Result<Vec<SourceOption>, String> {
         if !seen.insert(exe.clone()) { continue; }
         out.push(SourceOption { exe, name: s.name, icon: s.icon });
     }
+    Ok(out)
+}
+
+/// Apps with a Core Audio process object — the macOS equivalent of holding an
+/// audio session — already deduped by bundle id. Icons would mean rendering an
+/// `NSImage` to PNG on every poll; the picker falls back to the app's name
+/// without one, so that is left for later rather than paid for here.
+#[cfg(target_os = "macos")]
+fn source_options() -> Result<Vec<SourceOption>, String> {
+    Ok(crate::mixer::audio_process_apps()?
+        .into_iter()
+        .map(|a| SourceOption { exe: a.bundle_id, name: a.name, icon: None })
+        .collect())
+}
+
+/// Drives the Settings source picker.
+#[tauri::command]
+pub fn audio_sources_list() -> Result<Vec<SourceOption>, String> {
+    let mut out = source_options()?;
     out.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
     Ok(out)
 }
@@ -197,5 +220,65 @@ mod tests {
             match_sessions(&["spotify.exe".to_string()], &sessions),
             vec![Some(100)]
         );
+    }
+
+    /// macOS puts a bundle id (`com.spotify.client`) in the same `exe` field
+    /// Windows puts `spotify.exe` in. Nothing between the picker and the
+    /// capture backend is allowed to care which it is holding — the sensitivity
+    /// map is keyed on `source_key`'s output and the frontend's `parseSourceKey`
+    /// splits it back on the first `:`, so a dot-separated identifier has to
+    /// behave exactly as an exe name does at every step. Runs on all platforms
+    /// deliberately: this is the seam, and a Windows-only CI run must catch a
+    /// break in it.
+    #[test]
+    fn bundle_ids_behave_exactly_like_exe_names() {
+        let exe: Source = serde_json::from_str(r#"{"mode":"apps","exes":["spotify.exe"]}"#).unwrap();
+        let bundle: Source =
+            serde_json::from_str(r#"{"mode":"apps","exes":["com.spotify.client"]}"#).unwrap();
+        assert_eq!(bundle, Source::Apps { exes: vec!["com.spotify.client".into()] });
+        assert_eq!(source_key(&bundle), "apps:com.spotify.client");
+        // Same shape of key, differing only in the identifier itself.
+        assert_eq!(
+            source_key(&exe).split_once(':').map(|(m, _)| m),
+            source_key(&bundle).split_once(':').map(|(m, _)| m),
+        );
+
+        // Bundle ids are *not* reliably lowercase (`com.apple.Music`), so the
+        // same normalization that keeps `Spotify.EXE` and `spotify.exe` on one
+        // sensitivity key — and collapses them to one slot — has to apply here.
+        let mixed: Source = serde_json::from_str(
+            r#"{"mode":"apps","exes":["com.apple.Music","com.apple.music","com.spotify.client"]}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            mixed,
+            Source::Apps { exes: vec!["com.apple.music".into(), "com.spotify.client".into()] }
+        );
+        // Sorted set key, so pick order can't strand a saved gain.
+        assert_eq!(source_key(&mixed), "apps:com.apple.music+com.spotify.client");
+
+        // The 0.6.4 shapes migrate identically for a dot-separated identifier.
+        let only: Source =
+            serde_json::from_str(r#"{"mode":"only","exe":"com.apple.Music"}"#).unwrap();
+        assert_eq!(only, Source::Apps { exes: vec!["com.apple.music".into()] });
+        let except: Source =
+            serde_json::from_str(r#"{"mode":"except","exe":"com.apple.Music"}"#).unwrap();
+        assert_eq!(except, Source::Mix);
+
+        // And the supervisor's pid reduction is identifier-agnostic: macOS
+        // feeds it (bundle id, pid) pairs where Windows feeds (exe, pid).
+        let sessions = vec![
+            ("com.apple.music".to_string(), 7u32),
+            ("com.spotify.client".to_string(), 9u32),
+        ];
+        let Source::Apps { exes } = mixed.clone() else { panic!("expected apps") };
+        assert_eq!(match_sessions(&exes, &sessions), vec![Some(7), Some(9)]);
+
+        // And it survives a serialize → deserialize round trip unchanged, which
+        // is the path a persisted tweaks file takes on every launch.
+        let json = serde_json::to_string(&bundle).unwrap();
+        let back: Source = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, bundle);
+        assert_eq!(source_key(&back), source_key(&bundle));
     }
 }

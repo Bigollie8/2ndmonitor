@@ -4,6 +4,7 @@ import { MapView, RecenterButton, type ProjectFn } from './map/MapView';
 import { useMapView } from './map/useMapView';
 import { distanceKm, fetchIssPosition } from '../state/iss';
 import { usePoll } from '../state/usePoll';
+import { redactLocation } from '../state/streamer';
 import type { Density, WeatherLocation } from '../types';
 
 const REFRESH_MS = 15 * 1000;
@@ -20,9 +21,11 @@ export interface IssTileProps {
   location: WeatherLocation;
   config: Record<string, unknown> | undefined;
   setConfig: (next: Record<string, unknown>) => void;
+  /** Streamer mode (0.7.1 §2): blanks the map — see MapView.redacted. */
+  redacted?: boolean;
 }
 
-export function IssTile({ density, accent, location, config, setConfig }: IssTileProps) {
+export function IssTile({ density, accent, location, config, setConfig, redacted = false }: IssTileProps) {
   const { data: pos } = usePoll(
     async () => {
       // fetchIssPosition returns null on failure; usePoll drives backoff off
@@ -126,6 +129,7 @@ export function IssTile({ density, accent, location, config, setConfig }: IssTil
             minZoom={MAP_MIN_ZOOM}
             maxZoom={MAP_MAX_ZOOM}
             overlay={drawIss}
+            redacted={redacted}
           />
           {overridden && <RecenterButton accent={accent} onClick={recenter} />}
         </div>
@@ -143,7 +147,7 @@ export function IssTile({ density, accent, location, config, setConfig }: IssTil
               <span><span style={{ color: 'rgba(255,255,255,0.4)' }}>v </span>{Math.round(pos.velocity)} km/h</span>
               <span><span style={{ color: 'rgba(255,255,255,0.4)' }}>alt </span>{pos.altitude.toFixed(0)} km</span>
               {distance != null && (
-                <span><span style={{ color: 'rgba(255,255,255,0.4)' }}>Δ </span>{Math.round(distance)} km</span>
+                <span><span style={{ color: 'rgba(255,255,255,0.4)' }}>Δ </span>{redactLocation(`${Math.round(distance)} km`, redacted)}</span>
               )}
             </>
           ) : (

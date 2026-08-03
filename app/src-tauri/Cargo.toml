@@ -1,6 +1,6 @@
 [package]
 name = "second-monitor-hub"
-version = "0.6.7"
+version = "0.7.1"
 description = "Second-Monitor Hub"
 authors = ["you"]
 edition = "2021"
@@ -25,7 +25,6 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sysinfo = { version = "0.32", features = ["network"] }
 parking_lot = "0.12"
-nvml-wrapper = "0.10"
 cpal = "0.15"
 rustfft = "6"
 ureq = { version = "2", features = ["json", "tls"] }
@@ -43,6 +42,11 @@ urlencoding = "2"
 tokio = { version = "1", features = ["rt", "rt-multi-thread"] }
 
 [target.'cfg(windows)'.dependencies]
+# NVML (NVIDIA Management Library) only ships bindings/drivers relevant on
+# Windows and Linux desktops with NVIDIA GPUs; macOS has none. sysmon.rs
+# treats GPU metrics as optional already, so this simply reports `None` off
+# Windows rather than requiring a Linux-specific NVML path too.
+nvml-wrapper = "0.10"
 # Liquid glass (0.6.6): runtime acrylic behind the transparent main window.
 window-vibrancy = "0.6"
 # Temps (temps.rs): LibreHardwareMonitor sensors + ACPI thermal zone over WMI.
@@ -81,6 +85,29 @@ windows = { version = "0.58", features = [
     "Win32_UI_WindowsAndMessaging",
     "Win32_Graphics_Gdi",
 ] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# Backs the secret store (secrets.rs) with the system Keychain — DPAPI has no
+# macOS equivalent, so this is the platform-idiomatic substitute rather than
+# an attempt to fake the same encryption boundary.
+keyring = "3"
+# Backs foreground.rs's frontmost-app lookup via NSWorkspace. The "libc"
+# feature is required for NSRunningApplication::processIdentifier(), which
+# returns a libc::pid_t; we only ever `as u32` it, so no direct `libc`
+# dependency is needed.
+objc2 = "0.5"
+objc2-app-kit = { version = "0.2", features = ["NSWorkspace", "NSRunningApplication", "libc"] }
+objc2-foundation = "0.2"
+# Backs mixer.rs's Core Audio device enumeration / default-output switching
+# (AudioObjectGetPropertyData et al. on kAudioObjectSystemObject). Raw bindgen
+# bindings, not the higher-level coreaudio-rs wrapper, since we only need a
+# handful of AudioObject property calls. core-foundation-sys converts the
+# CFStringRef device names to Rust String — the same crate cpal's own
+# coreaudio backend uses for this (and already resolves in Cargo.lock via
+# cpal's transitive coreaudio-rs dependency), so this doesn't add a new
+# family of CF bindings, just our own direct edge to it.
+coreaudio-sys = "0.2"
+core-foundation-sys = "0.8"
 
 [profile.release]
 opt-level = "s"

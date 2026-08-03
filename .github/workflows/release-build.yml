@@ -1,11 +1,63 @@
-# Builds, signs, and publishes the Windows installer + updater artifacts as a
-# GitHub Release whenever a v* tag is pushed. The updater endpoint
-# (releases/latest/download/latest.json) is fed by tauri-action's generated
-# manifest, signed with the minisign key in the two TAURI_SIGNING_* secrets.
+# Builds, signs, and publishes the Windows installer + macOS dmg, plus the
+# updater artifacts, as a GitHub Release whenever a v* tag is pushed. Both
+# platforms are signed with the same minisign key (the two TAURI_SIGNING_*
+# secrets) — minisign is cross-platform and the app's pinned pubkey does not
+# change, so no Apple codesigning/notarization secrets are used and builds are
+# deliberately unsigned on the Apple side.
+#
+# Why a third job: tauri-action can generate `latest.json` itself
+# (includeUpdaterJson: true, the default), but with two platform legs on the
+# SAME release, the second leg's latest.json would silently clobber the
+# first's — the updater would then only ever see one platform's entry. Both
+# legs below set includeUpdaterJson: false and just publish their bundle +
+# .sig to the release as before; a separate `publish-manifest` job (needs:
+# build, so it waits for both matrix legs) downloads each platform's .sig
+# from the release, discovers the matching bundle's real asset name from the
+# .sig filename (never guessed/hardcoded — see the "Second-Monitor.Hub" vs.
+# "Second-Monitor Hub" space-to-dot sanitizing tauri-bundler does to
+# productName in filenames), and uploads one merged `latest.json`.
+#
+# Two things about that manifest are load-bearing and were both got wrong once:
+#
+#   * The platform KEYS must be the ones tauri-plugin-updater actually looks
+#     up. It resolves `[{os}-{arch}-{installer}, {os}-{arch}]` in
+#     `updater.rs::get_urls`, where `updater_os()` returns "darwin" on macOS
+#     and `updater_arch()` returns "aarch64"/"x86_64" — there is no
+#     "darwin-universal" alias anywhere in that path, so a manifest keyed only
+#     that way makes every Mac's update check die with
+#     TargetsNotFound(["darwin-aarch64"]). The universal bundle is therefore
+#     listed under BOTH real arch keys (same url, same signature);
+#     "darwin-universal" is kept alongside purely for human readers.
+#   * A failure on one leg must not suppress the OTHER platform's entry. The
+#     job runs whether or not `build` succeeded and composes the platform map
+#     from whichever .sig files actually made it onto the release. A manifest
+#     with one working platform beats no manifest at all — without this, a
+#     transient macOS toolchain error would 404 every existing *Windows*
+#     user's update check.
+#
+#     But "missing platform" is only tolerable when that platform's leg is
+#     KNOWN to have failed, which the leg itself reports by uploading a
+#     `leg-<platform>` marker artifact as its last step. A leg that SUCCEEDED
+#     and still produced no matching .sig means our glob has drifted from what
+#     the bundler names the updater artifact, and silently omitting the
+#     platform then strands every one of its existing clients on their
+#     installed version with a green pipeline and no other signal. That is a
+#     hard error. (`needs.build.result` cannot express this: a matrix
+#     collapses to one result, so a macOS failure would mask a Windows drift.)
+#     Under tauri-action's own includeUpdaterJson the filename could not
+#     drift, because it generated the manifest from the artifact it had just
+#     built; splitting the manifest out is what created this exposure.
+#
+#     So: ambiguous match => hard error; zero matches on a successful leg =>
+#     hard error; zero matches on a failed leg => warn and omit; empty map =>
+#     hard error.
 #
 # Coexists with announce-release.yml on the same tag: this one publishes the
-# artifacts, that one posts to Discord. First live run: the v0.5.1 tag — this
-# workflow cannot be end-to-end tested without pushing a tag.
+# artifacts, that one posts to Discord. First live run: the v0.5.1 tag —
+# this workflow cannot be end-to-end tested without pushing a tag. macOS
+# correctness (both the build itself and the merged manifest's asset
+# filenames/URLs) can only be proven by an actual tagged release building on
+# macos-latest; see the Task 10 report for what remains unverified.
 name: Release build
 
 on:
@@ -18,7 +70,15 @@ concurrency:
 
 jobs:
   build:
-    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows-latest
+            args: ""
+          - platform: macos-latest
+            args: "--target universal-apple-darwin"
+    runs-on: ${{ matrix.platform }}
     permissions:
       contents: write
     steps:
@@ -29,6 +89,14 @@ jobs:
           node-version: 22
 
       - uses: dtolnay/rust-toolchain@stable
+
+      # Universal macOS binary = both Apple Silicon and Intel slices lipo'd
+      # together; the runner's default toolchain only has its own host target
+      # installed, so both must be added explicitly before `tauri build
+      # --target universal-apple-darwin` can build either slice.
+      - name: Add Apple Silicon + Intel Rust targets (macOS)
+        if: matrix.platform == 'macos-latest'
+        run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
 
       - uses: swatinem/rust-cache@v2
         with:
@@ -51,3 +119,192 @@ jobs:
           releaseBody: "See CHANGELOG.md for details. Installer below; the app auto-updates from this release onward."
           releaseDraft: false
           prerelease: false
+          includeUpdaterJson: false
+          args: ${{ matrix.args }}
+
+      # Carry-forward from Task 3: __SANDBOX_ORIGIN__ (vite.config.ts `define`)
+      # must resolve to 'vizsandbox://localhost' on macOS / WKWebView, vs.
+      # 'http://vizsandbox.localhost' on Windows / WebView2 — see
+      # src/sandbox/sandbox-html.ts. macos-check.yml only runs `tsc` + `npm
+      # test`, both of which take the tsx fallback branch and never exercise
+      # Vite's `define` at all, so this substitution has never actually been
+      # built and checked. If it silently failed, the sandbox iframe's src
+      # would violate the app's own CSP frame-src and every visualizer would
+      # go dark with no runtime error at the failure point. `tauri-action`
+      # above already ran `npm run build` as its beforeBuildCommand, so
+      # app/dist here is the exact bundle this leg is about to ship —
+      # checking it (rather than rebuilding) is the "cheap" verification.
+      - name: Assert macOS sandbox origin literal made it into the bundle
+        if: matrix.platform == 'macos-latest'
+        working-directory: app
+        shell: bash
+        run: |
+          if ! grep -RIl "vizsandbox://localhost" dist >/dev/null 2>&1; then
+            echo "::error::__SANDBOX_ORIGIN__ did not resolve to 'vizsandbox://localhost' anywhere in app/dist. The macOS build define is broken: the sandbox iframe's src would violate the app's CSP frame-src and every visualizer would be dead with no runtime error at the failure point."
+            exit 1
+          fi
+
+      # Proof that THIS leg completed every step above, including the upload.
+      # publish-manifest needs it to tell two cases apart that look identical
+      # from the release's asset list:
+      #
+      #   leg failed, no .sig        -> already reported by the failed job;
+      #                                 omit the platform and warn.
+      #   leg SUCCEEDED, no .sig     -> our glob no longer matches what the
+      #                                 bundler names its updater artifact.
+      #                                 Nothing else reports this, and the
+      #                                 result is a manifest that silently
+      #                                 strands every existing client on that
+      #                                 platform. Hard error.
+      #
+      # `needs.build.result` cannot make that distinction: a matrix collapses
+      # to ONE result, so a macOS failure would mask a Windows filename drift.
+      # A step is skipped once an earlier step in the job fails, so reaching
+      # this one is itself the proof — there is no `if:` to get wrong.
+      - name: Record a successful leg
+        shell: bash
+        run: |
+          mkdir -p leg
+          echo "${{ matrix.platform }}" > leg/ok
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: leg-${{ matrix.platform }}
+          path: leg/ok
+          retention-days: 1
+
+  publish-manifest:
+    needs: build
+    # Runs even when a leg failed (fail-fast is off, so the other leg still
+    # published its bundle + .sig). `!cancelled()` rather than `always()`: a
+    # manually cancelled release should not still publish a manifest, but a
+    # macOS-only failure must not take the Windows manifest down with it.
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      # Which legs actually finished. A leg that failed uploaded no marker.
+      # No `name:` filter, so zero matches is a warning here, not a failure —
+      # both legs failing is handled downstream by the empty-map check.
+      - name: Collect successful-leg markers
+        uses: actions/download-artifact@v4
+        with:
+          path: legs
+          pattern: leg-*
+
+      # No checkout needed: this job only talks to the GitHub Release API via
+      # `gh`/`jq`, both preinstalled on the runner image.
+      - name: Compose and publish merged updater manifest
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+
+          mkdir -p dl
+          # Both legs' updater signatures end in .sig; nothing else uploaded
+          # to this release does. The Windows NSIS updater artifact is the
+          # setup .exe itself (`*-setup.exe.sig`); the macOS updater artifact
+          # is the .app bundle tarball (`*.app.tar.gz.sig`) — confirmed
+          # against this project's own v0.6.4 Windows release rather than
+          # guessed, since tauri-bundler sanitizes the productName
+          # ("Second-Monitor Hub" -> "Second-Monitor.Hub") in a way that
+          # would be easy to get wrong by hand.
+          #
+          # A leg that failed uploaded nothing, and `gh release download` exits
+          # non-zero when its pattern matches no asset at all — neither is
+          # fatal here, the per-platform checks below decide what is.
+          gh release download "$TAG" --pattern "*.sig" --dir dl --clobber \
+            || echo "::warning::no .sig assets matched on release $TAG (did both build legs fail?)"
+
+          # `nullglob` above means an unmatched glob yields 0 elements rather
+          # than the literal pattern. Exactly one match => use it. Zero =>
+          # that leg failed; warn and omit the platform. Two or more => the
+          # glob is ambiguous and `basename`/`cat` would be fed garbage, which
+          # is precisely the "manifest whose URLs 404" failure this job exists
+          # to prevent, so that stays a hard error.
+          win_matches=(dl/*-setup.exe.sig)
+          mac_matches=(dl/*.app.tar.gz.sig)
+          if [ "${#win_matches[@]}" -gt 1 ]; then
+            echo "::error::expected at most one Windows NSIS .sig asset (*-setup.exe.sig) on release $TAG, found: ${win_matches[*]}"
+            exit 1
+          fi
+          if [ "${#mac_matches[@]}" -gt 1 ]; then
+            echo "::error::expected at most one macOS .app.tar.gz.sig asset on release $TAG, found: ${mac_matches[*]}"
+            exit 1
+          fi
+
+          # Did each leg finish? Written as an artifact by the build job's last
+          # step, so its presence means that platform built AND uploaded. `if`
+          # blocks rather than `[ -f x ] && flag=true`, which would trip the
+          # `set -e` above when the file is absent.
+          win_built=false
+          mac_built=false
+          if [ -f legs/leg-windows-latest/ok ]; then win_built=true; fi
+          if [ -f legs/leg-macos-latest/ok ]; then mac_built=true; fi
+          echo "build legs: windows=${win_built} macos=${mac_built}"
+
+          version="${TAG#v}"
+          pub_date=$(date -u +"%Y-%m-%dT%H:%M:%S.%3NZ")
+          base_url="https://github.com/${GH_REPO}/releases/download/${TAG}"
+
+          platforms='{}'
+
+          if [ "${#win_matches[@]}" -eq 1 ]; then
+            win_asset=$(basename "${win_matches[0]}" .sig)
+            win_sig=$(cat "${win_matches[0]}")
+            platforms=$(jq -n --argjson p "$platforms" \
+              --arg sig "$win_sig" --arg url "${base_url}/${win_asset}" \
+              '$p + { "windows-x86_64": { signature: $sig, url: $url } }')
+          elif [ "$win_built" = true ]; then
+            echo "::error::the Windows build leg SUCCEEDED but no *-setup.exe.sig asset is on release $TAG. The updater artifact's filename has drifted from this glob (a productName change, a bundler rename, or createUpdaterArtifacts being turned off). Refusing to publish a latest.json without windows-x86_64: every existing Windows client's update check would die with TargetsNotFound([\"windows-x86_64\"])."
+            exit 1
+          else
+            echo "::warning::no Windows updater artifact on release $TAG and the Windows leg did not finish — omitting windows-x86_64 from latest.json. Windows clients will not see this version as an update."
+          fi
+
+          if [ "${#mac_matches[@]}" -eq 1 ]; then
+            mac_asset=$(basename "${mac_matches[0]}" .sig)
+            mac_sig=$(cat "${mac_matches[0]}")
+            # One universal bundle, three keys: the two the updater actually
+            # resolves (darwin-aarch64 / darwin-x86_64, per updater_os() +
+            # updater_arch() in tauri-plugin-updater's updater.rs::get_urls)
+            # plus darwin-universal, which nothing looks up but which says out
+            # loud what the asset is.
+            platforms=$(jq -n --argjson p "$platforms" \
+              --arg sig "$mac_sig" --arg url "${base_url}/${mac_asset}" \
+              '$p + {
+                 "darwin-aarch64":  { signature: $sig, url: $url },
+                 "darwin-x86_64":   { signature: $sig, url: $url },
+                 "darwin-universal": { signature: $sig, url: $url }
+               }')
+          elif [ "$mac_built" = true ]; then
+            echo "::error::the macOS build leg SUCCEEDED but no *.app.tar.gz.sig asset is on release $TAG. The updater artifact's filename has drifted from this glob. Refusing to publish a latest.json without the darwin-* entries: every existing Mac client's update check would die with TargetsNotFound([\"darwin-aarch64\"])."
+            exit 1
+          else
+            echo "::warning::no macOS updater artifact on release $TAG and the macOS leg did not finish — omitting the darwin-* entries from latest.json. Mac clients will not see this version as an update."
+          fi
+
+          if [ "$(jq -r 'length' <<<"$platforms")" -eq 0 ]; then
+            echo "::error::no platform artifacts found on release $TAG; refusing to publish an empty latest.json (that would break every client's update check)"
+            exit 1
+          fi
+
+          jq -n \
+            --arg version "$version" \
+            --arg pub_date "$pub_date" \
+            --argjson platforms "$platforms" \
+            '{
+              version: $version,
+              notes: "See CHANGELOG.md for details. Installer below; the app auto-updates from this release onward.",
+              pub_date: $pub_date,
+              platforms: $platforms
+            }' > latest.json
+
+          echo "Composed manifest:"
+          cat latest.json
+
+          gh release upload "$TAG" latest.json --clobber

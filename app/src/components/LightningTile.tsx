@@ -4,6 +4,7 @@ import { MapView, RecenterButton, type ProjectFn } from './map/MapView';
 import { useMapView } from './map/useMapView';
 import { type BlitzortungStatus, type LightningStrike, connectBlitzortung } from '../state/blitzortung';
 import { distanceKm } from '../state/iss';
+import { redactLocation } from '../state/streamer';
 import { TileError } from './tileStates';
 import type { Density, WeatherLocation } from '../types';
 
@@ -23,13 +24,15 @@ export interface LightningTileProps {
   location: WeatherLocation;
   config: Record<string, unknown> | undefined;
   setConfig: (next: Record<string, unknown>) => void;
+  /** Streamer mode (0.7.1 §2): blanks the map — see MapView.redacted. */
+  redacted?: boolean;
 }
 
 interface RecentStrike extends LightningStrike {
   distance: number;
 }
 
-export function LightningTile({ density, accent, location, config, setConfig }: LightningTileProps) {
+export function LightningTile({ density, accent, location, config, setConfig, redacted = false }: LightningTileProps) {
   const [strikes, setStrikes] = useState<RecentStrike[]>([]);
   // Starts 'connecting': the effect below connects on mount, and starting at
   // 'disconnected' would flash the error state for one frame before it runs.
@@ -109,7 +112,7 @@ export function LightningTile({ density, accent, location, config, setConfig }: 
       <span style={{
         fontSize: 10, color: 'rgba(255,255,255,0.55)',
         fontFamily: '"JetBrains Mono", ui-monospace, monospace',
-      }}>{fresh.length} strikes · {RADIUS_KM} km</span>
+      }}>{fresh.length} strikes · {redactLocation(`${RADIUS_KM} km`, redacted)}</span>
       <StatusDot status={status} />
     </div>
   );
@@ -129,6 +132,7 @@ export function LightningTile({ density, accent, location, config, setConfig }: 
             minZoom={MAP_MIN_ZOOM}
             maxZoom={MAP_MAX_ZOOM}
             overlay={drawStrikes}
+            redacted={redacted}
           />
           {overridden && <RecenterButton accent={accent} onClick={recenter} />}
           {status.kind === 'disconnected' && (
@@ -149,11 +153,11 @@ export function LightningTile({ density, accent, location, config, setConfig }: 
         }}>
           {closest ? (
             <>
-              <span>closest <span style={{ color: '#facc15' }}>{Math.round(closest.distance)} km</span></span>
+              <span>closest <span style={{ color: '#facc15' }}>{redactLocation(`${Math.round(closest.distance)} km`, redacted)}</span></span>
               <span>{Math.round((now - closest.timeMs) / 1000)}s ago</span>
             </>
           ) : (
-            <span style={{ color: 'rgba(255,255,255,0.4)' }}>no recent strikes within {RADIUS_KM} km</span>
+            <span style={{ color: 'rgba(255,255,255,0.4)' }}>no recent strikes within {redactLocation(`${RADIUS_KM} km`, redacted)}</span>
           )}
         </div>
       </div>

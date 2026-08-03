@@ -52,7 +52,11 @@ pub fn foreground_get() -> ForegroundInfo {
 
         ForegroundInfo { process_name, window_title: title, pid }
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    {
+        macos::foreground_get()
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
     {
         ForegroundInfo::default()
     }
@@ -73,4 +77,39 @@ unsafe fn process_name_for_pid(pid: u32) -> Option<String> {
         return None;
     }
     Some(String::from_utf16_lossy(&buf[..len as usize]))
+}
+
+#[cfg(target_os = "macos")]
+mod macos {
+    use objc2_app_kit::NSWorkspace;
+
+    use super::ForegroundInfo;
+
+    pub fn foreground_get() -> ForegroundInfo {
+        // SAFETY: `sharedWorkspace`, `frontmostApplication`, `localizedName`
+        // and `processIdentifier` are simple read-only Objective-C message
+        // sends with no additional preconditions; the returned `Retained`
+        // values manage their own reference counts.
+        unsafe {
+            let workspace = NSWorkspace::sharedWorkspace();
+            let Some(app) = workspace.frontmostApplication() else {
+                return ForegroundInfo::default();
+            };
+
+            let process_name = app
+                .localizedName()
+                .map(|name| name.to_string())
+                .unwrap_or_default();
+            let pid = app.processIdentifier();
+
+            ForegroundInfo {
+                process_name,
+                // Window title requires `CGWindowListCopyWindowInfo` plus a
+                // user-granted Accessibility permission, which is out of
+                // scope here. The frontend already tolerates an empty title.
+                window_title: String::new(),
+                pid: pid as u32,
+            }
+        }
+    }
 }

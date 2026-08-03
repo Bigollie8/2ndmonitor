@@ -44,17 +44,32 @@ export const SANDBOX_ATTR = 'allow-scripts';
  *  + src/webview2/mod.rs::attach_custom_protocol_handler). */
 export const SANDBOX_SCHEME = 'vizsandbox';
 
-/** The frame's real origin, as WebView2 sees it. This exact string must also
- *  appear as the `frame-src` value in src-tauri/tauri.conf.json — the app's
- *  own CSP otherwise blocks the frame from loading. A test below pins the two
- *  together.
+/** The frame's real origin, as the platform webview sees it. This value must
+ *  also appear in the `frame-src` list in src-tauri/tauri.conf.json — the
+ *  app's own CSP otherwise blocks the frame from loading. A test below pins
+ *  the two together.
  *
- *  Windows form. macOS/Linux would be `vizsandbox://localhost`; the bundle
- *  targets only `nsis`, and tauri.conf.json's CSP is a static string that can
- *  encode exactly one form, so this is deliberately the Windows one. A future
- *  macOS build will see the frame blocked by frame-src — loudly, in the
- *  console — rather than silently misbehave. */
-export const SANDBOX_ORIGIN = `http://${SANDBOX_SCHEME}.localhost`;
+ *  Resolved at build time (see `__SANDBOX_ORIGIN__` in vite.config.ts), since
+ *  every call site here is synchronous: Windows/WebView2 cannot register a
+ *  non-standard scheme, so wry rewrites it to `http://${SANDBOX_SCHEME}.localhost`;
+ *  macOS/WKWebView uses the real scheme, `${SANDBOX_SCHEME}://localhost`.
+ *  Each release leg builds its own bundle on its own runner, so a single
+ *  static per-build value is enough — no runtime platform branch needed.
+ *  tauri.conf.json's CSP lists both forms so one static string satisfies
+ *  every platform's build.
+ *
+ *  The fallback below only matters outside a Vite build: `npm run
+ *  gen:sandbox` and `npm test` both load this module directly under `tsx`,
+ *  which does not evaluate Vite's `define`, so `__SANDBOX_ORIGIN__` is an
+ *  undeclared global there. In that case fall back to the same check
+ *  vite.config.ts does, so there is exactly one platform rule, expressed
+ *  twice for two different toolchains rather than duplicated by accident. */
+export const SANDBOX_ORIGIN: string =
+  typeof __SANDBOX_ORIGIN__ !== 'undefined'
+    ? __SANDBOX_ORIGIN__
+    : (globalThis as { process?: { platform?: string } }).process?.platform === 'darwin'
+      ? 'vizsandbox://localhost'
+      : `http://${SANDBOX_SCHEME}.localhost`;
 
 /** What the iframe's `src` points at. Any path works — the protocol handler
  *  serves the same static document for every path — but a stable one keeps

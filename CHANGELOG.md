@@ -5,6 +5,56 @@ All notable changes to 2ndMonitor are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-08-03
+
+### Fixed
+- **F11 fullscreen**: the window-fullscreen permission was never granted, so
+  F11 silently did nothing in the installed app. It now actually works.
+  Failures are also logged instead of swallowed
+
+### Added
+- **Date & time tile**: a large digital clock (follows your system
+  12/24-hour preference) with a full date line and an optional seconds
+  display — hover the tile to toggle seconds on or off
+- **Streamer mode**: one click in the top bar (⊘) hides every map and
+  location label — radar, aircraft, lightning, ISS, city names, tide
+  station — so screenshares can't reveal where you are. Also available in
+  Settings → Appearance; a "streamer" chip shows in the status bar while
+  active
+- **Profile export/import**: export any profile to a shareable JSON file
+  from the profile switcher — saved map positions are stripped from the
+  file since they'd reveal your home location — and import one as a new
+  profile or over an existing one
+
+## [0.7.0] - 2026-08-03
+
+### Added
+- **macOS support**: 2ndMonitor now runs on macOS 14.2 (Sonoma) and later,
+  as a universal build for both Apple Silicon and Intel Macs. Everything
+  the Windows build does comes with it — tiles, profiles, the content
+  library, the marketplace, and the visualizers
+- **Audio-reactive visualizers on macOS**: the equalizer, MilkDrop, and
+  scripted visualizers react to your sound using Core Audio process taps,
+  including the per-app audio source picker. macOS asks for permission to
+  record audio the first time you pick an app; the tap never mutes or
+  alters what you hear
+- **macOS system integration**: passwords and API keys are stored in the
+  Keychain, the "now playing app" tile follows the frontmost app, and the
+  audio mixer can list your output devices and switch the default one
+- **Automatic updates on macOS**: Mac builds are served by the same
+  in-app updater as Windows
+
+### Known limitations on macOS
+- Builds are **unsigned**, the same as the Windows builds. The first launch
+  needs System Settings → Privacy & Security → "Open Anyway" — macOS's
+  equivalent of the Windows SmartScreen prompt
+- The audio-source picker lists **helper processes** for apps that are
+  built from several processes. Chrome, Discord and Electron apps play
+  their audio from a helper, so you may see something like
+  `com.google.Chrome.helper` rather than the app's own name
+- The audio-recording permission may need re-approving after an update,
+  because the app is unsigned
+
 ## [0.6.7] - 2026-08-03
 
 ### Added

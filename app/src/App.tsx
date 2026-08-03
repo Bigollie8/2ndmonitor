@@ -21,6 +21,7 @@ import {
 } from './state/layout';
 import { seedStarterProfiles, PROFILE_DEFAULT_COLORS } from './state/starterProfiles';
 import { shouldPinTopBar } from './state/topBar';
+import { redactLocation } from './state/streamer';
 import { isBundleTile, bundleIdOf } from './tiles/tileRegistry';
 import { useTileCatalog } from './tiles/useTileCatalog';
 import type { Track, Profile, AccentTheme, VizMode, Density, Todo, WeatherLocation } from './types';
@@ -96,19 +97,9 @@ const AircraftTile = lazy(() => import('./components/AircraftTile').then((m) => 
 const ActiveWindowTile = lazy(() => import('./components/ActiveWindowTile').then((m) => ({ default: m.ActiveWindowTile })));
 const DockerTile = lazy(() => import('./components/DockerTile').then((m) => ({ default: m.DockerTile })));
 const EnergyTile = lazy(() => import('./components/EnergyTile').then((m) => ({ default: m.EnergyTile })));
+const DateTimeTile = lazy(() => import('./components/DateTimeTile').then((m) => ({ default: m.DateTimeTile })));
 const DeclarativeTile = lazy(() => import('./components/DeclarativeTile').then((m) => ({ default: m.DeclarativeTile })));
 const MissingTileCard = lazy(() => import('./components/MissingTileCard').then((m) => ({ default: m.MissingTileCard })));
-
-// Vite injects `import.meta.env` at build time; the project has no
-// vite-env.d.ts / "vite/client" types reference, so declare the one flag we
-// use. The dev-only Tweaks panel that used to read DEV here is gone
-// (superseded by the Settings window); kept in case future dev-only gating
-// needs it again.
-declare global {
-  interface ImportMeta {
-    readonly env: { readonly DEV: boolean };
-  }
-}
 
 interface VizColorOverride {
   enabled: boolean;
@@ -179,6 +170,10 @@ interface TweakState extends Record<string, unknown> {
    *  the mouse hits the top edge. Pinned open while any bar-anchored overlay
    *  is up — see state/topBar.ts. Off by default. */
   autoHideTopBar: boolean;
+  /** Streamer mode (0.7.1 §2): hides maps and location text so a screenshare
+   *  can't reveal where you are. Pure presentation — data, settings, and
+   *  polling are untouched. Off by default. */
+  streamerMode: boolean;
 }
 
 /** How long the viz surface will wait for boot seeding before giving up and
@@ -225,6 +220,7 @@ const TWEAK_DEFAULTS: TweakState = {
   catalogRemoved: [],
   pileRepaired: false,
   autoHideTopBar: false,
+  streamerMode: false,
 };
 
 
@@ -772,7 +768,12 @@ export default function App() {
             const { getCurrentWindow } = await import('@tauri-apps/api/window');
             const win = getCurrentWindow();
             await win.setFullscreen(!(await win.isFullscreen()));
-          } catch { /* browser dev — no tauri */ }
+          } catch (err) {
+            // Browser dev has no Tauri — but in the real app a rejection here
+            // is a permission denial and must be visible, not swallowed
+            // (0.7.1 §1: the silent catch is how broken F11 shipped).
+            console.warn('F11 fullscreen failed:', err);
+          }
         })();
       }
       else if (e.key === 'Escape') {
@@ -920,6 +921,13 @@ export default function App() {
     updateActiveOrientation({ tiles: [] });
   };
 
+  // Streamer mode (0.7.1 §2): every location-aware tile gets this instead of
+  // the raw saved location. lat/lon are byte-identical (fetches and usePoll
+  // deps unaffected) — only the human-readable label is masked.
+  const displayLocation: WeatherLocation = t.streamerMode
+    ? { ...t.weatherLocation, label: redactLocation(t.weatherLocation.label, t.streamerMode) }
+    : t.weatherLocation;
+
   const renderTile = (instance: TileInstance) => {
     switch (instance.type) {
       case 'discord':
@@ -941,7 +949,7 @@ export default function App() {
       case 'sysmon':
         return <SysMonTile density={t.density} accent={accent} accent2={accent2} />;
       case 'clock':
-        return <NowAndForecastTile density={t.density} accent={accent} accent2={accent2} />;
+        return <NowAndForecastTile density={t.density} accent={accent} accent2={accent2} streamer={t.streamerMode} />;
       case 'viz':
         return (
           <VizHero
@@ -993,11 +1001,12 @@ export default function App() {
           <RadarTile
             density={t.density}
             accent={accent}
-            location={t.weatherLocation}
+            location={displayLocation}
             config={instance.config as Record<string, unknown> | undefined}
             setConfig={(next) => updateActiveOrientation({
               tiles: updateInstance(activeOrientation.tiles, instance.instanceId, { config: next }),
             })}
+            redacted={t.streamerMode}
           />
         );
       case 'pomodoro':
@@ -1017,7 +1026,7 @@ export default function App() {
           <SunTile
             density={t.density}
             accent={accent}
-            location={t.weatherLocation}
+            location={displayLocation}
           />
         );
       case 'aurora':
@@ -1025,7 +1034,7 @@ export default function App() {
           <AuroraTile
             density={t.density}
             accent={accent}
-            location={t.weatherLocation}
+            location={displayLocation}
           />
         );
       case 'airQuality':
@@ -1033,7 +1042,7 @@ export default function App() {
           <AirQualityTile
             density={t.density}
             accent={accent}
-            location={t.weatherLocation}
+            location={displayLocation}
           />
         );
       case 'stocks':
@@ -1059,6 +1068,7 @@ export default function App() {
             setConfig={(next) => updateActiveOrientation({
               tiles: updateInstance(activeOrientation.tiles, instance.instanceId, { config: next }),
             })}
+            streamer={t.streamerMode}
           />
         );
       case 'streamChat':
@@ -1097,15 +1107,16 @@ export default function App() {
           <IssTile
             density={t.density}
             accent={accent}
-            location={t.weatherLocation}
+            location={displayLocation}
             config={instance.config as Record<string, unknown> | undefined}
             setConfig={(next) => updateActiveOrientation({
               tiles: updateInstance(activeOrientation.tiles, instance.instanceId, { config: next }),
             })}
+            redacted={t.streamerMode}
           />
         );
       case 'pollen':
-        return <PollenTile density={t.density} accent={accent} editing={editMode} location={t.weatherLocation} />;
+        return <PollenTile density={t.density} accent={accent} editing={editMode} location={displayLocation} />;
       case 'solarFlare':
         return <SolarFlareTile density={t.density} accent={accent} />;
       case 'lightning':
@@ -1113,11 +1124,12 @@ export default function App() {
           <LightningTile
             density={t.density}
             accent={accent}
-            location={t.weatherLocation}
+            location={displayLocation}
             config={instance.config as Record<string, unknown> | undefined}
             setConfig={(next) => updateActiveOrientation({
               tiles: updateInstance(activeOrientation.tiles, instance.instanceId, { config: next }),
             })}
+            redacted={t.streamerMode}
           />
         );
       case 'aircraft':
@@ -1125,11 +1137,12 @@ export default function App() {
           <AircraftTile
             density={t.density}
             accent={accent}
-            location={t.weatherLocation}
+            location={displayLocation}
             config={instance.config as Record<string, unknown> | undefined}
             setConfig={(next) => updateActiveOrientation({
               tiles: updateInstance(activeOrientation.tiles, instance.instanceId, { config: next }),
             })}
+            redacted={t.streamerMode}
           />
         );
       case 'activeWindow':
@@ -1143,6 +1156,17 @@ export default function App() {
             accent={accent}
             accent2={accent2}
             editing={editMode}
+            config={instance.config as Record<string, unknown> | undefined}
+            setConfig={(next) => updateActiveOrientation({
+              tiles: updateInstance(activeOrientation.tiles, instance.instanceId, { config: next }),
+            })}
+          />
+        );
+      case 'dateTime':
+        return (
+          <DateTimeTile
+            density={t.density}
+            accent={accent}
             config={instance.config as Record<string, unknown> | undefined}
             setConfig={(next) => updateActiveOrientation({
               tiles: updateInstance(activeOrientation.tiles, instance.instanceId, { config: next }),
@@ -1195,6 +1219,8 @@ export default function App() {
       }}>
         <TopChrome
           accent={accent} editMode={editMode} setEditMode={setEditMode}
+          streamerMode={t.streamerMode}
+          setStreamerMode={(b) => setTweak('streamerMode', b)}
           hidden={topBarHidden}
           onBarEnter={() => setTopBarRevealed(true)}
           onBarLeave={() => setTopBarRevealed(false)}
@@ -1255,6 +1281,7 @@ export default function App() {
           profileName={activeProfile.name}
           tileCount={visibleTileCount}
           audioSource={t.vizAudioSource}
+          streamer={t.streamerMode}
         />
         {editMode && (
           <EditModeOverlay
@@ -1400,10 +1427,14 @@ export default function App() {
   );
 }
 
-function TopChrome({ accent, editMode, setEditMode, profiles, activeProfileId, setActiveProfileId, onSwitcher, onOnboarding, onSettings, onShortcuts, hidden, onBarEnter, onBarLeave, onMenuOpenChange }: {
+function TopChrome({ accent, editMode, setEditMode, streamerMode, setStreamerMode, profiles, activeProfileId, setActiveProfileId, onSwitcher, onOnboarding, onSettings, onShortcuts, hidden, onBarEnter, onBarLeave, onMenuOpenChange }: {
   accent: string;
   editMode: boolean;
   setEditMode: (b: boolean) => void;
+  /** Streamer mode quick toggle (0.7.1 §2) — active state uses the accent
+   *  like the Edit button. */
+  streamerMode: boolean;
+  setStreamerMode: (b: boolean) => void;
   profiles: Profile[];
   activeProfileId: string;
   setActiveProfileId: (id: string) => void;
@@ -1539,6 +1570,16 @@ function TopChrome({ accent, editMode, setEditMode, profiles, activeProfileId, s
           fontWeight: 500, letterSpacing: '.03em',
         }}>⌘E</span>
       </button>
+      <button
+        onClick={() => setStreamerMode(!streamerMode)}
+        title="Streamer mode — hide location data"
+        style={{
+          ...ghostButton, padding: '5px 9px',
+          background: streamerMode ? accent : 'transparent',
+          color: streamerMode ? '#000' : 'rgba(255,255,255,0.7)',
+          border: streamerMode ? '1px solid transparent' : '1px solid rgba(255,255,255,0.1)',
+        }}
+      >⊘</button>
       <button onClick={onSettings} title="Settings (⌘,)" style={{ ...ghostButton, padding: '5px 9px' }}>⚙</button>
       <div ref={menuRef} style={{ position: 'relative' }}>
         <button
@@ -1701,13 +1742,15 @@ function useFrameRate(): number {
 }
 
 function BottomStatus({
-  accent, onSwitcher, profileName, tileCount, audioSource,
+  accent, onSwitcher, profileName, tileCount, audioSource, streamer,
 }: {
   accent: string;
   onSwitcher: () => void;
   profileName: string;
   tileCount: number;
   audioSource: AudioSource;
+  /** Streamer-mode indicator chip (0.7.1 §2). */
+  streamer: boolean;
 }) {
   // The 1Hz sysmon subscription and rAF frame counter live HERE, not in App:
   // this bar is the only chrome that displays them, and keeping them out of
@@ -1764,6 +1807,12 @@ function BottomStatus({
       fontSize: 10.5, color: 'rgba(255,255,255,0.45)', fontFamily: '"JetBrains Mono", ui-monospace, monospace',
     }}>
       <span style={{ color: accent }}>● {tileCount} tile{tileCount === 1 ? '' : 's'}</span>
+      {streamer && (
+        <span style={{
+          color: accent, padding: '1px 7px', borderRadius: 4,
+          background: `${accent}15`, border: `1px solid ${accent}44`,
+        }}>streamer</span>
+      )}
       <span title="App CPU usage">CPU {cpuText}</span>
       <span title="App resident memory">RAM {ramText}</span>
       <span title="App GPU usage (via NVML, NVIDIA only)">GPU {gpuText}</span>

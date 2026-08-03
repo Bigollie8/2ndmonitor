@@ -5,6 +5,7 @@ import { useMapView } from './map/useMapView';
 import { fetchAircraftInBox } from '../state/opensky';
 import { distanceKm } from '../state/iss';
 import { usePoll } from '../state/usePoll';
+import { redactLocation } from '../state/streamer';
 import type { Density, WeatherLocation } from '../types';
 
 const REFRESH_MS = 60 * 1000;
@@ -21,9 +22,12 @@ export interface AircraftTileProps {
   location: WeatherLocation;
   config: Record<string, unknown> | undefined;
   setConfig: (next: Record<string, unknown>) => void;
+  /** Streamer mode: blanks the map AND hides the nearest-5 list — callsigns
+   *  + distances imply the viewer's location (0.7.1 §2). */
+  redacted?: boolean;
 }
 
-export function AircraftTile({ density, accent, location, config, setConfig }: AircraftTileProps) {
+export function AircraftTile({ density, accent, location, config, setConfig, redacted = false }: AircraftTileProps) {
   const { data, error, loading } = usePoll(
     async () => {
       const result = await fetchAircraftInBox(location.lat, location.lon, RADIUS_KM);
@@ -86,8 +90,8 @@ export function AircraftTile({ density, accent, location, config, setConfig }: A
       fontSize: 10,
       color: error ? '#fca5a5' : 'rgba(255,255,255,0.55)',
       fontFamily: '"JetBrains Mono", ui-monospace, monospace',
-    }} title={error ?? undefined}>
-      {loading ? '…' : error ? 'OpenSky error' : `${planes.length} · ${RADIUS_KM} km`}
+    }} title={redacted ? undefined : (error ?? undefined)}>
+      {loading ? '…' : error ? 'OpenSky error' : `${planes.length} · ${redactLocation(`${RADIUS_KM} km`, redacted)}`}
     </span>
   );
 
@@ -106,49 +110,52 @@ export function AircraftTile({ density, accent, location, config, setConfig }: A
             minZoom={MAP_MIN_ZOOM}
             maxZoom={MAP_MAX_ZOOM}
             overlay={drawPlanes}
+            redacted={redacted}
           />
           {overridden && <RecenterButton accent={accent} onClick={recenter} />}
         </div>
         {/* Closest list */}
-        <div style={{
-          flexShrink: 0, maxHeight: '40%', overflowY: 'auto',
-          padding: '4px 8px',
-          borderTop: '1px solid rgba(255,255,255,0.06)',
-        }}>
-          {sorted.slice(0, 5).map((p) => (
-            <div key={p.icao24} style={{
-              display: 'flex', alignItems: 'baseline', gap: 8,
-              fontSize: 10.5, padding: '2px 0',
-              fontFamily: '"JetBrains Mono", ui-monospace, monospace',
-            }}>
-              <span style={{ color: accent, fontWeight: 700, minWidth: 56 }}>
-                {(p.callsign || p.icao24).slice(0, 8)}
-              </span>
-              <span style={{ flex: 1, color: 'rgba(255,255,255,0.55)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {p.originCountry}
-              </span>
-              <span style={{ color: 'rgba(255,255,255,0.7)' }}>
-                {Math.round(p.dist)} km
-              </span>
-              <span style={{ color: 'rgba(255,255,255,0.5)', minWidth: 50, textAlign: 'right' }}>
-                {Math.round(p.altitude)} m
-              </span>
-            </div>
-          ))}
-          {sorted.length === 0 && !loading && !error && (
-            <div style={{ color: 'rgba(255,255,255,0.45)', fontSize: 10.5, padding: 4 }}>
-              No aircraft within {RADIUS_KM} km.
-            </div>
-          )}
-          {error && !loading && (
-            <div style={{ color: '#fca5a5', fontSize: 10.5, padding: 4, lineHeight: 1.4 }}>
-              {error}
-              <div style={{ color: 'rgba(255,255,255,0.45)', marginTop: 2 }}>
-                OpenSky throttles anonymous reads — usually clears in a minute.
+        {!redacted && (
+          <div style={{
+            flexShrink: 0, maxHeight: '40%', overflowY: 'auto',
+            padding: '4px 8px',
+            borderTop: '1px solid rgba(255,255,255,0.06)',
+          }}>
+            {sorted.slice(0, 5).map((p) => (
+              <div key={p.icao24} style={{
+                display: 'flex', alignItems: 'baseline', gap: 8,
+                fontSize: 10.5, padding: '2px 0',
+                fontFamily: '"JetBrains Mono", ui-monospace, monospace',
+              }}>
+                <span style={{ color: accent, fontWeight: 700, minWidth: 56 }}>
+                  {(p.callsign || p.icao24).slice(0, 8)}
+                </span>
+                <span style={{ flex: 1, color: 'rgba(255,255,255,0.55)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {p.originCountry}
+                </span>
+                <span style={{ color: 'rgba(255,255,255,0.7)' }}>
+                  {Math.round(p.dist)} km
+                </span>
+                <span style={{ color: 'rgba(255,255,255,0.5)', minWidth: 50, textAlign: 'right' }}>
+                  {Math.round(p.altitude)} m
+                </span>
               </div>
-            </div>
-          )}
-        </div>
+            ))}
+            {sorted.length === 0 && !loading && !error && (
+              <div style={{ color: 'rgba(255,255,255,0.45)', fontSize: 10.5, padding: 4 }}>
+                No aircraft within {RADIUS_KM} km.
+              </div>
+            )}
+            {error && !loading && (
+              <div style={{ color: '#fca5a5', fontSize: 10.5, padding: 4, lineHeight: 1.4 }}>
+                {error}
+                <div style={{ color: 'rgba(255,255,255,0.45)', marginTop: 2 }}>
+                  OpenSky throttles anonymous reads — usually clears in a minute.
+                </div>
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </HFTile>
   );

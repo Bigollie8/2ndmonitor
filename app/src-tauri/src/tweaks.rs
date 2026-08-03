@@ -45,15 +45,22 @@ pub fn tweaks_save<R: Runtime>(app: AppHandle<R>, value: Value) -> Result<(), St
     Ok(())
 }
 
-/// Save-dialog + write. `json` is the frontend's current tweak state,
+/// Save-dialog + write. `json` is a frontend-provided JSON string,
 /// pretty-printed here so hand-editing the exported file is pleasant.
+/// `file_name` overrides the dialog's default name — settings export omits
+/// it (keeps "2ndmonitor-settings.json"); profile export (0.7.1 §3) passes
+/// "<profile>.2ndmonitor-profile.json".
 #[tauri::command]
-pub async fn tweaks_export<R: Runtime>(app: AppHandle<R>, json: String) -> Result<bool, String> {
+pub async fn tweaks_export<R: Runtime>(
+    app: AppHandle<R>,
+    json: String,
+    file_name: Option<String>,
+) -> Result<bool, String> {
     let value: Value = serde_json::from_str(&json).map_err(|e| format!("bad json: {e}"))?;
     let Some(path) = app
         .dialog()
         .file()
-        .set_file_name("2ndmonitor-settings.json")
+        .set_file_name(file_name.as_deref().unwrap_or("2ndmonitor-settings.json"))
         .add_filter("JSON", &["json"])
         .blocking_save_file()
         .and_then(|p| p.into_path().ok())

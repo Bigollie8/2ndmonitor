@@ -1,8 +1,11 @@
 //! Discord local IPC (RPC) client.
 //!
-//! Connects to `\\.\pipe\discord-ipc-0` (Discord's local Named Pipe), performs
-//! the IPC handshake + AUTHENTICATE with our existing OAuth access token, then
-//! subscribes to the events we care about:
+//! Connects to Discord's local IPC endpoint — a Named Pipe
+//! (`\\.\pipe\discord-ipc-0`) on Windows, a Unix domain socket
+//! (`discord-ipc-0` under `$XDG_RUNTIME_DIR`/`$TMPDIR`/`/tmp`, see
+//! `ipc_path`) on macOS/Linux — performs the IPC handshake + AUTHENTICATE
+//! with our existing OAuth access token, then subscribes to the events we
+//! care about:
 //!
 //!   - NOTIFICATION_CREATE  → live DM / @mention feed (whenever Discord would
 //!     have shown a desktop notification, we get the same payload)
@@ -22,8 +25,6 @@ use serde::Serialize;
 use serde_json::{json, Value};
 use std::{
     collections::HashMap,
-    ffi::OsStr,
-    os::windows::ffi::OsStrExt,
     sync::{
         atomic::{AtomicU64, Ordering},
         mpsc::{channel, Sender},
@@ -33,16 +34,48 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tauri::{AppHandle, Emitter, Runtime};
+#[cfg(windows)]
+use std::{ffi::OsStr, os::windows::ffi::OsStrExt};
+#[cfg(windows)]
 use windows::core::PCWSTR;
+#[cfg(windows)]
 use windows::Win32::Foundation::{CloseHandle, ERROR_IO_PENDING, HANDLE};
+#[cfg(windows)]
 use windows::Win32::Storage::FileSystem::{
     CreateFileW, ReadFile, WriteFile, FILE_FLAG_OVERLAPPED, FILE_GENERIC_READ, FILE_GENERIC_WRITE,
     FILE_SHARE_NONE, OPEN_EXISTING,
 };
+#[cfg(windows)]
 use windows::Win32::System::Threading::CreateEventW;
+#[cfg(windows)]
 use windows::Win32::System::IO::{GetOverlappedResult, OVERLAPPED};
 
-const PIPE_BASE: &str = r"\\.\pipe\discord-ipc-";
+/// Per-platform Discord IPC transport. Windows: `PipeIo`, a named-pipe wrapper
+/// using overlapped I/O (see the comment above `PipeIo` for why). macOS/Linux:
+/// `SocketIo`, a plain blocking Unix domain socket — no overlapped-I/O
+/// equivalent needed there (see the comment above `SocketIo`).
+#[cfg(windows)]
+type Transport = PipeIo;
+#[cfg(unix)]
+type Transport = SocketIo;
+
+/// Where Discord's IPC endpoint lives. Windows: a named pipe. macOS/Linux:
+/// a Unix domain socket under the per-user temp/runtime dir. Checked in the
+/// same order Discord's own clients use: `XDG_RUNTIME_DIR` (what the Linux
+/// client sets) first, then `TMPDIR` (what the macOS client uses), then
+/// `/tmp`. An empty (as opposed to unset) env var falls through too, so a
+/// set-but-blank `TMPDIR` can't produce a path rooted at `/`.
+#[cfg(windows)]
+fn ipc_path(index: u8) -> String { format!(r"\\.\pipe\discord-ipc-{index}") }
+#[cfg(unix)]
+fn ipc_path(index: u8) -> String {
+    let env_dir = |name: &str| std::env::var(name).ok().filter(|s| !s.is_empty());
+    let base = env_dir("XDG_RUNTIME_DIR")
+        .or_else(|| env_dir("TMPDIR"))
+        .unwrap_or_else(|| "/tmp".to_string());
+    format!("{}/discord-ipc-{index}", base.trim_end_matches('/'))
+}
+
 const RECONNECT_DELAY_SECS: u64 = 5;
 const MAX_NOTIFICATIONS: usize = 20;
 
@@ -92,12 +125,13 @@ pub struct RpcState {
 static STATE: Lazy<Mutex<RpcState>> = Lazy::new(|| Mutex::new(RpcState::default()));
 static NONCE: AtomicU64 = AtomicU64::new(1);
 
-/// Write-side handle to the active IPC pipe. Tauri commands clone this so
-/// they can send SET_VOICE_SETTINGS / SELECT_VOICE_CHANNEL etc. while the
-/// worker thread reads concurrently — `PipeIo` uses Win32 overlapped I/O so
-/// reads and writes don't serialize at the FILE_OBJECT level. None when no
+/// Write-side handle to the active IPC transport. Tauri commands clone this
+/// so they can send SET_VOICE_SETTINGS / SELECT_VOICE_CHANNEL etc. while the
+/// worker thread reads concurrently — on Windows `PipeIo` uses overlapped I/O
+/// so reads and writes don't serialize at the FILE_OBJECT level; on
+/// macOS/Linux `SocketIo` just needs its internal write lock. None when no
 /// session is live.
-static WRITE_PIPE: Lazy<Mutex<Option<PipeIo>>> = Lazy::new(|| Mutex::new(None));
+static WRITE_PIPE: Lazy<Mutex<Option<Transport>>> = Lazy::new(|| Mutex::new(None));
 
 /// Pending command nonces awaiting a Discord IPC response. Each entry's Sender
 /// resolves the matching `discord_rpc_*` Tauri command with the parsed response
@@ -296,7 +330,7 @@ fn run_session<R: Runtime>(app: &AppHandle<R>, client_id: &str, token: &str) -> 
 
 fn handle_message<R: Runtime>(
     app: &AppHandle<R>,
-    writer: &PipeIo,
+    writer: &Transport,
     msg: &Value,
     current_voice_channel: &mut Option<String>,
 ) -> Result<(), String> {
@@ -579,12 +613,12 @@ fn fetch_granted_scopes(token: &str) -> Result<Vec<String>, String> {
         .unwrap_or_default())
 }
 
-fn open_pipe() -> Result<PipeIo, String> {
+fn open_pipe() -> Result<Transport, String> {
     // Discord may use 0..9 if multiple instances are running. Try in order.
     let mut last_err = String::new();
-    for i in 0..10 {
-        let path = format!("{PIPE_BASE}{i}");
-        match PipeIo::open(&path) {
+    for i in 0..=9u8 {
+        let path = ipc_path(i);
+        match Transport::open(&path) {
             Ok(p) => return Ok(p),
             Err(e) => last_err = format!("{path}: {e}"),
         }
@@ -603,17 +637,17 @@ fn frame_bytes(opcode: u32, payload: &[u8]) -> Vec<u8> {
     buf
 }
 
-fn write_frame(writer: &PipeIo, opcode: u32, json_payload: &str) -> Result<(), String> {
+fn write_frame(writer: &Transport, opcode: u32, json_payload: &str) -> Result<(), String> {
     write_frame_raw(writer, opcode, json_payload.as_bytes())
 }
 
-fn write_frame_raw(writer: &PipeIo, opcode: u32, payload: &[u8]) -> Result<(), String> {
+fn write_frame_raw(writer: &Transport, opcode: u32, payload: &[u8]) -> Result<(), String> {
     let bytes = frame_bytes(opcode, payload);
     writer.write_all(&bytes)?;
     Ok(())
 }
 
-fn recv_frame(pipe: &PipeIo) -> Result<(u32, Vec<u8>), String> {
+fn recv_frame(pipe: &Transport) -> Result<(u32, Vec<u8>), String> {
     let mut header = [0u8; 8];
     pipe.read_exact(&mut header)?;
     let opcode = u32::from_le_bytes([header[0], header[1], header[2], header[3]]);
@@ -638,9 +672,13 @@ fn recv_frame(pipe: &PipeIo) -> Result<(u32, Vec<u8>), String> {
 // "didn't work until a Discord message arrived." Opening with FILE_FLAG_OVERLAPPED
 // lets read and write proceed independently.
 
+#[cfg(windows)]
 struct PipeHandle(HANDLE);
+#[cfg(windows)]
 unsafe impl Send for PipeHandle {}
+#[cfg(windows)]
 unsafe impl Sync for PipeHandle {}
+#[cfg(windows)]
 impl Drop for PipeHandle {
     fn drop(&mut self) {
         if !self.0.is_invalid() {
@@ -649,6 +687,7 @@ impl Drop for PipeHandle {
     }
 }
 
+#[cfg(windows)]
 #[derive(Clone)]
 pub struct PipeIo {
     handle: Arc<PipeHandle>,
@@ -656,6 +695,7 @@ pub struct PipeIo {
     write_lock: Arc<Mutex<()>>,
 }
 
+#[cfg(windows)]
 impl PipeIo {
     fn open(path: &str) -> Result<Self, String> {
         let wide: Vec<u16> = OsStr::new(path).encode_wide().chain(std::iter::once(0)).collect();
@@ -773,12 +813,71 @@ impl PipeIo {
     }
 }
 
+#[cfg(windows)]
 struct EventGuard(HANDLE);
+#[cfg(windows)]
 impl Drop for EventGuard {
     fn drop(&mut self) {
         if !self.0.is_invalid() {
             unsafe { let _ = CloseHandle(self.0); }
         }
+    }
+}
+
+// ── Unix domain socket transport (macOS/Linux) ───────────────────────────────
+//
+// The Windows overlapped-I/O dance above exists solely because a pending
+// ReadFile blocks a concurrent WriteFile on the same named-pipe handle. A
+// Unix domain socket has no such restriction at the kernel level — a thread
+// blocked in recv() on one fd doesn't stop another thread from send()-ing on
+// a *different* fd for the same socket. But naively wrapping ONE fd in a
+// single Rust-level `Mutex<UnixStream>` for both read and write would
+// reintroduce the identical hazard one level up: the worker thread spends
+// most of its life blocked inside `read_exact`, holding that lock, so a
+// concurrent `write_frame` from a Tauri command (e.g. SET_VOICE_SETTINGS for
+// mute/deafen) would stall until Discord happens to push the next event —
+// exactly the "mute/deafen didn't work until a message arrived" bug above.
+//
+// `SocketIo` avoids that by holding two independent `try_clone()`d handles —
+// one dedicated to reads, one to writes — each behind its own lock, so a
+// pending read can never block a write (and vice versa). Do not collapse
+// these back into a single handle/lock; that reintroduces the bug this
+// split exists to avoid.
+#[cfg(unix)]
+#[derive(Clone)]
+pub struct SocketIo {
+    /// Read-only use: only `read_exact` ever locks this.
+    read: Arc<parking_lot::Mutex<std::os::unix::net::UnixStream>>,
+    /// Write-only use: only `write_all` ever locks this. Locking it also
+    /// serializes concurrent writers so frames don't interleave, matching
+    /// `PipeIo`'s write_lock.
+    write: Arc<parking_lot::Mutex<std::os::unix::net::UnixStream>>,
+}
+
+#[cfg(unix)]
+impl SocketIo {
+    fn open(path: &str) -> Result<Self, String> {
+        let read = std::os::unix::net::UnixStream::connect(path)
+            .map_err(|e| format!("connect {path}: {e}"))?;
+        let write = read
+            .try_clone()
+            .map_err(|e| format!("try_clone {path}: {e}"))?;
+        Ok(Self {
+            read: Arc::new(parking_lot::Mutex::new(read)),
+            write: Arc::new(parking_lot::Mutex::new(write)),
+        })
+    }
+
+    fn read_exact(&self, buf: &mut [u8]) -> Result<(), String> {
+        use std::io::Read;
+        self.read.lock().read_exact(buf).map_err(|e| format!("read: {e}"))
+    }
+
+    fn write_all(&self, data: &[u8]) -> Result<(), String> {
+        use std::io::Write;
+        let mut w = self.write.lock();
+        w.write_all(data).map_err(|e| format!("write: {e}"))?;
+        w.flush().map_err(|e| format!("flush: {e}"))
     }
 }
 
@@ -802,7 +901,7 @@ fn parse_command_response(resp: &Value) -> Result<(), String> {
     Ok(())
 }
 
-fn writer_or_err() -> Result<PipeIo, String> {
+fn writer_or_err() -> Result<Transport, String> {
     WRITE_PIPE
         .lock()
         .clone()

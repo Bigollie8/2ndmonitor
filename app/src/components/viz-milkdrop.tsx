@@ -8,6 +8,14 @@ import {
 } from '../state/milkdrop-presets';
 import { ORIGINALS } from '../state/originals';
 import { TRON_PALETTE, paletteFromAccents } from '../state/originals/palette';
+import { IS_MAC } from '../state/platform';
+
+/** Where user-dropped presets live, for the folder hint shown under the
+ *  "Your presets" group. Real path per platform (see src-tauri's app-data-dir
+ *  usage); this is display text only, not resolved via any filesystem call. */
+const USER_PRESETS_HINT = IS_MAC
+  ? '~/Library/Application Support/com.secondmonitor.hub/presets'
+  : '%APPDATA%\\com.secondmonitor.hub\\presets';
 
 /** MilkDrop 2 presets via Butterchurn (WebGL2), run inside the no-capability
  *  viz sandbox iframe — butterchurn compiles preset equations with
@@ -489,7 +497,7 @@ function PresetPicker({ library, failures, currentKey, accent, onPick, onClose, 
         {renderGroup('original', `Originals · ${originalCount}`)}
         {renderGroup('market', `Marketplace · ${marketCount}`)}
         {renderGroup('bundled', `Bundled · ${bundledCount}`)}
-        {renderGroup('user', 'Your presets — %APPDATA%\\com.secondmonitor.hub\\presets')}
+        {renderGroup('user', `Your presets — ${USER_PRESETS_HINT}`)}
         <div style={{
           padding: '8px 12px', fontSize: 10, color: 'rgba(255,255,255,0.35)',
           borderTop: '1px solid rgba(255,255,255,0.06)',

@@ -8,10 +8,12 @@ import { AudioSourcePicker } from './AudioSourcePicker';
 import { useAudioSource } from '../state/useAudioSource';
 import type { AudioSourceState, SourceOption } from '../state/useAudioSource';
 import type { GeocodeResult } from '../state/weatherLocation';
+import { redactLocation, REDACTED_TEXT } from '../state/streamer';
 import { ACCENT_PALETTES } from '../data';
 import { useVizStyles } from './useVizStyles';
 import { defaultBookmarks, type Bookmark } from './browser-player';
 import { isTauri } from '../state/tauri';
+import { IS_MAC } from '../state/platform';
 import {
   LS_URL, LS_PUBKEY, DEFAULT_URL, DEFAULT_PUBKEY, cfgUrl, cfgPubkey, isDefaultServer,
 } from '../state/marketplaceConfig';
@@ -66,6 +68,8 @@ export interface SettingsValues {
   glassStrength: number;
   /** Auto-hide top bar — slides away until the mouse hits the top edge. */
   autoHideTopBar: boolean;
+  /** Streamer mode — hides maps and location details in every tile. */
+  streamerMode: boolean;
   /** The catalog removal list — see state/removedContent.ts. Needed here
    *  because the Visualizer pane's style dropdown is a picker. */
   catalogRemoved: string[];
@@ -74,9 +78,10 @@ export interface SettingsValues {
 export type SettingsSetter = <K extends keyof SettingsValues>(key: K, value: SettingsValues[K]) => void;
 
 /** Launch-at-startup state backed by the tauri-plugin-autostart registry
- *  entry. The plugin is the source of truth — no Tweaks persistence — so the
- *  toggle always reflects what Windows will actually do at next login.
- *  `enabled === null` means "still loading" (control should be disabled). */
+ *  entry (Windows) / login item (macOS). The plugin is the source of truth
+ *  — no Tweaks persistence — so the toggle always reflects what the OS will
+ *  actually do at next login. `enabled === null` means "still loading"
+ *  (control should be disabled). */
 export function useAutostart(): [boolean | null, (next: boolean) => void] {
   const [enabled, setEnabled] = useState<boolean | null>(null);
   useEffect(() => {
@@ -300,6 +305,11 @@ export function SettingsWindow({
           hint: 'Slides away until you move the mouse to the top edge',
           control: <Toggle checked={v.autoHideTopBar} onChange={(c) => set('autoHideTopBar', c)} accent={accent} />,
         },
+        {
+          id: 'appearance-streamer', label: 'Streamer mode',
+          hint: "Hides maps and location details so screenshares can't reveal where you are",
+          control: <Toggle checked={v.streamerMode} onChange={(c) => set('streamerMode', c)} accent={accent} />,
+        },
       ],
     },
     {
@@ -338,6 +348,7 @@ export function SettingsWindow({
               current={v.weatherLocation}
               onPick={(loc) => set('weatherLocation', loc)}
               accent={accent}
+              streamer={v.streamerMode}
             />
           ),
         },
@@ -370,7 +381,9 @@ export function SettingsWindow({
         },
         {
           id: 'system-autostart', label: 'Launch at startup',
-          hint: 'Start the hub automatically when you sign in to Windows',
+          hint: IS_MAC
+            ? 'Start the hub automatically when you sign in'
+            : 'Start the hub automatically when you sign in to Windows',
           control: <AutostartSwitch accent={accent} />,
         },
         {
@@ -702,7 +715,7 @@ function AudioSourceStatusLine({ status, options }: {
     // not an assertion about the cause.
     return (
       <div style={{ fontSize: 10.5, color: 'rgba(255,255,255,0.4)', textAlign: 'right' }}>
-        {status.reason ?? 'Per-app audio needs Windows 11 (build 20348+)'}
+        {status.reason ?? (IS_MAC ? 'Per-app audio needs macOS 14.2 or newer' : 'Per-app audio needs Windows 11 (build 20348+)')}
       </div>
     );
   }
@@ -971,10 +984,12 @@ function MarketplaceServerEditor({ accent }: { accent: string }) {
 // Weather location search.
 // ---------------------------------------------------------------------------
 
-function SettingsWeatherSearch({ current, onPick, accent }: {
+function SettingsWeatherSearch({ current, onPick, accent, streamer }: {
   current: WeatherLocation;
   onPick: (loc: WeatherLocation) => void;
   accent: string;
+  /** While on: label masked, input read-only (0.7.1 §2). */
+  streamer: boolean;
 }) {
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<GeocodeResult[]>([]);
@@ -1003,11 +1018,12 @@ function SettingsWeatherSearch({ current, onPick, accent }: {
     <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
       <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.55)', display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
         <span>Current</span>
-        <span style={{ fontFamily: MONO, fontSize: 10.5, color: accent }}>{current.label}</span>
+        <span style={{ fontFamily: MONO, fontSize: 10.5, color: accent }}>{redactLocation(current.label, streamer)}</span>
       </div>
       <input
-        type="text" value={query}
-        onChange={(e) => setQuery(e.target.value)}
+        type="text" value={streamer ? REDACTED_TEXT : query}
+        readOnly={streamer}
+        onChange={(e) => { if (!streamer) setQuery(e.target.value); }}
         placeholder="Search a city…"
         spellCheck={false}
         style={{
@@ -1016,9 +1032,14 @@ function SettingsWeatherSearch({ current, onPick, accent }: {
           borderRadius: 6, color: '#fff', outline: 'none',
         }}
       />
+      {streamer && (
+        <div style={{ fontSize: 10.5, color: 'rgba(255,255,255,0.4)' }}>
+          Turn off streamer mode to edit your location.
+        </div>
+      )}
       {loading && <div style={{ fontSize: 10.5, color: 'rgba(255,255,255,0.4)' }}>Searching…</div>}
       {err && <div style={{ fontSize: 10.5, color: '#fb7185' }}>{err}</div>}
-      {results.length > 0 && (
+      {!streamer && results.length > 0 && (
         <div style={{
           display: 'flex', flexDirection: 'column', gap: 2,
           background: 'rgba(0,0,0,0.25)', border: HAIRLINE, borderRadius: 6, padding: 4,

@@ -218,24 +218,25 @@ function SessionRow({
   const exe = session.exe;
   const isIncluded = exe != null && audioSource.mode === 'apps' && audioSource.exes.includes(exe);
   const atCap = !isIncluded && audioSource.mode === 'apps' && audioSource.exes.length >= MAX_AUDIO_APPS;
+  const displayName = sessionDisplayName(session);
   return (
     <div style={{
       display: 'flex', alignItems: 'center', gap: 8,
       padding: '6px 8px', borderRadius: 6,
     }}>
-      <SessionAvatar name={session.name} icon={session.icon} isSystem={session.is_system_sounds} />
+      <SessionAvatar name={displayName} icon={session.icon} isSystem={session.is_system_sounds} />
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{
           display: 'flex', alignItems: 'center', justifyContent: 'space-between',
           marginBottom: 2,
         }}>
-          <span title={session.name} style={{
+          <span title={displayName} style={{
             fontSize: 11.5,
             color: session.mute ? 'rgba(255,255,255,0.45)' : 'rgba(255,255,255,0.9)',
             fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
             paddingRight: 8,
           }}>
-            {session.name}
+            {displayName}
           </span>
           <span style={{
             fontSize: 10, color: 'rgba(255,255,255,0.5)',
@@ -271,6 +272,16 @@ function SessionRow({
   );
 }
 
+/** Rust already resolves `name` to the friendliest string it can (a real
+ *  display name, then the exe's version info, then a raw fallback — see
+ *  mixer.rs). If that's ever empty, fall back to the raw `exe` field as-is —
+ *  NOT with a Windows-style `.exe` suffix strip, since on macOS `exe` holds a
+ *  bundle identifier (e.g. "com.spotify.client"), not an executable filename,
+ *  and stripping ".exe" from that would be a no-op that only looks intentional. */
+function sessionDisplayName(session: { name: string; exe: string | null }): string {
+  return session.name || session.exe || 'Unknown';
+}
+
 function SessionAvatar({ name, icon, isSystem }: { name: string; icon: string | null; isSystem: boolean }) {
   if (isSystem) {
     return (
@@ -300,9 +311,11 @@ function SessionAvatar({ name, icon, isSystem }: { name: string; icon: string | 
     );
   }
   // Fallback when icon extraction failed (32-bit process inaccessible from
-  // 64-bit, no shell association, etc.) — colored letter avatar.
+  // 64-bit, no shell association, etc.) — colored letter avatar. `name` here
+  // is already the resolved display name (see sessionDisplayName), so no
+  // further stripping (e.g. a Windows-only ".exe" suffix) belongs here.
   const color = hashColor(name);
-  const letter = (name.replace(/\.exe$/i, '')[0] ?? '?').toUpperCase();
+  const letter = (name[0] ?? '?').toUpperCase();
   return (
     <div style={{
       width: 28, height: 28, borderRadius: 6, flexShrink: 0,

@@ -8,6 +8,7 @@ import {
 } from '../state/tides';
 import { usePoll } from '../state/usePoll';
 import type { Density } from '../types';
+import { redactLocation } from '../state/streamer';
 
 const REFRESH_MS = 30 * 60 * 1000; // tides are predicted, not live — half-hour refresh is plenty
 
@@ -17,9 +18,11 @@ export interface TidesTileProps {
   editing: boolean;
   config: Record<string, unknown> | undefined;
   setConfig: (next: Record<string, unknown>) => void;
+  /** Streamer mode (0.7.1 §2): masks the NOAA station label/id. */
+  streamer?: boolean;
 }
 
-export function TidesTile({ density, accent, editing, config, setConfig }: TidesTileProps) {
+export function TidesTile({ density, accent, editing, config, setConfig, streamer = false }: TidesTileProps) {
   const parsed = useMemo(() => parseTidesConfig(config), [config]);
   const [now, setNow] = useState<number>(() => Date.now());
 
@@ -58,7 +61,7 @@ export function TidesTile({ density, accent, editing, config, setConfig }: Tides
       <span style={{
         fontSize: 10, color: 'rgba(255,255,255,0.55)',
         fontFamily: '"JetBrains Mono", ui-monospace, monospace',
-      }}>{parsed.stationLabel || parsed.stationId || 'no station'}</span>
+      }}>{redactLocation(parsed.stationLabel || parsed.stationId || 'no station', streamer)}</span>
     </div>
   );
 
@@ -73,6 +76,7 @@ export function TidesTile({ density, accent, editing, config, setConfig }: Tides
           <UnconfiguredPanel
             editing={editing}
             accent={accent}
+            streamer={streamer}
             onSave={(stationId, stationLabel) => setConfig({ stationId, stationLabel } as unknown as Record<string, unknown>)}
           />
         )}
@@ -82,7 +86,7 @@ export function TidesTile({ density, accent, editing, config, setConfig }: Tides
             background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)',
             borderRadius: 5,
           }}>
-            {error}
+            {streamer ? 'Request failed' : error}
           </div>
         )}
         {parsed.stationId && data && !error && upcoming.length === 0 && (
@@ -136,8 +140,8 @@ export function TidesTile({ density, accent, editing, config, setConfig }: Tides
 }
 
 function UnconfiguredPanel({
-  editing, accent, onSave,
-}: { editing: boolean; accent: string; onSave: (id: string, label: string) => void }) {
+  editing, accent, streamer, onSave,
+}: { editing: boolean; accent: string; streamer: boolean; onSave: (id: string, label: string) => void }) {
   const [id, setId] = useState('');
   const [label, setLabel] = useState('');
   return (
@@ -153,33 +157,57 @@ function UnconfiguredPanel({
         {' '}— pick a station near a coast.
       </div>
       {editing ? (
-        <>
-          <input
-            value={id}
-            onChange={(e) => setId(e.target.value)}
-            placeholder="Station ID (e.g. 8443970)"
-            maxLength={16}
-            style={inputStyle}
-          />
-          <input
-            value={label}
-            onChange={(e) => setLabel(e.target.value)}
-            placeholder="Display name (optional)"
-            maxLength={64}
-            style={inputStyle}
-          />
-          <button
-            onClick={() => { if (id.trim()) onSave(id.trim(), label.trim()); }}
-            disabled={!id.trim()}
-            style={{
-              padding: '7px 12px', fontSize: 11, fontWeight: 700,
-              background: id.trim() ? accent : 'rgba(255,255,255,0.06)',
-              color: id.trim() ? '#000' : 'rgba(255,255,255,0.4)',
-              border: 'none', borderRadius: 5,
-              cursor: id.trim() ? 'pointer' : 'not-allowed',
-            }}
-          >Save station</button>
-        </>
+        streamer ? (
+          <>
+            <input
+              value={id}
+              readOnly
+              disabled
+              placeholder="Station ID (e.g. 8443970)"
+              maxLength={16}
+              style={inputStyle}
+            />
+            <input
+              value={label}
+              readOnly
+              disabled
+              placeholder="Display name (optional)"
+              maxLength={64}
+              style={inputStyle}
+            />
+            <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.45)' }}>
+              Turn off streamer mode to configure the station.
+            </div>
+          </>
+        ) : (
+          <>
+            <input
+              value={id}
+              onChange={(e) => setId(e.target.value)}
+              placeholder="Station ID (e.g. 8443970)"
+              maxLength={16}
+              style={inputStyle}
+            />
+            <input
+              value={label}
+              onChange={(e) => setLabel(e.target.value)}
+              placeholder="Display name (optional)"
+              maxLength={64}
+              style={inputStyle}
+            />
+            <button
+              onClick={() => { if (id.trim()) onSave(id.trim(), label.trim()); }}
+              disabled={!id.trim()}
+              style={{
+                padding: '7px 12px', fontSize: 11, fontWeight: 700,
+                background: id.trim() ? accent : 'rgba(255,255,255,0.06)',
+                color: id.trim() ? '#000' : 'rgba(255,255,255,0.4)',
+                border: 'none', borderRadius: 5,
+                cursor: id.trim() ? 'pointer' : 'not-allowed',
+              }}
+            >Save station</button>
+          </>
+        )
       ) : (
         <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.45)' }}>
           Enter edit mode to configure.

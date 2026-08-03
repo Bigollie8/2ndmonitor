@@ -229,12 +229,20 @@ test('the runtime re-posts ready until it is initialised', () => {
     "the 'init' branch must stop the pings");
 });
 
-test('app CSP frame-src allows exactly the sandbox origin', () => {
+test('app CSP frame-src allows exactly the two per-platform sandbox origins', () => {
   const conf = JSON.parse(readApp('src-tauri', 'tauri.conf.json'));
   const frameSrc: string = conf.app.security.csp['frame-src'];
-  // Exactly the sandbox origin — not 'self', not a wildcard. Anything wider
-  // would let the app frame arbitrary content it has no reason to frame.
-  assert.equal(frameSrc, SANDBOX_ORIGIN);
+  const tokens = frameSrc.trim().split(/\s+/);
+  // Exactly the Windows and macOS sandbox origins — not 'self', not a
+  // wildcard. Anything wider would let the app frame arbitrary content it has
+  // no reason to frame. tauri.conf.json's CSP is a static string built once
+  // per release, so it has to name both platforms' forms in one list; the
+  // build-time SANDBOX_ORIGIN (see vite.config.ts's __SANDBOX_ORIGIN__)
+  // resolves to whichever one matches the platform the bundle was built on —
+  // this test runs under node, so process.platform is whatever this checkout
+  // is on, and SANDBOX_ORIGIN must be one of the two listed here regardless.
+  assert.deepEqual(new Set(tokens), new Set(['http://vizsandbox.localhost', 'vizsandbox://localhost']));
+  assert.ok(tokens.includes(SANDBOX_ORIGIN), 'SANDBOX_ORIGIN must be one of the origins the CSP allows');
   assert.ok(SANDBOX_SRC.startsWith(SANDBOX_ORIGIN + '/'));
   // The app document's own script-src must stay 'self': widening it to
   // satisfy the child frame would hand the whole app the exact capability the
