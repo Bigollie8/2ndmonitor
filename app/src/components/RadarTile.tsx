@@ -62,7 +62,13 @@ export function RadarTile({ density, accent, location, config, setConfig, redact
     [manifest, radarCfg.windowMin],
   );
 
-  const currentFrame = frames[frameIndex];
+  // Clamp for render: frameIndex can momentarily point past the end when the
+  // window shrinks (e.g. 2h→30m while parked at the last frame) — the effect
+  // below reconciles frameIndex itself on the next tick, but the render in
+  // between must never index frames[] out of range (that would null out
+  // currentFrame, unmount the whole footer, and flash the overlay off).
+  const shownIndex = Math.min(frameIndex, Math.max(0, frames.length - 1));
+  const currentFrame = frames[shownIndex];
 
   const { view, overridden, onViewChange, recenter } = useMapView({
     anchor: { lat: location.lat, lon: location.lon },
@@ -203,7 +209,7 @@ export function RadarTile({ density, accent, location, config, setConfig, redact
               type="range"
               min={0}
               max={frames.length - 1}
-              value={frameIndex}
+              value={shownIndex}
               onMouseDown={() => setScrubbing(true)}
               onMouseUp={() => setScrubbing(false)}
               onTouchStart={() => setScrubbing(true)}
