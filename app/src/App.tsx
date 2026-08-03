@@ -761,7 +761,12 @@ export default function App() {
             const { getCurrentWindow } = await import('@tauri-apps/api/window');
             const win = getCurrentWindow();
             await win.setFullscreen(!(await win.isFullscreen()));
-          } catch { /* browser dev — no tauri */ }
+          } catch (err) {
+            // Browser dev has no Tauri — but in the real app a rejection here
+            // is a permission denial and must be visible, not swallowed
+            // (0.7.1 §1: the silent catch is how broken F11 shipped).
+            console.warn('F11 fullscreen failed:', err);
+          }
         })();
       }
       else if (e.key === 'Escape') {
