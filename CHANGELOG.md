@@ -5,6 +5,27 @@ All notable changes to 2ndMonitor are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-08-03
+
+### Fixed
+- **F11 fullscreen**: the window-fullscreen permission was never granted, so
+  F11 silently did nothing in the installed app. It now actually works.
+  Failures are also logged instead of swallowed
+
+### Added
+- **Date & time tile**: a large digital clock (follows your system
+  12/24-hour preference) with a full date line and an optional seconds
+  display — hover the tile to toggle seconds on or off
+- **Streamer mode**: one click in the top bar (⊘) hides every map and
+  location label — radar, aircraft, lightning, ISS, city names, tide
+  station — so screenshares can't reveal where you are. Also available in
+  Settings → Appearance; a "streamer" chip shows in the status bar while
+  active
+- **Profile export/import**: export any profile to a shareable JSON file
+  from the profile switcher — saved map positions are stripped from the
+  file since they'd reveal your home location — and import one as a new
+  profile or over an existing one
+
 ## [0.7.0] - 2026-08-03
 
 ### Added
