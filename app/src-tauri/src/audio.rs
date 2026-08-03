@@ -12,16 +12,22 @@
 //! smooths each band with peak-hold + decay, and emits an `audio:spectrum`
 //! event for the frontend visualizers.
 //!
-//! Which capture fills that ring buffer is swappable at runtime: either the
-//! system mix (cpal loopback, above) or a single app via WASAPI process
-//! loopback (`audio_loopback`). A supervisor thread owns whichever one is
-//! live — see [`supervisor`] — so exactly one backend writes the ring at any
-//! moment, and the frontend drives it with the `audio_set_source` command.
+//! What fills that FFT ring is swappable at runtime: either the system mix
+//! (cpal loopback, above, which writes the ring directly) or a STRICT
+//! include list of up to `audio_source::MAX_APPS` apps — one WASAPI
+//! process-loopback capture per selected exe (`audio_loopback`), each with
+//! its own ring, drained and summed sample-wise into the FFT ring at every
+//! hop by [`mix_rings`]. A supervisor thread owns whichever backend set is
+//! live — see [`supervisor`] — and the frontend drives it with the
+//! `audio_set_source` command.
 //!
-//! That supervisor also *watches*: every two seconds it reattaches to the
-//! chosen app as it starts or stops playing, rebuilds a capture the OS
-//! invalidated, and follows a change of default playback device. See
-//! [`Supervisor::tick`].
+//! The supervisor also *watches*: every two seconds it attaches a capture
+//! for a selected app that has gained an audio session, rebuilds captures
+//! the OS invalidated, and (in mix mode) follows a change of default
+//! playback device. It NEVER changes which source is live on its own — a
+//! selected app that isn't running simply contributes silence, and all
+//! selected apps silent means the visualizer idles. The 0.6.4 auto-fallback
+//! state machine is gone. See [`Supervisor::tick`].
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use parking_lot::Mutex;
@@ -38,7 +44,7 @@ use std::{
 };
 use tauri::{AppHandle, Emitter, Runtime};
 
-use crate::audio_source::{decide, target_exe, Active, Source};
+use crate::audio_source::{match_sessions, Source};
 
 const FFT_SIZE: usize = 2048;
 const SPECTRUM_BANDS: usize = 64;
@@ -125,34 +131,36 @@ enum CaptureCmd {
 /// process-lifetime static, so it never goes back to `None`).
 static CMD_TX: Mutex<Option<mpsc::Sender<CaptureCmd>>> = Mutex::new(None);
 
-/// Point the visualizer at the system mix, one app, or everything-but-one-app.
+/// Point the visualizer at the system mix or a strict include list of apps.
 /// Returns as soon as the request is queued — the swap itself happens on the
-/// supervisor thread and its outcome arrives as an `audio:source` event,
-/// because falling back to the mix (app not playing, old Windows) is a normal
-/// result, not an error.
+/// supervisor thread and its outcome (which selected apps actually have live
+/// captures) arrives as an `audio:source` event. Async per the repo rule for
+/// new/changed commands: never block the main thread from a command.
 #[tauri::command]
-pub fn audio_set_source(source: Source) -> Result<(), String> {
+pub async fn audio_set_source(source: Source) -> Result<(), String> {
     let guard = CMD_TX.lock();
     let tx = guard.as_ref().ok_or("audio capture not running")?;
     tx.send(CaptureCmd::SetSource(source))
         .map_err(|e| e.to_string())
 }
 
-/// What the frontend is told about the capture after every swap.
+/// What the frontend is told about the capture after every swap. Mirrored by
+/// `AudioSourceState` in `app/src/state/useAudioSource.ts`.
 #[derive(Clone, Serialize)]
 pub struct AudioSourceState {
     pub requested: Source,
-    /// "mix" | "process" — what is really feeding the ring buffer now. If the
+    /// "mix" | "apps" — which backend family is feeding the FFT ring. If the
     /// mix itself could not be opened this still reads "mix" (nothing is
-    /// feeding the ring) and `reason` says why; the frontend contract is
-    /// deliberately two-valued.
+    /// feeding the ring) and `reason` says why.
     pub active: &'static str,
-    /// The app being listened to (or excluded); `None` whenever the mix is live.
-    pub active_exe: Option<String>,
+    /// Selected exes with a live capture attached right now. A requested exe
+    /// missing from this list is contributing silence — it has no audio
+    /// session ("not running" in the UI). Always empty in mix mode.
+    pub live_exes: Vec<String>,
     /// False once a process activation has failed — usually a Windows build
-    /// without process loopback, which is why the UI stops offering it. Not a
-    /// permanent verdict: an explicit `audio_set_source` re-arms it and tries
-    /// again, since the same `Err` covers transient failures too.
+    /// without process loopback. Not a permanent verdict: an explicit
+    /// `audio_set_source` re-arms it and tries again, since the same `Err`
+    /// covers transient failures too.
     pub supported: bool,
     pub reason: Option<String>,
 }
@@ -163,28 +171,44 @@ pub struct AudioSourceState {
 /// where things stand would clobber a persisted per-app source.
 static LAST_STATE: Mutex<Option<AudioSourceState>> = Mutex::new(None);
 
+/// The per-app capture rings while `Source::Apps` is live — what
+/// `process_loop` drains and sums into the FFT ring at every hop. Holds one
+/// entry per SELECTED exe (capture attached or not: a writer-less ring just
+/// reads as silence), so a non-empty list is also how `process_loop` knows it
+/// is in apps mode and must keep the window sliding with synthesized silence
+/// when nothing plays. Empty in mix mode, where cpal writes the FFT ring
+/// directly. Only Arc handles are cloned out — the lock is held for
+/// microseconds.
+static APP_RINGS: Mutex<Vec<Arc<Mutex<Vec<f32>>>>> = Mutex::new(Vec::new());
+
 /// Current capture state. Pure read — never touches the capture.
 ///
 /// Before the supervisor's first swap (a window of a few ms at startup) this
 /// reports the state it is about to establish: the system mix, nothing wrong.
 #[tauri::command]
-pub fn audio_get_source() -> AudioSourceState {
+pub async fn audio_get_source() -> AudioSourceState {
     LAST_STATE.lock().clone().unwrap_or(AudioSourceState {
         requested: Source::Mix,
         active: "mix",
-        active_exe: None,
+        live_exes: Vec::new(),
         supported: true,
         reason: None,
     })
 }
 
-/// Whichever capture currently owns the ring buffer. Exactly one may exist at
-/// a time — Windows will not hand out a second loopback client for the same
-/// target while the first lives — and this enum is what enforces that.
-/// `cpal::Stream` is `!Send`, so `Live` never leaves the supervisor thread.
-///
-/// The `cpal::Stream` payload is held purely for its `Drop` — reading it is
-/// never the point, staying alive (and then not) is — hence the allow.
+/// One selected exe's slot in apps mode. The ring exists for the slot's whole
+/// life; `cap` is `None` while the app has no audio session, in which case
+/// the ring stays empty and the hop mix reads that as silence — attaching
+/// later is the watcher's job, switching source is nobody's.
+struct AppCapture {
+    exe: String,
+    ring: Arc<Mutex<Vec<f32>>>,
+    cap: Option<(u32, crate::audio_loopback::ProcessCapture)>,
+}
+
+/// Whichever backend set currently feeds the FFT. `cpal::Stream` is `!Send`,
+/// so `Live` never leaves the supervisor thread. The stream payload is held
+/// purely for its `Drop` — hence the allow.
 #[allow(dead_code)]
 enum Live {
     None,
@@ -192,24 +216,23 @@ enum Live {
     /// keeps handing back a `Stream` object that feeds nothing, so the object's
     /// existence is not evidence that anything is being captured.
     Mix(cpal::Stream, Arc<AtomicBool>),
-    Process(crate::audio_loopback::ProcessCapture),
+    /// One entry per selected exe, in request order, capped at
+    /// `audio_source::MAX_APPS` by the `Source` deserializer.
+    Apps(Vec<AppCapture>),
 }
 
 struct Supervisor<R: Runtime> {
     app: AppHandle<R>,
+    /// The FFT ring. Mix mode: cpal writes it directly. Apps mode: only the
+    /// hop mix in `process_loop` writes it (via `APP_RINGS`).
     buffer: Arc<Mutex<Vec<f32>>>,
     live: Live,
-    /// What `live` actually ended up being, which is not always what `decide`
-    /// asked for — a failed activation lands on `Mix`. Compared against the
-    /// new decision to keep `apply` idempotent.
-    active: Option<Active>,
     requested: Source,
-    active_exe: Option<String>,
     supported: bool,
     reason: Option<String>,
-    /// Id of the default render endpoint as of the last swap — what the live
-    /// capture is bound to. `None` when it could not be read (no audio device,
-    /// COM unavailable), which is a value the watcher compares like any other.
+    /// Id of the default render endpoint as of the last swap — what a live
+    /// mix capture is bound to. `None` when it could not be read (no audio
+    /// device, COM unavailable), which the watcher compares like any value.
     endpoint_id: Option<String>,
 }
 
@@ -229,9 +252,7 @@ fn supervisor<R: Runtime>(
         app,
         buffer,
         live: Live::None,
-        active: None,
         requested: Source::Mix,
-        active_exe: None,
         supported: true,
         reason: None,
         endpoint_id: None,
@@ -243,22 +264,16 @@ fn supervisor<R: Runtime>(
     loop {
         match rx.recv_timeout(WATCH_INTERVAL) {
             Ok(CaptureCmd::SetSource(s)) => {
-                // An explicit request re-arms per-app capture. `supported` is a
-                // hint learned from one failed activation, and `start` returns
-                // Err for plenty of transient reasons (Initialize against a
-                // device being switched, the activation deadline, a busy
-                // machine timing out) that have nothing to do with the Windows
-                // build lacking process loopback. Suppressing retries forever
-                // on that evidence would turn a UI hint into a permanent
-                // feature lockout with no way back. So: the sticky bit only
-                // suppresses *automatic* re-attempts (a watcher tick), never a
-                // user asking for it again.
-                //
-                // This is exactly why the watcher must call `sup.apply` itself
-                // rather than post a `SetSource` to this channel: a tick routed
-                // through here would re-arm the flag every two seconds and
-                // retry activation forever on a machine that genuinely cannot
-                // do process loopback.
+                // An explicit request re-arms per-app capture. `supported` is
+                // a hint learned from one failed activation, and `start`
+                // returns Err for plenty of transient reasons that have
+                // nothing to do with the Windows build lacking process
+                // loopback. The sticky bit only suppresses *automatic*
+                // re-attempts (a watcher tick), never a user asking again —
+                // which is also why the watcher calls `sup.apply` directly
+                // instead of posting to this channel: a tick routed through
+                // here would re-arm the flag every two seconds and retry
+                // activation forever on a machine that cannot do it.
                 sup.supported = true;
                 sup.apply(s);
             }
@@ -271,226 +286,165 @@ fn supervisor<R: Runtime>(
 }
 
 impl<R: Runtime> Supervisor<R> {
-    /// Swap to whatever `requested` implies right now, then report. Idempotent:
-    /// re-applying the source that is already live and healthy re-emits the
-    /// state without touching the capture, so callers may call it freely.
+    /// Tear down whatever is live and build what `requested` calls for.
+    /// Deliberately NOT incremental: attaching one app rebuilds all of them.
+    /// A rebuild costs a sub-second gap in the spectrum at most once per
+    /// watcher tick, and one build path means one teardown ordering to get
+    /// right. It never falls back: a selected app that can't be captured
+    /// stays selected and silent.
     fn apply(&mut self, requested: Source) {
         self.requested = requested;
-        let active = self.decision_now();
+        self.reason = None;
 
-        // Why we are not on the requested source, if we are not. Computed from
-        // the decision rather than the swap, so the skip path below reports the
-        // same thing a fresh swap would.
-        let mut reason = match (&self.requested, active) {
-            (Source::Mix, _) | (_, Active::Process { .. }) => None,
-            (_, Active::Mix) if !self.supported => {
-                Some("per-app capture could not be started on this machine".to_string())
-            }
-            (_, Active::Mix) => target_exe(&self.requested)
-                .map(|t| format!("{t} has no audio session right now")),
-        };
-
-        if self.active == Some(active) && self.live_matches(active) {
-            // Already exactly here, and the backend is still running. Emit
-            // anyway: a caller re-asserting its source wants the state back.
-            self.reason = reason;
-            self.emit();
-            return;
-        }
-
-        // Drop the old backend *first*, and completely. `ProcessCapture::drop`
-        // joins a pump thread that blocks on `buffer.lock()`, so this must
-        // happen while we hold no ring lock — and the new backend must not be
-        // built until the old one has stopped writing. Written as an explicit
-        // `drop` so the ordering survives future edits to this function.
+        // Teardown ordering matters:
+        // 1. Unpublish the rings so the hop mix stops draining them.
+        // 2. Drop every old backend completely — `ProcessCapture::drop`
+        //    joins a pump thread that takes its ring lock, so no ring lock
+        //    may be held here, and Windows will not hand out a second
+        //    loopback client for a target while the first lives.
+        // 3. Clear the FFT ring while nothing is writing it, so the first
+        //    window after the swap can't straddle two backends at two rates.
+        APP_RINGS.lock().clear();
         drop(std::mem::replace(&mut self.live, Live::None));
-        self.active = None;
-
         {
-            // Nothing is capturing at this instant, which is the only safe
-            // moment to touch the ring. Clearing it stops the first FFT window
-            // after the swap from straddling two backends at two sample rates.
-            // Scoped so the lock is released before anything is constructed.
-            let mut buf = self.buffer.lock();
-            buf.clear();
+            self.buffer.lock().clear();
         }
 
-        let mut exe: Option<String> = None;
-        let (live, settled, rate) = match active {
-            Active::Mix => {
-                let (live, rate) = open_mix_or_none(&self.buffer, &mut reason);
-                (live, Active::Mix, rate)
+        match self.requested.clone() {
+            Source::Mix => {
+                let (live, rate) = open_mix_or_none(&self.buffer, &mut self.reason);
+                SAMPLE_RATE.store(rate, Ordering::Relaxed);
+                self.live = live;
             }
-            Active::Process { pid, exclude } => {
-                match crate::audio_loopback::start(pid, exclude, self.buffer.clone(), RING_CAP) {
-                    Ok(cap) => {
-                        let rate = cap.sample_rate();
-                        exe = target_exe(&self.requested).map(str::to_string);
-                        eprintln!(
-                            "audio: process loopback on pid {pid} (exclude={exclude}) @ {rate} Hz"
-                        );
-                        (Live::Process(cap), active, rate)
-                    }
-                    Err(e) => {
-                        eprintln!("audio: process capture failed, falling back to mix: {e}");
-                        // Reported to the UI, and it stops *automatic* retries
-                        // (see the branch above). Cleared again by the next
-                        // explicit request, because this Err is not proof the
-                        // machine can't do process loopback at all.
-                        self.supported = false;
-                        reason = Some(e);
-                        let (live, rate) = open_mix_or_none(&self.buffer, &mut reason);
-                        (live, Active::Mix, rate)
-                    }
+            Source::Apps { exes } => {
+                let sessions = session_pairs();
+                let pids = match_sessions(&exes, &sessions);
+                let mut caps: Vec<AppCapture> = Vec::with_capacity(exes.len());
+                for (exe, pid) in exes.into_iter().zip(pids) {
+                    let ring = Arc::new(Mutex::new(Vec::with_capacity(RING_CAP)));
+                    let cap = match pid {
+                        Some(pid) if self.supported => {
+                            match crate::audio_loopback::start(pid, false, ring.clone(), RING_CAP) {
+                                Ok(c) => {
+                                    eprintln!("audio: process loopback on {exe} (pid {pid})");
+                                    Some((pid, c))
+                                }
+                                Err(e) => {
+                                    eprintln!("audio: process capture for {exe} failed: {e}");
+                                    // Stops *automatic* retries only — an
+                                    // explicit audio_set_source re-arms this
+                                    // (see the note in `supervisor`). NO
+                                    // fallback: the exe just stays silent.
+                                    self.supported = false;
+                                    self.reason = Some(e);
+                                    None
+                                }
+                            }
+                        }
+                        // No session (app not running / not playing): the
+                        // slot contributes silence until the watcher sees a
+                        // session and rebuilds. This is a fact, not an error.
+                        _ => None,
+                    };
+                    caps.push(AppCapture { exe, ring, cap });
                 }
+                // Publish EVERY selected ring, attached or not — a non-empty
+                // list is also how process_loop knows it's in apps mode (see
+                // APP_RINGS). Then pin the FFT rate: process loopback always
+                // delivers at CAPTURE_SAMPLE_RATE regardless of the endpoint.
+                *APP_RINGS.lock() = caps.iter().map(|c| c.ring.clone()).collect();
+                SAMPLE_RATE.store(
+                    crate::audio_loopback::CAPTURE_SAMPLE_RATE,
+                    Ordering::Relaxed,
+                );
+                self.live = Live::Apps(caps);
             }
-        };
+        }
 
-        self.live = live;
-        self.active = Some(settled);
-        // Read *after* the backend is up, so a device switch that raced this
-        // build is seen as a difference on the next tick instead of being
-        // baked in as "what we're bound to". Refreshed on every swap, process
-        // captures included: they die on an endpoint change too, and the mix
-        // stream we fall back to must not inherit a stale id.
+        // Read *after* the backends are up, so a device switch that raced
+        // this build is seen as a difference on the next tick instead of
+        // being baked in as "what we're bound to".
         self.endpoint_id = crate::mixer::default_endpoint_id().ok();
-        // Must happen on *every* swap, including the fallback paths: the FFT's
-        // band edges are derived from this, so a stale value silently misplaces
-        // every frequency band.
-        SAMPLE_RATE.store(rate, Ordering::Relaxed);
-        self.active_exe = exe;
-        self.reason = reason;
         self.emit();
     }
 
-    /// Which backend `requested` implies *right now*, i.e. what `apply` would
-    /// settle on if it ran this instant.
-    ///
-    /// "App not running" is decided here, by the session lookup — NOT by
-    /// `audio_loopback::start` failing. Activating against a stale or bogus PID
-    /// succeeds and then yields silence forever, so a missing session must be
-    /// caught before we ever try.
-    ///
-    /// Costs a COM session enumeration (a few ms) whenever the requested source
-    /// names an app, and nothing at all for `Mix` — `target_exe` is `None`, so
-    /// `find_pid_for_exe` is never called.
-    fn decision_now(&self) -> Active {
-        let pid = target_exe(&self.requested).and_then(crate::mixer::find_pid_for_exe);
-        if self.supported {
-            decide(&self.requested, pid)
-        } else {
-            // Activation failed the last time it was asked for, so automatic
-            // re-attempts (a watcher tick) stop here rather than tearing down a
-            // working mix stream on every poll. An explicit `audio_set_source`
-            // clears this first, so the user is never locked out.
-            Active::Mix
-        }
-    }
-
-    /// One watcher pass. Runs on the supervisor thread every `WATCH_INTERVAL`,
-    /// and calls `apply` **directly** — never through `CaptureCmd::SetSource`,
-    /// which would re-arm the sticky `supported` flag and retry a hopeless
-    /// activation forever (see the note in `supervisor`).
-    ///
-    /// Three things can have changed since the last tick:
-    /// 1. the default playback device (rebind — nothing follows it for us),
-    /// 2. the live backend died (an invalidated endpoint leaves the object
-    ///    intact and the ring frozen, so only `live_matches` can tell),
-    /// 3. the chosen app started, stopped, or restarted under a new pid.
-    ///
-    /// Anything else must produce no event and no churn: this runs forever, on
-    /// every machine, whether or not the feature is used.
+    /// One watcher pass, every `WATCH_INTERVAL`, on the supervisor thread.
+    /// Attach / rebuild ONLY — it never changes which source family is live
+    /// (no fallback, ever), and it calls `apply` directly rather than posting
+    /// a `SetSource`, which would re-arm the sticky `supported` flag and
+    /// retry a hopeless activation forever.
     fn tick(&mut self) {
-        // (1) Follow the default endpoint. One enumerator + GetId, no session
-        // walk — cheap enough to pay unconditionally, which matters because a
-        // per-app request whose app is silent is *also* sitting on a mix
-        // stream. Skipped while a process capture is live: that one is torn
-        // down and rebuilt by (2) below when the endpoint change kills it, and
-        // rebuilding it here as well would double the interruption.
-        if !matches!(self.live, Live::Process(_)) {
-            let now_id = crate::mixer::default_endpoint_id().ok();
-            if now_id != self.endpoint_id {
-                eprintln!("audio: default output device changed, rebinding capture");
-                // `apply` is idempotent and the old stream has usually not
-                // errored *yet*, so it would take the skip path and leave us on
-                // the dead endpoint. Clearing the settled decision is what
-                // forces the rebuild; `apply` then refreshes `endpoint_id`,
-                // `SAMPLE_RATE` (a new endpoint may run at a different rate)
-                // and emits.
-                self.active = None;
-                self.apply(self.requested.clone());
-                return;
+        let stale = match &self.live {
+            Live::Apps(caps) => {
+                // Rebuild when reality drifted from what we built: a capture
+                // died (endpoint change kills process-loopback clients too),
+                // a session moved to a new pid (app restarted), or a silent
+                // slot's app now has a session. One COM snapshot for all
+                // slots. Anything else must produce no churn and no event.
+                let sessions = session_pairs();
+                let exes: Vec<String> = caps.iter().map(|c| c.exe.clone()).collect();
+                let pids = match_sessions(&exes, &sessions);
+                caps.iter().zip(&pids).any(|(c, now_pid)| match &c.cap {
+                    Some((pid, cap)) => !cap.is_alive() || *now_pid != Some(*pid),
+                    None => self.supported && now_pid.is_some(),
+                })
             }
-        }
-
-        if matches!(self.requested, Source::Mix) {
-            // The feature is unused, so there is no app to look for and no
-            // session enumeration to pay for. One case still needs handling:
-            // the mix stream died without the endpoint id changing (device
-            // disabled and re-enabled, driver restart). That costs only the
-            // atomic below, and the guard means a machine with no audio device
-            // at all (`Live::None`) stays quiet instead of failing to open the
-            // mix every two seconds.
-            if matches!(&self.live, Live::Mix(_, alive) if !alive.load(Ordering::Relaxed)) {
-                eprintln!("audio: mix capture stopped, rebuilding");
-                self.apply(Source::Mix);
+            _ => {
+                // Mix mode (or nothing open): follow the default endpoint and
+                // rebuild a dead stream — unchanged 0.6.4 behavior. The
+                // `Live::None` guard means a machine with no audio device
+                // stays quiet instead of failing to open the mix every 2 s.
+                let now_id = crate::mixer::default_endpoint_id().ok();
+                let endpoint_moved = now_id != self.endpoint_id;
+                let mix_died = matches!(&self.live, Live::Mix(_, alive) if !alive.load(Ordering::Relaxed));
+                if endpoint_moved {
+                    eprintln!("audio: default output device changed, rebinding capture");
+                }
+                if mix_died {
+                    eprintln!("audio: mix capture stopped, rebuilding");
+                }
+                endpoint_moved || mix_died
             }
-            return;
-        }
-
-        // (2) + (3): has the decision changed, or has the backend behind it
-        // stopped? Identical to `apply`'s own skip condition, deliberately —
-        // asking `apply` and letting it no-op would re-emit an `audio:source`
-        // event every two seconds for a frontend with nothing to learn.
-        let want = self.decision_now();
-        // `Live::None` means the mix itself could not be opened. While that is
-        // still the decision (the app is silent), re-applying every two seconds
-        // would just re-fail, re-log and re-emit; the endpoint check above is
-        // what notices a device worth retrying for, and an explicit source
-        // change always retries from scratch. Same reasoning as the `Mix`
-        // branch above, which is why that one only rebuilds a *dead stream*.
-        if want == Active::Mix && matches!(self.live, Live::None) {
-            return;
-        }
-        if self.active == Some(want) && self.live_matches(want) {
-            return;
-        }
-        self.apply(self.requested.clone());
-    }
-
-    /// Is the live backend the one `active` calls for, and *still capturing*?
-    ///
-    /// Liveness is checked on both backends, not just the process one. Either
-    /// client is invalidated by a default-device change
-    /// (`AUDCLNT_E_DEVICE_INVALIDATED`); a dead one leaves the object intact
-    /// and the ring frozen on its last samples. If this returned `true` for a
-    /// dead stream, `apply` would take the skip path and the user re-selecting
-    /// the same source — their only recovery affordance — would be a silent
-    /// no-op.
-    fn live_matches(&self, active: Active) -> bool {
-        match (&self.live, active) {
-            (Live::Mix(_, alive), Active::Mix) => alive.load(Ordering::Relaxed),
-            (Live::Process(cap), Active::Process { .. }) => cap.is_alive(),
-            _ => false,
+        };
+        if stale {
+            self.apply(self.requested.clone());
         }
     }
 
     fn emit(&self) {
+        let (active, live_exes): (&'static str, Vec<String>) = match &self.live {
+            Live::Apps(caps) => (
+                "apps",
+                caps.iter()
+                    .filter(|c| c.cap.is_some())
+                    .map(|c| c.exe.clone())
+                    .collect(),
+            ),
+            _ => ("mix", Vec::new()),
+        };
         let state = AudioSourceState {
             requested: self.requested.clone(),
-            active: match self.live {
-                Live::Process(_) => "process",
-                _ => "mix",
-            },
-            active_exe: self.active_exe.clone(),
+            active,
+            live_exes,
             supported: self.supported,
             reason: self.reason.clone(),
         };
-        // Recorded before it is emitted, so `audio_get_source` can never report
-        // something older than what a listener has already seen.
+        // Recorded before it is emitted, so `audio_get_source` can never
+        // report something older than what a listener has already seen.
         *LAST_STATE.lock() = Some(state.clone());
         let _ = self.app.emit("audio:source", state);
     }
+}
+
+/// (exe, pid) pairs for every session that has an executable, lowercased —
+/// the shape `match_sessions` consumes. One COM snapshot per call (a few ms,
+/// paid at most once per watcher tick / apply).
+fn session_pairs() -> Vec<(String, u32)> {
+    crate::mixer::sessions_snapshot()
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|s| s.exe.map(|e| (e.to_lowercase(), s.pid)))
+        .collect()
 }
 
 /// Open the system-mix capture, or give up and leave the ring unfed. Failing
@@ -674,6 +628,34 @@ fn process_loop<R: Runtime>(
             // clamps to zero.
             band_tilt = band_tilt_db(SPECTRUM_BANDS, FFT_SIZE / 2, rate, 30.0, 16_000.0);
             smoothed.iter_mut().for_each(|v| *v = 0.0); // stale peaks belong to the old rate
+        }
+
+        // Apps mode: one hop of mixing. Drain whatever every per-app capture
+        // pushed since the last tick and append the sample-wise sum to the
+        // FFT ring. When nothing arrived at all — every selected app silent,
+        // paused, or not running — append one hop of synthesized silence
+        // instead, so the window keeps sliding and the spectrum decays to
+        // zero; a frozen ring would replay the last real window forever.
+        // Empty list = mix mode (cpal writes the ring directly): this whole
+        // block then costs one uncontended lock.
+        let rings: Vec<Arc<Mutex<Vec<f32>>>> = APP_RINGS.lock().clone();
+        if !rings.is_empty() {
+            let drained: Vec<Vec<f32>> = rings
+                .iter()
+                .map(|r| std::mem::take(&mut *r.lock()))
+                .collect();
+            let mixed = mix_rings(&drained);
+            let mut buf = buffer.lock();
+            if mixed.is_empty() {
+                let hop = ((rate / hz.max(1) as f32) as usize).max(1);
+                buf.extend(std::iter::repeat(0.0f32).take(hop));
+            } else {
+                buf.extend_from_slice(&mixed);
+            }
+            if buf.len() > RING_CAP {
+                let drop_n = buf.len() - RING_CAP;
+                buf.drain(..drop_n);
+            }
         }
 
         // Snapshot the most-recent FFT_SIZE samples without holding the lock

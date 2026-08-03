@@ -1,51 +1,95 @@
-//! What the visualizer is listening to, and the pure decision of which
-//! capture backend that implies right now. No Windows API here on purpose:
-//! this is the part worth unit-testing.
+//! What the visualizer is listening to. No Windows API here on purpose:
+//! this is the part worth unit-testing. Since 0.6.6 the model is a STRICT
+//! include list — the mix, or up to [`MAX_APPS`] specific apps — with no
+//! automatic switching between the two (audio.rs enforces the policy).
 
 use serde::{Deserialize, Deserializer, Serialize};
+
+/// Hard cap on concurrent per-app captures: each selected exe is a real
+/// WASAPI process-loopback client. Mirrors `MAX_AUDIO_APPS` in
+/// `app/src/state/audioSource.ts`.
+pub const MAX_APPS: usize = 4;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "mode", rename_all = "lowercase")]
 pub enum Source {
     Mix,
-    Only { exe: String },
-    Except { exe: String },
+    /// Non-empty by construction — `normalize_apps` degrades an empty list
+    /// to `Mix`, so downstream never has to define "apps of nothing".
+    Apps { exes: Vec<String> },
 }
 
 impl Default for Source {
     fn default() -> Self { Source::Mix }
 }
 
-// Hand-rolled so exe names normalize on the way in — every comparison
-// downstream (session lookup, sensitivity keys) assumes lowercase.
+// Hand-rolled for two reasons: exe names normalize on the way in (every
+// comparison downstream — session lookup, sensitivity keys — assumes
+// lowercase), and the retired 0.6.4 shapes must keep deserializing. The
+// frontend migrates persisted tweaks before it ever invokes us, but an old
+// value can still arrive from an un-upgraded webview mid-update or a
+// hand-edited settings import; mapping it here beats an invoke error that
+// silently strands the capture on its previous source.
 impl<'de> Deserialize<'de> for Source {
     fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
         #[derive(Deserialize)]
         #[serde(tag = "mode", rename_all = "lowercase")]
-        enum Raw { Mix, Only { exe: String }, Except { exe: String } }
+        enum Raw {
+            Mix,
+            Apps { exes: Vec<String> },
+            // 0.6.4 shapes. `only:x` is exactly `apps:[x]`; `except:x` has
+            // no include-list equivalent and downgrades to the mix (the
+            // 0.6.6 changelog says so out loud).
+            Only { exe: String },
+            // The exe is parsed (the old shape always carries it) but has
+            // nothing to map onto — hence the allow instead of a read.
+            Except {
+                #[allow(dead_code)]
+                exe: String,
+            },
+        }
         Ok(match Raw::deserialize(d)? {
             Raw::Mix => Source::Mix,
-            Raw::Only { exe } => Source::Only { exe: exe.to_lowercase() },
-            Raw::Except { exe } => Source::Except { exe: exe.to_lowercase() },
+            Raw::Apps { exes } => normalize_apps(exes),
+            Raw::Only { exe } => normalize_apps(vec![exe]),
+            Raw::Except { .. } => Source::Mix,
         })
     }
 }
 
-/// Stable key for the per-source sensitivity map. "Only Spotify" and
-/// "everything except Spotify" are different listening situations and get
-/// different gain, so the mode is part of the key, not just the exe.
-pub fn source_key(s: &Source) -> String {
-    match s {
-        Source::Mix => "mix".to_string(),
-        Source::Only { exe } => format!("only:{exe}"),
-        Source::Except { exe } => format!("except:{exe}"),
+/// Lowercase, drop empties, dedupe keeping first occurrence, cap at
+/// [`MAX_APPS`]. An empty result degrades to `Mix`.
+fn normalize_apps(exes: Vec<String>) -> Source {
+    let mut out: Vec<String> = Vec::new();
+    for e in exes {
+        let e = e.to_lowercase();
+        if e.is_empty() || out.contains(&e) {
+            continue;
+        }
+        out.push(e);
+        if out.len() == MAX_APPS {
+            break;
+        }
+    }
+    if out.is_empty() {
+        Source::Mix
+    } else {
+        Source::Apps { exes: out }
     }
 }
 
-pub fn target_exe(s: &Source) -> Option<&str> {
+/// Stable key for the per-source sensitivity map — MUST agree with
+/// `sourceKey` in `app/src/state/audioSource.ts`, or a user's gain silently
+/// lands under a key nothing reads. Sorted so the same *set* of apps
+/// resolves the same saved gain regardless of pick order.
+pub fn source_key(s: &Source) -> String {
     match s {
-        Source::Mix => None,
-        Source::Only { exe } | Source::Except { exe } => Some(exe),
+        Source::Mix => "mix".to_string(),
+        Source::Apps { exes } => {
+            let mut sorted = exes.clone();
+            sorted.sort();
+            format!("apps:{}", sorted.join("+"))
+        }
     }
 }
 
@@ -58,9 +102,9 @@ pub struct SourceOption {
     pub icon: Option<String>,
 }
 
-/// Apps currently holding an audio session, deduped by executable. Drives the
-/// Settings source picker. System-sounds has no executable and is excluded:
-/// there is no process tree to include or exclude.
+/// Apps currently holding an audio session, deduped by executable. Drives
+/// the source picker. System-sounds has no executable and is excluded:
+/// there is no process tree to include.
 #[tauri::command]
 pub fn audio_sources_list() -> Result<Vec<SourceOption>, String> {
     let sessions = crate::mixer::sessions_snapshot()?;
@@ -74,23 +118,6 @@ pub fn audio_sources_list() -> Result<Vec<SourceOption>, String> {
     }
     out.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
     Ok(out)
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Active {
-    Mix,
-    Process { pid: u32, exclude: bool },
-}
-
-/// Which backend should be live, given what the user asked for and whether
-/// the target app currently holds an audio session. Absent target → Mix,
-/// which is the "auto-reattach, mix meanwhile" behavior the spec chose.
-pub fn decide(requested: &Source, session_pid: Option<u32>) -> Active {
-    match (requested, session_pid) {
-        (Source::Mix, _) | (_, None) => Active::Mix,
-        (Source::Only { .. }, Some(pid)) => Active::Process { pid, exclude: false },
-        (Source::Except { .. }, Some(pid)) => Active::Process { pid, exclude: true },
-    }
 }
 
 /// Pure reduction for the capture supervisor: given one session snapshot as
@@ -109,48 +136,45 @@ mod tests {
     use super::*;
 
     #[test]
-    fn source_key_distinguishes_only_from_except() {
+    fn source_key_sorts_the_set() {
         assert_eq!(source_key(&Source::Mix), "mix");
-        assert_eq!(source_key(&Source::Only { exe: "spotify.exe".into() }), "only:spotify.exe");
-        assert_eq!(source_key(&Source::Except { exe: "discord.exe".into() }), "except:discord.exe");
+        assert_eq!(
+            source_key(&Source::Apps { exes: vec!["spotify.exe".into()] }),
+            "apps:spotify.exe"
+        );
+        assert_eq!(
+            source_key(&Source::Apps { exes: vec!["spotify.exe".into(), "discord.exe".into()] }),
+            "apps:discord.exe+spotify.exe"
+        );
     }
 
     #[test]
-    fn mix_is_always_active_as_mix() {
-        assert_eq!(decide(&Source::Mix, None), Active::Mix);
-        assert_eq!(decide(&Source::Mix, Some(1234)), Active::Mix);
+    fn deserialize_normalizes_case_dupes_and_cap() {
+        let s: Source = serde_json::from_str(
+            r#"{"mode":"apps","exes":["Spotify.EXE","spotify.exe","b.exe","c.exe","d.exe","e.exe"]}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            s,
+            Source::Apps {
+                exes: vec!["spotify.exe".into(), "b.exe".into(), "c.exe".into(), "d.exe".into()]
+            }
+        );
     }
 
     #[test]
-    fn only_falls_back_to_mix_when_the_app_has_no_session() {
-        let s = Source::Only { exe: "spotify.exe".into() };
-        assert_eq!(decide(&s, None), Active::Mix);
+    fn deserialize_empty_apps_degrades_to_mix() {
+        let s: Source = serde_json::from_str(r#"{"mode":"apps","exes":[]}"#).unwrap();
+        assert_eq!(s, Source::Mix);
     }
 
     #[test]
-    fn only_attaches_include_mode_when_the_app_is_present() {
-        let s = Source::Only { exe: "spotify.exe".into() };
-        assert_eq!(decide(&s, Some(4242)), Active::Process { pid: 4242, exclude: false });
-    }
-
-    #[test]
-    fn except_attaches_exclude_mode_when_the_app_is_present() {
-        let s = Source::Except { exe: "discord.exe".into() };
-        assert_eq!(decide(&s, Some(77)), Active::Process { pid: 77, exclude: true });
-    }
-
-    #[test]
-    fn except_falls_back_to_mix_when_the_app_is_absent() {
-        // Nothing to exclude means the plain mix is already the right answer,
-        // and it avoids paying for a process-loopback client that filters nothing.
-        let s = Source::Except { exe: "discord.exe".into() };
-        assert_eq!(decide(&s, None), Active::Mix);
-    }
-
-    #[test]
-    fn exe_names_normalize_to_lowercase_on_parse() {
-        let s: Source = serde_json::from_str(r#"{"mode":"only","exe":"Spotify.EXE"}"#).unwrap();
-        assert_eq!(s, Source::Only { exe: "spotify.exe".into() });
+    fn deserialize_migrates_the_0_6_4_shapes() {
+        let only: Source = serde_json::from_str(r#"{"mode":"only","exe":"Spotify.EXE"}"#).unwrap();
+        assert_eq!(only, Source::Apps { exes: vec!["spotify.exe".into()] });
+        let except: Source =
+            serde_json::from_str(r#"{"mode":"except","exe":"discord.exe"}"#).unwrap();
+        assert_eq!(except, Source::Mix);
     }
 
     #[test]
