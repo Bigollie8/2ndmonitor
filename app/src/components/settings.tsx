@@ -64,6 +64,8 @@ export interface SettingsValues {
   glassEnabled: boolean;
   /** 0–100; 0 = clear glass, 100 = most opaque frosted. */
   glassStrength: number;
+  /** Auto-hide top bar — slides away until the mouse hits the top edge. */
+  autoHideTopBar: boolean;
   /** The catalog removal list — see state/removedContent.ts. Needed here
    *  because the Visualizer pane's style dropdown is a picker. */
   catalogRemoved: string[];
@@ -292,6 +294,11 @@ export function SettingsWindow({
               onChange={(x) => set('glassStrength', x)}
             />
           ),
+        },
+        {
+          id: 'appearance-autohide-topbar', label: 'Auto-hide top bar',
+          hint: 'Slides away until you move the mouse to the top edge',
+          control: <Toggle checked={v.autoHideTopBar} onChange={(c) => set('autoHideTopBar', c)} accent={accent} />,
         },
       ],
     },

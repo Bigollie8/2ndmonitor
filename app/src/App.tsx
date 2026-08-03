@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
-import type { TileType, Layout, TileInstance, OrientationLayout, Rect } from './state/layout';
+import type { TileType, BuiltinTileType, Layout, TileInstance, OrientationLayout, Rect } from './state/layout';
 import {
   DEFAULT_LANDSCAPE_LAYOUT,
   DEFAULT_PORTRAIT_LAYOUT,
@@ -17,8 +17,10 @@ import {
   removeTilesOfType,
   updateInstance,
   remapRetiredTileType,
+  repairPileTiles,
 } from './state/layout';
 import { seedStarterProfiles, PROFILE_DEFAULT_COLORS } from './state/starterProfiles';
+import { shouldPinTopBar } from './state/topBar';
 import { isBundleTile, bundleIdOf } from './tiles/tileRegistry';
 import { useTileCatalog } from './tiles/useTileCatalog';
 import type { Track, Profile, AccentTheme, VizMode, Density, Todo, WeatherLocation } from './types';
@@ -168,6 +170,15 @@ interface TweakState extends Record<string, unknown> {
    *  which is the tombstone that stops a later seed sync from reinstalling
    *  it. Travels with settings export/import like any other tweak. */
   catalogRemoved: string[];
+  /** One-time pile repair (0.6.7): true once repairPileTiles has run over
+   *  every profile/orientation during tweaks hydration. The repair is
+   *  idempotent by nature; the flag exists so it can never re-fire against
+   *  future false positives. */
+  pileRepaired: boolean;
+  /** Auto-hide top bar (0.6.7): the top chrome slides up out of view until
+   *  the mouse hits the top edge. Pinned open while any bar-anchored overlay
+   *  is up — see state/topBar.ts. Off by default. */
+  autoHideTopBar: boolean;
 }
 
 /** How long the viz surface will wait for boot seeding before giving up and
@@ -212,6 +223,8 @@ const TWEAK_DEFAULTS: TweakState = {
   activeProfileId: '',
   onboardingDone: false,
   catalogRemoved: [],
+  pileRepaired: false,
+  autoHideTopBar: false,
 };
 
 
@@ -397,6 +410,39 @@ function migrateTweaks(loaded: Record<string, unknown>): Record<string, unknown>
     }
   }
 
+  // Pile repair (0.6.7 §1): profiles that existed before the 0.6.1 seeding
+  // fix carry junk tiles the old every-type-at-defaults bug materialized —
+  // stacked at their exact default rects, overlapping each other (portrait
+  // was hit worst). Remove every tile matching that pile signature, once,
+  // for every profile and orientation. Must run AFTER the tile-array
+  // migration (it needs `tiles`) and AFTER the retired-type remap (so
+  // retired junk is compared against the shared bundle default rect).
+  // Starter/arranged layouts are untouched by construction — see
+  // repairPileTiles' threshold and signature rules in state/layout.ts.
+  if (!result.pileRepaired) {
+    const profiles = result.profiles as Array<Record<string, unknown>> | undefined;
+    if (profiles) {
+      result.profiles = profiles.map((p) => {
+        const profile = p as Record<string, unknown>;
+        const repairOrientation = (
+          slotRaw: unknown,
+          defaults: Record<BuiltinTileType, Rect>,
+          bundleDefault: Rect,
+        ): unknown => {
+          const slot = slotRaw as { tiles?: TileInstance[] } | undefined;
+          if (!slot?.tiles) return slotRaw;
+          return { ...slot, tiles: repairPileTiles(slot.tiles, defaults, bundleDefault) };
+        };
+        return {
+          ...profile,
+          landscape: repairOrientation(profile.landscape, DEFAULT_LANDSCAPE_LAYOUT, DEFAULT_BUNDLE_TILE_RECT.landscape),
+          portrait: repairOrientation(profile.portrait, DEFAULT_PORTRAIT_LAYOUT, DEFAULT_BUNDLE_TILE_RECT.portrait),
+        };
+      });
+    }
+    result.pileRepaired = true;
+  }
+
   return result;
 }
 
@@ -447,6 +493,14 @@ export default function App() {
   // NEXT plain open doesn't inherit a stale rail from whatever last set it.
   const [libraryRail, setLibraryRail] = useState<string | undefined>();
   const [showShortcuts, setShowShortcuts] = useState(false);
+  // Auto-hide top bar (0.6.7 §3). `topBarRevealed` is true while the pointer
+  // is holding the bar open — set on reveal-strip or bar pointerenter,
+  // cleared on bar pointerleave.
+  const [topBarRevealed, setTopBarRevealed] = useState(false);
+  // Mirror of TopChrome's LOCAL ⋯-menu open state, reported up via
+  // onMenuOpenChange. The pin decision (state/topBar.ts) composes App-level
+  // overlay flags with this bar-local one; App owns the composed decision.
+  const [topBarMenuOpen, setTopBarMenuOpen] = useState(false);
   const [selectedInstanceId, setSelectedInstanceId] = useState<string>('');
   // Transient "theme synced" toast: holds the track title being announced, or
   // null when hidden. Set by the effect below when accent is track-linked and
@@ -706,6 +760,21 @@ export default function App() {
         const p = t.profiles[idx];
         if (p) setTweak('activeProfileId', p.id);
       }
+      else if (e.key === 'F11') {
+        // True window fullscreen — the Windows taskbar disappears on this
+        // monitor while active. Deliberately NOT persisted: the app always
+        // starts windowed. Guarded dynamic import, same pattern as the other
+        // invokes — in browser dev getCurrentWindow() throws and this is a
+        // clean no-op.
+        e.preventDefault();
+        void (async () => {
+          try {
+            const { getCurrentWindow } = await import('@tauri-apps/api/window');
+            const win = getCurrentWindow();
+            await win.setFullscreen(!(await win.isFullscreen()));
+          } catch { /* browser dev — no tauri */ }
+        })();
+      }
       else if (e.key === 'Escape') {
         if (showShortcuts) setShowShortcuts(false);
         else if (showContentLibrary) setShowContentLibrary(false);
@@ -757,6 +826,14 @@ export default function App() {
   const canvas = useCanvas();
 
   const overlaysOpen = editMode || showSwitcher || showOnboarding;
+  // Pin/hide decision for the auto-hiding top bar. Pinned ⇒ never hidden.
+  // Hiding does NOT reflow tiles: the bar overlays the same reserved space
+  // when revealed (like the Windows taskbar) — CHROME_TOP_PX stays as-is.
+  const topBarPinned = shouldPinTopBar({
+    editMode, showSettings, showContentLibrary, showSwitcher, showOnboarding,
+    showShortcuts, menuOpen: topBarMenuOpen,
+  });
+  const topBarHidden = t.autoHideTopBar && !topBarPinned && !topBarRevealed;
   const fallbackProfile = useMemo<Profile>(() => ({
     id: '_fallback', name: 'Default', color: '#a78bfa',
     landscape: { tiles: ALL_TILE_TYPES.map((type) => ({ instanceId: newId(), type, rect: DEFAULT_LANDSCAPE_LAYOUT[type] })) },
@@ -1118,6 +1195,15 @@ export default function App() {
       }}>
         <TopChrome
           accent={accent} editMode={editMode} setEditMode={setEditMode}
+          hidden={topBarHidden}
+          onBarEnter={() => setTopBarRevealed(true)}
+          onBarLeave={() => setTopBarRevealed(false)}
+          // Only wired when the feature is on: when it's off topBarHidden is
+          // already unconditionally false (see the topBarHidden computation
+          // above), so topBarMenuOpen is dead state — skipping the setter
+          // here means TopChrome's report-up effect becomes a true no-op and
+          // toggling the ⋯ menu no longer re-renders App at all.
+          onMenuOpenChange={t.autoHideTopBar ? setTopBarMenuOpen : undefined}
           profiles={t.profiles}
           activeProfileId={t.activeProfileId}
           setActiveProfileId={(id) => setTweak('activeProfileId', id)}
@@ -1126,6 +1212,19 @@ export default function App() {
           onSettings={() => setShowSettings(true)}
           onShortcuts={() => setShowShortcuts(true)}
         />
+        {topBarHidden && (
+          // 4px reveal strip (0.6.7 §3): invisible, sits at the very top edge
+          // ONLY while the bar is hidden. Hovering it reveals the bar; it
+          // unmounts whenever the bar is visible so it can never block the
+          // bar's own top edge.
+          <div
+            onPointerEnter={() => setTopBarRevealed(true)}
+            style={{
+              position: 'fixed', top: 0, left: 0, right: 0, height: 4,
+              zIndex: 40, background: 'transparent', pointerEvents: 'auto',
+            }}
+          />
+        )}
         {accentLinked && !showOnboarding && themeToast !== null && (
           <ThemeToast accent={accent} title={themeToast} />
         )}
@@ -1301,7 +1400,7 @@ export default function App() {
   );
 }
 
-function TopChrome({ accent, editMode, setEditMode, profiles, activeProfileId, setActiveProfileId, onSwitcher, onOnboarding, onSettings, onShortcuts }: {
+function TopChrome({ accent, editMode, setEditMode, profiles, activeProfileId, setActiveProfileId, onSwitcher, onOnboarding, onSettings, onShortcuts, hidden, onBarEnter, onBarLeave, onMenuOpenChange }: {
   accent: string;
   editMode: boolean;
   setEditMode: (b: boolean) => void;
@@ -1312,6 +1411,17 @@ function TopChrome({ accent, editMode, setEditMode, profiles, activeProfileId, s
   onOnboarding: () => void;
   onSettings: () => void;
   onShortcuts: () => void;
+  /** Auto-hide (0.6.7 §3): when true the bar translates up out of view.
+   *  App owns the decision — see topBarHidden in App(). */
+  hidden: boolean;
+  /** Pointer entered/left the bar — App sets/clears topBarRevealed. */
+  onBarEnter: () => void;
+  onBarLeave: () => void;
+  /** Reports the bar-LOCAL ⋯-menu state up so App's pin logic
+   *  (state/topBar.ts) can hold the bar open while the menu is up. Optional:
+   *  App omits it entirely when the auto-hide feature is off, since the
+   *  pin decision is irrelevant then — see the call site in App(). */
+  onMenuOpenChange?: (open: boolean) => void;
 }) {
   const visibleProfiles = profiles.slice(0, 4);
   const overflow = Math.max(0, profiles.length - visibleProfiles.length);
@@ -1340,6 +1450,15 @@ function TopChrome({ accent, editMode, setEditMode, profiles, activeProfileId, s
     };
   }, [menuOpen]);
 
+  // Surface menuOpen to App (see the onMenuOpenChange prop doc). Effect, not
+  // call-site wrapping: the menu closes from three places (toggle button,
+  // outside pointerdown, Esc) and this catches all of them. The `?.` makes
+  // this a true no-op when App omits the prop (auto-hide off) — no App
+  // re-render on every menu toggle in the common (feature-off) case.
+  useEffect(() => {
+    onMenuOpenChange?.(menuOpen);
+  }, [menuOpen, onMenuOpenChange]);
+
   const ghostButton: React.CSSProperties = {
     padding: '5px 10px', fontSize: 11, borderRadius: 6,
     background: 'transparent', color: 'rgba(255,255,255,0.7)',
@@ -1354,12 +1473,33 @@ function TopChrome({ accent, editMode, setEditMode, profiles, activeProfileId, s
   };
 
   return (
-    <div style={{
-      position: 'absolute', top: 0, left: 0, right: 0, height: 56,
-      background: 'var(--surface-chrome, rgba(8,9,12,0.85))', backdropFilter: 'blur(10px)',
-      borderBottom: '1px solid rgba(255,255,255,0.05)',
-      display: 'flex', alignItems: 'center', padding: '0 18px', gap: 16, zIndex: 10,
-    }}>
+    <div
+      onPointerEnter={onBarEnter} onPointerLeave={onBarLeave}
+      // Focus-driven reveal (0.6.7 §3 fix-up): tabbing into any control
+      // inside the hidden bar reveals it, and tabbing back out hides it
+      // again. `Capture` variants fire for focus moving between children
+      // too, so `onBlurCapture` checks `relatedTarget` against the bar's own
+      // subtree (via currentTarget, which is *this* div in a capture
+      // handler) to tell "focus moved to another control in the bar" apart
+      // from "focus left the bar" — the former must not hide it mid-tab.
+      // `relatedTarget === null` (blur to nowhere, e.g. window losing focus)
+      // is treated as focus-left. Because focus can never land on an
+      // invisible control, no aria-hidden/inert juggling is needed — the
+      // bar is guaranteed visible before anything inside it can be focused.
+      onFocusCapture={onBarEnter}
+      onBlurCapture={(e) => {
+        const next = e.relatedTarget as Node | null;
+        if (next === null || !e.currentTarget.contains(next)) onBarLeave();
+      }}
+      style={{
+        position: 'absolute', top: 0, left: 0, right: 0, height: 56,
+        background: 'var(--surface-chrome, rgba(8,9,12,0.85))', backdropFilter: 'blur(10px)',
+        borderBottom: '1px solid rgba(255,255,255,0.05)',
+        display: 'flex', alignItems: 'center', padding: '0 18px', gap: 16, zIndex: 10,
+        transform: hidden ? 'translateY(-100%)' : 'translateY(0)',
+        transition: 'transform 150ms ease',
+      }}
+    >
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
         <div style={{ width: 16, height: 16, borderRadius: 5, background: `linear-gradient(135deg, ${accent}, ${accent}99)`, boxShadow: `0 0 12px ${accent}66` }} />
         <span style={{ fontSize: 12, fontWeight: 700, letterSpacing: '-0.01em' }}>Hub</span>
@@ -1478,6 +1618,7 @@ const SHORTCUT_ROWS: ReadonlyArray<readonly [string, string]> = [
   ['⌘E', 'Edit layout'],
   ['⌘,', 'Settings'],
   ['⌘1/2/3', 'Switch profile'],
+  ['F11', 'Fullscreen'],
   ['Esc', 'Close overlays'],
   ['?', 'This overlay'],
 ];

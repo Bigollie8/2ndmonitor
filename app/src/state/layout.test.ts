@@ -324,3 +324,121 @@ test('remapRetiredTileType: onThisDay and stocks stay built-in (additional listi
 test('remapRetiredTileType: an already-bundle type is unchanged', () => {
   assert.equal(remapRetiredTileType('bundle:tile-quote'), 'bundle:tile-quote');
 });
+
+// ---------------------------------------------------------------------------
+// repairPileTiles (0.6.7 §1 — legacy tile-pile repair)
+// ---------------------------------------------------------------------------
+import { repairPileTiles, DEFAULT_BUNDLE_TILE_RECT } from './layout';
+
+/** Real-data fixture: mirrors the developer's pre-0.6.1 tweaks.json, where
+ *  portrait piles were exactly these 9 types materialized at exact portrait
+ *  defaults, alongside tiles the user actually arranged (rects differing
+ *  from defaults). Every one of the 9 overlaps at least one other at the
+ *  default portrait rects (pomodoro↔discord, sun↔mixer, streamDeck↔claude/
+ *  sysmon/clock/aurora, …). */
+const PORTRAIT_PILE_TYPES = [
+  'discord', 'claude', 'mixer', 'sysmon', 'clock',
+  'streamDeck', 'pomodoro', 'sun', 'aurora',
+] as const;
+
+function portraitPileFixture(): TileInstance[] {
+  const arranged: TileInstance[] = [
+    { instanceId: 'kept-viz', type: 'viz', rect: { x: 0.02, y: 0.05, w: 0.96, h: 0.38 } },
+    { instanceId: 'kept-spotify', type: 'spotify', rect: { x: 0.02, y: 0.45, w: 0.96, h: 0.10 } },
+  ];
+  const junk: TileInstance[] = PORTRAIT_PILE_TYPES.map((type, i) => ({
+    instanceId: `junk-${i}`,
+    type,
+    rect: { ...DEFAULT_PORTRAIT_LAYOUT[type] },
+  }));
+  return [...arranged, ...junk];
+}
+
+test('repairPileTiles: real-data portrait pile — all 9 junk tiles removed, arranged tiles kept', () => {
+  const tiles = portraitPileFixture();
+  const out = repairPileTiles(tiles, DEFAULT_PORTRAIT_LAYOUT, DEFAULT_BUNDLE_TILE_RECT.portrait);
+  assert.deepEqual(out.map((t) => t.instanceId), ['kept-viz', 'kept-spotify']);
+});
+
+test('repairPileTiles: arranged layout (rects differ from defaults) is untouched, even when tiles overlap', () => {
+  // Rects are near-but-not-at defaults (off by ~0.01 ≫ the 1e-9 epsilon) and
+  // deliberately overlapping — user-arranged mess is the user's to keep.
+  const tiles: TileInstance[] = [
+    { instanceId: 'a', type: 'pomodoro', rect: { x: 0.06, y: 0.56, w: 0.20, h: 0.18 } },
+    { instanceId: 'b', type: 'scratchpad', rect: { x: 0.10, y: 0.60, w: 0.20, h: 0.18 } },
+    { instanceId: 'c', type: 'viz', rect: { x: 0.30, y: 0.10, w: 0.60, h: 0.40 } },
+  ];
+  const out = repairPileTiles(tiles, DEFAULT_LANDSCAPE_LAYOUT, DEFAULT_BUNDLE_TILE_RECT.landscape);
+  assert.equal(out, tiles); // same reference — nothing to repair
+});
+
+test('repairPileTiles: threshold — a single signature tile is left alone', () => {
+  // streamDeck sits at its exact portrait default and overlaps an arranged
+  // tile, but it is the ONLY signature tile → below the ≥2 threshold.
+  const tiles: TileInstance[] = [
+    { instanceId: 'sd', type: 'streamDeck', rect: { ...DEFAULT_PORTRAIT_LAYOUT.streamDeck } },
+    { instanceId: 'arranged', type: 'notes', rect: { x: 0.10, y: 0.75, w: 0.50, h: 0.10 } },
+  ];
+  const out = repairPileTiles(tiles, DEFAULT_PORTRAIT_LAYOUT, DEFAULT_BUNDLE_TILE_RECT.portrait);
+  assert.equal(out, tiles);
+});
+
+test('repairPileTiles: default-rect tiles that do not overlap anything are not signature tiles', () => {
+  // viz and notes at exact portrait defaults never overlap each other, so
+  // neither matches the pile signature and both survive.
+  const tiles: TileInstance[] = [
+    { instanceId: 'v', type: 'viz', rect: { ...DEFAULT_PORTRAIT_LAYOUT.viz } },
+    { instanceId: 'n', type: 'notes', rect: { ...DEFAULT_PORTRAIT_LAYOUT.notes } },
+  ];
+  const out = repairPileTiles(tiles, DEFAULT_PORTRAIT_LAYOUT, DEFAULT_BUNDLE_TILE_RECT.portrait);
+  assert.equal(out, tiles);
+});
+
+test('repairPileTiles: epsilon — float noise (1e-12) still matches the signature', () => {
+  // discord and pomodoro overlap at portrait defaults; pomodoro is off its
+  // default x by 1e-12, far inside the 1e-9 epsilon → both are signature
+  // tiles → threshold met → both removed.
+  const pom = DEFAULT_PORTRAIT_LAYOUT.pomodoro;
+  const tiles: TileInstance[] = [
+    { instanceId: 'd', type: 'discord', rect: { ...DEFAULT_PORTRAIT_LAYOUT.discord } },
+    { instanceId: 'p', type: 'pomodoro', rect: { x: pom.x + 1e-12, y: pom.y, w: pom.w, h: pom.h } },
+  ];
+  const out = repairPileTiles(tiles, DEFAULT_PORTRAIT_LAYOUT, DEFAULT_BUNDLE_TILE_RECT.portrait);
+  assert.deepEqual(out, []);
+});
+
+test('repairPileTiles: epsilon — a real offset (1e-6) does not match, threshold not met', () => {
+  // Same pair, but pomodoro is off by 1e-6 (> epsilon) → not a signature
+  // tile. Only discord qualifies → below the ≥2 threshold → untouched.
+  const pom = DEFAULT_PORTRAIT_LAYOUT.pomodoro;
+  const tiles: TileInstance[] = [
+    { instanceId: 'd', type: 'discord', rect: { ...DEFAULT_PORTRAIT_LAYOUT.discord } },
+    { instanceId: 'p', type: 'pomodoro', rect: { x: pom.x + 1e-6, y: pom.y, w: pom.w, h: pom.h } },
+  ];
+  const out = repairPileTiles(tiles, DEFAULT_PORTRAIT_LAYOUT, DEFAULT_BUNDLE_TILE_RECT.portrait);
+  assert.equal(out, tiles);
+});
+
+test('repairPileTiles: bundle tiles match against the shared bundle default rect', () => {
+  // A `bundle:` tile has no entry in the builtin default maps — its default
+  // is DEFAULT_BUNDLE_TILE_RECT. Here it overlaps a junk weatherRadar at
+  // its portrait default → 2 signature tiles → both removed.
+  const tiles: TileInstance[] = [
+    { instanceId: 'b1', type: 'bundle:tile-quote', rect: { ...DEFAULT_BUNDLE_TILE_RECT.portrait } },
+    { instanceId: 'wr', type: 'weatherRadar', rect: { ...DEFAULT_PORTRAIT_LAYOUT.weatherRadar } },
+  ];
+  const out = repairPileTiles(tiles, DEFAULT_PORTRAIT_LAYOUT, DEFAULT_BUNDLE_TILE_RECT.portrait);
+  assert.deepEqual(out, []);
+});
+
+test('repairPileTiles: landscape pile — identical default rects overlap and are removed, arranged kept', () => {
+  // landscape pomodoro and scratchpad share the exact same default rect
+  // ({x:0.05,y:0.55,w:0.20,h:0.18}) — the classic landscape pile shape.
+  const tiles: TileInstance[] = [
+    { instanceId: 'kept', type: 'viz', rect: { x: 0.30, y: 0.10, w: 0.65, h: 0.40 } },
+    { instanceId: 'j1', type: 'pomodoro', rect: { ...DEFAULT_LANDSCAPE_LAYOUT.pomodoro } },
+    { instanceId: 'j2', type: 'scratchpad', rect: { ...DEFAULT_LANDSCAPE_LAYOUT.scratchpad } },
+  ];
+  const out = repairPileTiles(tiles, DEFAULT_LANDSCAPE_LAYOUT, DEFAULT_BUNDLE_TILE_RECT.landscape);
+  assert.deepEqual(out.map((t) => t.instanceId), ['kept']);
+});
