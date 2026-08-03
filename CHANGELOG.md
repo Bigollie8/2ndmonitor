@@ -20,13 +20,14 @@ All notable changes to 2ndMonitor are documented here. Format follows
   re-clamps any tile still caught in the band, once, back below it
 - **Platform-wide time & temperature formats**: Settings → Appearance →
   Time format (System/12h/24h) and Settings → Weather & location →
-  Temperature (System/°F/°C) now apply everywhere a clock or a
-  temperature is shown, including the forecast tile's hourly strip and
-  the system-monitor temps strip. This also fixes the forecast tile's
-  clock, which was ignoring Time format and always rendering 12-hour. The
-  sysmon CPU/GPU sub-line (e.g. "58°C") is unaffected by the Temperature
-  setting — it's the sensor's native hardware reading, not a converted
-  display value
+  Temperature (System/°F/°C) now apply across the app's clocks and
+  temperatures, including the forecast tile's hourly strip and the
+  system-monitor temps strip. This also fixes the forecast tile's
+  clock, which was ignoring your locale and always rendering 24-hour.
+  Two small exceptions keep their native form for now: the forecast
+  tile's sunrise/sunset stats (still 12-hour) and the sysmon CPU/GPU
+  sub-line (e.g. "58°C") — the latter is the sensor's native hardware
+  reading, not a converted display value
 - **Date & time tile styles**: hover the tile to cycle digital (the 0.7.1
   clock + date line), minimal (time only, larger), or analog — a canvas
   clock face with hour, minute and second hands
