@@ -384,6 +384,13 @@ export function migrateLegacyProfileToOrientations<T extends {
   };
 }
 
+/** Standard open-interval rect intersection. Shared by findEmptyRect's
+ *  placement scan and repairPileTiles' pile-signature check — the two must
+ *  never disagree about what "overlaps" means. */
+export function rectsOverlap(a: Rect, b: Rect): boolean {
+  return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+}
+
 /** Find a snap-aligned, non-overlapping rect close to `preferred`. If `preferred`
  *  is already empty, returns it unchanged. Otherwise scans snap-aligned positions
  *  for an empty slot of the same size, scoring by Euclidean distance from
@@ -394,9 +401,7 @@ export function findEmptyRect(
   preferred: Rect,
   canvasPx: { w: number; h: number },
 ): Rect {
-  const overlaps = (a: Rect, b: Rect) =>
-    a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
-  const overlapsAny = (r: Rect) => visibleRects.some((v) => overlaps(r, v));
+  const overlapsAny = (r: Rect) => visibleRects.some((v) => rectsOverlap(r, v));
 
   if (!overlapsAny(preferred)) return preferred;
 
@@ -501,4 +506,52 @@ export function migrateLayoutHiddenToTiles(
     out.push({ instanceId: newId(), type, rect });
   }
   return out;
+}
+
+/** Fractional-equality epsilon for the pile signature below. Junk rects were
+ *  materialized from the SAME constant expressions that build the default
+ *  maps, so a genuine match differs only by float noise — while any user
+ *  drag/resize moves a rect by at least one snap step (SNAP_FRAC ≈ 0.0156),
+ *  seven orders of magnitude larger. */
+const PILE_EPS = 1e-9;
+
+function rectsAlmostEqual(a: Rect, b: Rect): boolean {
+  return Math.abs(a.x - b.x) <= PILE_EPS
+    && Math.abs(a.y - b.y) <= PILE_EPS
+    && Math.abs(a.w - b.w) <= PILE_EPS
+    && Math.abs(a.h - b.h) <= PILE_EPS;
+}
+
+/** One-time repair for the pre-0.6.1 "tile pile" bug (0.6.7 §1): profiles
+ *  that existed before the seeding fix carry tiles materialized by the old
+ *  every-type-at-defaults behavior. Returns `tiles` minus every tile matching
+ *  the **pile signature** — rect exactly equals the type's default rect
+ *  (epsilon PILE_EPS) AND the tile overlaps at least one other tile in the
+ *  same orientation. Applies only when the orientation has ≥ 2 signature
+ *  tiles; below that threshold the input array is returned unchanged (same
+ *  reference).
+ *
+ *  Safety: dragging/resizing changes the rect, so arranged tiles never
+ *  match; `findEmptyRect` placement means add-flows never create an
+ *  exact-default tile that overlaps. `bundleDefault` covers `bundle:` tiles
+ *  (no compile-time entry in the builtin default maps) — pass
+ *  DEFAULT_BUNDLE_TILE_RECT[orientation]. A runtime tile type that is in
+ *  neither map resolves to no default and can never be a signature tile. */
+export function repairPileTiles(
+  tiles: TileInstance[],
+  defaults: Record<BuiltinTileType, Rect>,
+  bundleDefault: Rect,
+): TileInstance[] {
+  const defaultRectOf = (type: TileType): Rect | undefined =>
+    type.startsWith('bundle:') ? bundleDefault : defaults[type as BuiltinTileType];
+
+  const isSignature = (tile: TileInstance): boolean => {
+    const def = defaultRectOf(tile.type);
+    if (def === undefined || !rectsAlmostEqual(tile.rect, def)) return false;
+    return tiles.some((other) => other !== tile && rectsOverlap(tile.rect, other.rect));
+  };
+
+  const signatureIds = new Set(tiles.filter(isSignature).map((t) => t.instanceId));
+  if (signatureIds.size < 2) return tiles;
+  return tiles.filter((t) => !signatureIds.has(t.instanceId));
 }
