@@ -5,6 +5,22 @@ All notable changes to 2ndMonitor are documented here. Format follows
 
 ## [Unreleased]
 
+### Added
+- **Liquid glass**: an optional translucent look where your desktop shows
+  through the app (Windows acrylic). Toggle it in Settings → Appearance and
+  set the strength — 0 is clear glass, 100 is fully frosted. Off by default
+  and pixel-identical to before when off
+- **Real maps**: the aircraft radar, weather radar, lightning, and ISS tiles
+  now plot on an actual pannable, zoomable dark map (drag to pan, scroll to
+  zoom). Each tile remembers its view, and a recenter button appears whenever
+  you've panned away. Weather radar overlays live RainViewer precipitation
+  with a play button that animates the last hour; the ISS tile draws the
+  station's ground track as it moves
+- **System temps**: the system monitor shows per-part temperatures — CPU,
+  GPU, board, and drives — with amber/red warnings when parts run hot. Full
+  detail comes from LibreHardwareMonitor when it's running; without it you
+  get what the hardware exposes natively
+
 ### Changed
 - The visualizer's audio source is now a strict include list: check up to
   4 apps and it hears exactly those, mixed together — or all system audio.
