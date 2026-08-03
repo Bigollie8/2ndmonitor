@@ -61,12 +61,133 @@ impl Perm {
     }
 }
 
+/// Category vocabulary, per kind. Shared verbatim with the app's sidebar —
+/// `CATEGORY_LABELS` in `app/src/components/catalogRail.ts` holds the display
+/// strings for exactly these values. A category outside its kind's list is
+/// rejected rather than coerced, for the same reason `surface` is: a typo
+/// should fail once at submission, not publish and then sort into the wrong
+/// part of the store where the author cannot diagnose it.
+const TILE_CATEGORIES: &[&str] =
+    &["media", "system", "weather", "productivity", "ambient", "integrations"];
+const VIZ_CATEGORIES: &[&str] = &["spectrum", "wave", "scene", "engine"];
+const PRESET_CATEGORIES: &[&str] = &["milkdrop"];
+
+pub fn category_ok(kind: &str, cat: &str) -> bool {
+    let allowed = match kind {
+        "tile" => TILE_CATEGORIES,
+        "visualizer" => VIZ_CATEGORIES,
+        "preset" => PRESET_CATEGORIES,
+        _ => return false,
+    };
+    allowed.contains(&cat)
+}
+
+/// Optional descriptive metadata. Every field is `Option`/empty when absent —
+/// this is additive to api 1, so an older manifest that declares none of it
+/// stays valid and simply carries nothing.
+#[derive(Debug, Clone, Default)]
+pub struct Meta {
+    pub summary: Option<String>,
+    pub description: Option<String>,
+    pub category: Option<String>,
+    pub tags: Vec<String>,
+    pub icon: Option<String>,
+    pub changelog: Option<String>,
+    pub min_app_version: Option<String>,
+}
+
+fn opt_string(
+    obj: &serde_json::Map<String, Value>,
+    key: &str,
+    max: usize,
+) -> Result<Option<String>, String> {
+    let Some(raw) = obj.get(key) else { return Ok(None) };
+    let s = raw
+        .as_str()
+        .ok_or_else(|| format!("{key} must be a string"))?
+        .trim();
+    if s.is_empty() {
+        return Err(format!("{key} must not be blank when present"));
+    }
+    if s.chars().count() > max {
+        return Err(format!("{key} must be at most {max} characters"));
+    }
+    Ok(Some(s.to_string()))
+}
+
+fn dotted_numeric(s: &str) -> bool {
+    !s.is_empty()
+        && s.len() <= 32
+        && s.split('.').all(|seg| !seg.is_empty() && seg.bytes().all(|b| b.is_ascii_digit()))
+}
+
+/// Validates the optional metadata block. Public because the admin `PATCH`
+/// route applies the identical rules — an admin correction must not be able to
+/// write a category or tag shape that a submission could not.
+pub fn validate_meta(kind: &str, obj: &serde_json::Map<String, Value>) -> Result<Meta, String> {
+    let summary = opt_string(obj, "summary", 100)?;
+    let description = opt_string(obj, "description", 4000)?;
+    let changelog = opt_string(obj, "changelog", 1000)?;
+
+    let category = match opt_string(obj, "category", 32)? {
+        Some(c) if !category_ok(kind, &c) => {
+            return Err(format!("category {c:?} is not valid for a {kind}"))
+        }
+        other => other,
+    };
+
+    let mut tags = Vec::new();
+    if let Some(raw) = obj.get("tags") {
+        let arr = raw.as_array().ok_or("tags must be an array")?;
+        if arr.len() > 8 {
+            return Err("too many tags (max 8)".into());
+        }
+        for t in arr {
+            let s = t.as_str().ok_or("tags entries must be strings")?.trim();
+            let ok = (1..=24).contains(&s.len())
+                && s.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-');
+            if !ok {
+                return Err(format!("tag must be 1-24 chars of [a-z0-9-]: {s:?}"));
+            }
+            tags.push(s.to_string());
+        }
+    }
+
+    // One or two chars, not one: a glyph plus a variation selector (U+FE0F) is
+    // a single rendered symbol but two `char`s, and rejecting it would refuse
+    // legitimate icons. Anything longer is a label, not an icon.
+    let icon = match obj.get("icon") {
+        None => None,
+        Some(v) => {
+            let s = v.as_str().ok_or("icon must be a string")?;
+            if !(1..=2).contains(&s.chars().count()) {
+                return Err("icon must be 1-2 characters".into());
+            }
+            Some(s.to_string())
+        }
+    };
+
+    let min_app_version = match obj.get("minAppVersion") {
+        None => None,
+        Some(v) => {
+            let s = v.as_str().ok_or("minAppVersion must be a string")?.trim();
+            if !dotted_numeric(s) {
+                return Err("minAppVersion must be dotted numeric, e.g. \"0.8.0\"".into());
+            }
+            Some(s.to_string())
+        }
+    };
+
+    Ok(Meta { summary, description, category, tags, icon, changelog, min_app_version })
+}
+
 #[derive(Debug, Clone)]
 pub struct Validated {
     pub id: String,
     pub name: String,
     pub version: String,
     pub permissions: Vec<Perm>,
+    pub meta: Meta,
 }
 
 fn id_ok(id: &str) -> bool {
@@ -224,11 +345,14 @@ pub fn validate(kind: &str, manifest_json: &str) -> Result<Validated, String> {
         }
     }
 
+    let meta = validate_meta(kind, obj)?;
+
     Ok(Validated {
         id: id.to_string(),
         name: name.to_string(),
         version: version.to_string(),
         permissions,
+        meta,
     })
 }
 
@@ -548,6 +672,101 @@ mod tests {
 
     fn m(perms: &str) -> String {
         format!(r#"{{"id":"my-tile","name":"T","version":"1.0.0","api":1,"permissions":{perms}}}"#)
+    }
+
+    fn viz_with(extra: serde_json::Value) -> String {
+        let mut m = serde_json::json!({
+            "id": "demo", "name": "Demo", "version": "1.0.0", "api": 1, "permissions": []
+        });
+        let obj = m.as_object_mut().unwrap();
+        for (k, v) in extra.as_object().unwrap() {
+            obj.insert(k.clone(), v.clone());
+        }
+        m.to_string()
+    }
+
+    #[test]
+    fn metadata_is_optional_and_absent_means_none() {
+        let v = validate("visualizer", &viz_with(serde_json::json!({}))).unwrap();
+        assert_eq!(v.meta.summary, None);
+        assert_eq!(v.meta.category, None);
+        assert!(v.meta.tags.is_empty());
+    }
+
+    #[test]
+    fn metadata_round_trips_when_valid() {
+        let v = validate(
+            "visualizer",
+            &viz_with(serde_json::json!({
+                "summary": "A spinning thing",
+                "description": "Longer prose about the spinning thing.",
+                "category": "scene",
+                "tags": ["retro", "slow"],
+                "icon": "◆",
+                "changelog": "Initial release.",
+                "minAppVersion": "0.8.0"
+            })),
+        )
+        .unwrap();
+        assert_eq!(v.meta.summary.as_deref(), Some("A spinning thing"));
+        assert_eq!(v.meta.category.as_deref(), Some("scene"));
+        assert_eq!(v.meta.tags, vec!["retro".to_string(), "slow".to_string()]);
+        assert_eq!(v.meta.icon.as_deref(), Some("◆"));
+        assert_eq!(v.meta.min_app_version.as_deref(), Some("0.8.0"));
+    }
+
+    #[test]
+    fn category_must_belong_to_the_kind() {
+        // 'weather' is a tile category; a visualizer may not claim it.
+        let err = validate("visualizer", &viz_with(serde_json::json!({"category": "weather"})))
+            .unwrap_err();
+        assert!(err.contains("category"), "unexpected error: {err}");
+        assert!(category_ok("tile", "weather"));
+        assert!(!category_ok("tile", "scene"));
+        assert!(category_ok("preset", "milkdrop"));
+    }
+
+    #[test]
+    fn summary_over_100_chars_is_rejected() {
+        let long = "x".repeat(101);
+        let err = validate("visualizer", &viz_with(serde_json::json!({"summary": long})))
+            .unwrap_err();
+        assert!(err.contains("summary"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn tags_are_capped_and_shape_checked() {
+        let nine: Vec<String> = (0..9).map(|i| format!("t{i}")).collect();
+        let err = validate("visualizer", &viz_with(serde_json::json!({"tags": nine})))
+            .unwrap_err();
+        assert!(err.contains("tags"), "unexpected error: {err}");
+
+        let err = validate("visualizer", &viz_with(serde_json::json!({"tags": ["Has Caps"]})))
+            .unwrap_err();
+        assert!(err.contains("tag"), "unexpected error: {err}");
+
+        let err = validate("visualizer", &viz_with(serde_json::json!({"tags": "not-an-array"})))
+            .unwrap_err();
+        assert!(err.contains("tags"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn icon_must_be_one_or_two_chars() {
+        assert!(validate("visualizer", &viz_with(serde_json::json!({"icon": "◆"}))).is_ok());
+        let err = validate("visualizer", &viz_with(serde_json::json!({"icon": "abc"})))
+            .unwrap_err();
+        assert!(err.contains("icon"), "unexpected error: {err}");
+        let err = validate("visualizer", &viz_with(serde_json::json!({"icon": ""})))
+            .unwrap_err();
+        assert!(err.contains("icon"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn min_app_version_must_be_dotted_numeric() {
+        assert!(validate("visualizer", &viz_with(serde_json::json!({"minAppVersion": "1.2.3"}))).is_ok());
+        let err = validate("visualizer", &viz_with(serde_json::json!({"minAppVersion": "next"})))
+            .unwrap_err();
+        assert!(err.contains("minAppVersion"), "unexpected error: {err}");
     }
 
     #[test]
