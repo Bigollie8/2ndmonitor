@@ -445,16 +445,57 @@ pub async fn marketplace_fetch_index(url: String, pubkey: String) -> Result<serd
         let base = url.trim_end_matches('/');
         let body_bytes = get_capped(&format!("{base}/index.json"), FETCH_CAP)?;
         let body = String::from_utf8(body_bytes).map_err(|_| "index not UTF-8".to_string())?;
-        let v: serde_json::Value = serde_json::from_str(&body).map_err(|e| format!("index not JSON: {e}"))?;
-        let sig = v.get("sig").and_then(|s| s.as_str()).ok_or("index missing sig")?;
-        let bundles_str = extract_bundles_str(&body).ok_or("index malformed")?;
-        if !verify_index(bundles_str, sig, &pubkey) {
-            return Err("index signature does not verify — wrong key or tampered index".into());
-        }
-        Ok(v)
+        verify_body(&body, &pubkey)
     })
     .await
     .map_err(|e| format!("fetch task failed: {e}"))?
+}
+
+/// Same fetch and verification as `marketplace_fetch_index`, but also returns
+/// the RAW BODY so the frontend can cache it verbatim. Caching the parsed
+/// value would be useless: `index.rs` signs the exact serialized `bundles`
+/// substring, so a re-serialized copy could not be verified again.
+#[tauri::command]
+pub async fn marketplace_fetch_index_body(
+    url: String,
+    pubkey: String,
+) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let base = url.trim_end_matches('/');
+        let body_bytes = get_capped(&format!("{base}/index.json"), FETCH_CAP)?;
+        let body = String::from_utf8(body_bytes).map_err(|_| "index not UTF-8".to_string())?;
+        let value = verify_body(&body, &pubkey)?;
+        Ok(serde_json::json!({ "body": body, "value": value }))
+    })
+    .await
+    .map_err(|e| format!("fetch task failed: {e}"))?
+}
+
+/// Re-verifies a body the frontend cached earlier. A cached index is not
+/// trusted just because it came from our own localStorage: the signature is
+/// what makes it trustworthy, and localStorage is writable by anything
+/// running in the webview.
+#[tauri::command]
+pub async fn marketplace_verify_index_body(
+    body: String,
+    pubkey: String,
+) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || verify_body(&body, &pubkey))
+        .await
+        .map_err(|e| format!("verify task failed: {e}"))?
+}
+
+/// The verification half of `marketplace_fetch_index`, factored out so the
+/// live fetch and the cache read cannot drift into two different checks.
+fn verify_body(body: &str, pubkey: &str) -> Result<serde_json::Value, String> {
+    let v: serde_json::Value =
+        serde_json::from_str(body).map_err(|e| format!("index not JSON: {e}"))?;
+    let sig = v.get("sig").and_then(|s| s.as_str()).ok_or("index missing sig")?;
+    let bundles_str = extract_bundles_str(body).ok_or("index malformed")?;
+    if !verify_index(bundles_str, sig, pubkey) {
+        return Err("index signature does not verify — wrong key or tampered index".into());
+    }
+    Ok(v)
 }
 
 fn content_dir<R: Runtime>(

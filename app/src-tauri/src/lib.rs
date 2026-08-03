@@ -118,6 +118,8 @@ pub fn run() {
             tiles::tiles_list,
             tiles::tiles_read,
             marketplace::marketplace_fetch_index,
+            marketplace::marketplace_fetch_index_body,
+            marketplace::marketplace_verify_index_body,
             marketplace::marketplace_fetch_preview,
             marketplace::marketplace_install,
             marketplace::marketplace_uninstall,
