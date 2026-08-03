@@ -189,6 +189,9 @@ commands.allow = [
   # tray (src/App.tsx).
   "set_close_to_tray",
 
+  # liquid glass — runtime acrylic behind the transparent window (src/App.tsx).
+  "set_glass",
+
   # sandbox proof token (src/components/viz-sandbox-surface.tsx). Keeps its own
   # `webview.label() != "main"` guard in sandbox.rs as well — the ACL is now the
   # outer gate, that check is the inner one.

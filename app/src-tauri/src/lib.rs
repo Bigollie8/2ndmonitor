@@ -17,6 +17,7 @@ mod discord;
 mod discord_rpc;
 mod docker_tile;
 mod foreground;
+mod glass;
 mod lyrics;
 mod market;
 mod mixer;
@@ -134,6 +135,7 @@ pub fn run() {
             secrets::secret_set,
             secrets::secret_delete,
             tray::set_close_to_tray,
+            glass::set_glass,
             sandbox::sandbox_token,
         ])
         .setup(|app| {

@@ -43,6 +43,8 @@ urlencoding = "2"
 tokio = { version = "1", features = ["rt", "rt-multi-thread"] }
 
 [target.'cfg(windows)'.dependencies]
+# Liquid glass (0.6.6): runtime acrylic behind the transparent main window.
+window-vibrancy = "0.6"
 # Temps (temps.rs): LibreHardwareMonitor sensors + ACPI thermal zone over WMI.
 # Serde-based deserialization of query rows is built into the crate.
 wmi = "0.15"
