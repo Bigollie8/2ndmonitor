@@ -205,6 +205,13 @@ struct AppCapture {
     exe: String,
     ring: Arc<Mutex<Vec<f32>>>,
     cap: Option<(u32, crate::audio_loopback::ProcessCapture)>,
+    /// Session pid observed for this exe at the last build or watcher pass —
+    /// tracked whether or not a capture is attached. This is what lets the
+    /// watcher tell "the same session is still there" (no evidence, no retry)
+    /// from "a session appeared or moved" (evidence of change, which re-arms
+    /// a failed `supported` for exactly one rebuild attempt). Bounds retries
+    /// on an unsupported OS to one per session transition, never per tick.
+    seen_pid: Option<u32>,
 }
 
 /// Whichever backend set currently feeds the FFT. `cpal::Stream` is `!Send`,
@@ -359,7 +366,7 @@ impl<R: Runtime> Supervisor<R> {
                         // session and rebuilds. This is a fact, not an error.
                         _ => None,
                     };
-                    caps.push(AppCapture { exe, ring, cap });
+                    caps.push(AppCapture { exe, ring, cap, seen_pid: pid });
                 }
                 // Publish EVERY selected ring, attached or not — a non-empty
                 // list is also how process_loop knows it's in apps mode (see
@@ -389,47 +396,63 @@ impl<R: Runtime> Supervisor<R> {
     /// happens only on real evidence of change (a dead capture, a session
     /// appearing or moving) — see the `stale` handling below.
     fn tick(&mut self) {
-        let stale = match &self.live {
-            Live::Apps(caps) => {
-                // Rebuild when reality drifted from what we built: a capture
-                // died (endpoint change kills process-loopback clients too),
-                // a session moved to a new pid (app restarted), or a silent
-                // slot's app now has a session. One COM snapshot for all
-                // slots. Anything else must produce no churn and no event.
-                let sessions = session_pairs();
-                let exes: Vec<String> = caps.iter().map(|c| c.exe.clone()).collect();
-                let pids = match_sessions(&exes, &sessions);
-                caps.iter().zip(&pids).any(|(c, now_pid)| match &c.cap {
-                    Some((pid, cap)) => !cap.is_alive() || *now_pid != Some(*pid),
-                    None => self.supported && now_pid.is_some(),
-                })
+        let stale = if let Live::Apps(caps) = &mut self.live {
+            // Rebuild when reality drifted from what we built: a capture
+            // died (endpoint change kills process-loopback clients too),
+            // a session moved to a new pid (app restarted), or a silent
+            // slot's app now has a session. One COM snapshot for all
+            // slots. Anything else must produce no churn and no event.
+            let sessions = session_pairs();
+            let exes: Vec<String> = caps.iter().map(|c| c.exe.clone()).collect();
+            let pids = match_sessions(&exes, &sessions);
+            let mut stale = false;
+            for (c, now_pid) in caps.iter_mut().zip(pids) {
+                // Session-transition EVIDENCE, computed before (and
+                // independent of) the `supported` gate — a new or moved
+                // session must count exactly once even after a failed
+                // activation, or `supported = false` becomes circular:
+                // no rebuild, so no re-arm, so no rebuild.
+                let changed = now_pid != c.seen_pid;
+                stale |= match &c.cap {
+                    Some((pid, cap)) => !cap.is_alive() || now_pid != Some(*pid),
+                    // A silent slot warrants a build when a session is
+                    // there and either activation is believed to work, or
+                    // the session is NEW evidence (appeared / moved) — the
+                    // transition that re-arms a failed `supported` below.
+                    None => now_pid.is_some() && (self.supported || changed),
+                };
+                // Track even when nothing rebuilds, so "the same session
+                // still sitting there" never reads as evidence twice: on
+                // an unsupported OS a continuously-running app yields
+                // `changed == false` on every later tick, bounding retries
+                // to one per genuine session transition.
+                c.seen_pid = now_pid;
             }
-            _ => {
-                // Mix mode (or nothing open): follow the default endpoint and
-                // rebuild a dead stream — unchanged 0.6.4 behavior. The
-                // `Live::None` guard means a machine with no audio device
-                // stays quiet instead of failing to open the mix every 2 s.
-                let now_id = crate::mixer::default_endpoint_id().ok();
-                let endpoint_moved = now_id != self.endpoint_id;
-                let mix_died = matches!(&self.live, Live::Mix(_, alive) if !alive.load(Ordering::Relaxed));
-                if endpoint_moved {
-                    eprintln!("audio: default output device changed, rebinding capture");
-                }
-                if mix_died {
-                    eprintln!("audio: mix capture stopped, rebuilding");
-                }
-                endpoint_moved || mix_died
+            stale
+        } else {
+            // Mix mode (or nothing open): follow the default endpoint and
+            // rebuild a dead stream — unchanged 0.6.4 behavior. The
+            // `Live::None` guard means a machine with no audio device
+            // stays quiet instead of failing to open the mix every 2 s.
+            let now_id = crate::mixer::default_endpoint_id().ok();
+            let endpoint_moved = now_id != self.endpoint_id;
+            let mix_died = matches!(&self.live, Live::Mix(_, alive) if !alive.load(Ordering::Relaxed));
+            if endpoint_moved {
+                eprintln!("audio: default output device changed, rebinding capture");
             }
+            if mix_died {
+                eprintln!("audio: mix capture stopped, rebuilding");
+            }
+            endpoint_moved || mix_died
         };
         if stale {
             // A rebuild triggered by real evidence of change (a dead capture,
             // a session appearing or moving) is a fresh start for per-app
             // activation: re-arm the sticky flag so a transient failure is
             // retried on this pass instead of sticking until the user
-            // re-touches the picker. A truly unsupported OS cannot loop
-            // through here: its failed build leaves every slot detached, and
-            // the only trigger a fully-detached set has — the attach check
-            // above — stays gated on `supported`.
+            // re-touches the picker. Bounded on a truly unsupported OS: the
+            // rebuilt slots record `seen_pid`, so an unchanged session
+            // produces no further evidence and no further retries.
             if matches!(self.live, Live::Apps(_)) {
                 self.supported = true;
             }
