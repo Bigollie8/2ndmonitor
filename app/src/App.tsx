@@ -989,7 +989,17 @@ export default function App() {
       case 'lightning':
         return <LightningTile density={t.density} accent={accent} location={t.weatherLocation} />;
       case 'aircraft':
-        return <AircraftTile density={t.density} accent={accent} location={t.weatherLocation} />;
+        return (
+          <AircraftTile
+            density={t.density}
+            accent={accent}
+            location={t.weatherLocation}
+            config={instance.config as Record<string, unknown> | undefined}
+            setConfig={(next) => updateActiveOrientation({
+              tiles: updateInstance(activeOrientation.tiles, instance.instanceId, { config: next }),
+            })}
+          />
+        );
       case 'activeWindow':
         return <ActiveWindowTile density={t.density} accent={accent} />;
       case 'docker':

@@ -1,5 +1,7 @@
 import React from 'react';
 import { HFTile } from './tiles';
+import { MapView, RecenterButton, type ProjectFn } from './map/MapView';
+import { useMapView } from './map/useMapView';
 import { fetchAircraftInBox } from '../state/opensky';
 import { distanceKm } from '../state/iss';
 import { usePoll } from '../state/usePoll';
@@ -7,14 +9,21 @@ import type { Density, WeatherLocation } from '../types';
 
 const REFRESH_MS = 60 * 1000;
 const RADIUS_KM = 80;
+const MAP_MIN_ZOOM = 4;
+const MAP_MAX_ZOOM = 12;
+const MAP_DEFAULT_ZOOM = 8;
+/** Callsign labels render at or above this zoom (spec: zoom ≥ 8). */
+const CALLSIGN_MIN_ZOOM = 8;
 
 export interface AircraftTileProps {
   density: Density;
   accent: string;
   location: WeatherLocation;
+  config: Record<string, unknown> | undefined;
+  setConfig: (next: Record<string, unknown>) => void;
 }
 
-export function AircraftTile({ density, accent, location }: AircraftTileProps) {
+export function AircraftTile({ density, accent, location, config, setConfig }: AircraftTileProps) {
   const { data, error, loading } = usePoll(
     async () => {
       const result = await fetchAircraftInBox(location.lat, location.lon, RADIUS_KM);
@@ -33,6 +42,45 @@ export function AircraftTile({ density, accent, location }: AircraftTileProps) {
     .map((p) => ({ ...p, dist: distanceKm(p.lat, p.lon, location.lat, location.lon) }))
     .sort((a, b) => a.dist - b.dist);
 
+  const { view, overridden, onViewChange, recenter } = useMapView({
+    anchor: { lat: location.lat, lon: location.lon },
+    defaultZoom: MAP_DEFAULT_ZOOM,
+    minZoom: MAP_MIN_ZOOM,
+    maxZoom: MAP_MAX_ZOOM,
+    config,
+    setConfig,
+  });
+
+  const drawPlanes = (ctx: CanvasRenderingContext2D, projectPt: ProjectFn) => {
+    // Anchor (weather location) dot.
+    const home = projectPt(location.lat, location.lon);
+    ctx.fillStyle = 'rgba(255,255,255,0.6)';
+    ctx.beginPath();
+    ctx.arc(home.x, home.y, 3, 0, Math.PI * 2);
+    ctx.fill();
+    // Heading-rotated plane glyphs (dart pointing to its heading).
+    for (const p of sorted) {
+      const pt = projectPt(p.lat, p.lon);
+      ctx.save();
+      ctx.translate(pt.x, pt.y);
+      ctx.rotate(p.heading * Math.PI / 180);
+      ctx.fillStyle = accent;
+      ctx.beginPath();
+      ctx.moveTo(0, -6);
+      ctx.lineTo(4.5, 5);
+      ctx.lineTo(0, 2.5);
+      ctx.lineTo(-4.5, 5);
+      ctx.closePath();
+      ctx.fill();
+      ctx.restore();
+      if (view.zoom >= CALLSIGN_MIN_ZOOM) {
+        ctx.font = '9px "JetBrains Mono", ui-monospace, monospace';
+        ctx.fillStyle = 'rgba(255,255,255,0.75)';
+        ctx.fillText((p.callsign || p.icao24).trim().slice(0, 8), pt.x + 7, pt.y + 3);
+      }
+    }
+  };
+
   const headRight = (
     <span style={{
       fontSize: 10,
@@ -50,47 +98,16 @@ export function AircraftTile({ density, accent, location }: AircraftTileProps) {
         display: 'flex', flexDirection: 'column',
         overflow: 'hidden',
       }}>
-        {/* Radar plot — circular, planes positioned by bearing+distance */}
-        <div style={{
-          flex: 1, minHeight: 0, position: 'relative',
-          background: 'radial-gradient(circle at 50% 50%, rgba(96,165,250,0.05) 0%, rgba(8,9,12,0.85) 70%)',
-        }}>
-          {[0.33, 0.66, 1.0].map((r) => (
-            <div key={r} style={{
-              position: 'absolute', left: '50%', top: '50%',
-              width: `${r * 90}%`, aspectRatio: '1 / 1',
-              borderRadius: '50%',
-              border: '1px solid rgba(255,255,255,0.06)',
-              transform: 'translate(-50%, -50%)',
-              pointerEvents: 'none',
-            }} />
-          ))}
-          <div style={{
-            position: 'absolute', left: '50%', top: '50%',
-            width: 6, height: 6, borderRadius: 999,
-            background: 'rgba(255,255,255,0.6)',
-            transform: 'translate(-50%, -50%)',
-          }} />
-          {sorted.map((p) => {
-            const dx = (p.lon - location.lon) * Math.cos(location.lat * Math.PI / 180);
-            const dy = (location.lat - p.lat);
-            const SCALE = 50 / (RADIUS_KM / 111);
-            const xPct = 50 + dx * SCALE;
-            const yPct = 50 + dy * SCALE;
-            return (
-              <div
-                key={p.icao24}
-                title={`${p.callsign || p.icao24} · ${Math.round(p.dist)} km · ${Math.round(p.altitude)} m`}
-                style={{
-                  position: 'absolute',
-                  left: `${xPct}%`, top: `${yPct}%`,
-                  width: 0, height: 0, color: accent,
-                  transform: `translate(-50%, -50%) rotate(${p.heading}deg)`,
-                  fontSize: 14, lineHeight: 1, pointerEvents: 'none',
-                }}
-              >▲</div>
-            );
-          })}
+        {/* Real slippy map with heading-rotated glyphs */}
+        <div style={{ flex: 1, minHeight: 0, position: 'relative', overflow: 'hidden' }}>
+          <MapView
+            view={view}
+            onViewChange={onViewChange}
+            minZoom={MAP_MIN_ZOOM}
+            maxZoom={MAP_MAX_ZOOM}
+            overlay={drawPlanes}
+          />
+          {overridden && <RecenterButton accent={accent} onClick={recenter} />}
         </div>
         {/* Closest list */}
         <div style={{
