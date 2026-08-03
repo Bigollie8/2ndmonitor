@@ -35,6 +35,8 @@ import { TRACKS, ACCENT_PALETTES } from './data';
 import { useTweaks } from './state/useTweaks';
 import type { AudioSource } from './state/audioSource';
 import { describeAudioSource, effectiveSensitivity, migrateAudioSource, migrateSensitivity } from './state/audioSource';
+import type { ClockFormatSetting } from './state/dateTime';
+import type { TempUnitSetting } from './state/units';
 import { useAudioSource } from './state/useAudioSource';
 import { UpdateToast } from './components/UpdateToast';
 import { useSysmon, useNowPlaying, useSpectrumRef } from './state/tauri';
@@ -174,6 +176,12 @@ interface TweakState extends Record<string, unknown> {
    *  can't reveal where you are. Pure presentation — data, settings, and
    *  polling are untouched. Off by default. */
   streamerMode: boolean;
+  /** Platform-wide clock format (0.7.2 §3). 'system' follows the OS locale —
+   *  today's behavior, so existing installs see no change. */
+  clockFormat: ClockFormatSetting;
+  /** Platform-wide temperature unit (0.7.2 §3). 'system' resolves by locale
+   *  (en-US → °F, most others → °C) — see state/units.ts. */
+  tempUnit: TempUnitSetting;
 }
 
 /** How long the viz surface will wait for boot seeding before giving up and
@@ -221,6 +229,8 @@ const TWEAK_DEFAULTS: TweakState = {
   pileRepaired: false,
   autoHideTopBar: false,
   streamerMode: false,
+  clockFormat: 'system',
+  tempUnit: 'system',
 };
 
 
