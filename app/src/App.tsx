@@ -35,8 +35,8 @@ import { TRACKS, ACCENT_PALETTES } from './data';
 import { useTweaks } from './state/useTweaks';
 import type { AudioSource } from './state/audioSource';
 import { describeAudioSource, effectiveSensitivity, migrateAudioSource, migrateSensitivity } from './state/audioSource';
-import type { ClockFormatSetting } from './state/dateTime';
-import type { TempUnitSetting } from './state/units';
+import { resolveHour12, type ClockFormatSetting } from './state/dateTime';
+import { resolveTempUnit, type TempUnit, type TempUnitSetting } from './state/units';
 import { useAudioSource } from './state/useAudioSource';
 import { UpdateToast } from './components/UpdateToast';
 import { useSysmon, useNowPlaying, useSpectrumRef } from './state/tauri';
@@ -938,6 +938,11 @@ export default function App() {
     ? { ...t.weatherLocation, label: redactLocation(t.weatherLocation.label, t.streamerMode) }
     : t.weatherLocation;
 
+  // Platform-wide formats (0.7.2 §3), resolved once per setting change and
+  // threaded to tiles as plain props — tiles never read tweaks directly.
+  const hour12 = useMemo(() => resolveHour12(t.clockFormat), [t.clockFormat]);
+  const tempUnit: TempUnit = useMemo(() => resolveTempUnit(t.tempUnit), [t.tempUnit]);
+
   const renderTile = (instance: TileInstance) => {
     switch (instance.type) {
       case 'discord':
@@ -959,7 +964,7 @@ export default function App() {
       case 'sysmon':
         return <SysMonTile density={t.density} accent={accent} accent2={accent2} />;
       case 'clock':
-        return <NowAndForecastTile density={t.density} accent={accent} accent2={accent2} streamer={t.streamerMode} />;
+        return <NowAndForecastTile density={t.density} accent={accent} accent2={accent2} streamer={t.streamerMode} hour12={hour12} tempUnit={tempUnit} />;
       case 'viz':
         return (
           <VizHero
