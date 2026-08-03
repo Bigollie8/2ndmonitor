@@ -746,6 +746,21 @@ export default function App() {
         const p = t.profiles[idx];
         if (p) setTweak('activeProfileId', p.id);
       }
+      else if (e.key === 'F11') {
+        // True window fullscreen — the Windows taskbar disappears on this
+        // monitor while active. Deliberately NOT persisted: the app always
+        // starts windowed. Guarded dynamic import, same pattern as the other
+        // invokes — in browser dev getCurrentWindow() throws and this is a
+        // clean no-op.
+        e.preventDefault();
+        void (async () => {
+          try {
+            const { getCurrentWindow } = await import('@tauri-apps/api/window');
+            const win = getCurrentWindow();
+            await win.setFullscreen(!(await win.isFullscreen()));
+          } catch { /* browser dev — no tauri */ }
+        })();
+      }
       else if (e.key === 'Escape') {
         if (showShortcuts) setShowShortcuts(false);
         else if (showContentLibrary) setShowContentLibrary(false);
@@ -1518,6 +1533,7 @@ const SHORTCUT_ROWS: ReadonlyArray<readonly [string, string]> = [
   ['⌘E', 'Edit layout'],
   ['⌘,', 'Settings'],
   ['⌘1/2/3', 'Switch profile'],
+  ['F11', 'Fullscreen'],
   ['Esc', 'Close overlays'],
   ['?', 'This overlay'],
 ];
