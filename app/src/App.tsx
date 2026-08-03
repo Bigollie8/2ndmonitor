@@ -4,6 +4,7 @@ import {
   DEFAULT_LANDSCAPE_LAYOUT,
   DEFAULT_PORTRAIT_LAYOUT,
   DEFAULT_BUNDLE_TILE_RECT,
+  CHROME_TOP_PX,
   migrateLegacyProfileToOrientations,
   useCanvas,
   useOrientation,
@@ -18,6 +19,7 @@ import {
   updateInstance,
   remapRetiredTileType,
   repairPileTiles,
+  reclampProfilesBelowChrome,
 } from './state/layout';
 import { seedStarterProfiles, PROFILE_DEFAULT_COLORS } from './state/starterProfiles';
 import { shouldPinTopBar } from './state/topBar';
@@ -845,6 +847,10 @@ export default function App() {
     showShortcuts, menuOpen: topBarMenuOpen,
   });
   const topBarHidden = t.autoHideTopBar && !topBarPinned && !topBarRevealed;
+  // 0.7.2 §2: when auto-hide is on, the top-chrome band is free for tiles —
+  // clamps/placement use 0 inset. When it's off, the bar is always painted so
+  // the reserved band stays CHROME_TOP_PX (unchanged pre-0.7.2 behavior).
+  const topInsetPx = t.autoHideTopBar ? 0 : CHROME_TOP_PX;
   const fallbackProfile = useMemo<Profile>(() => ({
     id: '_fallback', name: 'Default', color: '#a78bfa',
     landscape: { tiles: ALL_TILE_TYPES.map((type) => ({ instanceId: newId(), type, rect: DEFAULT_LANDSCAPE_LAYOUT[type] })) },
@@ -894,7 +900,7 @@ export default function App() {
   const addTileInstance = (type: TileType) => {
     const defaults = orientation === 'portrait' ? DEFAULT_PORTRAIT_LAYOUT : DEFAULT_LANDSCAPE_LAYOUT;
     const preferred = isBundleTile(type) ? DEFAULT_BUNDLE_TILE_RECT[orientation] : defaults[type];
-    const rect = findEmptyRect(activeOrientation.tiles.map((inst) => inst.rect), preferred, canvas);
+    const rect = findEmptyRect(activeOrientation.tiles.map((inst) => inst.rect), preferred, canvas, topInsetPx);
     updateActiveOrientation({
       tiles: addInstance(activeOrientation.tiles, { instanceId: newId(), type, rect }),
     });
@@ -1282,6 +1288,7 @@ export default function App() {
               rect={instance.rect}
               editing={editMode}
               snap={snapEnabled}
+              topInsetPx={topInsetPx}
               selected={selectedInstanceId === instance.instanceId}
               onSelect={() => setSelectedInstanceId(instance.instanceId)}
               onChange={(r) => updateActiveOrientation({
@@ -1320,6 +1327,7 @@ export default function App() {
             setSnap={setSnapEnabled}
             profileName={activeProfile.name}
             catalogRemoved={t.catalogRemoved}
+            topInsetPx={topInsetPx}
           />
         )}
         {showSwitcher && (
@@ -1405,7 +1413,17 @@ export default function App() {
           // TweakState is a strict superset of SettingsValues (same keys, same
           // types), but TS can't prove the per-key correspondence across two
           // generic signatures — hence the unknown bridge. Callers stay typed.
-          set={(key, value) => setTweak(key, value as unknown as TweakState[typeof key])}
+          set={(key, value) => {
+            // 0.7.2 §2: switching auto-hide OFF re-claims the top band — a
+            // one-time re-clamp of every profile/orientation so no tile stays
+            // under the persistent bar. (The latched 0.6.7 pile repair is a
+            // different migration and is untouched.)
+            if (key === 'autoHideTopBar' && value === false) {
+              const reclamped = reclampProfilesBelowChrome(t.profiles);
+              if (reclamped !== t.profiles) setTweak('profiles', reclamped);
+            }
+            setTweak(key, value as unknown as TweakState[typeof key]);
+          }}
           accent={accent}
           accent2={accent2}
           accentLinked={accentLinked}

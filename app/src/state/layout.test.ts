@@ -13,6 +13,8 @@ import {
   DEFAULT_LANDSCAPE_LAYOUT,
   DEFAULT_PORTRAIT_LAYOUT,
   removeTilesOfType,
+  reclampTilesBelowChrome,
+  reclampProfilesBelowChrome,
 } from './layout';
 import type { TileInstance } from './layout';
 
@@ -441,4 +443,58 @@ test('repairPileTiles: landscape pile — identical default rects overlap and ar
   ];
   const out = repairPileTiles(tiles, DEFAULT_LANDSCAPE_LAYOUT, DEFAULT_BUNDLE_TILE_RECT.landscape);
   assert.deepEqual(out.map((t) => t.instanceId), ['kept']);
+});
+
+test('clampRectFrac: topInsetPx 0 lets a rect sit at y=0 (0.7.2 §2)', () => {
+  const c = clampRectFrac({ x: 0.1, y: 0, w: 0.2, h: 0.2 }, { w: 2560, h: 1440 }, 0);
+  assert.equal(c.y, 0);
+});
+
+test('clampRectFrac: topInsetPx 0 still enforces bottom chrome and min size', () => {
+  const c = clampRectFrac({ x: 0.1, y: 0.99, w: 0.001, h: 0.001 }, { w: 2560, h: 1440 }, 0);
+  assert.ok(c.y + c.h <= 1 - 32 / 1440 + 1e-9);
+  assert.ok(c.w >= 200 / 2560 - 1e-9);
+});
+
+test('findEmptyRect: topInsetPx 0 opens the top band for placement (0.7.2 §2)', () => {
+  const canvas = { w: 2560, h: 1440 };
+  const topF = CHROME_TOP_PX / canvas.h;
+  // Wall of tiles covering everything BELOW the chrome band.
+  const wall = [{ x: 0, y: topF, w: 1, h: 1 - topF }];
+  const preferred = { x: 0.4, y: 0.5, w: 0.2, h: topF * 0.9 };
+  const withInset = findEmptyRect(wall, preferred, canvas);
+  assert.deepEqual(withInset, preferred); // no slot with the default inset → preferred returned
+  const freed = findEmptyRect(wall, preferred, canvas, 0);
+  assert.ok(freed.y < topF); // the freed band is now a valid slot
+  assert.equal(freed.w, preferred.w);
+  assert.equal(freed.h, preferred.h);
+});
+
+test('reclampTilesBelowChrome: moves banded tiles down, size preserved', () => {
+  const canvas = { w: 2560, h: 1440 };
+  const topF = CHROME_TOP_PX / canvas.h;
+  const banded = { instanceId: 'a', type: 'notes' as const, rect: { x: 0.1, y: 0, w: 0.3, h: 0.2 } };
+  const fine = { instanceId: 'b', type: 'clock' as const, rect: { x: 0.5, y: 0.5, w: 0.3, h: 0.2 } };
+  const out = reclampTilesBelowChrome([banded, fine], canvas);
+  assert.equal(out[0]!.rect.y, topF);
+  assert.equal(out[0]!.rect.w, 0.3);
+  assert.equal(out[0]!.rect.h, 0.2);
+  assert.equal(out[1], fine); // untouched tile keeps its reference
+});
+
+test('reclampTilesBelowChrome: nothing in the band → same array reference', () => {
+  const tiles = [{ instanceId: 'b', type: 'clock' as const, rect: { x: 0.5, y: 0.5, w: 0.3, h: 0.2 } }];
+  assert.equal(reclampTilesBelowChrome(tiles, { w: 2560, h: 1440 }), tiles);
+});
+
+test('reclampProfilesBelowChrome: sweeps both orientations of every profile', () => {
+  const mk = (y: number) => [{ instanceId: 'x', type: 'notes' as const, rect: { x: 0.1, y, w: 0.3, h: 0.2 } }];
+  const dirty = { id: 'p1', landscape: { tiles: mk(0) }, portrait: { tiles: mk(0.5) } };
+  const clean = { id: 'p2', landscape: { tiles: mk(0.5) }, portrait: { tiles: mk(0.5) } };
+  const out = reclampProfilesBelowChrome([dirty, clean]);
+  assert.ok(out[0]!.landscape.tiles[0]!.rect.y >= 56 / 1440 - 1e-9);
+  assert.equal(out[0]!.portrait.tiles[0]!.rect.y, 0.5);
+  assert.equal(out[1], clean); // clean profile keeps its reference
+  const cleanOnly = [clean];
+  assert.equal(reclampProfilesBelowChrome(cleanOnly), cleanOnly); // all-clean → same reference
 });

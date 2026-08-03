@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import type { Rect } from '../state/layout';
-import { MIN_SIZE_PX, clampRectFrac, snapFrac } from '../state/layout';
+import { MIN_SIZE_PX, CHROME_TOP_PX, clampRectFrac, snapFrac } from '../state/layout';
 
 type Mode =
   | { kind: 'idle' }
@@ -28,6 +28,7 @@ function getCanvasPx(): { w: number; h: number } {
 
 export function TileFrame({
   id, rect, editing, selected, onSelect, onChange, accent, children, snap: snapEnabled = true,
+  topInsetPx = CHROME_TOP_PX,
 }: {
   id: string;
   rect: Rect;
@@ -38,6 +39,7 @@ export function TileFrame({
   accent: string;
   children: React.ReactNode;
   snap?: boolean;
+  topInsetPx?: number;
 }) {
   const modeRef = useRef<Mode>({ kind: 'idle' });
   const onChangeRef = useRef(onChange);
@@ -46,6 +48,8 @@ export function TileFrame({
   // per `editing` change, so closure-captured props would go stale on toggle.
   const snapRef = useRef(snapEnabled);
   snapRef.current = snapEnabled;
+  const topInsetRef = useRef(topInsetPx);
+  topInsetRef.current = topInsetPx;
   const [, force] = useState(0);
 
   useEffect(() => {
@@ -87,7 +91,7 @@ export function TileFrame({
           next.h = Math.max(minHFrac, snapFrac(next.h));
         }
       }
-      onChangeRef.current(clampRectFrac(next, canvasPx));
+      onChangeRef.current(clampRectFrac(next, canvasPx, topInsetRef.current));
     };
     const onUp = () => {
       modeRef.current = { kind: 'idle' };
