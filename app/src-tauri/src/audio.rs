@@ -537,7 +537,12 @@ impl<R: Runtime> Supervisor<R> {
             }
         }
 
-        (Live::Apps(TapApps { slots, ring: ring.clone(), tap }), vec![ring], rate)
+        // Rings are read back off the built value rather than tracked
+        // alongside it, mirroring the Windows arm's
+        // `caps.iter().map(|c| c.ring.clone())` — one owner of the truth.
+        let apps = TapApps { slots, ring, tap };
+        let rings = vec![apps.ring.clone()];
+        (Live::Apps(apps), rings, rate)
     }
 
     /// One watcher pass, every `WATCH_INTERVAL`, on the supervisor thread.
