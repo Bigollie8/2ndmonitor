@@ -18,6 +18,7 @@ import type { InstalledTileFolder } from '../tiles/tileRegistry';
 import { bundleTileId } from '../tiles/tileRegistry';
 import type { InstalledVizFolder } from './contentRegistry';
 import { isFirstParty } from './firstParty';
+import { isNewer } from './appCompat';
 import { parsePermission } from '../sandbox/manifest';
 
 export type CatalogKind = 'tile' | 'visualizer' | 'preset';
@@ -171,19 +172,6 @@ export interface MergeCatalogArgs {
 }
 
 export const catalogKey = (kind: CatalogKind, id: string): string => `${kind}:${id}`;
-
-/** Newer-than comparison over dotted numeric versions. Non-numeric segments
- *  compare as 0, so a malformed version never reports an update — failing
- *  closed is right here: a spurious update badge invites a pointless install. */
-export function isNewer(available: string, installed: string): boolean {
-  const a = available.split('.').map((s) => Number.parseInt(s, 10) || 0);
-  const b = installed.split('.').map((s) => Number.parseInt(s, 10) || 0);
-  for (let i = 0; i < Math.max(a.length, b.length); i++) {
-    const x = a[i] ?? 0, y = b[i] ?? 0;
-    if (x !== y) return x > y;
-  }
-  return false;
-}
 
 export function mergeCatalog(args: MergeCatalogArgs): CatalogItem[] {
   const removed = new Set(args.removed);
@@ -366,6 +354,9 @@ export function mergeCatalog(args: MergeCatalogArgs): CatalogItem[] {
       ...item, installed: false, installedVersion: null, updateAvailable: false, removed: true,
     });
   }
+  // Ordering is the caller's decision now (state/catalogSort.ts). A stable
+  // A–Z here keeps `mergeCatalog`'s output deterministic for tests and for
+  // any consumer that does not sort, without claiming to be THE order.
   return out.sort((a, b) => a.name.localeCompare(b.name));
 }
 
