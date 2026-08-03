@@ -60,6 +60,10 @@ export interface SettingsValues {
   videoEnabled: boolean;
   videoBookmarks: Bookmark[];
   closeToTray: boolean;
+  /** Liquid glass — translucent surfaces + acrylic. See state/theme.ts. */
+  glassEnabled: boolean;
+  /** 0–100; 0 = clear glass, 100 = most opaque frosted. */
+  glassStrength: number;
   /** The catalog removal list — see state/removedContent.ts. Needed here
    *  because the Visualizer pane's style dropdown is a picker. */
   catalogRemoved: string[];
@@ -269,6 +273,23 @@ export function SettingsWindow({
               options={['compact', 'regular', 'spacious']}
               onChange={(x) => set('density', x)}
               accent={accent}
+            />
+          ),
+        },
+        {
+          id: 'appearance-glass', label: 'Liquid glass',
+          hint: 'See the desktop through the app (Windows acrylic). Adds GPU cost on top of the visualizer and can stutter while dragging the window.',
+          control: <Toggle checked={v.glassEnabled} onChange={(c) => set('glassEnabled', c)} accent={accent} />,
+        },
+        {
+          id: 'appearance-glass-strength', label: 'Glass strength',
+          hint: '0 = clear glass, 100 = opaque frosted',
+          control: (
+            <SliderControl
+              value={v.glassStrength} min={0} max={100} step={1}
+              format={(x) => `${Math.round(x)}`}
+              accent={accent}
+              onChange={(x) => set('glassStrength', x)}
             />
           ),
         },
