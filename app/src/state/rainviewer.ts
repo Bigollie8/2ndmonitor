@@ -64,3 +64,40 @@ function isFrame(x: unknown): x is RainViewerFrame {
 export function radarTileUrl(host: string, path: string, z: number, x: number, y: number): string {
   return `${host}${path}/256/${z}/${x}/${y}/2/1_1.png`;
 }
+
+// ── Radar loop controls (0.7.2 §1) ───────────────────────────────────────────
+// RainViewer serves exactly 13 past frames at 10-min steps = 2 h hard max, so
+// 120 is the ceiling; anything longer needs a different provider (parked).
+
+export type RadarSpeed = 'slow' | 'normal' | 'fast';
+export type RadarWindowMin = 30 | 60 | 120;
+
+export interface RadarConfig {
+  windowMin: RadarWindowMin;
+  speed: RadarSpeed;
+}
+
+/** Frame cadence per speed. 'fast' is the pre-0.7.2 hardcoded 500 ms;
+ *  'normal' (the new default) is the 1× feel. */
+export const RADAR_SPEED_MS: Record<RadarSpeed, number> = { slow: 1200, normal: 800, fast: 500 };
+
+/** Parse the tile's persisted `instance.config` blob. Same parse-with-fallback
+ *  pattern as parseMapView / parseDateTimeConfig; the blob is SHARED with the
+ *  map-view keys, so unknown keys are expected and ignored, and each field
+ *  falls back independently. */
+export function parseRadarConfig(raw: unknown): RadarConfig {
+  const fallback: RadarConfig = { windowMin: 60, speed: 'normal' };
+  if (!raw || typeof raw !== 'object') return fallback;
+  const c = raw as { windowMin?: unknown; speed?: unknown };
+  const windowMin: RadarWindowMin =
+    c.windowMin === 30 || c.windowMin === 60 || c.windowMin === 120 ? c.windowMin : 60;
+  const speed: RadarSpeed =
+    c.speed === 'slow' || c.speed === 'normal' || c.speed === 'fast' ? c.speed : 'normal';
+  return { windowMin, speed };
+}
+
+/** The loop window as a tail slice of the manifest's past frames (10-min
+ *  cadence): 30 min → 4 frames, 1 h → 7, 2 h → 13 (all of them). */
+export function radarFrameSlice<T>(past: T[], windowMin: RadarWindowMin): T[] {
+  return past.slice(-(windowMin / 10 + 1));
+}
