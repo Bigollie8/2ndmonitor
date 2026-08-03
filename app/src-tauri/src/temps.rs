@@ -17,6 +17,10 @@
 
 use serde::Serialize;
 
+use once_cell::sync::Lazy;
+use parking_lot::Mutex;
+use std::time::{Duration, Instant};
+
 /// One canonical part temperature, ready for the frontend chip strip.
 /// Serde style matches `SysmonSample`: derive Serialize, snake_case fields.
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -121,6 +125,135 @@ pub fn reduce_sensors(all: &[SensorRow]) -> Vec<TempReading> {
 /// `MSAcpi_ThermalZoneTemperature.CurrentTemperature` reports decikelvin.
 pub fn acpi_to_celsius(deci_kelvin: u32) -> f32 {
     deci_kelvin as f32 / 10.0 - 273.15
+}
+
+const CACHE_TTL: Duration = Duration::from_secs(5);
+
+/// Last reading + when it was taken. An empty Vec means "we looked and found
+/// nothing" — cached too, so a sensor-less machine doesn't re-query WMI on
+/// every tick.
+static CACHE: Lazy<Mutex<Option<(Instant, Vec<TempReading>)>>> =
+    Lazy::new(|| Mutex::new(None));
+
+/// Returns current per-part temps, refreshing at most every [`CACHE_TTL`].
+///
+/// `nvml_gpu_celsius` is the GPU temp sysmon.rs already reads via NVML —
+/// passed in so this module doesn't own an NVML handle. Returns `None` when
+/// no sensor source is available at all (frontend renders no strip).
+///
+/// Blocking: the WMI refresh takes tens of milliseconds. Callers MUST be on a
+/// background thread — in this app that is sysmon's sampler thread only.
+pub fn sample(nvml_gpu_celsius: Option<u32>) -> Option<Vec<TempReading>> {
+    let mut cache = CACHE.lock();
+    if let Some((at, cached)) = cache.as_ref() {
+        if at.elapsed() < CACHE_TTL {
+            return if cached.is_empty() { None } else { Some(cached.clone()) };
+        }
+    }
+    let fresh = read_now(nvml_gpu_celsius);
+    *cache = Some((Instant::now(), fresh.clone().unwrap_or_default()));
+    fresh
+}
+
+fn read_now(nvml_gpu_celsius: Option<u32>) -> Option<Vec<TempReading>> {
+    #[cfg(windows)]
+    {
+        if let Some(r) = windows_impl::read_lhm() {
+            return Some(r);
+        }
+    }
+    read_fallback(nvml_gpu_celsius)
+}
+
+/// Reader 2: ACPI thermal zone (CPU-adjacent) + the NVML GPU temp.
+/// Canonical order is kept: CPU before GPU.
+fn read_fallback(nvml_gpu_celsius: Option<u32>) -> Option<Vec<TempReading>> {
+    let mut out: Vec<TempReading> = Vec::new();
+    #[cfg(windows)]
+    if let Some(c) = windows_impl::read_acpi_zone() {
+        out.push(TempReading { label: "CPU".into(), celsius: c });
+    }
+    if let Some(t) = nvml_gpu_celsius {
+        out.push(TempReading { label: "GPU".into(), celsius: t as f32 });
+    }
+    if out.is_empty() {
+        None
+    } else {
+        Some(out)
+    }
+}
+
+#[cfg(windows)]
+mod windows_impl {
+    use super::{acpi_to_celsius, reduce_sensors, SensorRow, TempReading};
+    use serde::Deserialize;
+    use wmi::{COMLibrary, WMIConnection};
+
+    thread_local! {
+        /// COM must be initialized once per thread before any WMI call.
+        /// `sample()` only ever runs on the sysmon sampler thread, so this
+        /// initializes exactly once. `None` = COM init failed; WMI disabled.
+        static COM_LIB: Option<COMLibrary> = COMLibrary::new().ok();
+    }
+
+    /// LHM/OHM `Sensor` row. `rename_all = "PascalCase"` maps the fields onto
+    /// the WMI property names (Name, Value, Parent). SensorType is selected
+    /// (spec query) but not deserialized — serde ignores unknown keys.
+    #[derive(Deserialize)]
+    #[serde(rename_all = "PascalCase")]
+    struct WmiSensor {
+        name: String,
+        value: f32,
+        parent: String,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "PascalCase")]
+    struct AcpiZone {
+        current_temperature: u32,
+    }
+
+    const SENSOR_QUERY: &str =
+        "SELECT Name, Value, SensorType, Parent FROM Sensor WHERE SensorType='Temperature'";
+
+    /// Reader 1: LibreHardwareMonitor, then the older OpenHardwareMonitor
+    /// fork. Reconnects on every (5 s) refresh on purpose: the namespace only
+    /// exists while the monitor app runs, so a fresh connect is exactly what
+    /// makes the chips appear when the user starts LHM after our app.
+    pub(super) fn read_lhm() -> Option<Vec<TempReading>> {
+        let com = COM_LIB.with(|c| c.clone())?;
+        for ns in ["ROOT\\LibreHardwareMonitor", "ROOT\\OpenHardwareMonitor"] {
+            let Ok(conn) = WMIConnection::with_namespace_path(ns, com) else {
+                continue;
+            };
+            let Ok(rows) = conn.raw_query::<WmiSensor>(SENSOR_QUERY) else {
+                continue;
+            };
+            let rows: Vec<SensorRow> = rows
+                .into_iter()
+                .map(|r| SensorRow { name: r.name, value: r.value, parent: r.parent })
+                .collect();
+            let reduced = reduce_sensors(&rows);
+            if !reduced.is_empty() {
+                return Some(reduced);
+            }
+        }
+        None
+    }
+
+    /// ACPI thermal zone, exposed by some boards only. Decikelvin on the wire.
+    pub(super) fn read_acpi_zone() -> Option<f32> {
+        let com = COM_LIB.with(|c| c.clone())?;
+        let conn = WMIConnection::with_namespace_path("ROOT\\WMI", com).ok()?;
+        let zones = conn
+            .raw_query::<AcpiZone>(
+                "SELECT CurrentTemperature FROM MSAcpi_ThermalZoneTemperature",
+            )
+            .ok()?;
+        let c = zones.first().map(|z| acpi_to_celsius(z.current_temperature))?;
+        // Some boards report a constant bogus zone value; gate on plausibility.
+        (c > 5.0 && c < 110.0).then_some(c)
+    }
 }
 
 #[cfg(test)]
