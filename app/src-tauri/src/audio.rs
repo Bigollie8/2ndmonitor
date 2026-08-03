@@ -159,8 +159,9 @@ pub struct AudioSourceState {
     pub live_exes: Vec<String>,
     /// False once a process activation has failed — usually a Windows build
     /// without process loopback. Not a permanent verdict: an explicit
-    /// `audio_set_source` re-arms it and tries again, since the same `Err`
-    /// covers transient failures too.
+    /// `audio_set_source`, or a watcher rebuild triggered by real change (a
+    /// dead capture, a session appearing or moving), re-arms it and tries
+    /// again, since the same `Err` covers transient failures too.
     pub supported: bool,
     pub reason: Option<String>,
 }
@@ -320,10 +321,15 @@ impl<R: Runtime> Supervisor<R> {
                 let sessions = session_pairs();
                 let pids = match_sessions(&exes, &sessions);
                 let mut caps: Vec<AppCapture> = Vec::with_capacity(exes.len());
+                // Snapshot the sticky flag for this whole build: one exe's
+                // failed activation must never skip its sibling slots in the
+                // same build. The bit set below governs *future automatic*
+                // attempts, not this one.
+                let can_try = self.supported;
                 for (exe, pid) in exes.into_iter().zip(pids) {
                     let ring = Arc::new(Mutex::new(Vec::with_capacity(RING_CAP)));
                     let cap = match pid {
-                        Some(pid) if self.supported => {
+                        Some(pid) if can_try => {
                             match crate::audio_loopback::start(pid, false, ring.clone(), RING_CAP) {
                                 Ok(c) => {
                                     eprintln!("audio: process loopback on {exe} (pid {pid})");
@@ -331,12 +337,19 @@ impl<R: Runtime> Supervisor<R> {
                                 }
                                 Err(e) => {
                                     eprintln!("audio: process capture for {exe} failed: {e}");
-                                    // Stops *automatic* retries only — an
-                                    // explicit audio_set_source re-arms this
-                                    // (see the note in `supervisor`). NO
-                                    // fallback: the exe just stays silent.
+                                    // Suppresses the watcher's *attach*
+                                    // trigger until an explicit
+                                    // audio_set_source or a change-triggered
+                                    // rebuild re-arms it (see `tick` and the
+                                    // note in `supervisor`). NO fallback: the
+                                    // exe just stays silent.
                                     self.supported = false;
-                                    self.reason = Some(e);
+                                    // First failure wins — later slots in the
+                                    // same build must not clobber the reason
+                                    // the user is shown.
+                                    if self.reason.is_none() {
+                                        self.reason = Some(e);
+                                    }
                                     None
                                 }
                             }
@@ -371,8 +384,10 @@ impl<R: Runtime> Supervisor<R> {
     /// One watcher pass, every `WATCH_INTERVAL`, on the supervisor thread.
     /// Attach / rebuild ONLY — it never changes which source family is live
     /// (no fallback, ever), and it calls `apply` directly rather than posting
-    /// a `SetSource`, which would re-arm the sticky `supported` flag and
-    /// retry a hopeless activation forever.
+    /// a `SetSource`, which would re-arm the sticky `supported` flag on every
+    /// quiet tick and retry a hopeless activation forever. Re-arming here
+    /// happens only on real evidence of change (a dead capture, a session
+    /// appearing or moving) — see the `stale` handling below.
     fn tick(&mut self) {
         let stale = match &self.live {
             Live::Apps(caps) => {
@@ -407,6 +422,17 @@ impl<R: Runtime> Supervisor<R> {
             }
         };
         if stale {
+            // A rebuild triggered by real evidence of change (a dead capture,
+            // a session appearing or moving) is a fresh start for per-app
+            // activation: re-arm the sticky flag so a transient failure is
+            // retried on this pass instead of sticking until the user
+            // re-touches the picker. A truly unsupported OS cannot loop
+            // through here: its failed build leaves every slot detached, and
+            // the only trigger a fully-detached set has — the attach check
+            // above — stays gated on `supported`.
+            if matches!(self.live, Live::Apps(_)) {
+                self.supported = true;
+            }
             self.apply(self.requested.clone());
         }
     }
