@@ -24,7 +24,7 @@ export function Onboarding({ accent, profiles, onFinish }: {
   return (
     <div style={{
       position: 'absolute', inset: 0, zIndex: 90,
-      background: '#06070a',
+      background: 'var(--surface-canvas, #06070a)',
       display: 'flex', flexDirection: 'column',
     }}>
       <div style={{

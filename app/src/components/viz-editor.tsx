@@ -100,7 +100,7 @@ export function VizEditor({ id, accent, liveError, onClose }: {
   return (
     <div style={{
       position: 'absolute', inset: 0, zIndex: 10, display: 'flex', flexDirection: 'column',
-      background: 'rgba(8,9,13,0.97)',
+      background: 'var(--surface-overlay, rgba(8,9,13,0.97))',
     }}>
       <div style={{
         display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px',
