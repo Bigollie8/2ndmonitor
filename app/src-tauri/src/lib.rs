@@ -30,6 +30,7 @@ mod tiles;
 mod visualizers;
 mod spotify;
 mod sysmon;
+mod temps;
 mod tray;
 mod tweaks;
 mod weather;
