@@ -93,6 +93,17 @@ pub fn decide(requested: &Source, session_pid: Option<u32>) -> Active {
     }
 }
 
+/// Pure reduction for the capture supervisor: given one session snapshot as
+/// (lowercased exe, pid) pairs, the pid backing each selected exe — `None`
+/// when the app has no audio session right now (it contributes silence).
+/// First match wins when an app has several sessions, same as the 0.6.4
+/// `find_pid_for_exe` behavior.
+pub fn match_sessions(exes: &[String], sessions: &[(String, u32)]) -> Vec<Option<u32>> {
+    exes.iter()
+        .map(|want| sessions.iter().find(|(e, _)| e == want).map(|(_, pid)| *pid))
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -140,5 +151,27 @@ mod tests {
     fn exe_names_normalize_to_lowercase_on_parse() {
         let s: Source = serde_json::from_str(r#"{"mode":"only","exe":"Spotify.EXE"}"#).unwrap();
         assert_eq!(s, Source::Only { exe: "spotify.exe".into() });
+    }
+
+    #[test]
+    fn match_sessions_maps_each_exe_to_its_session_pid() {
+        let sessions = vec![
+            ("spotify.exe".to_string(), 100u32),
+            ("discord.exe".to_string(), 200u32),
+        ];
+        let exes = vec!["spotify.exe".to_string(), "game.exe".to_string()];
+        assert_eq!(match_sessions(&exes, &sessions), vec![Some(100), None]);
+    }
+
+    #[test]
+    fn match_sessions_takes_the_first_session_for_a_duplicated_exe() {
+        let sessions = vec![
+            ("spotify.exe".to_string(), 100u32),
+            ("spotify.exe".to_string(), 101u32),
+        ];
+        assert_eq!(
+            match_sessions(&["spotify.exe".to_string()], &sessions),
+            vec![Some(100)]
+        );
     }
 }

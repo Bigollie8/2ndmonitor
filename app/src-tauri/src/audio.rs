@@ -773,9 +773,34 @@ fn log_band_edges(bands: usize, max_bin: usize, sample_rate: f32, fmin: f32, fma
     edges
 }
 
+/// Sample-wise sum of the per-app captures for one FFT hop. Each input Vec is
+/// everything one capture pushed since the last hop (already mono, all pinned
+/// to `audio_loopback::CAPTURE_SAMPLE_RATE`); runs are aligned at the front
+/// and shorter runs are padded with silence, so an app that produced nothing
+/// (paused, muted, not running) simply contributes zeros. Clamped to [-1, 1]
+/// so four loud apps can't blow past full scale into the FFT. Pure — the
+/// caller drains each capture's ring and hands the drained Vecs here.
+///
+/// Cross-app alignment is deliberately loose: packet timing can skew apps by
+/// up to one hop (~30 ms) relative to each other, which is invisible in a
+/// spectrum display and avoids per-capture timestamp bookkeeping.
+pub fn mix_rings(drained: &[Vec<f32>]) -> Vec<f32> {
+    let len = drained.iter().map(|d| d.len()).max().unwrap_or(0);
+    let mut out = vec![0.0f32; len];
+    for d in drained {
+        for (i, s) in d.iter().enumerate() {
+            out[i] += *s;
+        }
+    }
+    for s in out.iter_mut() {
+        *s = s.clamp(-1.0, 1.0);
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
-    use super::sample_to_byte;
+    use super::{mix_rings, sample_to_byte};
 
     #[test]
     fn silence_maps_to_center() {
@@ -788,5 +813,38 @@ mod tests {
         assert_eq!(sample_to_byte(-1.5), 1);
         assert_eq!(sample_to_byte(1.0), 255);
         assert_eq!(sample_to_byte(-1.0), 1);
+    }
+
+    // -- mix_rings: the per-hop sample-wise sum of the per-app captures ----
+    // Values are chosen to be exact in binary floating point (quarters and
+    // halves) so equality assertions are legitimate.
+
+    #[test]
+    fn mix_sums_two_runs_sample_wise() {
+        assert_eq!(mix_rings(&[vec![0.25, 0.5], vec![0.25, -0.25]]), vec![0.5, 0.25]);
+    }
+
+    #[test]
+    fn mix_pads_shorter_runs_with_silence() {
+        // The app that produced less audio this hop contributes silence for
+        // the remainder — never stretched, never resampled.
+        assert_eq!(mix_rings(&[vec![0.5, 0.5, 0.5], vec![0.5]]), vec![1.0, 0.5, 0.5]);
+    }
+
+    #[test]
+    fn mix_clamps_to_unit_range() {
+        assert_eq!(mix_rings(&[vec![0.75], vec![0.75]]), vec![1.0]);
+        assert_eq!(mix_rings(&[vec![-0.75], vec![-0.75]]), vec![-1.0]);
+    }
+
+    #[test]
+    fn mix_of_single_run_passes_through() {
+        assert_eq!(mix_rings(&[vec![0.25, -0.5]]), vec![0.25, -0.5]);
+    }
+
+    #[test]
+    fn mix_of_nothing_is_nothing() {
+        assert_eq!(mix_rings(&[]), Vec::<f32>::new());
+        assert_eq!(mix_rings(&[vec![], vec![]]), Vec::<f32>::new());
     }
 }
