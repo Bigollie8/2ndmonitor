@@ -20,7 +20,8 @@ pub fn init(conn: &Connection) {
             email TEXT UNIQUE NOT NULL,
             pass_hash TEXT NOT NULL,
             verified INTEGER NOT NULL DEFAULT 0,
-            created_at INTEGER NOT NULL
+            created_at INTEGER NOT NULL,
+            display_name TEXT
         );
         CREATE TABLE IF NOT EXISTS tokens (
             token TEXT PRIMARY KEY,
@@ -46,6 +47,15 @@ pub fn init(conn: &Connection) {
             downloads INTEGER NOT NULL DEFAULT 0,
             created_at INTEGER NOT NULL,
             preview BLOB,
+            summary TEXT,
+            description TEXT,
+            category TEXT,
+            tags TEXT NOT NULL DEFAULT '[]',
+            icon TEXT,
+            changelog TEXT,
+            min_app_version TEXT,
+            featured INTEGER NOT NULL DEFAULT 0,
+            approved_at INTEGER,
             PRIMARY KEY (id, version)
         );
         CREATE TABLE IF NOT EXISTS ratings (
@@ -62,31 +72,50 @@ pub fn init(conn: &Connection) {
     )
     .expect("schema init");
 
-    migrate_add_preview_column(conn);
+    migrate(conn);
 }
 
 /// `CREATE TABLE IF NOT EXISTS` above only runs the full `CREATE TABLE` body
-/// against a database that has no `bundles` table yet. The live deployment
-/// already has one, with 15 published bundles, so adding `preview` to the
-/// literal `CREATE TABLE` text above is a no-op there — the statement is
-/// skipped entirely because the table already exists. Reaching an existing
-/// install requires an explicit `ALTER TABLE`, guarded by checking
-/// `PRAGMA table_info` first so this is safe (and a no-op) to call on every
-/// startup, including against a database that already has the column.
-fn migrate_add_preview_column(conn: &Connection) {
+/// against a database that has no such table yet. The live deployment already
+/// has `bundles` and `users`, so adding a column to the literal `CREATE TABLE`
+/// text above is a no-op there — the statement is skipped entirely because the
+/// table already exists. Reaching an existing install requires an explicit
+/// `ALTER TABLE`, guarded by checking `PRAGMA table_info` first so this is safe
+/// (and a no-op) to call on every startup, including against a database that
+/// already has the column.
+///
+/// Generalised from the original single-column `migrate_add_preview_column`
+/// when Market v2 added nine more. Note SQLite's rule: `ALTER TABLE ADD COLUMN`
+/// rejects `NOT NULL` without a `DEFAULT`, which is why `tags` and `featured`
+/// carry one and every other new column is nullable.
+fn ensure_column(conn: &Connection, table: &str, name: &str, decl: &str) {
     let mut stmt = conn
-        .prepare("PRAGMA table_info(bundles)")
+        .prepare(&format!("PRAGMA table_info({table})"))
         .expect("prepare table_info");
-    let has_preview = stmt
+    let present = stmt
         .query_map([], |row| row.get::<_, String>(1))
         .expect("query table_info")
         .filter_map(Result::ok)
-        .any(|name| name == "preview");
+        .any(|c| c == name);
     drop(stmt);
-    if !has_preview {
-        conn.execute("ALTER TABLE bundles ADD COLUMN preview BLOB", [])
-            .expect("add preview column");
+    if !present {
+        conn.execute(&format!("ALTER TABLE {table} ADD COLUMN {name} {decl}"), [])
+            .unwrap_or_else(|e| panic!("add column {table}.{name}: {e}"));
     }
+}
+
+fn migrate(conn: &Connection) {
+    ensure_column(conn, "bundles", "preview", "BLOB");
+    ensure_column(conn, "bundles", "summary", "TEXT");
+    ensure_column(conn, "bundles", "description", "TEXT");
+    ensure_column(conn, "bundles", "category", "TEXT");
+    ensure_column(conn, "bundles", "tags", "TEXT NOT NULL DEFAULT '[]'");
+    ensure_column(conn, "bundles", "icon", "TEXT");
+    ensure_column(conn, "bundles", "changelog", "TEXT");
+    ensure_column(conn, "bundles", "min_app_version", "TEXT");
+    ensure_column(conn, "bundles", "featured", "INTEGER NOT NULL DEFAULT 0");
+    ensure_column(conn, "bundles", "approved_at", "INTEGER");
+    ensure_column(conn, "users", "display_name", "TEXT");
 }
 
 pub fn now() -> i64 {
@@ -171,6 +200,101 @@ mod tests {
 
         // Re-running init (as happens on every server startup) must not
         // error out trying to add a column that is already there.
+        init(&conn);
+        init(&conn);
+    }
+
+    fn columns(conn: &Connection, table: &str) -> Vec<String> {
+        let mut stmt = conn.prepare(&format!("PRAGMA table_info({table})")).unwrap();
+        stmt.query_map([], |r| r.get::<_, String>(1))
+            .unwrap()
+            .filter_map(Result::ok)
+            .collect()
+    }
+
+    const NEW_BUNDLE_COLUMNS: &[&str] = &[
+        "summary", "description", "category", "tags", "icon", "changelog", "min_app_version",
+        "featured", "approved_at",
+    ];
+
+    #[test]
+    fn fresh_database_gets_every_market_v2_column() {
+        let conn = Connection::open_in_memory().unwrap();
+        init(&conn);
+        let cols = columns(&conn, "bundles");
+        for want in NEW_BUNDLE_COLUMNS {
+            assert!(cols.iter().any(|c| c == want), "bundles is missing {want}");
+        }
+        assert!(
+            columns(&conn, "users").iter().any(|c| c == "display_name"),
+            "users is missing display_name"
+        );
+    }
+
+    #[test]
+    fn live_shaped_database_gains_every_column_without_losing_rows() {
+        let conn = Connection::open_in_memory().unwrap();
+        // The live database's shape: `bundles` already exists WITH preview
+        // (that migration shipped), so `CREATE TABLE IF NOT EXISTS` is a no-op
+        // and only ALTER TABLE can reach it.
+        conn.execute_batch(
+            r#"
+            CREATE TABLE bundles (
+                id TEXT NOT NULL,
+                version TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                name TEXT NOT NULL,
+                author_id INTEGER NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
+                permissions TEXT NOT NULL DEFAULT '[]',
+                manifest TEXT NOT NULL,
+                code TEXT,
+                sha256 TEXT,
+                size INTEGER,
+                zip BLOB,
+                ai_report TEXT,
+                review_note TEXT,
+                downloads INTEGER NOT NULL DEFAULT 0,
+                created_at INTEGER NOT NULL,
+                preview BLOB,
+                PRIMARY KEY (id, version)
+            );
+            CREATE TABLE users (
+                id INTEGER PRIMARY KEY,
+                email TEXT UNIQUE NOT NULL,
+                pass_hash TEXT NOT NULL,
+                verified INTEGER NOT NULL DEFAULT 0,
+                created_at INTEGER NOT NULL
+            );
+            "#,
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO bundles (id, version, kind, name, author_id, manifest, created_at)
+             VALUES ('demo', '1.0', 'preset', 'Demo', 1, '{}', 0)",
+            [],
+        )
+        .unwrap();
+
+        init(&conn);
+
+        let cols = columns(&conn, "bundles");
+        for want in NEW_BUNDLE_COLUMNS {
+            assert!(cols.iter().any(|c| c == want), "migration missed {want}");
+        }
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM bundles", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, 1, "existing rows must survive the migration");
+
+        // `tags` has a NOT NULL default, so the pre-existing row must have been
+        // backfilled with it rather than left NULL.
+        let tags: String = conn
+            .query_row("SELECT tags FROM bundles WHERE id = 'demo'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(tags, "[]");
+
+        // Every startup re-runs init; adding an existing column must not error.
         init(&conn);
         init(&conn);
     }
