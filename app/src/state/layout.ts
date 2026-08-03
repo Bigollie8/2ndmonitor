@@ -266,10 +266,16 @@ export const DEFAULT_BUNDLE_TILE_RECT: Record<Orientation, Rect> = {
  *  pixel-based minimums (so tiles don't shrink below content readability) and
  *  pixel-based chrome reserved areas (top/bottom bars). Returned rect is also
  *  fractional. */
-export function clampRectFrac(r: Rect, canvasPx: { w: number; h: number }): Rect {
+export function clampRectFrac(
+  r: Rect,
+  canvasPx: { w: number; h: number },
+  /** Top reserved band in CSS px. 0 when the auto-hiding bar frees its space
+   *  (0.7.2 §2); the default keeps every untouched caller's behavior. */
+  topInsetPx: number = CHROME_TOP_PX,
+): Rect {
   const minW = MIN_SIZE_PX.w / canvasPx.w;
   const minH = MIN_SIZE_PX.h / canvasPx.h;
-  const topF = CHROME_TOP_PX / canvasPx.h;
+  const topF = topInsetPx / canvasPx.h;
   const botF = CHROME_BOTTOM_PX / canvasPx.h;
 
   const x = Math.max(0, Math.min(1 - minW, r.x));
@@ -404,12 +410,13 @@ export function findEmptyRect(
   visibleRects: Rect[],
   preferred: Rect,
   canvasPx: { w: number; h: number },
+  topInsetPx: number = CHROME_TOP_PX,
 ): Rect {
   const overlapsAny = (r: Rect) => visibleRects.some((v) => rectsOverlap(r, v));
 
   if (!overlapsAny(preferred)) return preferred;
 
-  const topF = CHROME_TOP_PX / canvasPx.h;
+  const topF = topInsetPx / canvasPx.h;
   const botF = CHROME_BOTTOM_PX / canvasPx.h;
   const xMax = 1 - preferred.w;
   const yMax = 1 - botF - preferred.h;
@@ -432,6 +439,60 @@ export function findEmptyRect(
   }
 
   return best ?? preferred;
+}
+
+/** Re-clamp only tiles that sit (partly) in the top-chrome band — the
+ *  one-time pass when auto-hide is switched OFF (0.7.2 §2): position shifts
+ *  down, size preserved (clampRectFrac semantics). Tiles already below the
+ *  band and fully-clean arrays are returned by reference so callers can skip
+ *  a state write. */
+export function reclampTilesBelowChrome(
+  tiles: TileInstance[],
+  canvasPx: { w: number; h: number },
+): TileInstance[] {
+  const topF = CHROME_TOP_PX / canvasPx.h;
+  let changed = false;
+  const next = tiles.map((t) => {
+    if (t.rect.y >= topF) return t;
+    changed = true;
+    return { ...t, rect: clampRectFrac(t.rect, canvasPx) };
+  });
+  return changed ? next : tiles;
+}
+
+/** Apply reclampTilesBelowChrome to BOTH orientations of EVERY profile —
+ *  autoHideTopBar is a global setting, so any profile could have tiles in the
+ *  band. Preserves references when nothing moved. The 0.6.7 pile repair is a
+ *  separate, latched migration — untouched by this.
+ *
+ *  `canvasByOrientation` must be the LIVE canvas per orientation, not a fixed
+ *  design-resolution reference: a fixed reference taller than the real
+ *  window (e.g. assuming 2560x1440 landscape when the live window is
+ *  1920x1080) re-clamps to a `y` fraction that is legal against the fake
+ *  reference but still under the real, shorter, persistent bar once
+ *  converted back through the live canvas — the tile is silently left banded.
+ *  The caller only has a live measurement for the orientation currently on
+ *  screen; the other orientation's canvas is necessarily an estimate. */
+export function reclampProfilesBelowChrome<P extends {
+  landscape: OrientationLayout;
+  portrait: OrientationLayout;
+}>(
+  profiles: P[],
+  canvasByOrientation: Record<Orientation, { w: number; h: number }>,
+): P[] {
+  let changed = false;
+  const next = profiles.map((p) => {
+    const landscape = reclampTilesBelowChrome(p.landscape.tiles, canvasByOrientation.landscape);
+    const portrait = reclampTilesBelowChrome(p.portrait.tiles, canvasByOrientation.portrait);
+    if (landscape === p.landscape.tiles && portrait === p.portrait.tiles) return p;
+    changed = true;
+    return {
+      ...p,
+      landscape: { ...p.landscape, tiles: landscape },
+      portrait: { ...p.portrait, tiles: portrait },
+    };
+  });
+  return changed ? next : profiles;
 }
 
 /** Built-in tiles that moved to the marketplace. A saved layout naming one is

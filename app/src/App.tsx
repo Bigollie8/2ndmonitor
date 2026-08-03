@@ -1,9 +1,10 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
-import type { TileType, BuiltinTileType, Layout, TileInstance, OrientationLayout, Rect } from './state/layout';
+import type { TileType, BuiltinTileType, Layout, TileInstance, OrientationLayout, Orientation, Rect } from './state/layout';
 import {
   DEFAULT_LANDSCAPE_LAYOUT,
   DEFAULT_PORTRAIT_LAYOUT,
   DEFAULT_BUNDLE_TILE_RECT,
+  CHROME_TOP_PX,
   migrateLegacyProfileToOrientations,
   useCanvas,
   useOrientation,
@@ -18,6 +19,7 @@ import {
   updateInstance,
   remapRetiredTileType,
   repairPileTiles,
+  reclampProfilesBelowChrome,
 } from './state/layout';
 import { seedStarterProfiles, PROFILE_DEFAULT_COLORS } from './state/starterProfiles';
 import { shouldPinTopBar } from './state/topBar';
@@ -35,6 +37,8 @@ import { TRACKS, ACCENT_PALETTES } from './data';
 import { useTweaks } from './state/useTweaks';
 import type { AudioSource } from './state/audioSource';
 import { describeAudioSource, effectiveSensitivity, migrateAudioSource, migrateSensitivity } from './state/audioSource';
+import { resolveHour12, type ClockFormatSetting } from './state/dateTime';
+import { resolveTempUnit, type TempUnit, type TempUnitSetting } from './state/units';
 import { useAudioSource } from './state/useAudioSource';
 import { UpdateToast } from './components/UpdateToast';
 import { useSysmon, useNowPlaying, useSpectrumRef } from './state/tauri';
@@ -174,6 +178,12 @@ interface TweakState extends Record<string, unknown> {
    *  can't reveal where you are. Pure presentation — data, settings, and
    *  polling are untouched. Off by default. */
   streamerMode: boolean;
+  /** Platform-wide clock format (0.7.2 §3). 'system' follows the OS locale —
+   *  today's behavior, so existing installs see no change. */
+  clockFormat: ClockFormatSetting;
+  /** Platform-wide temperature unit (0.7.2 §3). 'system' resolves by locale
+   *  (en-US → °F, most others → °C) — see state/units.ts. */
+  tempUnit: TempUnitSetting;
 }
 
 /** How long the viz surface will wait for boot seeding before giving up and
@@ -221,6 +231,8 @@ const TWEAK_DEFAULTS: TweakState = {
   pileRepaired: false,
   autoHideTopBar: false,
   streamerMode: false,
+  clockFormat: 'system',
+  tempUnit: 'system',
 };
 
 
@@ -835,6 +847,10 @@ export default function App() {
     showShortcuts, menuOpen: topBarMenuOpen,
   });
   const topBarHidden = t.autoHideTopBar && !topBarPinned && !topBarRevealed;
+  // 0.7.2 §2: when auto-hide is on, the top-chrome band is free for tiles —
+  // clamps/placement use 0 inset. When it's off, the bar is always painted so
+  // the reserved band stays CHROME_TOP_PX (unchanged pre-0.7.2 behavior).
+  const topInsetPx = t.autoHideTopBar ? 0 : CHROME_TOP_PX;
   const fallbackProfile = useMemo<Profile>(() => ({
     id: '_fallback', name: 'Default', color: '#a78bfa',
     landscape: { tiles: ALL_TILE_TYPES.map((type) => ({ instanceId: newId(), type, rect: DEFAULT_LANDSCAPE_LAYOUT[type] })) },
@@ -884,7 +900,7 @@ export default function App() {
   const addTileInstance = (type: TileType) => {
     const defaults = orientation === 'portrait' ? DEFAULT_PORTRAIT_LAYOUT : DEFAULT_LANDSCAPE_LAYOUT;
     const preferred = isBundleTile(type) ? DEFAULT_BUNDLE_TILE_RECT[orientation] : defaults[type];
-    const rect = findEmptyRect(activeOrientation.tiles.map((inst) => inst.rect), preferred, canvas);
+    const rect = findEmptyRect(activeOrientation.tiles.map((inst) => inst.rect), preferred, canvas, topInsetPx);
     updateActiveOrientation({
       tiles: addInstance(activeOrientation.tiles, { instanceId: newId(), type, rect }),
     });
@@ -928,6 +944,11 @@ export default function App() {
     ? { ...t.weatherLocation, label: redactLocation(t.weatherLocation.label, t.streamerMode) }
     : t.weatherLocation;
 
+  // Platform-wide formats (0.7.2 §3), resolved once per setting change and
+  // threaded to tiles as plain props — tiles never read tweaks directly.
+  const hour12 = useMemo(() => resolveHour12(t.clockFormat), [t.clockFormat]);
+  const tempUnit: TempUnit = useMemo(() => resolveTempUnit(t.tempUnit), [t.tempUnit]);
+
   const renderTile = (instance: TileInstance) => {
     switch (instance.type) {
       case 'discord':
@@ -947,9 +968,9 @@ export default function App() {
       case 'notes':
         return <NotesTile density={t.density} accent={accent} todos={t.todos} setTodos={(next) => setTweak('todos', next)} />;
       case 'sysmon':
-        return <SysMonTile density={t.density} accent={accent} accent2={accent2} />;
+        return <SysMonTile density={t.density} accent={accent} accent2={accent2} tempUnit={tempUnit} />;
       case 'clock':
-        return <NowAndForecastTile density={t.density} accent={accent} accent2={accent2} streamer={t.streamerMode} />;
+        return <NowAndForecastTile density={t.density} accent={accent} accent2={accent2} streamer={t.streamerMode} hour12={hour12} tempUnit={tempUnit} />;
       case 'viz':
         return (
           <VizHero
@@ -1007,6 +1028,7 @@ export default function App() {
               tiles: updateInstance(activeOrientation.tiles, instance.instanceId, { config: next }),
             })}
             redacted={t.streamerMode}
+            hour12={hour12}
           />
         );
       case 'pomodoro':
@@ -1027,6 +1049,7 @@ export default function App() {
             density={t.density}
             accent={accent}
             location={displayLocation}
+            hour12={hour12}
           />
         );
       case 'aurora':
@@ -1035,6 +1058,7 @@ export default function App() {
             density={t.density}
             accent={accent}
             location={displayLocation}
+            hour12={hour12}
           />
         );
       case 'airQuality':
@@ -1069,6 +1093,7 @@ export default function App() {
               tiles: updateInstance(activeOrientation.tiles, instance.instanceId, { config: next }),
             })}
             streamer={t.streamerMode}
+            hour12={hour12}
           />
         );
       case 'streamChat':
@@ -1171,6 +1196,7 @@ export default function App() {
             setConfig={(next) => updateActiveOrientation({
               tiles: updateInstance(activeOrientation.tiles, instance.instanceId, { config: next }),
             })}
+            hour12={hour12}
           />
         );
       default: {
@@ -1262,6 +1288,7 @@ export default function App() {
               rect={instance.rect}
               editing={editMode}
               snap={snapEnabled}
+              topInsetPx={topInsetPx}
               selected={selectedInstanceId === instance.instanceId}
               onSelect={() => setSelectedInstanceId(instance.instanceId)}
               onChange={(r) => updateActiveOrientation({
@@ -1300,6 +1327,7 @@ export default function App() {
             setSnap={setSnapEnabled}
             profileName={activeProfile.name}
             catalogRemoved={t.catalogRemoved}
+            topInsetPx={topInsetPx}
           />
         )}
         {showSwitcher && (
@@ -1385,7 +1413,26 @@ export default function App() {
           // TweakState is a strict superset of SettingsValues (same keys, same
           // types), but TS can't prove the per-key correspondence across two
           // generic signatures — hence the unknown bridge. Callers stay typed.
-          set={(key, value) => setTweak(key, value as unknown as TweakState[typeof key])}
+          set={(key, value) => {
+            // 0.7.2 §2: switching auto-hide OFF re-claims the top band — a
+            // one-time re-clamp of every profile/orientation so no tile stays
+            // under the persistent bar. (The latched 0.6.7 pile repair is a
+            // different migration and is untouched.)
+            if (key === 'autoHideTopBar' && value === false) {
+              // The live canvas (from useCanvas()) is only a real measurement
+              // for the CURRENT orientation. The other orientation has no
+              // live window to read — a rotated monitor is the closest real
+              // scenario, so its canvas is estimated as the current one with
+              // width/height swapped.
+              const rotatedCanvas = { w: canvas.h, h: canvas.w };
+              const canvasByOrientation: Record<Orientation, { w: number; h: number }> = orientation === 'landscape'
+                ? { landscape: canvas, portrait: rotatedCanvas }
+                : { landscape: rotatedCanvas, portrait: canvas };
+              const reclamped = reclampProfilesBelowChrome(t.profiles, canvasByOrientation);
+              if (reclamped !== t.profiles) setTweak('profiles', reclamped);
+            }
+            setTweak(key, value as unknown as TweakState[typeof key]);
+          }}
           accent={accent}
           accent2={accent2}
           accentLinked={accentLinked}

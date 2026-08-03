@@ -5,6 +5,32 @@ All notable changes to 2ndMonitor are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.7.2] - 2026-08-03
+
+### Added
+- **Radar loop controls**: hover the weather radar tile's footer for a
+  window switch (30 minutes / 1 hour / 2 hours) and a playback speed
+  (0.5×/1×/1.5×) — both apply live while the loop plays. 2 hours is the
+  longest window RainViewer's public feed offers; a longer-history
+  provider is a parked idea for a future release
+- **Auto-hide top bar frees its space**: with auto-hide on, tiles can now
+  be dragged into the band the bar used to reserve — the revealed bar
+  overlays them on top, the same way the Windows taskbar's auto-hide
+  works, so nothing reflows underneath. Turning auto-hide back off
+  re-clamps any tile still caught in the band, once, back below it
+- **Platform-wide time & temperature formats**: Settings → Appearance →
+  Time format (System/12h/24h) and Settings → Weather & location →
+  Temperature (System/°F/°C) now apply everywhere a clock or a
+  temperature is shown, including the forecast tile's hourly strip and
+  the system-monitor temps strip. This also fixes the forecast tile's
+  clock, which was ignoring Time format and always rendering 12-hour. The
+  sysmon CPU/GPU sub-line (e.g. "58°C") is unaffected by the Temperature
+  setting — it's the sensor's native hardware reading, not a converted
+  display value
+- **Date & time tile styles**: hover the tile to cycle digital (the 0.7.1
+  clock + date line), minimal (time only, larger), or analog — a canvas
+  clock face with hour, minute and second hands
+
 ## [0.7.1] - 2026-08-03
 
 ### Fixed

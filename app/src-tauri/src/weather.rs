@@ -48,6 +48,9 @@ pub struct DayForecast {
 #[derive(Debug, Serialize, Clone)]
 pub struct HourForecast {
     pub time: String,       // "8p" / "12a"
+    /// Raw 24-h hour (0-23), parsed from the same ISO timestamp as `time`.
+    /// Additive in 0.7.2 so the UI can honor the clock-format setting.
+    pub hour: u32,
     pub temp_f: f32,
     pub code: u32,
     pub icon: String,
@@ -210,6 +213,7 @@ fn fetch(loc: &WeatherLocation) -> Result<Weather, String> {
             let code = *resp.hourly.weather_code.get(i).unwrap_or(&0);
             HourForecast {
                 time: format_hour_label(ts),
+                hour: parse_hour(ts).unwrap_or(0),
                 temp_f: *resp.hourly.temperature_2m.get(i).unwrap_or(&0.0),
                 code,
                 icon: weather_icon(code).into(),
@@ -234,11 +238,15 @@ fn fetch(loc: &WeatherLocation) -> Result<Weather, String> {
     })
 }
 
+/// "2026-04-29T20:00" → Some(20). The additive `hour` payload field (0.7.2)
+/// and the legacy preformatted label both come from this one parse.
+fn parse_hour(iso: &str) -> Option<u32> {
+    iso.split('T').nth(1)?.split(':').next()?.parse::<u32>().ok()
+}
+
 /// "2026-04-29T20:00" → "8p"
 fn format_hour_label(iso: &str) -> String {
-    let Some(t) = iso.split('T').nth(1) else { return iso.to_string() };
-    let Some(h_str) = t.split(':').next() else { return t.to_string() };
-    let Ok(h) = h_str.parse::<u32>() else { return h_str.to_string() };
+    let Some(h) = parse_hour(iso) else { return iso.to_string() };
     let suffix = if h >= 12 { "p" } else { "a" };
     let h12 = ((h + 11) % 12) + 1;
     format!("{}{}", h12, suffix)
@@ -314,4 +322,25 @@ fn format_clock(iso: Option<&String>) -> String {
     let suffix = if h >= 12 { "p" } else { "a" };
     let h12 = ((h + 11) % 12) + 1;
     format!("{}:{}{}", h12, m_str, suffix)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{format_hour_label, parse_hour};
+
+    #[test]
+    fn parse_hour_reads_the_iso_hour() {
+        assert_eq!(parse_hour("2026-04-29T20:00"), Some(20));
+        assert_eq!(parse_hour("2026-04-29T00:00"), Some(0));
+        assert_eq!(parse_hour("2026-04-29T12:00"), Some(12));
+        assert_eq!(parse_hour("garbage"), None);
+    }
+
+    #[test]
+    fn format_hour_label_matches_the_shipped_shape() {
+        assert_eq!(format_hour_label("2026-04-29T20:00"), "8p");
+        assert_eq!(format_hour_label("2026-04-29T00:00"), "12a");
+        assert_eq!(format_hour_label("2026-04-29T12:00"), "12p");
+        assert_eq!(format_hour_label("garbage"), "garbage");
+    }
 }

@@ -37,9 +37,10 @@ export interface AuroraTileProps {
   density: Density;
   accent: string;
   location: WeatherLocation;
+  hour12: boolean;
 }
 
-export function AuroraTile({ density, accent, location }: AuroraTileProps) {
+export function AuroraTile({ density, accent, location, hour12 }: AuroraTileProps) {
   const [, setTick] = useState(0);
 
   // Fetch KP on mount + every 10 minutes. Both fetchers return [] on failure
@@ -115,7 +116,7 @@ export function AuroraTile({ density, accent, location }: AuroraTileProps) {
               {forecastBars.map((entry) => (
                 <div
                   key={entry.time}
-                  title={`Kp ${entry.kp.toFixed(1)} at ${new Date(entry.time * 1000).toLocaleTimeString([], { hour: 'numeric' })}`}
+                  title={`Kp ${entry.kp.toFixed(1)} at ${new Date(entry.time * 1000).toLocaleTimeString([], { hour: 'numeric', hour12 })}`}
                   style={{
                     flex: 1,
                     height: `${Math.max(8, (entry.kp / 9) * 100)}%`,
