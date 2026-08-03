@@ -35,6 +35,7 @@ import { describeAudioSource, effectiveSensitivity, migrateAudioSource, migrateS
 import { useAudioSource } from './state/useAudioSource';
 import { UpdateToast } from './components/UpdateToast';
 import { useSysmon, useNowPlaying, useSpectrumRef } from './state/tauri';
+import { applySurfaces, computeSurfaces, glassTintAlpha, DEFAULT_GLASS_STRENGTH } from './state/theme';
 import { setWindowHidden } from './state/framePace';
 import { VizHero, setVizDprCap, setVizMaxFps, getVizMaxFps } from './components/viz';
 import * as perfDebug from './perf/debug';
@@ -149,6 +150,12 @@ interface TweakState extends Record<string, unknown> {
   /** When true, the window close button hides to the system tray instead of
    *  quitting the app. Quit is then only available from the tray menu. */
   closeToTray: boolean;
+  /** Liquid glass: translucent surfaces + Windows acrylic behind the
+   *  transparent window. Off by default — glass off must render
+   *  pixel-identical to pre-0.6.6 (see state/theme.ts). */
+  glassEnabled: boolean;
+  /** 0–100. 0 = clear glass (acrylic cleared), 100 = most opaque frosted. */
+  glassStrength: number;
   todos: Todo[];
   weatherLocation: WeatherLocation;
   pomodoro: { state: PomodoroState; settings: PomodoroSettings };
@@ -193,6 +200,8 @@ const TWEAK_DEFAULTS: TweakState = {
   perfDebug: false,
   audioDebug: false,
   closeToTray: true,
+  glassEnabled: false,
+  glassStrength: DEFAULT_GLASS_STRENGTH,
   todos: [],
   weatherLocation: { label: 'Knoxville, TN', lat: 35.9606, lon: -83.9207 },
   pomodoro: {
@@ -496,6 +505,28 @@ export default function App() {
       } catch { /* browser dev — no tauri */ }
     })();
   }, [t.closeToTray]);
+
+  // Liquid glass: stamp the surface tokens on :root immediately (cheap — this
+  // is what makes the strength slider feel live) and mirror the acrylic state
+  // to the OS, debounced so a slider drag doesn't spam DWM once per
+  // pointermove. Runs on mount too, so a persisted glass-on state is applied
+  // right after tweaks hydrate (there is a brief opaque first paint before
+  // hydration flips glassEnabled — acceptable, it matches today's boot frame).
+  useEffect(() => {
+    applySurfaces(computeSurfaces(t.glassEnabled, t.glassStrength));
+    const timer = setTimeout(() => {
+      void (async () => {
+        try {
+          const { invoke } = await import('@tauri-apps/api/core');
+          await invoke('set_glass', {
+            enabled: t.glassEnabled,
+            tintAlpha: glassTintAlpha(t.glassStrength),
+          });
+        } catch { /* browser dev — no tauri */ }
+      })();
+    }, 150);
+    return () => clearTimeout(timer);
+  }, [t.glassEnabled, t.glassStrength]);
 
   // Push the chosen audio source to Rust whenever it changes. The tweak
   // store stays the single source of truth; Rust is a follower here — the
