@@ -962,7 +962,7 @@ export default function App() {
       case 'notes':
         return <NotesTile density={t.density} accent={accent} todos={t.todos} setTodos={(next) => setTweak('todos', next)} />;
       case 'sysmon':
-        return <SysMonTile density={t.density} accent={accent} accent2={accent2} />;
+        return <SysMonTile density={t.density} accent={accent} accent2={accent2} tempUnit={tempUnit} />;
       case 'clock':
         return <NowAndForecastTile density={t.density} accent={accent} accent2={accent2} streamer={t.streamerMode} hour12={hour12} tempUnit={tempUnit} />;
       case 'viz':
@@ -1022,6 +1022,7 @@ export default function App() {
               tiles: updateInstance(activeOrientation.tiles, instance.instanceId, { config: next }),
             })}
             redacted={t.streamerMode}
+            hour12={hour12}
           />
         );
       case 'pomodoro':
@@ -1042,6 +1043,7 @@ export default function App() {
             density={t.density}
             accent={accent}
             location={displayLocation}
+            hour12={hour12}
           />
         );
       case 'aurora':
@@ -1050,6 +1052,7 @@ export default function App() {
             density={t.density}
             accent={accent}
             location={displayLocation}
+            hour12={hour12}
           />
         );
       case 'airQuality':
@@ -1084,6 +1087,7 @@ export default function App() {
               tiles: updateInstance(activeOrientation.tiles, instance.instanceId, { config: next }),
             })}
             streamer={t.streamerMode}
+            hour12={hour12}
           />
         );
       case 'streamChat':
@@ -1186,6 +1190,7 @@ export default function App() {
             setConfig={(next) => updateActiveOrientation({
               tiles: updateInstance(activeOrientation.tiles, instance.instanceId, { config: next }),
             })}
+            hour12={hour12}
           />
         );
       default: {

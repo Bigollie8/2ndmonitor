@@ -6,6 +6,7 @@ import { type Playback, type SpectrumState, mediaControls, useSpotify, useSysmon
 import { useLyrics, currentLineIndex } from '../state/lyrics';
 import { mediaSourceFor, type MediaSourceInfo, type MediaSourceKind } from '../state/mediaSource';
 import { tempsToChips, tempsTooltip } from '../state/temps';
+import type { TempUnit } from '../state/units';
 import { Slider } from './Slider';
 
 export function HFTile({
@@ -820,7 +821,7 @@ export function NotesTile({
 }
 
 // ── Sysmon ───────────────────────────────────────────────────────────────────
-export function SysMonTile({ density, accent, accent2 }: { density: Density; accent: string; accent2: string }) {
+export function SysMonTile({ density, accent, accent2, tempUnit }: { density: Density; accent: string; accent2: string; tempUnit: TempUnit }) {
   // Subscribes itself so the 1Hz sample stream re-renders only this tile,
   // not the App root that used to own the subscription.
   const history = useSysmon();
@@ -837,7 +838,7 @@ export function SysMonTile({ density, accent, accent2 }: { density: Density; acc
     </div>
   );
   const top = history.latest.top.slice(0, 4);
-  const tempChips = tempsToChips(history.latest.temps);
+  const tempChips = tempsToChips(history.latest.temps, tempUnit);
   return (
     <HFTile title="System · live" density={density}
             headRight={<span style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)' }}>1Hz</span>}

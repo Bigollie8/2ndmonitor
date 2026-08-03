@@ -1,21 +1,23 @@
 import React, { useEffect, useState } from 'react';
 import { HFTile } from './tiles';
 import type { Density } from '../types';
-import { formatClock, formatDateLine, parseDateTimeConfig, systemHour12 } from '../state/dateTime';
+import { formatClock, formatDateLine, parseDateTimeConfig } from '../state/dateTime';
 
 export interface DateTimeTileProps {
   density: Density;
   accent: string;
   config: Record<string, unknown> | undefined;
   setConfig: (next: Record<string, unknown>) => void;
+  /** Resolved platform clock format — overrides systemHour12 when the tweak
+   *  isn't 'system'. */
+  hour12: boolean;
 }
 
 /** Large digital clock + full date line (0.7.1 §4). Honors the system
  *  12/24-hour preference via Intl resolved options. Seconds are per-instance
  *  config; the toggle appears on hover like other tiles' inline controls. */
-export function DateTimeTile({ density, accent, config, setConfig }: DateTimeTileProps) {
+export function DateTimeTile({ density, accent, config, setConfig, hour12 }: DateTimeTileProps) {
   const cfg = parseDateTimeConfig(config);
-  const hour12 = systemHour12();
   const [now, setNow] = useState(() => Date.now());
   const [hovered, setHovered] = useState(false);
 

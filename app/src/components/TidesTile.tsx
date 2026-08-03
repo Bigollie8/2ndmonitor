@@ -7,6 +7,7 @@ import {
   parseTidesConfig,
 } from '../state/tides';
 import { usePoll } from '../state/usePoll';
+import { formatClock } from '../state/dateTime';
 import type { Density } from '../types';
 import { redactLocation } from '../state/streamer';
 
@@ -20,9 +21,10 @@ export interface TidesTileProps {
   setConfig: (next: Record<string, unknown>) => void;
   /** Streamer mode (0.7.1 §2): masks the NOAA station label/id. */
   streamer?: boolean;
+  hour12: boolean;
 }
 
-export function TidesTile({ density, accent, editing, config, setConfig, streamer = false }: TidesTileProps) {
+export function TidesTile({ density, accent, editing, config, setConfig, streamer = false, hour12 }: TidesTileProps) {
   const parsed = useMemo(() => parseTidesConfig(config), [config]);
   const [now, setNow] = useState<number>(() => Date.now());
 
@@ -109,7 +111,7 @@ export function TidesTile({ density, accent, editing, config, setConfig, streame
                   <span style={{
                     flex: 1, color: 'rgba(255,255,255,0.85)',
                     fontFamily: '"JetBrains Mono", ui-monospace, monospace',
-                  }}>{formatTime(e.ts)}</span>
+                  }}>{formatTime(e.ts, hour12)}</span>
                   <span style={{
                     color: 'rgba(255,255,255,0.7)',
                     fontFamily: '"JetBrains Mono", ui-monospace, monospace',
@@ -224,8 +226,8 @@ const inputStyle: React.CSSProperties = {
   fontFamily: '"JetBrains Mono", ui-monospace, monospace', outline: 'none',
 };
 
-function formatTime(ts: number): string {
-  return new Date(ts).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+function formatTime(ts: number, hour12: boolean): string {
+  return formatClock(ts, { hour12 });
 }
 
 function formatRelative(min: number): string {

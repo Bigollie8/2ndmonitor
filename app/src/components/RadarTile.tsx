@@ -9,6 +9,7 @@ import {
   radarTileUrl,
 } from '../state/rainviewer';
 import { usePoll } from '../state/usePoll';
+import { formatClock } from '../state/dateTime';
 import type { Density, WeatherLocation } from '../types';
 
 const FRAME_INTERVAL_MS = 500;
@@ -30,9 +31,11 @@ export interface RadarTileProps {
   setConfig: (next: Record<string, unknown>) => void;
   /** Streamer mode (0.7.1 §2): blanks the map — see MapView.redacted. */
   redacted?: boolean;
+  /** Resolved platform clock format (0.7.2 §3). */
+  hour12: boolean;
 }
 
-export function RadarTile({ density, accent, location, config, setConfig, redacted = false }: RadarTileProps) {
+export function RadarTile({ density, accent, location, config, setConfig, redacted = false, hour12 }: RadarTileProps) {
   const [frameIndex, setFrameIndex] = useState<number>(0);
   // Spec: latest frame by default; the play button starts the animation.
   const [playing, setPlaying] = useState<boolean>(false);
@@ -169,7 +172,7 @@ export function RadarTile({ density, accent, location, config, setConfig, redact
               fontFamily: '"JetBrains Mono", ui-monospace, monospace',
               flexShrink: 0, minWidth: 110,
             }}>
-              {formatFrameTime(currentFrame, manifest)}
+              {formatFrameTime(currentFrame, manifest, hour12)}
             </span>
             <input
               type="range"
@@ -196,10 +199,9 @@ export function RadarTile({ density, accent, location, config, setConfig, redact
 /** Format frame time as "3:42 PM · -10 min" / "now" relative to the newest
  *  past frame ("now" boundary). `frames` only ever holds past frames (see
  *  `frames` above), so the offset is always ≤ 0 — never a future "+X min". */
-function formatFrameTime(frame: RainViewerFrame, manifest: RainViewerManifest | null): string {
+function formatFrameTime(frame: RainViewerFrame, manifest: RainViewerManifest | null, hour12: boolean): string {
   if (!manifest) return '';
-  const dt = new Date(frame.time * 1000);
-  const timeStr = dt.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  const timeStr = formatClock(frame.time * 1000, { hour12 });
 
   const lastPast = manifest.past[manifest.past.length - 1];
   if (!lastPast) return timeStr;
