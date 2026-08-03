@@ -68,6 +68,37 @@ pub fn init(conn: &Connection) {
             rated_at  INTEGER NOT NULL,
             PRIMARY KEY (bundle_id, user_id)
         );
+        CREATE TABLE IF NOT EXISTS bundle_media (
+            bundle_id TEXT NOT NULL,
+            version   TEXT NOT NULL,
+            idx       INTEGER NOT NULL,
+            kind      TEXT NOT NULL,        -- 'still' | 'anim'
+            mime      TEXT NOT NULL,        -- image/webp | image/png | image/gif
+            bytes     BLOB NOT NULL,
+            PRIMARY KEY (bundle_id, version, idx)
+        );
+        CREATE TABLE IF NOT EXISTS reviews (
+            bundle_id  TEXT NOT NULL,      -- no version: same rule as `ratings`,
+                                            -- a review is of the bundle, so
+                                            -- re-publishing must not wipe it.
+            user_id    INTEGER NOT NULL,
+            body       TEXT NOT NULL,
+            created_at INTEGER NOT NULL,
+            hidden     INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (bundle_id, user_id)
+        );
+        CREATE TABLE IF NOT EXISTS collections (
+            slug  TEXT PRIMARY KEY,
+            title TEXT NOT NULL,
+            blurb TEXT,
+            sort  INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE TABLE IF NOT EXISTS collection_items (
+            slug      TEXT NOT NULL,
+            bundle_id TEXT NOT NULL,
+            idx       INTEGER NOT NULL,
+            PRIMARY KEY (slug, bundle_id)
+        );
         "#,
     )
     .expect("schema init");
@@ -202,6 +233,70 @@ mod tests {
         // error out trying to add a column that is already there.
         init(&conn);
         init(&conn);
+    }
+
+    #[test]
+    fn fresh_database_gets_the_market_v2_tables() {
+        let conn = Connection::open_in_memory().unwrap();
+        init(&conn);
+        for table in ["bundle_media", "reviews", "collections", "collection_items"] {
+            let found: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?1",
+                    [table],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(found, 1, "missing table {table}");
+        }
+    }
+
+    #[test]
+    fn market_v2_tables_are_added_to_an_existing_database() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE bundles (id TEXT NOT NULL, version TEXT NOT NULL, kind TEXT NOT NULL,
+                 name TEXT NOT NULL, author_id INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'pending',
+                 permissions TEXT NOT NULL DEFAULT '[]', manifest TEXT NOT NULL, code TEXT,
+                 sha256 TEXT, size INTEGER, zip BLOB, ai_report TEXT, review_note TEXT,
+                 downloads INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL,
+                 PRIMARY KEY (id, version));",
+        )
+        .unwrap();
+        init(&conn);
+        let found: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='bundle_media'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(found, 1, "CREATE TABLE IF NOT EXISTS must still create new tables");
+    }
+
+    #[test]
+    fn one_review_per_user_per_bundle_is_enforced_by_the_primary_key() {
+        let conn = Connection::open_in_memory().unwrap();
+        init(&conn);
+        conn.execute(
+            "INSERT INTO reviews (bundle_id, user_id, body, created_at) VALUES ('a', 1, 'first', 0)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT OR REPLACE INTO reviews (bundle_id, user_id, body, created_at)
+             VALUES ('a', 1, 'second', 1)",
+            [],
+        )
+        .unwrap();
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM reviews", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, 1, "re-reviewing must replace, not stack");
+        let body: String = conn
+            .query_row("SELECT body FROM reviews", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(body, "second");
     }
 
     fn columns(conn: &Connection, table: &str) -> Vec<String> {
