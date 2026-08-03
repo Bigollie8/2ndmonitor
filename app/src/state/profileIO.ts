@@ -41,10 +41,27 @@ const REF_CANVAS = { w: 2560, h: 1440 };
 
 const FALLBACK_COLOR = '#a78bfa';
 
-/** Drop `mapView`; return undefined when nothing else remains. */
-function stripMapView(config: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
+/** Hard cap on tiles per orientation in an imported file. Defense-in-depth
+ *  against a crafted file forcing the parser to materialize an unbounded
+ *  array — no legitimate profile needs anywhere near this many tiles. */
+const MAX_TILES_PER_ORIENTATION = 200;
+
+/** Own-property keys that must never survive into a tile's `config`, so a
+ *  future unsafe merge (e.g. `for (const k in config) target[k] = ...`) can
+ *  never be tricked into rewriting an object's prototype. `mapView` is
+ *  dropped for privacy (see file header); the other three are dropped for
+ *  safety regardless of what they contain. */
+const DANGEROUS_CONFIG_KEYS = new Set(['mapView', '__proto__', 'constructor', 'prototype']);
+
+/** Drop `mapView` and any prototype-pollution-shaped keys; return undefined
+ *  when nothing else remains. */
+function sanitizeConfig(config: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
   if (!config) return undefined;
-  const { mapView: _mapView, ...rest } = config;
+  const rest: Record<string, unknown> = {};
+  for (const key of Object.keys(config)) {
+    if (DANGEROUS_CONFIG_KEYS.has(key)) continue;
+    rest[key] = config[key];
+  }
   return Object.keys(rest).length > 0 ? rest : undefined;
 }
 
@@ -53,7 +70,7 @@ export function buildProfileExport(profile: Profile): ProfileExportFile {
     tiles.map((t) => {
       const out: TileInstance = { instanceId: t.instanceId, type: t.type, rect: { ...t.rect } };
       if (t.name !== undefined) out.name = t.name;
-      const config = stripMapView(t.config);
+      const config = sanitizeConfig(t.config);
       if (config !== undefined) out.config = config;
       return out;
     });
@@ -85,7 +102,7 @@ function parseTile(raw: unknown): TileInstance | null {
   const out: TileInstance = { instanceId: newId(), type: t.type as TileInstance['type'], rect };
   if (typeof t.name === 'string') out.name = t.name;
   if (t.config && typeof t.config === 'object' && !Array.isArray(t.config)) {
-    const config = stripMapView(t.config as Record<string, unknown>);
+    const config = sanitizeConfig(t.config as Record<string, unknown>);
     if (config !== undefined) out.config = config;
   }
   return out;
@@ -95,6 +112,9 @@ function parseOrientation(raw: unknown, which: string): OrientationLayout | { er
   if (!raw || typeof raw !== 'object') return { error: `Missing ${which} layout.` };
   const tilesRaw = (raw as { tiles?: unknown }).tiles;
   if (!Array.isArray(tilesRaw)) return { error: `Missing ${which} tile list.` };
+  if (tilesRaw.length > MAX_TILES_PER_ORIENTATION) {
+    return { error: `Too many tiles in the ${which} layout (max ${MAX_TILES_PER_ORIENTATION}).` };
+  }
   const tiles: TileInstance[] = [];
   for (let i = 0; i < tilesRaw.length; i++) {
     const tile = parseTile(tilesRaw[i]);
@@ -131,6 +151,7 @@ export function parseProfileExport(raw: unknown): ParseProfileResult {
 /** Default save-dialog filename per spec: `<profile-name>.2ndmonitor-profile.json`,
  *  with Windows-forbidden filename characters removed. */
 export function exportFileName(profileName: string): string {
-  const safe = profileName.replace(/[\\/:*?"<>|]/g, '').trim() || 'profile';
+  // eslint-disable-next-line no-control-regex -- deliberately stripping ASCII control chars from a filename
+  const safe = profileName.replace(/[\\/:*?"<>|\x00-\x1F]/g, '').trim() || 'profile';
   return `${safe}.2ndmonitor-profile.json`;
 }
