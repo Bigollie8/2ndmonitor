@@ -21,33 +21,47 @@ export function AudioSourcePicker({ value, options, onChange, accent }: {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
 
-  // Close on any pointer-down outside the control (button + panel).
+  // Close on any pointer-down outside the control (button + panel), or on Escape.
   useEffect(() => {
     if (!open) return;
     const onDown = (e: PointerEvent) => {
       if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false);
     };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false);
+    };
     document.addEventListener('pointerdown', onDown);
-    return () => document.removeEventListener('pointerdown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('pointerdown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
   }, [open]);
 
   const selected = value.mode === 'apps' ? value.exes : [];
+  const liveExes = options.map((o) => o.exe);
   // A selected app that just quit is missing from `options` (the list only
   // holds live sessions) — union it in so its row still renders, checked,
   // and can be unchecked. Same trick the 0.6.4 <select> used.
   const rows: SourceOption[] = [...options];
+  const quitApps = new Set<string>();
   for (const exe of selected) {
-    if (!rows.some((o) => o.exe === exe)) rows.push({ exe, name: exe, icon: null });
+    if (!rows.some((o) => o.exe === exe)) {
+      rows.push({ exe, name: exe, icon: null });
+      quitApps.add(exe);
+    }
   }
   const atCap = selected.length >= MAX_AUDIO_APPS;
   const nameOf = (exe: string) => rows.find((o) => o.exe === exe)?.name ?? exe;
-  const label = describeAudioSource(value, nameOf, null);
+  const label = describeAudioSource(value, nameOf, liveExes);
 
   return (
     <div ref={rootRef} style={{ position: 'relative' }}>
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        aria-haspopup="listbox"
         title="What the visualizer listens to"
         style={{
           appearance: 'none',
@@ -87,13 +101,15 @@ export function AudioSourcePicker({ value, options, onChange, accent }: {
           )}
           {rows.map((o) => {
             const checked = selected.includes(o.exe);
+            const isQuit = quitApps.has(o.exe);
+            const displayLabel = isQuit ? `${o.name} (not running)` : o.name;
             return (
               <PickerRow
                 key={o.exe}
                 checked={checked}
                 disabled={!checked && atCap}
                 accent={accent}
-                label={o.name}
+                label={displayLabel}
                 icon={o.icon}
                 exclusive={false}
                 onClick={() => onChange(toggleAppInSource(value, o.exe))}
