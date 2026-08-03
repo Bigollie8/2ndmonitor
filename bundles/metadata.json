@@ -1,0 +1,429 @@
+{
+  "ambient": {
+    "summary": "Four soft colour blobs that drift and inflate with the low end",
+    "description": "Four large, softly-blurred colour blobs drift across the frame. Bass slowly inflates them and mid energy nudges their saturation, so the motion reads as breathing rather than beating. Migrated from the built-in ambient style; declares no permissions and does no networking.",
+    "category": "scene",
+    "tags": [
+      "ambient",
+      "slow",
+      "calm",
+      "blobs"
+    ],
+    "icon": "◍"
+  },
+  "aurora": {
+    "summary": "Aurora veils over a starfield and mountain silhouette",
+    "description": "Soft aurora curtains flow above a starfield sky and a mountain silhouette. Each curtain is tied to its own frequency band, so its shape bends with the music rather than only its brightness. Migrated from the built-in aurora style; no permissions, no network.",
+    "category": "scene",
+    "tags": [
+      "ambient",
+      "aurora",
+      "night",
+      "colourful"
+    ],
+    "icon": "◈",
+    "featured": true
+  },
+  "bars": {
+    "summary": "64-band bar chart with decaying peak-hold markers",
+    "description": "A classic 64-band vertical bar chart, each bar carrying a peak-hold marker that falls away slowly after a transient. The most legible way to actually read a spectrum. Migrated from the built-in bars style; no permissions, no network.",
+    "category": "spectrum",
+    "tags": [
+      "bars",
+      "classic",
+      "readable"
+    ],
+    "icon": "▤"
+  },
+  "cassette": {
+    "summary": "Tape deck with bass-driven reels and L/R VU meters",
+    "description": "An animated cassette deck: reels spun by bass energy, a label carrying a frequency-bar VU strip, and left/right VU meters. Falls back to SIDE A and NOW PLAYING when no track or playback state is reported. Migrated from the built-in cassette style.",
+    "category": "scene",
+    "tags": [
+      "retro",
+      "tape",
+      "vu",
+      "nowplaying"
+    ],
+    "icon": "▦"
+  },
+  "circular": {
+    "summary": "96 radial spokes around a bass-reactive glowing disc",
+    "description": "Ninety-six spokes radiate from a central disc that glows and swells with bass. Read from a 96-bin spectrum, so every spoke maps to its own band. Migrated from the built-in circular style; no permissions, no network.",
+    "category": "spectrum",
+    "tags": [
+      "radial",
+      "circular",
+      "glow"
+    ],
+    "icon": "◉"
+  },
+  "city": {
+    "summary": "Neon skyline whose windows light on their own frequency bin",
+    "description": "A night-time skyline silhouette under a moon that pulses with bass. Each foreground building window lights when its assigned frequency bin does, so the city reads as an equaliser you can look at. Migrated from the built-in city style.",
+    "category": "scene",
+    "tags": [
+      "neon",
+      "city",
+      "night",
+      "skyline"
+    ],
+    "icon": "▥"
+  },
+  "constellation": {
+    "summary": "Drifting particles that link to neighbours and scatter on kicks",
+    "description": "Seventy particles drift around wandering home positions, drawing lines to nearby neighbours as they pass. A kick shockwaves them outward before the springs pull them back. Migrated from the built-in constellation style.",
+    "category": "scene",
+    "tags": [
+      "particles",
+      "network",
+      "stars"
+    ],
+    "icon": "◇"
+  },
+  "freqgrid": {
+    "summary": "Scrolling 32x16 grid of frequency rows over time",
+    "description": "Sixteen frequency rows scroll across thirty-two columns of history, giving a compact picture of how the spectrum has moved over the last few seconds rather than only where it is now. Migrated from the built-in freqgrid style.",
+    "category": "spectrum",
+    "tags": [
+      "grid",
+      "history",
+      "scrolling"
+    ],
+    "icon": "▩"
+  },
+  "hud": {
+    "summary": "Fictional aircraft HUD driven by frequency bands and onsets",
+    "description": "Altitude and speed tapes, a compass ribbon, a pitch ladder and a bottom spectrum strip, all driven by frequency bands and onset detection. Entirely fictional instrumentation - it is a visualiser, not an instrument. Migrated from the built-in hud style.",
+    "category": "scene",
+    "tags": [
+      "hud",
+      "aviation",
+      "instruments"
+    ],
+    "icon": "◎"
+  },
+  "kaleidoscope": {
+    "summary": "Twelve rotating spectrum-scaled diamonds in screen blend",
+    "description": "Twelve diamonds rotate and scale from a twelve-bin spectrum read, blended with screen so overlaps brighten rather than occlude. Migrated from the built-in kaleidoscope style; no permissions, no network.",
+    "category": "scene",
+    "tags": [
+      "kaleidoscope",
+      "symmetry",
+      "blend"
+    ],
+    "icon": "◆"
+  },
+  "liquid": {
+    "summary": "Lava-lamp metaballs that swell and merge with bass",
+    "description": "Fluid metaball blobs swell, drift and merge under bass energy, with mid-driven highlight ripples running across their surfaces. Migrated from the built-in liquid style; no permissions, no network.",
+    "category": "scene",
+    "tags": [
+      "liquid",
+      "lava",
+      "organic",
+      "slow"
+    ],
+    "icon": "●"
+  },
+  "minimal": {
+    "summary": "Three dots pulsing to bass, mid and treble",
+    "description": "Three dots, one each for bass, mid and treble, sized by their band's energy. The quietest thing in the catalog and the one that survives being looked at all day. Migrated from the built-in minimal style.",
+    "category": "spectrum",
+    "tags": [
+      "minimal",
+      "calm",
+      "dots"
+    ],
+    "icon": "◌"
+  },
+  "neonbars": {
+    "summary": "56 glowing mirrored bars with heavy bloom",
+    "description": "Fifty-six mirrored bars scaled from a fifty-six-bin spectrum, drawn with enough glow to read as neon tubing rather than a chart. Migrated from the built-in neonbars style; no permissions, no network.",
+    "category": "spectrum",
+    "tags": [
+      "neon",
+      "bars",
+      "glow",
+      "mirrored"
+    ],
+    "icon": "▮"
+  },
+  "orbital": {
+    "summary": "Stacked rotating rings and comets around a pulsing sun",
+    "description": "Concentric rings rotate at different rates around a central sun that pulses with bass, each ring marked with frequency ticks and trailed by its own comet. Migrated from the built-in orbital style.",
+    "category": "scene",
+    "tags": [
+      "orbit",
+      "rings",
+      "space"
+    ],
+    "icon": "○"
+  },
+  "particles": {
+    "summary": "140 spring-and-drag particles that scatter on bass spikes",
+    "description": "A hundred and forty particles held by springs to wandering home positions, scattered outward by bass spikes and dragged back between beats. Migrated from the built-in particles style; no permissions, no network.",
+    "category": "scene",
+    "tags": [
+      "particles",
+      "physics",
+      "scatter"
+    ],
+    "icon": "⁘"
+  },
+  "perlin": {
+    "summary": "Glowing particles steered by a noise flow field",
+    "description": "A pseudo-Perlin noise field steers a swarm of glowing particles, with bass driving both drift speed and particle size. Migrated from the built-in perlin style; no permissions, no network.",
+    "category": "scene",
+    "tags": [
+      "flow",
+      "noise",
+      "particles",
+      "organic"
+    ],
+    "icon": "≈"
+  },
+  "pixelled": {
+    "summary": "Retro 32x20 LED grid with an accent-to-red heat map",
+    "description": "A thirty-two by twenty LED matrix coloured per cell with a heat map running from accent through accent2 to red, driven by a thirty-two-bin spectrum. Migrated from the built-in pixelled style.",
+    "category": "spectrum",
+    "tags": [
+      "retro",
+      "led",
+      "matrix",
+      "pixel"
+    ],
+    "icon": "▨"
+  },
+  "radial": {
+    "summary": "Slowly rotating ring of 96 mirrored spectrum spokes",
+    "description": "Ninety-six spokes mirrored around a slowly rotating circle, each scaled by its own spectrum bin. Migrated from the built-in radial style; no permissions, no network.",
+    "category": "spectrum",
+    "tags": [
+      "radial",
+      "rotation",
+      "mirrored"
+    ],
+    "icon": "◐"
+  },
+  "ribbon": {
+    "summary": "A single filled symmetric ribbon from a 48-bin spectrum",
+    "description": "One continuous symmetric ribbon, filled rather than stroked, shaped by a forty-eight-bin spectrum read. Migrated from the built-in ribbon style; no permissions, no network.",
+    "category": "wave",
+    "tags": [
+      "ribbon",
+      "smooth",
+      "symmetric"
+    ],
+    "icon": "◡"
+  },
+  "scope": {
+    "summary": "CRT-phosphor oscilloscope trace over a faint grid",
+    "description": "A phosphor-green oscilloscope trace rides a slow-moving carrier wave over a faint grid, its amplitude driven by the spectrum. Migrated from the built-in scope style; no permissions, no network.",
+    "category": "wave",
+    "tags": [
+      "oscilloscope",
+      "crt",
+      "retro",
+      "trace"
+    ],
+    "icon": "∿"
+  },
+  "spectrogram": {
+    "summary": "Scrolling waterfall heatmap of the spectrum over time",
+    "description": "Every frame's sixty-four-bin spectrum becomes a new colour column, scrolled in from the right - a waterfall of what the music has been doing, not just what it is doing. Migrated from the built-in spectrogram style.",
+    "category": "spectrum",
+    "tags": [
+      "waterfall",
+      "heatmap",
+      "history"
+    ],
+    "icon": "▧",
+    "featured": true
+  },
+  "splitmirror": {
+    "summary": "80 gradient bars mirrored around a glowing centre line",
+    "description": "Eighty gradient bars mirrored above and below a glowing centre line, each scaled from an eighty-bin spectrum read. Migrated from the built-in splitmirror style; no permissions, no network.",
+    "category": "spectrum",
+    "tags": [
+      "mirrored",
+      "bars",
+      "gradient"
+    ],
+    "icon": "◫"
+  },
+  "starfield": {
+    "summary": "Bass-warped 3D starfield with a kick-pulse depth flash",
+    "description": "Stars stream toward the viewer at a speed warped by bass, with a depth flash on every kick. Migrated from the built-in starfield style; no permissions, no network.",
+    "category": "scene",
+    "tags": [
+      "stars",
+      "space",
+      "depth",
+      "fast"
+    ],
+    "icon": "✳"
+  },
+  "strings": {
+    "summary": "Physically-modelled strings plucked by onset detection",
+    "description": "Vibrating strings across a fretboard, physically modelled rather than drawn: each is plucked on kick, snare and hat onset edges and continuously excited by its own spectrum bin. The most simulation-driven visualiser in the catalog.",
+    "category": "engine",
+    "tags": [
+      "physics",
+      "strings",
+      "simulation",
+      "onset"
+    ],
+    "icon": "≣",
+    "featured": true
+  },
+  "tunnel": {
+    "summary": "Six blurred waveform layers riding band energy",
+    "description": "Six layered waveform paths, each with its own blur, riding bass, mid and treble energy over a sixty-four-bin spectrum to read as depth. Migrated from the built-in tunnel style.",
+    "category": "wave",
+    "tags": [
+      "tunnel",
+      "layers",
+      "depth",
+      "blur"
+    ],
+    "icon": "◎"
+  },
+  "vinyl": {
+    "summary": "Spinning record with album art and a parking tonearm",
+    "description": "A turntable with the album art as its label, a kick-reactive glow ring, and a multi-piece SVG tonearm that swings in on play and parks when playback stops. Migrated from the built-in vinyl style.",
+    "category": "scene",
+    "tags": [
+      "vinyl",
+      "turntable",
+      "nowplaying",
+      "retro"
+    ],
+    "icon": "◉",
+    "featured": true
+  },
+  "waveform": {
+    "summary": "Gradient ribbon line biased toward the energetic low end",
+    "description": "A gradient ribbon line weighted toward the low and mid end of the spectrum and blended with overall loudness, so quiet passages thin out rather than flatline. Migrated from the built-in waveform style.",
+    "category": "wave",
+    "tags": [
+      "waveform",
+      "gradient",
+      "classic"
+    ],
+    "icon": "∼"
+  },
+  "tile-birds": {
+    "summary": "Recent bird sightings near you, from eBird",
+    "description": "Lists recent bird observations within a radius you choose, using the eBird public API. Needs a free eBird API key and a latitude/longitude; declares net access to api.ebird.org and nothing else.",
+    "category": "integrations",
+    "tags": [
+      "birds",
+      "nature",
+      "ebird",
+      "location"
+    ],
+    "icon": "✧"
+  },
+  "tile-dailychallenge": {
+    "summary": "Today's LeetCode daily problem, difficulty and acceptance",
+    "description": "Shows LeetCode's daily coding challenge - title, difficulty and acceptance rate, with a link through to the problem. Uses the public activeDailyCodingChallengeQuestion query; declares net access to leetcode.com only.",
+    "category": "productivity",
+    "tags": [
+      "coding",
+      "leetcode",
+      "daily",
+      "challenge"
+    ],
+    "icon": "◱"
+  },
+  "tile-dictionary": {
+    "summary": "First definition of a word you choose, key-less",
+    "description": "Looks up a word you configure in the Free Dictionary API and shows its first definition. Public and key-less; declares net access to api.dictionaryapi.dev only.",
+    "category": "productivity",
+    "tags": [
+      "dictionary",
+      "words",
+      "reference"
+    ],
+    "icon": "✎"
+  },
+  "tile-githubprs": {
+    "summary": "Open pull requests waiting on your review",
+    "description": "Lists open pull requests where your review has been requested, each linking through to GitHub. Needs a personal access token; declares net access to api.github.com and a stored github_pat secret.",
+    "category": "productivity",
+    "tags": [
+      "github",
+      "code-review",
+      "work"
+    ],
+    "icon": "◧",
+    "featured": true
+  },
+  "tile-launches": {
+    "summary": "Upcoming rocket launches with provider and window",
+    "description": "The next eight upcoming orbital launches with their status, provider and launch window, from The Space Devs' public launch library. Declares net access to ll.thespacedevs.com only.",
+    "category": "integrations",
+    "tags": [
+      "space",
+      "launches",
+      "rockets"
+    ],
+    "icon": "▲"
+  },
+  "tile-onthisday": {
+    "summary": "Historical events for a date you pick, from Wikipedia",
+    "description": "Events that happened on a given month and day, from Wikimedia's On This Day feed, each linking to its article. Declares net access to api.wikimedia.org only.",
+    "category": "integrations",
+    "tags": [
+      "history",
+      "wikipedia",
+      "daily"
+    ],
+    "icon": "◷"
+  },
+  "tile-phonenotifs": {
+    "summary": "Latest push from an ntfy topic you own",
+    "description": "Shows the most recent message on an ntfy.sh topic, which is a simple way to get phone notifications onto a second monitor. Needs the topic name as a stored secret; declares net access to ntfy.sh only.",
+    "category": "integrations",
+    "tags": [
+      "notifications",
+      "ntfy",
+      "phone"
+    ],
+    "icon": "◈"
+  },
+  "tile-quote": {
+    "summary": "Today's quote and author, refreshed hourly",
+    "description": "Fetches ZenQuotes' quote of the day every hour and shows it with its author. Public and key-less; declares net access to zenquotes.io only. Migrated from the built-in quote tile - same endpoint, same cadence.",
+    "category": "ambient",
+    "tags": [
+      "quote",
+      "daily",
+      "calm"
+    ],
+    "icon": "❋"
+  },
+  "tile-randomwiki": {
+    "summary": "A random Wikipedia article intro, refreshed hourly",
+    "description": "Pulls one random Wikipedia article each hour and shows its title and opening extract. Declares net access to en.wikipedia.org only.",
+    "category": "ambient",
+    "tags": [
+      "wikipedia",
+      "random",
+      "reading"
+    ],
+    "icon": "◫"
+  },
+  "tile-stocks": {
+    "summary": "One ticker's last price against its previous close",
+    "description": "Shows a single ticker's latest price with its previous close underneath, from Yahoo Finance's public chart endpoint. Declares net access to query1.finance.yahoo.com only.",
+    "category": "integrations",
+    "tags": [
+      "stocks",
+      "finance",
+      "ticker"
+    ],
+    "icon": "◲"
+  }
+}
