@@ -101,3 +101,44 @@ export function zoomAt(
   );
   return { center, zoom: newZoom };
 }
+
+export interface TileOnScreen {
+  z: number;
+  x: number;
+  y: number;
+  /** Top-left corner of the tile on the canvas, CSS px. */
+  sx: number;
+  sy: number;
+  /** On-screen edge length in CSS px (256 × 2^(zoom - z)). */
+  size: number;
+}
+
+/** Enumerate the base tiles covering a w×h viewport. Tiles come from the
+ *  integer zoom nearest the fractional view zoom, scaled to fit. X wraps
+ *  around the antimeridian; Y is clipped at the poles. */
+export function visibleTiles(view: MapViewState, w: number, h: number): TileOnScreen[] {
+  const tileZ = Math.min(MAX_TILE_Z, Math.max(MIN_TILE_Z, Math.round(view.zoom)));
+  const scale = Math.pow(2, view.zoom - tileZ);
+  const size = TILE_SIZE * scale;
+  const n = 1 << tileZ;
+  const c = latLonToWorld(view.center.lat, view.center.lon, tileZ);
+  // Visible world-px range at tileZ (canvas px / scale = world px).
+  const x0 = Math.floor((c.x - (w / 2) / scale) / TILE_SIZE);
+  const x1 = Math.ceil((c.x + (w / 2) / scale) / TILE_SIZE) - 1;
+  const y0 = Math.max(0, Math.floor((c.y - (h / 2) / scale) / TILE_SIZE));
+  const y1 = Math.min(n - 1, Math.ceil((c.y + (h / 2) / scale) / TILE_SIZE) - 1);
+  const tiles: TileOnScreen[] = [];
+  for (let ty = y0; ty <= y1; ty++) {
+    for (let tx = x0; tx <= x1; tx++) {
+      tiles.push({
+        z: tileZ,
+        x: ((tx % n) + n) % n,
+        y: ty,
+        sx: w / 2 + (tx * TILE_SIZE - c.x) * scale,
+        sy: h / 2 + (ty * TILE_SIZE - c.y) * scale,
+        size,
+      });
+    }
+  }
+  return tiles;
+}

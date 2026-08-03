@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import {
   TILE_SIZE, MAX_LAT, clampZoom, clampLat, wrapLon,
   latLonToWorld, worldToLatLon,
-  project, unproject, panBy, zoomAt,
+  project, unproject, panBy, zoomAt, visibleTiles,
 } from './slippy';
 
 const close = (a: number, b: number, eps = 1e-6) =>
@@ -125,4 +125,40 @@ test('zoomAt: clamps to maxZoom', () => {
 test('zoomAt: already at the clamp returns the view unchanged (same object)', () => {
   const v = { center: { lat: 40, lon: -3 }, zoom: 12 };
   assert.equal(zoomAt(v, 0.5, { x: 10, y: 10 }, { w: W, h: H }, 4, 12), v);
+});
+
+test('visibleTiles: 512×512 viewport at (0,0) z2 is exactly the middle 2×2 tiles', () => {
+  const tiles = visibleTiles({ center: { lat: 0, lon: 0 }, zoom: 2 }, 512, 512);
+  const key = (t: { x: number; y: number }) => `${t.x},${t.y}`;
+  assert.deepEqual(tiles.map(key).sort(), ['1,1', '1,2', '2,1', '2,2']);
+  for (const t of tiles) {
+    assert.equal(t.z, 2);
+    assert.equal(t.size, 256);
+  }
+  // The four tiles exactly cover the canvas: corners at 0 and 256.
+  const t11 = tiles.find((t) => key(t) === '1,1')!;
+  close(t11.sx, 0); close(t11.sy, 0);
+  const t22 = tiles.find((t) => key(t) === '2,2')!;
+  close(t22.sx, 256); close(t22.sy, 256);
+});
+
+test('visibleTiles: fractional zoom scales tiles from the nearest integer level', () => {
+  const tiles = visibleTiles({ center: { lat: 0, lon: 0 }, zoom: 2.5 }, 256, 256);
+  assert.ok(tiles.length > 0);
+  for (const t of tiles) {
+    assert.equal(t.z, 3); // round(2.5) = 3
+    close(t.size, 256 / Math.SQRT2, 1e-9);
+  }
+});
+
+test('visibleTiles: x wraps around the antimeridian, y is clipped at the poles', () => {
+  const tiles = visibleTiles({ center: { lat: 0, lon: 179 }, zoom: 2 }, 512, 256);
+  assert.ok(tiles.every((t) => t.x >= 0 && t.x <= 3 && t.y >= 0 && t.y <= 3));
+  assert.ok(tiles.some((t) => t.x === 0), 'expected a wrapped tile from the far side');
+});
+
+test('visibleTiles: near-polar view never asks for out-of-range y tiles', () => {
+  const tiles = visibleTiles({ center: { lat: 84, lon: 0 }, zoom: 2 }, 256, 1024);
+  assert.ok(tiles.length > 0);
+  assert.ok(tiles.every((t) => t.y >= 0 && t.y <= 3));
 });
