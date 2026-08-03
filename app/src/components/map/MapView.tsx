@@ -165,7 +165,11 @@ export function MapView({
     ro.observe(wrap);
     return () => {
       ro.disconnect();
-      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+      if (rafRef.current) {
+        cancelAnimationFrame(rafRef.current);
+        rafRef.current = 0; // StrictMode remounts synchronously; a stale non-zero
+        // handle here makes scheduleDraw's guard think a frame is still pending.
+      }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
