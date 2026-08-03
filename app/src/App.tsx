@@ -1198,7 +1198,12 @@ export default function App() {
           hidden={topBarHidden}
           onBarEnter={() => setTopBarRevealed(true)}
           onBarLeave={() => setTopBarRevealed(false)}
-          onMenuOpenChange={setTopBarMenuOpen}
+          // Only wired when the feature is on: when it's off topBarHidden is
+          // already unconditionally false (see the topBarHidden computation
+          // above), so topBarMenuOpen is dead state — skipping the setter
+          // here means TopChrome's report-up effect becomes a true no-op and
+          // toggling the ⋯ menu no longer re-renders App at all.
+          onMenuOpenChange={t.autoHideTopBar ? setTopBarMenuOpen : undefined}
           profiles={t.profiles}
           activeProfileId={t.activeProfileId}
           setActiveProfileId={(id) => setTweak('activeProfileId', id)}
@@ -1413,8 +1418,10 @@ function TopChrome({ accent, editMode, setEditMode, profiles, activeProfileId, s
   onBarEnter: () => void;
   onBarLeave: () => void;
   /** Reports the bar-LOCAL ⋯-menu state up so App's pin logic
-   *  (state/topBar.ts) can hold the bar open while the menu is up. */
-  onMenuOpenChange: (open: boolean) => void;
+   *  (state/topBar.ts) can hold the bar open while the menu is up. Optional:
+   *  App omits it entirely when the auto-hide feature is off, since the
+   *  pin decision is irrelevant then — see the call site in App(). */
+  onMenuOpenChange?: (open: boolean) => void;
 }) {
   const visibleProfiles = profiles.slice(0, 4);
   const overflow = Math.max(0, profiles.length - visibleProfiles.length);
@@ -1445,9 +1452,11 @@ function TopChrome({ accent, editMode, setEditMode, profiles, activeProfileId, s
 
   // Surface menuOpen to App (see the onMenuOpenChange prop doc). Effect, not
   // call-site wrapping: the menu closes from three places (toggle button,
-  // outside pointerdown, Esc) and this catches all of them.
+  // outside pointerdown, Esc) and this catches all of them. The `?.` makes
+  // this a true no-op when App omits the prop (auto-hide off) — no App
+  // re-render on every menu toggle in the common (feature-off) case.
   useEffect(() => {
-    onMenuOpenChange(menuOpen);
+    onMenuOpenChange?.(menuOpen);
   }, [menuOpen, onMenuOpenChange]);
 
   const ghostButton: React.CSSProperties = {
@@ -1464,14 +1473,33 @@ function TopChrome({ accent, editMode, setEditMode, profiles, activeProfileId, s
   };
 
   return (
-    <div onPointerEnter={onBarEnter} onPointerLeave={onBarLeave} style={{
-      position: 'absolute', top: 0, left: 0, right: 0, height: 56,
-      background: 'var(--surface-chrome, rgba(8,9,12,0.85))', backdropFilter: 'blur(10px)',
-      borderBottom: '1px solid rgba(255,255,255,0.05)',
-      display: 'flex', alignItems: 'center', padding: '0 18px', gap: 16, zIndex: 10,
-      transform: hidden ? 'translateY(-100%)' : 'translateY(0)',
-      transition: 'transform 150ms ease',
-    }}>
+    <div
+      onPointerEnter={onBarEnter} onPointerLeave={onBarLeave}
+      // Focus-driven reveal (0.6.7 §3 fix-up): tabbing into any control
+      // inside the hidden bar reveals it, and tabbing back out hides it
+      // again. `Capture` variants fire for focus moving between children
+      // too, so `onBlurCapture` checks `relatedTarget` against the bar's own
+      // subtree (via currentTarget, which is *this* div in a capture
+      // handler) to tell "focus moved to another control in the bar" apart
+      // from "focus left the bar" — the former must not hide it mid-tab.
+      // `relatedTarget === null` (blur to nowhere, e.g. window losing focus)
+      // is treated as focus-left. Because focus can never land on an
+      // invisible control, no aria-hidden/inert juggling is needed — the
+      // bar is guaranteed visible before anything inside it can be focused.
+      onFocusCapture={onBarEnter}
+      onBlurCapture={(e) => {
+        const next = e.relatedTarget as Node | null;
+        if (next === null || !e.currentTarget.contains(next)) onBarLeave();
+      }}
+      style={{
+        position: 'absolute', top: 0, left: 0, right: 0, height: 56,
+        background: 'var(--surface-chrome, rgba(8,9,12,0.85))', backdropFilter: 'blur(10px)',
+        borderBottom: '1px solid rgba(255,255,255,0.05)',
+        display: 'flex', alignItems: 'center', padding: '0 18px', gap: 16, zIndex: 10,
+        transform: hidden ? 'translateY(-100%)' : 'translateY(0)',
+        transition: 'transform 150ms ease',
+      }}
+    >
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
         <div style={{ width: 16, height: 16, borderRadius: 5, background: `linear-gradient(135deg, ${accent}, ${accent}99)`, boxShadow: `0 0 12px ${accent}66` }} />
         <span style={{ fontSize: 12, fontWeight: 700, letterSpacing: '-0.01em' }}>Hub</span>
