@@ -5,15 +5,18 @@
 pub mod admin;
 pub mod ai_review;
 pub mod auth;
+pub mod collections;
 pub mod db;
 pub mod index;
 pub mod keys;
 pub mod manifest;
+pub mod media;
 pub mod ratings;
+pub mod reviews;
 pub mod state;
 pub mod submit;
 
-use axum::routing::{patch, post};
+use axum::routing::{delete, patch, post};
 use axum::{routing::get, Json, Router};
 use parking_lot::Mutex;
 use serde_json::json;
@@ -40,6 +43,14 @@ pub fn router(state: AppState) -> Router {
         .route("/index.json", get(index::index_json))
         .route("/bundle/:id/:version", get(index::download))
         .route("/bundle/:id/:version/preview", get(index::preview))
+        .route("/bundle/:id/:version/media/:idx", get(media::get_media))
+        .route("/admin/bundles/:id/:version/media", post(media::put_media))
+        .route("/admin/bundles/:id/:version/media/:idx", delete(media::delete_media))
+        .route("/collections", get(collections::list))
+        .route("/admin/collections", post(collections::upsert))
+        .route("/admin/collections/:slug", delete(collections::remove))
+        .route("/reviews", get(reviews::list).post(reviews::post))
+        .route("/admin/reviews/:bundle_id/:user_id/hide", post(reviews::hide))
         .with_state(state)
 }
 

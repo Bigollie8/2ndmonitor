@@ -94,13 +94,24 @@ pub async fn index_json(State(state): State<AppState>) -> Result<Response, Statu
         .into_response())
 }
 
+/// Preserved for 0.7.x clients, which fetch this path directly. Prefers
+/// `bundle_media` index 0 and falls back to the legacy `bundles.preview` blob,
+/// which is what every bundle published before Market v2 carries.
 pub async fn preview(
     State(state): State<AppState>,
     Path((id, version)): Path<(String, String)>,
 ) -> Result<Response, StatusCode> {
-    let bytes: Vec<u8> = state
-        .db
-        .lock()
+    let db = state.db.lock();
+    if let Ok((mime, bytes)) = db.query_row(
+        "SELECT m.mime, m.bytes FROM bundle_media m
+         JOIN bundles b ON b.id = m.bundle_id AND b.version = m.version
+         WHERE m.bundle_id = ?1 AND m.version = ?2 AND m.idx = 0 AND b.status = 'approved'",
+        rusqlite::params![id, version],
+        |r| Ok((r.get::<_, String>(0)?, r.get::<_, Vec<u8>>(1)?)),
+    ) {
+        return Ok(([(header::CONTENT_TYPE, mime)], bytes).into_response());
+    }
+    let bytes: Vec<u8> = db
         .query_row(
             "SELECT preview FROM bundles WHERE id = ?1 AND version = ?2 AND status = 'approved' AND preview IS NOT NULL",
             rusqlite::params![id, version],
