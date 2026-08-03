@@ -4,7 +4,7 @@ import { MapView, RecenterButton, type ProjectFn } from './map/MapView';
 import { useMapView } from './map/useMapView';
 import { type BlitzortungStatus, type LightningStrike, connectBlitzortung } from '../state/blitzortung';
 import { distanceKm } from '../state/iss';
-import { REDACTED_TEXT } from '../state/streamer';
+import { redactLocation } from '../state/streamer';
 import { TileError } from './tileStates';
 import type { Density, WeatherLocation } from '../types';
 
@@ -112,7 +112,7 @@ export function LightningTile({ density, accent, location, config, setConfig, re
       <span style={{
         fontSize: 10, color: 'rgba(255,255,255,0.55)',
         fontFamily: '"JetBrains Mono", ui-monospace, monospace',
-      }}>{fresh.length} strikes · {redacted ? REDACTED_TEXT : `${RADIUS_KM} km`}</span>
+      }}>{fresh.length} strikes · {redactLocation(`${RADIUS_KM} km`, redacted)}</span>
       <StatusDot status={status} />
     </div>
   );
@@ -153,11 +153,11 @@ export function LightningTile({ density, accent, location, config, setConfig, re
         }}>
           {closest ? (
             <>
-              <span>closest <span style={{ color: '#facc15' }}>{redacted ? REDACTED_TEXT : `${Math.round(closest.distance)} km`}</span></span>
+              <span>closest <span style={{ color: '#facc15' }}>{redactLocation(`${Math.round(closest.distance)} km`, redacted)}</span></span>
               <span>{Math.round((now - closest.timeMs) / 1000)}s ago</span>
             </>
           ) : (
-            <span style={{ color: 'rgba(255,255,255,0.4)' }}>{redacted ? `no recent strikes within ${REDACTED_TEXT}` : `no recent strikes within ${RADIUS_KM} km`}</span>
+            <span style={{ color: 'rgba(255,255,255,0.4)' }}>no recent strikes within {redactLocation(`${RADIUS_KM} km`, redacted)}</span>
           )}
         </div>
       </div>

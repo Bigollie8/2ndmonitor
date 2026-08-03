@@ -925,7 +925,7 @@ export default function App() {
   // the raw saved location. lat/lon are byte-identical (fetches and usePoll
   // deps unaffected) — only the human-readable label is masked.
   const displayLocation: WeatherLocation = t.streamerMode
-    ? { ...t.weatherLocation, label: redactLocation(t.weatherLocation.label, true) }
+    ? { ...t.weatherLocation, label: redactLocation(t.weatherLocation.label, t.streamerMode) }
     : t.weatherLocation;
 
   const renderTile = (instance: TileInstance) => {

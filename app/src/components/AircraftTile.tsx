@@ -5,7 +5,7 @@ import { useMapView } from './map/useMapView';
 import { fetchAircraftInBox } from '../state/opensky';
 import { distanceKm } from '../state/iss';
 import { usePoll } from '../state/usePoll';
-import { REDACTED_TEXT } from '../state/streamer';
+import { redactLocation } from '../state/streamer';
 import type { Density, WeatherLocation } from '../types';
 
 const REFRESH_MS = 60 * 1000;
@@ -91,7 +91,7 @@ export function AircraftTile({ density, accent, location, config, setConfig, red
       color: error ? '#fca5a5' : 'rgba(255,255,255,0.55)',
       fontFamily: '"JetBrains Mono", ui-monospace, monospace',
     }} title={error ?? undefined}>
-      {loading ? '…' : error ? 'OpenSky error' : `${planes.length} · ${redacted ? REDACTED_TEXT : `${RADIUS_KM} km`}`}
+      {loading ? '…' : error ? 'OpenSky error' : `${planes.length} · ${redactLocation(`${RADIUS_KM} km`, redacted)}`}
     </span>
   );
 
