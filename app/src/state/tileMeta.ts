@@ -64,4 +64,5 @@ export const TILE_META: Record<BuiltinTileType, TileMeta> = {
   activeWindow: { icon: '▢', label: 'Active windows', description: 'Time spent per app today', multiInstance: false, category: 'system' },
   docker: { icon: '◫', label: 'Docker', description: 'Local container list + running state', multiInstance: false, category: 'system' },
   energy: { icon: '⌁', label: 'Energy', description: 'Solar production + grid consumption from HA', multiInstance: false, category: 'system', needsKey: true },
+  dateTime: { icon: '◔', label: 'Date & time', description: 'Large clock with a full date line, optional seconds', multiInstance: true, category: 'productivity' },
 };

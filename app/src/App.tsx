@@ -96,6 +96,7 @@ const AircraftTile = lazy(() => import('./components/AircraftTile').then((m) => 
 const ActiveWindowTile = lazy(() => import('./components/ActiveWindowTile').then((m) => ({ default: m.ActiveWindowTile })));
 const DockerTile = lazy(() => import('./components/DockerTile').then((m) => ({ default: m.DockerTile })));
 const EnergyTile = lazy(() => import('./components/EnergyTile').then((m) => ({ default: m.EnergyTile })));
+const DateTimeTile = lazy(() => import('./components/DateTimeTile').then((m) => ({ default: m.DateTimeTile })));
 const DeclarativeTile = lazy(() => import('./components/DeclarativeTile').then((m) => ({ default: m.DeclarativeTile })));
 const MissingTileCard = lazy(() => import('./components/MissingTileCard').then((m) => ({ default: m.MissingTileCard })));
 
@@ -1137,6 +1138,17 @@ export default function App() {
             accent={accent}
             accent2={accent2}
             editing={editMode}
+            config={instance.config as Record<string, unknown> | undefined}
+            setConfig={(next) => updateActiveOrientation({
+              tiles: updateInstance(activeOrientation.tiles, instance.instanceId, { config: next }),
+            })}
+          />
+        );
+      case 'dateTime':
+        return (
+          <DateTimeTile
+            density={t.density}
+            accent={accent}
             config={instance.config as Record<string, unknown> | undefined}
             setConfig={(next) => updateActiveOrientation({
               tiles: updateInstance(activeOrientation.tiles, instance.instanceId, { config: next }),
