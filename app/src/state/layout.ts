@@ -460,26 +460,30 @@ export function reclampTilesBelowChrome(
   return changed ? next : tiles;
 }
 
-/** Reference canvases for re-clamping an orientation that isn't live on the
- *  current window — the same design resolutions behind SNAP_FRAC, the legacy
- *  px→fraction conversion, and profileIO's REF_CANVAS. */
-export const REF_CANVAS_BY_ORIENTATION: Record<Orientation, { w: number; h: number }> = {
-  landscape: { w: 2560, h: 1440 },
-  portrait: { w: 1080, h: 1920 },
-};
-
 /** Apply reclampTilesBelowChrome to BOTH orientations of EVERY profile —
  *  autoHideTopBar is a global setting, so any profile could have tiles in the
  *  band. Preserves references when nothing moved. The 0.6.7 pile repair is a
- *  separate, latched migration — untouched by this. */
+ *  separate, latched migration — untouched by this.
+ *
+ *  `canvasByOrientation` must be the LIVE canvas per orientation, not a fixed
+ *  design-resolution reference: a fixed reference taller than the real
+ *  window (e.g. assuming 2560x1440 landscape when the live window is
+ *  1920x1080) re-clamps to a `y` fraction that is legal against the fake
+ *  reference but still under the real, shorter, persistent bar once
+ *  converted back through the live canvas — the tile is silently left banded.
+ *  The caller only has a live measurement for the orientation currently on
+ *  screen; the other orientation's canvas is necessarily an estimate. */
 export function reclampProfilesBelowChrome<P extends {
   landscape: OrientationLayout;
   portrait: OrientationLayout;
-}>(profiles: P[]): P[] {
+}>(
+  profiles: P[],
+  canvasByOrientation: Record<Orientation, { w: number; h: number }>,
+): P[] {
   let changed = false;
   const next = profiles.map((p) => {
-    const landscape = reclampTilesBelowChrome(p.landscape.tiles, REF_CANVAS_BY_ORIENTATION.landscape);
-    const portrait = reclampTilesBelowChrome(p.portrait.tiles, REF_CANVAS_BY_ORIENTATION.portrait);
+    const landscape = reclampTilesBelowChrome(p.landscape.tiles, canvasByOrientation.landscape);
+    const portrait = reclampTilesBelowChrome(p.portrait.tiles, canvasByOrientation.portrait);
     if (landscape === p.landscape.tiles && portrait === p.portrait.tiles) return p;
     changed = true;
     return {

@@ -491,10 +491,27 @@ test('reclampProfilesBelowChrome: sweeps both orientations of every profile', ()
   const mk = (y: number) => [{ instanceId: 'x', type: 'notes' as const, rect: { x: 0.1, y, w: 0.3, h: 0.2 } }];
   const dirty = { id: 'p1', landscape: { tiles: mk(0) }, portrait: { tiles: mk(0.5) } };
   const clean = { id: 'p2', landscape: { tiles: mk(0.5) }, portrait: { tiles: mk(0.5) } };
-  const out = reclampProfilesBelowChrome([dirty, clean]);
+  const canvasByOrientation = { landscape: LANDSCAPE, portrait: PORTRAIT };
+  const out = reclampProfilesBelowChrome([dirty, clean], canvasByOrientation);
   assert.ok(out[0]!.landscape.tiles[0]!.rect.y >= 56 / 1440 - 1e-9);
   assert.equal(out[0]!.portrait.tiles[0]!.rect.y, 0.5);
   assert.equal(out[1], clean); // clean profile keeps its reference
   const cleanOnly = [clean];
-  assert.equal(reclampProfilesBelowChrome(cleanOnly), cleanOnly); // all-clean → same reference
+  assert.equal(reclampProfilesBelowChrome(cleanOnly, canvasByOrientation), cleanOnly); // all-clean → same reference
+});
+
+test('reclampProfilesBelowChrome: uses the LIVE canvas per orientation, not a fixed reference (0.7.2 §2 fix, 1080p repro)', () => {
+  // Bug this guards against: a fixed 2560x1440 reference clamps a banded
+  // tile's y to 56/1440 ≈ 0.038889. Converted back through a real, shorter
+  // 1920x1080 window that is 0.038889 * 1080 ≈ 42px — still under the real
+  // 56px bar, permanently. Passing the LIVE canvas fixes it: y must land at
+  // exactly 56/1080 (≈ 0.051852), which is >= the real bar on that canvas.
+  const mk = (y: number) => [{ instanceId: 'x', type: 'notes' as const, rect: { x: 0.1, y, w: 0.3, h: 0.2 } }];
+  const live1080 = { w: 1920, h: 1080 };
+  const dirty = { id: 'p1', landscape: { tiles: mk(0) }, portrait: { tiles: mk(0.5) } };
+  const out = reclampProfilesBelowChrome([dirty], { landscape: live1080, portrait: PORTRAIT });
+  assert.equal(out[0]!.landscape.tiles[0]!.rect.y, CHROME_TOP_PX / live1080.h);
+  // The old bug's y (56/1440, i.e. 42px on a 1080-tall canvas) is NOT
+  // reached — the fix lands strictly higher (further from the bar).
+  assert.ok(out[0]!.landscape.tiles[0]!.rect.y > 56 / 1440);
 });

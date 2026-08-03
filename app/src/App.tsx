@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
-import type { TileType, BuiltinTileType, Layout, TileInstance, OrientationLayout, Rect } from './state/layout';
+import type { TileType, BuiltinTileType, Layout, TileInstance, OrientationLayout, Orientation, Rect } from './state/layout';
 import {
   DEFAULT_LANDSCAPE_LAYOUT,
   DEFAULT_PORTRAIT_LAYOUT,
@@ -1419,7 +1419,16 @@ export default function App() {
             // under the persistent bar. (The latched 0.6.7 pile repair is a
             // different migration and is untouched.)
             if (key === 'autoHideTopBar' && value === false) {
-              const reclamped = reclampProfilesBelowChrome(t.profiles);
+              // The live canvas (from useCanvas()) is only a real measurement
+              // for the CURRENT orientation. The other orientation has no
+              // live window to read — a rotated monitor is the closest real
+              // scenario, so its canvas is estimated as the current one with
+              // width/height swapped.
+              const rotatedCanvas = { w: canvas.h, h: canvas.w };
+              const canvasByOrientation: Record<Orientation, { w: number; h: number }> = orientation === 'landscape'
+                ? { landscape: canvas, portrait: rotatedCanvas }
+                : { landscape: rotatedCanvas, portrait: canvas };
+              const reclamped = reclampProfilesBelowChrome(t.profiles, canvasByOrientation);
               if (reclamped !== t.profiles) setTweak('profiles', reclamped);
             }
             setTweak(key, value as unknown as TweakState[typeof key]);
