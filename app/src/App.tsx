@@ -992,8 +992,12 @@ export default function App() {
             onToggleVideo={() => setTweak('videoEnabled', !t.videoEnabled)}
             onNavigate={(url) => setTweak('videoCurrentUrl', url)}
             onExit={() => setTweak('videoEnabled', false)}
-            overlaysOpen={showGallery || editMode || showContentLibrary}
-            paused={(t.videoEnabled && t.videoBookmarks.length > 0) || showGallery || (t.perfMode !== 'uncapped' && livePlayback?.playing !== true)}
+            overlaysOpen={showGallery || editMode || showContentLibrary || showSettings}
+            // Anything that covers the canvas pauses the visualizer — those
+            // panels are opaque, so drawing behind them is pure waste. Before
+            // 0.7.3 only the gallery counted, and opening Settings left the
+            // visualizer rendering at full FPS behind it.
+            paused={(t.videoEnabled && t.videoBookmarks.length > 0) || showGallery || showSettings || showContentLibrary || (t.perfMode !== 'uncapped' && livePlayback?.playing !== true)}
             onConfigure={() => setShowGallery(true)}
             audioDebug={t.audioDebug}
             catalogRemoved={t.catalogRemoved}

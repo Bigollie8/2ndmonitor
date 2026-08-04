@@ -59,40 +59,57 @@ function startMockSysmon(onSample: (s: SysmonSample) => void): () => void {
   return () => clearInterval(id);
 }
 
+// ─── Shared sysmon subscription (0.7.3 P6) ───────────────────────────────────
+// One backend subscription for the whole app. Previously every useSysmon()
+// caller opened its own Tauri listener and kept its own history, so the app
+// held N listeners and allocated 4N arrays per second for identical data.
+let sysmonHistory: SysmonHistory = emptyHistory();
+const sysmonSubscribers = new Set<(h: SysmonHistory) => void>();
+let sysmonStop: (() => void) | null = null;
+
+function pushSysmonSample(s: SysmonSample): void {
+  const h = sysmonHistory;
+  sysmonHistory = {
+    cpu: [...h.cpu.slice(1), s.cpu],
+    ram: [...h.ram.slice(1), s.ram],
+    gpu: [...h.gpu.slice(1), s.gpu],
+    net: [...h.net.slice(1), s.net],
+    latest: s,
+  };
+  for (const fn of sysmonSubscribers) fn(sysmonHistory);
+}
+
+function startSysmon(): void {
+  if (isTauri) {
+    let unlisten: (() => void) | null = null;
+    let stopped = false;
+    void import('@tauri-apps/api/event')
+      .then(({ listen }) => listen<SysmonSample>('sysmon:tick', (e) => pushSysmonSample(e.payload)))
+      .then((fn) => {
+        if (stopped) { fn(); return; }
+        unlisten = fn;
+      })
+      .catch((err) => console.error('sysmon listen failed', err));
+    sysmonStop = () => { stopped = true; unlisten?.(); };
+  } else {
+    sysmonStop = startMockSysmon(pushSysmonSample);
+  }
+}
+
 export function useSysmon(): SysmonHistory {
-  const [history, setHistory] = useState<SysmonHistory>(emptyHistory);
+  const [history, setHistory] = useState<SysmonHistory>(sysmonHistory);
 
   useEffect(() => {
-    let cancelled = false;
-    let cleanup: (() => void) | null = null;
-
-    const handleSample = (s: SysmonSample) => {
-      if (cancelled) return;
-      setHistory((h) => ({
-        cpu: [...h.cpu.slice(1), s.cpu],
-        ram: [...h.ram.slice(1), s.ram],
-        gpu: [...h.gpu.slice(1), s.gpu],
-        net: [...h.net.slice(1), s.net],
-        latest: s,
-      }));
-    };
-
-    if (isTauri) {
-      // Live sysmon from the Rust backend.
-      import('@tauri-apps/api/event')
-        .then(({ listen }) => listen<SysmonSample>('sysmon:tick', (e) => handleSample(e.payload)))
-        .then((unlisten) => {
-          if (cancelled) { unlisten(); return; }
-          cleanup = unlisten;
-        })
-        .catch((err) => console.error('sysmon listen failed', err));
-    } else {
-      cleanup = startMockSysmon(handleSample);
-    }
-
+    sysmonSubscribers.add(setHistory);
+    if (sysmonSubscribers.size === 1) startSysmon();
+    // Adopt whatever has already accumulated so a late mount isn't blank.
+    setHistory(sysmonHistory);
     return () => {
-      cancelled = true;
-      if (cleanup) cleanup();
+      sysmonSubscribers.delete(setHistory);
+      if (sysmonSubscribers.size === 0) {
+        sysmonStop?.();
+        sysmonStop = null;
+      }
     };
   }, []);
 
