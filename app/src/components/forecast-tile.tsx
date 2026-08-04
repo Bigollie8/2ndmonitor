@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { HFTile } from './tiles';
 import type { Density } from '../types';
 import { type Weather, useWeather } from '../state/tauri';
@@ -6,7 +6,7 @@ import { redactLocation } from '../state/streamer';
 import { formatClockParts, formatHourLabel } from '../state/dateTime';
 import { formatTemp, type TempUnit } from '../state/units';
 
-export function NowAndForecastTile({ density, accent, accent2, streamer = false, hour12, tempUnit }: {
+function NowAndForecastTileImpl({ density, accent, accent2, streamer = false, hour12, tempUnit }: {
   density: Density; accent: string; accent2: string; streamer?: boolean;
   /** Resolved platform clock format (0.7.2 §3) — resolveHour12 in App. */
   hour12: boolean;
@@ -277,3 +277,7 @@ function bgFor(weather: Weather | null, accent: string, accent2: string): string
   }
   return `linear-gradient(135deg, ${accent}18, ${accent2}10), #0a0c11`;
 }
+
+/** Memoised (0.7.3 P2): App re-renders on any tweak change, and this tile's
+ *  props are primitives or stable identities, so it can bail out. */
+export const NowAndForecastTile = React.memo(NowAndForecastTileImpl);

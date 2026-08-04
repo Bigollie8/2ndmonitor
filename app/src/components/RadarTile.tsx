@@ -36,7 +36,7 @@ export interface RadarTileProps {
   hour12: boolean;
 }
 
-export function RadarTile({ density, accent, location, config, setConfig, redacted = false, hour12 }: RadarTileProps) {
+function RadarTileImpl({ density, accent, location, config, setConfig, redacted = false, hour12 }: RadarTileProps) {
   const [frameIndex, setFrameIndex] = useState<number>(0);
   // Spec: latest frame by default; the play button starts the animation.
   const [playing, setPlaying] = useState<boolean>(false);
@@ -290,3 +290,7 @@ function FooterSeg<T extends string>({ value, options, labels, onChange, accent,
     </div>
   );
 }
+
+/** Memoised (0.7.3 P2): App re-renders on any tweak change, and this tile's
+ *  props are primitives or stable identities, so it can bail out. */
+export const RadarTile = React.memo(RadarTileImpl);

@@ -28,7 +28,7 @@ export interface AircraftTileProps {
   redacted?: boolean;
 }
 
-export function AircraftTile({ density, accent, location, config, setConfig, redacted = false }: AircraftTileProps) {
+function AircraftTileImpl({ density, accent, location, config, setConfig, redacted = false }: AircraftTileProps) {
   const { data, error, loading } = usePoll(
     async () => {
       const result = await fetchAircraftInBox(location.lat, location.lon, RADIUS_KM);
@@ -161,3 +161,7 @@ export function AircraftTile({ density, accent, location, config, setConfig, red
     </HFTile>
   );
 }
+
+/** Memoised (0.7.3 P2): App re-renders on any tweak change, and this tile's
+ *  props are primitives or stable identities, so it can bail out. */
+export const AircraftTile = React.memo(AircraftTileImpl);

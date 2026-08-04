@@ -15,7 +15,7 @@ const TABS: Tab[] = ['events', 'births', 'deaths'];
 
 const REFRESH_MS = 6 * 60 * 60 * 1000; // 6h — date rolls naturally during the day
 
-export function OnThisDayTile({ density, accent }: { density: Density; accent: string }) {
+function OnThisDayTileImpl({ density, accent }: { density: Density; accent: string }) {
   const [tab, setTab] = useState<Tab>('events');
   const { data } = usePoll<OnThisDayPayload>(
     async () => {
@@ -105,3 +105,7 @@ function formatYear(year: number): string {
   if (year < 0) return `${-year} BC`;
   return year.toString();
 }
+
+/** Memoised (0.7.3 P2): App re-renders on any tweak change, and this tile's
+ *  props are primitives or stable identities, so it can bail out. */
+export const OnThisDayTile = React.memo(OnThisDayTileImpl);

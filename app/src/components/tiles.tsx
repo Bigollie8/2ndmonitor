@@ -821,7 +821,7 @@ export function NotesTile({
 }
 
 // ── Sysmon ───────────────────────────────────────────────────────────────────
-export function SysMonTile({ density, accent, accent2, tempUnit }: { density: Density; accent: string; accent2: string; tempUnit: TempUnit }) {
+function SysMonTileImpl({ density, accent, accent2, tempUnit }: { density: Density; accent: string; accent2: string; tempUnit: TempUnit }) {
   // Subscribes itself so the 1Hz sample stream re-renders only this tile,
   // not the App root that used to own the subscription.
   const history = useSysmon();
@@ -884,4 +884,6 @@ export function SysMonTile({ density, accent, accent2, tempUnit }: { density: De
   );
 }
 
-
+/** Memoised (0.7.3 P2): App re-renders on any tweak change, and this tile's
+ *  props are primitives or stable identities, so it can bail out. */
+export const SysMonTile = React.memo(SysMonTileImpl);

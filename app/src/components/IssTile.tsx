@@ -26,7 +26,7 @@ export interface IssTileProps {
   redacted?: boolean;
 }
 
-export function IssTile({ density, accent, location, config, setConfig, redacted = false }: IssTileProps) {
+function IssTileImpl({ density, accent, location, config, setConfig, redacted = false }: IssTileProps) {
   const { data: pos } = usePoll(
     async () => {
       // fetchIssPosition returns null on failure; usePoll drives backoff off
@@ -155,3 +155,7 @@ export function IssTile({ density, accent, location, config, setConfig, redacted
     </HFTile>
   );
 }
+
+/** Memoised (0.7.3 P2): App re-renders on any tweak change, and this tile's
+ *  props are primitives or stable identities, so it can bail out. */
+export const IssTile = React.memo(IssTileImpl);

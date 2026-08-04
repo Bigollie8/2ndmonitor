@@ -33,7 +33,7 @@ interface RecentStrike extends LightningStrike {
   distance: number;
 }
 
-export function LightningTile({ density, accent, location, config, setConfig, redacted = false }: LightningTileProps) {
+function LightningTileImpl({ density, accent, location, config, setConfig, redacted = false }: LightningTileProps) {
   const [strikes, setStrikes] = useState<RecentStrike[]>([]);
   // Starts 'connecting': the effect below connects on mount, and starting at
   // 'disconnected' would flash the error state for one frame before it runs.
@@ -171,3 +171,7 @@ function StatusDot({ status }: { status: BlitzortungStatus }) {
     boxShadow: status.kind === 'connected' ? `0 0 6px ${color}` : 'none',
   }} />;
 }
+
+/** Memoised (0.7.3 P2): App re-renders on any tweak change, and this tile's
+ *  props are primitives or stable identities, so it can bail out. */
+export const LightningTile = React.memo(LightningTileImpl);

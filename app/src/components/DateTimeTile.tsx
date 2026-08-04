@@ -23,7 +23,7 @@ export interface DateTimeTileProps {
 /** Clock tile with three styles (0.7.2 §4): digital (0.7.1 rendering),
  *  minimal (time only, larger), analog (canvas face). Style + seconds are
  *  per-instance config; hover controls cycle style / toggle seconds. */
-export function DateTimeTile({ density, accent, config, setConfig, hour12 }: DateTimeTileProps) {
+function DateTimeTileImpl({ density, accent, config, setConfig, hour12 }: DateTimeTileProps) {
   const cfg = parseDateTimeConfig(config);
   // 'minimal' never shows seconds — the toggle is hidden there and the
   // cadence drops to once a minute.
@@ -194,3 +194,7 @@ function AnalogClock({ now, accent, seconds }: { now: number; accent: string; se
   }, [now, accent, seconds, resizeTick]);
   return <canvas ref={ref} data-testid="datetime-analog" style={{ width: '100%', height: '100%', display: 'block' }} />;
 }
+
+/** Memoised (0.7.3 P2): App re-renders on any tweak change, and this tile's
+ *  props are primitives or stable identities, so it can bail out. */
+export const DateTimeTile = React.memo(DateTimeTileImpl);
