@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { HFTile } from './tiles';
 import { MapView, RecenterButton, type ProjectFn } from './map/MapView';
+import { drawHomeDot } from './map/homeDot';
 import { useMapView } from './map/useMapView';
 import { type BlitzortungStatus, type LightningStrike, connectBlitzortung } from '../state/blitzortung';
 import { distanceKm } from '../state/iss';
@@ -86,11 +87,7 @@ export function LightningTile({ density, accent, location, config, setConfig, re
 
   const drawStrikes = (ctx: CanvasRenderingContext2D, projectPt: ProjectFn) => {
     // Center dot (user).
-    const home = projectPt(location.lat, location.lon);
-    ctx.fillStyle = 'rgba(255,255,255,0.6)';
-    ctx.beginPath();
-    ctx.arc(home.x, home.y, 3, 0, Math.PI * 2);
-    ctx.fill();
+    drawHomeDot(ctx, projectPt, location.lat, location.lon);
     // Strikes: yellow dots fading (and losing glow) with age.
     for (const s of fresh) {
       const ageRatio = Math.min(1, (now - s.timeMs) / FADE_MS);

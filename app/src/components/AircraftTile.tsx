@@ -1,6 +1,7 @@
 import React from 'react';
 import { HFTile } from './tiles';
 import { MapView, RecenterButton, type ProjectFn } from './map/MapView';
+import { drawHomeDot } from './map/homeDot';
 import { useMapView } from './map/useMapView';
 import { fetchAircraftInBox } from '../state/opensky';
 import { distanceKm } from '../state/iss';
@@ -57,11 +58,7 @@ export function AircraftTile({ density, accent, location, config, setConfig, red
 
   const drawPlanes = (ctx: CanvasRenderingContext2D, projectPt: ProjectFn) => {
     // Anchor (weather location) dot.
-    const home = projectPt(location.lat, location.lon);
-    ctx.fillStyle = 'rgba(255,255,255,0.6)';
-    ctx.beginPath();
-    ctx.arc(home.x, home.y, 3, 0, Math.PI * 2);
-    ctx.fill();
+    drawHomeDot(ctx, projectPt, location.lat, location.lon);
     // Heading-rotated plane glyphs (dart pointing to its heading).
     for (const p of sorted) {
       const pt = projectPt(p.lat, p.lon);

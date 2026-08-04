@@ -1,6 +1,7 @@
 import React, { useEffect, useRef } from 'react';
 import { HFTile } from './tiles';
 import { MapView, RecenterButton, type ProjectFn } from './map/MapView';
+import { drawHomeDot } from './map/homeDot';
 import { useMapView } from './map/useMapView';
 import { distanceKm, fetchIssPosition } from '../state/iss';
 import { usePoll } from '../state/usePoll';
@@ -86,11 +87,7 @@ export function IssTile({ density, accent, location, config, setConfig, redacted
     }
     ctx.globalAlpha = 1;
     // User pin.
-    const home = projectPt(location.lat, location.lon);
-    ctx.fillStyle = 'rgba(255,255,255,0.7)';
-    ctx.beginPath();
-    ctx.arc(home.x, home.y, 3, 0, Math.PI * 2);
-    ctx.fill();
+    drawHomeDot(ctx, projectPt, location.lat, location.lon);
     // ISS glyph at the current position.
     if (pos) {
       const pt = projectPt(pos.lat, pos.lon);

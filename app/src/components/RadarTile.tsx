@@ -1,6 +1,7 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { HFTile } from './tiles';
-import { MapView, RecenterButton } from './map/MapView';
+import { MapView, RecenterButton, type ProjectFn } from './map/MapView';
+import { drawHomeDot } from './map/homeDot';
 import { useMapView } from './map/useMapView';
 import {
   type RainViewerFrame,
@@ -125,6 +126,16 @@ export function RadarTile({ density, accent, location, config, setConfig, redact
 
   const hasFrames = frames.length > 0;
 
+  // The saved-location dot — the one thing radar was missing versus the other
+  // three map tiles (0.7.3). Stable identity so the memoised MapView can bail
+  // out when nothing about the map changed.
+  const drawHome = useCallback(
+    (ctx: CanvasRenderingContext2D, projectPt: ProjectFn) => {
+      drawHomeDot(ctx, projectPt, location.lat, location.lon);
+    },
+    [location.lat, location.lon],
+  );
+
   return (
     <HFTile title="Weather radar" headRight={headRight} accent={accent} density={density} style={{ height: '100%' }}>
       <div
@@ -143,6 +154,7 @@ export function RadarTile({ density, accent, location, config, setConfig, redact
             maxZoom={MAP_MAX_ZOOM}
             overlayTileUrl={overlayTileUrl}
             overlayTileAlpha={RADAR_OPACITY}
+            overlay={drawHome}
             redacted={redacted}
           />
           {overridden && <RecenterButton accent={accent} onClick={recenter} />}
