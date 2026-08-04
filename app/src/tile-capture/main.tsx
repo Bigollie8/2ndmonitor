@@ -88,9 +88,11 @@ async function captureOne(id: string): Promise<void> {
 
 void (async () => {
   const params = new URLSearchParams(location.search);
+  // Default is "only what is missing" — see the sidecar's /list. `?all=1`
+  // re-captures everything, `?id=x` does one.
   const ids: string[] = params.has('id')
     ? [params.get('id')!]
-    : await (await fetch(`${SIDECAR}/list`)).json();
+    : await (await fetch(`${SIDECAR}/list${params.has('all') ? '?all=1' : ''}`)).json();
   const failed: string[] = [];
   for (const id of ids) {
     status.textContent = `capturing ${id}…`;

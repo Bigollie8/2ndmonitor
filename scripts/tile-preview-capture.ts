@@ -65,8 +65,15 @@ const server = createServer((req, res) => {
       return;
     }
     if (url.pathname === '/list') {
+      // Only bundles that have NO preview yet, unless ?all=1. Capturing
+      // everything by default would overwrite a good published preview with a
+      // generic-stub render for any bundle that declares no previewData —
+      // a silent downgrade, and the exact mistake this default prevents.
+      const ids = url.searchParams.has('all')
+        ? tileIds()
+        : tileIds().filter((id) => !existsSync(join(BUNDLES, id, 'preview.png')));
       res.writeHead(200, { ...CORS, 'Content-Type': 'application/json' })
-        .end(JSON.stringify(tileIds()));
+        .end(JSON.stringify(ids));
     } else if (url.pathname === '/spec') {
       const id = url.searchParams.get('id') ?? '';
       if (!/^[a-z0-9-]+$/.test(id) || !existsSync(join(BUNDLES, id))) {
