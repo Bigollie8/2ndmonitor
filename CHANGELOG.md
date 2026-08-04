@@ -5,6 +5,30 @@ All notable changes to 2ndMonitor are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.8.2] - 2026-08-04
+
+### Changed
+- **Licence: 2ndMonitor is now under the Business Source License 1.1.** You can
+  still read, modify and redistribute the source, and you can use the app for
+  personal use and internal business use. What you can't do is offer it to
+  other people as a commercial product or a hosted service. Each version turns
+  into plain MIT on **2030-08-04**, or four years after that version was first
+  published, whichever comes first — so nothing is locked away permanently
+- **Versions up to and including 0.8.1 stay MIT.** That grant can't be
+  withdrawn and isn't being withdrawn; `LICENSE-MIT` keeps the terms alongside
+  the new licence for exactly that reason
+- The app now declares its licence everywhere it should — the installer shows
+  it, and the built executable finally carries a real publisher and copyright
+  instead of blank fields
+
+### Added
+- **Third-party licence notices**: `THIRD-PARTY-LICENSES.md` lists every
+  runtime dependency the app ships — 30 JavaScript packages and 428 Rust
+  crates — with its version and licence. It's generated from the real
+  dependency graphs by `scripts/gen-third-party-licenses.mjs` rather than
+  maintained by hand, and the licence text plus the notices are now bundled
+  into the installer
+
 ## [0.8.1] - 2026-08-04
 
 ### Added

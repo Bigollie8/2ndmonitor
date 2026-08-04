@@ -1,7 +1,9 @@
 {
   "name": "second-monitor-hub",
   "private": true,
-  "version": "0.8.1",
+  "version": "0.8.2",
+  "license": "BUSL-1.1",
+  "author": "Bigollie8 <bigollie8@gmail.com>",
   "type": "module",
   "scripts": {
     "gen:sandbox": "tsx scripts/gen-sandbox-html.ts",

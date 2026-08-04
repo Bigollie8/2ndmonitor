@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Second-Monitor Hub",
-  "version": "0.8.1",
+  "version": "0.8.2",
   "identifier": "com.secondmonitor.hub",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -41,9 +41,14 @@
   },
   "bundle": {
     "active": true,
+    "publisher": "Bigollie8",
+    "copyright": "Copyright (c) 2026 Bigollie8. Licensed under the Business Source License 1.1.",
+    "licenseFile": "resources/legal/LICENSE.txt",
+    "shortDescription": "Second-Monitor Hub",
+    "longDescription": "A dashboard and music visualiser for a second monitor: configurable tiles, audio-reactive visualisers, MilkDrop presets, and a bundle marketplace.",
     "targets": ["nsis", "dmg", "app"],
     "icon": ["icons/icon.ico", "icons/icon.icns"],
-    "resources": ["resources/seed/**/*"],
+    "resources": ["resources/seed/**/*", "resources/legal/*"],
     "createUpdaterArtifacts": true,
     "windows": {
       "webviewInstallMode": { "type": "downloadBootstrapper" }

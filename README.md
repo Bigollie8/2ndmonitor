@@ -101,4 +101,17 @@ Issues and PRs welcome. The codebase prefers small, focused commits — the rece
 
 ## License
 
-[MIT](LICENSE).
+[Business Source License 1.1](LICENSE). You may use Second-Monitor Hub for
+personal use and internal business use, and you may read, modify and
+redistribute the source. You may not offer it to third parties as a commercial
+product or a hosted service without a licence from the author.
+
+Each version converts to [MIT](LICENSE-MIT) on **2030-08-04**, or four years
+after that version was first published, whichever comes first.
+
+Versions up to and including **v0.8.1** were released under MIT and remain
+available under it — see [LICENSE-MIT](LICENSE-MIT).
+
+Third-party components are listed in
+[THIRD-PARTY-LICENSES.md](THIRD-PARTY-LICENSES.md), regenerated with
+`node scripts/gen-third-party-licenses.mjs`.
