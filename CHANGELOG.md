@@ -5,6 +5,36 @@ All notable changes to 2ndMonitor are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-08-04
+
+### Added
+- **Seven new visualizers**: **Chroma wheel** and **Note bars** show the
+  actual pitch content of the music — the twelve notes as a wheel that names
+  the strongest one, or as three octaves of piano keys. **Ridgeline** stacks
+  the spectrum into scrolling ridges; **Terrain** turns that history into a
+  wireframe landscape receding into the distance. **Moiré** and **Silk** are
+  two cheap, calm ambient styles. **Beat lab** is for people who want the
+  data: onset strength with a threshold line and beat markers, a brightness
+  track, and a live BPM readout. They install themselves the first time you
+  open 0.8.1 — no trip to the marketplace needed
+- **Wind speed units**: Settings → Weather & location → Wind speed switches
+  the forecast tile between mph and km/h, or follows your system locale
+
+### Fixed
+- **Panels no longer open behind the video**: with something playing on the
+  visualizer, the profile switcher, the onboarding screen and the keyboard
+  shortcuts sheet all opened *underneath* it. The video plays in a native
+  window that sits above everything the app draws, so each panel has to ask
+  for it to step aside — three of them never did
+- **F11 no longer clears liquid glass**: going fullscreen made Windows drop
+  the glass effect, and it stayed gone until you toggled the setting. It's
+  now restored automatically
+
+### Note on the pitch-based styles
+Chroma wheel and Note bars derive pitch from the frequency spectrum. That
+tracks sustained notes and chord changes well, and is unreliable on dense
+percussive material — it's a good musical readout, not key detection.
+
 ## [0.8.0] - 2026-08-03
 
 Market v2. The marketplace was hard to browse because the signed index carried
