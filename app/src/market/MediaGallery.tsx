@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from 'react';
 import type { CatalogItem } from '../state/catalog';
 import { mediaRefsFor, hasGallery } from '../state/mediaList';
 import { PreviewImage } from '../components/PreviewImage';
+import { PREVIEW_ASPECT } from '../components/previewSource';
 import { cfgUrl } from '../state/marketplaceConfig';
 
 /** Hero asset plus a thumbnail strip when there is more than one.
@@ -90,7 +91,7 @@ export function MediaGallery({ item, accent, fallback }: {
 }
 
 const frameStyle = (accent: string) => ({
-  aspectRatio: '16 / 9', borderRadius: 12, overflow: 'hidden',
+  aspectRatio: PREVIEW_ASPECT, borderRadius: 12, overflow: 'hidden',
   background: `linear-gradient(135deg, ${accent}22, ${accent}08)`,
   border: `1px solid ${accent}2a`,
   display: 'flex', alignItems: 'center', justifyContent: 'center',

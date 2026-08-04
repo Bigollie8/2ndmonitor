@@ -2,7 +2,7 @@ import { useState, type MutableRefObject } from 'react';
 import type { CatalogItem } from '../state/catalog';
 import type { SpectrumState } from '../state/tauri';
 import type { BundleHistory } from '../state/catalogVersions';
-import { canLivePreview } from '../components/previewSource';
+import { canLivePreview, PREVIEW_ASPECT } from '../components/previewSource';
 import { LivePreview } from '../components/LivePreview';
 import { StarRating } from '../components/StarRating';
 import { PermissionList } from './PermissionList';
@@ -78,7 +78,7 @@ export function MarketDetail({
 
       {live && (
         <div style={{
-          aspectRatio: '16 / 9', borderRadius: 12, overflow: 'hidden', marginTop: 10,
+          aspectRatio: PREVIEW_ASPECT, borderRadius: 12, overflow: 'hidden', marginTop: 10,
           background: `linear-gradient(135deg, ${accent}22, ${accent}08)`,
           border: `1px solid ${accent}2a`,
           display: 'flex', alignItems: 'center', justifyContent: 'center',

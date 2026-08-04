@@ -13,6 +13,20 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import type { CatalogItem } from '../state/catalog';
 
+/** The exact stage every published preview is captured at — see
+ *  `scripts/preview-capture.ts` and `scripts/tile-preview-capture.ts`, both of
+ *  which rasterize a 576x194 frame.
+ *
+ *  Every frame that displays a preview MUST use this aspect. The Store's cards
+ *  originally used 16:9, which is a different shape (1.78 vs 2.97), so
+ *  `object-fit: cover` filled the box by slicing ~40% off each image's width.
+ *  It is also the shape a tile actually is on the dashboard, so matching it is
+ *  not just a cropping fix — a 16:9 preview would misrepresent the tile. */
+export const PREVIEW_STAGE = { width: 576, height: 194 } as const;
+
+/** Ready to drop into a CSS `aspect-ratio`. */
+export const PREVIEW_ASPECT = `${PREVIEW_STAGE.width} / ${PREVIEW_STAGE.height}`;
+
 export type PreviewSource =
   | { kind: 'image' }
   | { kind: 'glyph'; glyph: string }

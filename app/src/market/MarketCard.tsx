@@ -1,7 +1,7 @@
 import { useState, type MutableRefObject } from 'react';
 import type { CatalogItem } from '../state/catalog';
 import type { SpectrumState } from '../state/tauri';
-import { previewSourceFor, canLivePreview } from '../components/previewSource';
+import { previewSourceFor, canLivePreview, PREVIEW_ASPECT } from '../components/previewSource';
 import { PreviewImage } from '../components/PreviewImage';
 import { LivePreview } from '../components/LivePreview';
 import { StarRating } from '../components/StarRating';
@@ -89,7 +89,9 @@ export function MarketCard({
       }}
     >
       <div style={{
-        aspectRatio: '16 / 9', borderRadius: 8, overflow: 'hidden', flexShrink: 0,
+        // The capture stage's shape, NOT 16:9 — see PREVIEW_ASPECT. A 16:9
+        // frame plus object-fit:cover sliced ~40% off every preview's width.
+        aspectRatio: PREVIEW_ASPECT, borderRadius: 8, overflow: 'hidden', flexShrink: 0,
         background: `linear-gradient(135deg, ${accent}22, ${accent}08)`,
         border: `1px solid ${accent}2a`,
         display: 'flex', alignItems: 'center', justifyContent: 'center',

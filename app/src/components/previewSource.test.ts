@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { previewSourceFor, canLivePreview } from './previewSource';
+import { readFileSync, readdirSync, existsSync } from 'node:fs';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { previewSourceFor, canLivePreview, PREVIEW_STAGE, PREVIEW_ASPECT } from './previewSource';
 import type { CatalogItem } from '../state/catalog';
 
 const item = (o: Partial<CatalogItem> = {}): CatalogItem => ({
@@ -61,4 +64,38 @@ test('canLivePreview: false for a removed item', () => {
 
 test('canLivePreview: false for a first-party item — built-ins are not bundles', () => {
   assert.equal(canLivePreview(item({ source: 'first-party', installed: true, installedVersion: '1.0.0' })), false);
+});
+
+// ── Preview geometry ─────────────────────────────────────────────────────────
+// The Store's cards originally used a 16:9 frame with `object-fit: cover`,
+// which sliced ~40% off the width of every 576x194 capture. These pin the
+// frame shape to the real artifacts, so resizing the capture harness without
+// updating the UI (or vice versa) fails here rather than in someone's eyes.
+
+const BUNDLES = join(
+  dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'bundles',
+);
+
+/** Width/height straight out of the PNG IHDR chunk — no image library. */
+const pngSize = (file: string): { width: number; height: number } => {
+  const buf = readFileSync(file);
+  return { width: buf.readUInt32BE(16), height: buf.readUInt32BE(20) };
+};
+
+test('PREVIEW_ASPECT is the stage the capture harnesses rasterize', () => {
+  assert.equal(PREVIEW_ASPECT, '576 / 194');
+  assert.equal(PREVIEW_STAGE.width / PREVIEW_STAGE.height > 2.9, true,
+    'a preview is much wider than 16:9 — that mismatch was the cropping bug');
+});
+
+test('every captured preview.png actually has the stage dimensions', () => {
+  const files = readdirSync(BUNDLES, { withFileTypes: true })
+    .filter((d) => d.isDirectory() && d.name !== 'dist')
+    .map((d) => join(BUNDLES, d.name, 'preview.png'))
+    .filter((p) => existsSync(p));
+  assert.ok(files.length > 0, 'no captured previews found to check');
+  const wrong = files
+    .map((f) => ({ f, ...pngSize(f) }))
+    .filter((r) => r.width !== PREVIEW_STAGE.width || r.height !== PREVIEW_STAGE.height);
+  assert.deepEqual(wrong, [], `previews not at the stage size: ${JSON.stringify(wrong)}`);
 });
