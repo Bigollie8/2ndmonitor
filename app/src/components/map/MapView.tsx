@@ -92,7 +92,7 @@ export interface MapViewProps {
  *  pans (window-listener pattern shared with usePanelDrag in
  *  components/panelDrag.ts), wheel zooms anchored at the cursor, and all
  *  redraws are rAF-batched. */
-export function MapView({
+function MapViewImpl({
   view, onViewChange, minZoom, maxZoom, overlay, overlayTileUrl, overlayTileAlpha = 0.7, redacted = false,
 }: MapViewProps) {
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -277,6 +277,14 @@ export function MapView({
     </div>
   );
 }
+
+/** Memoised (0.7.3 P4/P5): the redraw effect above has no dependency array, so
+ *  ANY render of this component repaints the canvas. Host tiles re-render on
+ *  every poll tick and on every unrelated tweak change, which meant all four
+ *  map canvases repainted for reasons that had nothing to do with the map.
+ *  Bailing out here is what stops that — it relies on useMapView returning a
+ *  stable `view`/`onViewChange` and on hosts passing a stable `overlay`. */
+export const MapView = React.memo(MapViewImpl);
 
 /** Shown by host tiles when the view is panned/zoomed off its anchor. Place
  *  inside the same positioned ancestor as the MapView. */

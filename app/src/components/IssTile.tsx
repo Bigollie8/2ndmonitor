@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useCallback, useEffect, useRef } from 'react';
 import { HFTile } from './tiles';
 import { MapView, RecenterButton, type ProjectFn } from './map/MapView';
 import { drawHomeDot } from './map/homeDot';
@@ -66,7 +66,7 @@ export function IssTile({ density, accent, location, config, setConfig, redacted
     setConfig,
   });
 
-  const drawIss = (ctx: CanvasRenderingContext2D, projectPt: ProjectFn) => {
+  const drawIss = useCallback((ctx: CanvasRenderingContext2D, projectPt: ProjectFn) => {
     // Trail, oldest → newest, alpha ramping toward the head. Segments that
     // jump the antimeridian are skipped (project takes the short way around,
     // so a >180° lon jump would draw a line across the whole map).
@@ -99,7 +99,7 @@ export function IssTile({ density, accent, location, config, setConfig, redacted
       ctx.fill();
       ctx.shadowBlur = 0;
     }
-  };
+  }, [accent, pos, location.lat, location.lon]);
 
   const headRight = (
     <span style={{

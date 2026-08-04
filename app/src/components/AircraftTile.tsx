@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useCallback, useMemo } from 'react';
 import { HFTile } from './tiles';
 import { MapView, RecenterButton, type ProjectFn } from './map/MapView';
 import { drawHomeDot } from './map/homeDot';
@@ -43,9 +43,13 @@ export function AircraftTile({ density, accent, location, config, setConfig, red
   );
   const planes = data ?? [];
 
-  const sorted = [...planes]
-    .map((p) => ({ ...p, dist: distanceKm(p.lat, p.lon, location.lat, location.lon) }))
-    .sort((a, b) => a.dist - b.dist);
+  // Memoised so drawPlanes' identity is stable between polls (0.7.3 P5).
+  const sorted = useMemo(
+    () => [...planes]
+      .map((p) => ({ ...p, dist: distanceKm(p.lat, p.lon, location.lat, location.lon) }))
+      .sort((a, b) => a.dist - b.dist),
+    [planes, location.lat, location.lon],
+  );
 
   const { view, overridden, onViewChange, recenter } = useMapView({
     anchor: { lat: location.lat, lon: location.lon },
@@ -56,7 +60,7 @@ export function AircraftTile({ density, accent, location, config, setConfig, red
     setConfig,
   });
 
-  const drawPlanes = (ctx: CanvasRenderingContext2D, projectPt: ProjectFn) => {
+  const drawPlanes = useCallback((ctx: CanvasRenderingContext2D, projectPt: ProjectFn) => {
     // Anchor (weather location) dot.
     drawHomeDot(ctx, projectPt, location.lat, location.lon);
     // Heading-rotated plane glyphs (dart pointing to its heading).
@@ -80,7 +84,7 @@ export function AircraftTile({ density, accent, location, config, setConfig, red
         ctx.fillText((p.callsign || p.icao24).trim().slice(0, 8), pt.x + 7, pt.y + 3);
       }
     }
-  };
+  }, [sorted, accent, view.zoom, location.lat, location.lon]);
 
   const headRight = (
     <span style={{

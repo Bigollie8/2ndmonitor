@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { HFTile } from './tiles';
 import { MapView, RecenterButton, type ProjectFn } from './map/MapView';
 import { drawHomeDot } from './map/homeDot';
@@ -73,7 +73,8 @@ export function LightningTile({ density, accent, location, config, setConfig, re
 
   // Drop strikes older than FADE_MS (handled in render, not state, so we don't
   // dirty React on every tick — the timer above forces a re-render).
-  const fresh = strikes.filter((s) => now - s.timeMs < FADE_MS);
+  // Memoised so drawStrikes' identity is stable between renders (0.7.3 P5).
+  const fresh = useMemo(() => strikes.filter((s) => now - s.timeMs < FADE_MS), [strikes, now]);
   const closest = fresh[0];
 
   const { view, overridden, onViewChange, recenter } = useMapView({
@@ -85,7 +86,7 @@ export function LightningTile({ density, accent, location, config, setConfig, re
     setConfig,
   });
 
-  const drawStrikes = (ctx: CanvasRenderingContext2D, projectPt: ProjectFn) => {
+  const drawStrikes = useCallback((ctx: CanvasRenderingContext2D, projectPt: ProjectFn) => {
     // Center dot (user).
     drawHomeDot(ctx, projectPt, location.lat, location.lon);
     // Strikes: yellow dots fading (and losing glow) with age.
@@ -102,7 +103,7 @@ export function LightningTile({ density, accent, location, config, setConfig, re
     }
     ctx.globalAlpha = 1;
     ctx.shadowBlur = 0;
-  };
+  }, [fresh, now, location.lat, location.lon]);
 
   const headRight = (
     <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
