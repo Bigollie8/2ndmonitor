@@ -5,6 +5,41 @@ All notable changes to 2ndMonitor are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.7.3] - 2026-08-03
+
+### Fixed
+- **Weather radar shows your location**: the radar was the only map without
+  the white dot marking your saved location — the aircraft, lightning and ISS
+  maps all had one. It's now drawn from a single shared helper, so the four
+  maps can't drift apart again. Streamer mode still hides it, along with the
+  rest of the map
+- **The forecast no longer gets stuck empty**: if the very first forecast
+  fetch failed — most often because the network wasn't up yet when the app
+  launched — the tile stayed blank for up to 30 minutes, and only restarting
+  the app brought it back. It now retries within 30 seconds and backs off
+  gently if the problem persists. Separately, a window that finished loading
+  just after an update arrived could miss it entirely; it now shows the last
+  known forecast immediately instead of waiting for the next one
+
+### Performance
+- **Dragging tiles is much cheaper**: moving or resizing a tile in edit mode
+  used to re-render every other tile and repaint every map on each mouse
+  movement. The same drag now does that work once, when you let go. Measured
+  over a 60-step drag with four maps on screen, map repaints dropped from 246
+  to 0 and image draws from 2,580 to 3
+- **Maps stay idle when nothing about them changed**: an unrelated settings
+  change used to repaint all four map canvases. Panning, zooming and
+  recentering still repaint immediately
+- **Tiles no longer re-render for unrelated reasons**: changing any single
+  setting used to re-render every tile on the canvas
+- **The visualizer pauses behind Settings and the Content Library**, as it
+  already did behind the visualizer gallery — it was previously still drawing
+  at full speed behind those panels
+- **System-monitor data is collected once and shared** rather than gathered
+  separately for each tile that displays it
+- **Settings are saved to one place instead of two**, halving the work done
+  each time a setting changes
+
 ## [0.7.2] - 2026-08-03
 
 ### Added
@@ -20,13 +55,14 @@ All notable changes to 2ndMonitor are documented here. Format follows
   re-clamps any tile still caught in the band, once, back below it
 - **Platform-wide time & temperature formats**: Settings → Appearance →
   Time format (System/12h/24h) and Settings → Weather & location →
-  Temperature (System/°F/°C) now apply everywhere a clock or a
-  temperature is shown, including the forecast tile's hourly strip and
-  the system-monitor temps strip. This also fixes the forecast tile's
-  clock, which was ignoring Time format and always rendering 12-hour. The
-  sysmon CPU/GPU sub-line (e.g. "58°C") is unaffected by the Temperature
-  setting — it's the sensor's native hardware reading, not a converted
-  display value
+  Temperature (System/°F/°C) now apply across the app's clocks and
+  temperatures, including the forecast tile's hourly strip and the
+  system-monitor temps strip. This also fixes the forecast tile's
+  clock, which was ignoring your locale and always rendering 24-hour.
+  Two small exceptions keep their native form for now: the forecast
+  tile's sunrise/sunset stats (still 12-hour) and the sysmon CPU/GPU
+  sub-line (e.g. "58°C") — the latter is the sensor's native hardware
+  reading, not a converted display value
 - **Date & time tile styles**: hover the tile to cycle digital (the 0.7.1
   clock + date line), minimal (time only, larger), or analog — a canvas
   clock face with hour, minute and second hands

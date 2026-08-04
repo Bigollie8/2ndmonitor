@@ -52,6 +52,23 @@ export function TileFrame({
   topInsetRef.current = topInsetPx;
   const [, force] = useState(0);
 
+  const elRef = useRef<HTMLDivElement>(null);
+  /** Rect being dragged/resized right now. Non-null ONLY between pointerdown
+   *  and pointerup. While set, the element's geometry is written straight to
+   *  its inline style and NO React state is touched — committing per
+   *  pointermove re-rendered every tile in the profile and repainted every map
+   *  canvas, ~4 repaints per mouse move (0.7.3 P1). */
+  const liveRectRef = useRef<Rect | null>(null);
+
+  const applyRectToDom = (r: Rect) => {
+    const el = elRef.current;
+    if (!el) return;
+    el.style.left = `${r.x * 100}%`;
+    el.style.top = `${r.y * 100}%`;
+    el.style.width = `${r.w * 100}%`;
+    el.style.height = `${r.h * 100}%`;
+  };
+
   useEffect(() => {
     if (!editing) return;
     const onMove = (e: PointerEvent) => {
@@ -91,10 +108,17 @@ export function TileFrame({
           next.h = Math.max(minHFrac, snapFrac(next.h));
         }
       }
-      onChangeRef.current(clampRectFrac(next, canvasPx, topInsetRef.current));
+      const clamped = clampRectFrac(next, canvasPx, topInsetRef.current);
+      liveRectRef.current = clamped;
+      applyRectToDom(clamped);
     };
     const onUp = () => {
+      const live = liveRectRef.current;
       modeRef.current = { kind: 'idle' };
+      liveRectRef.current = null;
+      // One commit for the whole gesture. React re-renders with the same
+      // geometry already written to the DOM, so there is no visual snap.
+      if (live) onChangeRef.current(live);
       force((n) => n + 1);
     };
     window.addEventListener('pointermove', onMove);
@@ -145,14 +169,18 @@ export function TileFrame({
 
   return (
     <div
+      ref={elRef}
       data-tile-id={id}
       onPointerDown={startMoveOnFrame}
       style={{
         position: 'absolute',
-        left: `${rect.x * 100}%`,
-        top: `${rect.y * 100}%`,
-        width: `${rect.w * 100}%`,
-        height: `${rect.h * 100}%`,
+        // Render from the live rect while a gesture is in flight: an unrelated
+        // App re-render mid-drag would otherwise snap the tile back to the
+        // last committed rect.
+        left: `${(liveRectRef.current ?? rect).x * 100}%`,
+        top: `${(liveRectRef.current ?? rect).y * 100}%`,
+        width: `${(liveRectRef.current ?? rect).w * 100}%`,
+        height: `${(liveRectRef.current ?? rect).h * 100}%`,
         outline: editing && selected ? `2px solid ${accent}` : 'none',
         outlineOffset: 2,
         borderRadius: 14,

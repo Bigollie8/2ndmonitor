@@ -40,7 +40,7 @@ export interface AuroraTileProps {
   hour12: boolean;
 }
 
-export function AuroraTile({ density, accent, location, hour12 }: AuroraTileProps) {
+function AuroraTileImpl({ density, accent, location, hour12 }: AuroraTileProps) {
   const [, setTick] = useState(0);
 
   // Fetch KP on mount + every 10 minutes. Both fetchers return [] on failure
@@ -154,3 +154,7 @@ export function AuroraTile({ density, accent, location, hour12 }: AuroraTileProp
     </HFTile>
   );
 }
+
+/** Memoised (0.7.3 P2): App re-renders on any tweak change, and this tile's
+ *  props are primitives or stable identities, so it can bail out. */
+export const AuroraTile = React.memo(AuroraTileImpl);

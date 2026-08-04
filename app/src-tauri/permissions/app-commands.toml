@@ -118,6 +118,8 @@ commands.allow = [
   # weather / audio engine knobs (src/state/weatherLocation.ts, src/App.tsx,
   # src/state/waveform.ts).
   "set_weather_location",
+  # Replays the last forecast to a webview that attached after the emit.
+  "weather_current",
   "set_audio_emit_hz",
   "set_waveform_enabled",
 

@@ -10,7 +10,7 @@ import type { Density } from '../types';
 
 const REFRESH_MS = 5 * 60 * 1000;
 
-export function SolarFlareTile({ density, accent }: { density: Density; accent: string }) {
+function SolarFlareTileImpl({ density, accent }: { density: Density; accent: string }) {
   const { data } = usePoll(
     async () => {
       const r = await fetchSolarXray();
@@ -89,3 +89,7 @@ export function SolarFlareTile({ density, accent }: { density: Density; accent: 
     </HFTile>
   );
 }
+
+/** Memoised (0.7.3 P2): App re-renders on any tweak change, and this tile's
+ *  props are primitives or stable identities, so it can bail out. */
+export const SolarFlareTile = React.memo(SolarFlareTileImpl);

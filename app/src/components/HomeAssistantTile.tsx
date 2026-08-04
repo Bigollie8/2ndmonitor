@@ -23,7 +23,7 @@ export interface HomeAssistantTileProps {
   editing: boolean;
 }
 
-export function HomeAssistantTile({ density, accent, editing }: HomeAssistantTileProps) {
+function HomeAssistantTileImpl({ density, accent, editing }: HomeAssistantTileProps) {
   const [url, setUrl] = useState<string>(getStoredUrl);
   const { value: token, loaded, save: saveToken, clear: clearToken } =
     useSecret('ha_token', { legacyLocalStorageKey: '2mh.ha.token' });
@@ -291,3 +291,7 @@ const inputStyle: React.CSSProperties = {
   border: '1px solid rgba(255,255,255,0.1)',
   fontFamily: '"JetBrains Mono", ui-monospace, monospace', outline: 'none',
 };
+
+/** Memoised (0.7.3 P2): App re-renders on any tweak change, and this tile's
+ *  props are primitives or stable identities, so it can bail out. */
+export const HomeAssistantTile = React.memo(HomeAssistantTileImpl);

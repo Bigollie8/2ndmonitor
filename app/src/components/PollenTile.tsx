@@ -21,7 +21,7 @@ export interface PollenTileProps {
 
 const TIP_ROTATE_MS = 8000;
 
-export function PollenTile({ density, accent, editing, location }: PollenTileProps) {
+function PollenTileImpl({ density, accent, editing, location }: PollenTileProps) {
   const { value: token, loaded, save: saveToken, clear: clearToken } =
     useSecret('google_pollen_key', { legacyLocalStorageKey: '2mh.googlePollen.token' });
   const [tipIndex, setTipIndex] = useState(0);
@@ -306,3 +306,7 @@ const inputStyle: React.CSSProperties = {
   border: '1px solid rgba(255,255,255,0.1)',
   fontFamily: '"JetBrains Mono", ui-monospace, monospace', outline: 'none',
 };
+
+/** Memoised (0.7.3 P2): App re-renders on any tweak change, and this tile's
+ *  props are primitives or stable identities, so it can bail out. */
+export const PollenTile = React.memo(PollenTileImpl);

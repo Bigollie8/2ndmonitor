@@ -20,7 +20,7 @@ export interface StocksTileProps {
   setConfig: (next: Record<string, unknown>) => void;
 }
 
-export function StocksTile({ density, accent, editing, config, setConfig }: StocksTileProps) {
+function StocksTileImpl({ density, accent, editing, config, setConfig }: StocksTileProps) {
   const parsed = useMemo(() => parseStocksConfig(config), [config]);
   const symbolsKey = parsed.symbols.join(',');
   // fetchStockQuotes returns [] both for "no symbols" and for a failed invoke,
@@ -205,3 +205,7 @@ function formatPrice(p: number, currency: string | null | undefined): string {
   if (currency && currency !== 'USD') return `${num} ${currency}`;
   return `$${num}`;
 }
+
+/** Memoised (0.7.3 P2): App re-renders on any tweak change, and this tile's
+ *  props are primitives or stable identities, so it can bail out. */
+export const StocksTile = React.memo(StocksTileImpl);

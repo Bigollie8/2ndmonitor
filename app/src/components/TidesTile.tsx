@@ -24,7 +24,7 @@ export interface TidesTileProps {
   hour12: boolean;
 }
 
-export function TidesTile({ density, accent, editing, config, setConfig, streamer = false, hour12 }: TidesTileProps) {
+function TidesTileImpl({ density, accent, editing, config, setConfig, streamer = false, hour12 }: TidesTileProps) {
   const parsed = useMemo(() => parseTidesConfig(config), [config]);
   const [now, setNow] = useState<number>(() => Date.now());
 
@@ -241,3 +241,7 @@ function formatRelative(min: number): string {
   const m = min % 60;
   return m > 0 ? `in ${h}h ${m}m` : `in ${h}h`;
 }
+
+/** Memoised (0.7.3 P2): App re-renders on any tweak change, and this tile's
+ *  props are primitives or stable identities, so it can bail out. */
+export const TidesTile = React.memo(TidesTileImpl);

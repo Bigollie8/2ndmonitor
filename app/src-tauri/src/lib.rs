@@ -103,6 +103,7 @@ pub fn run() {
             tweaks::tweaks_export,
             tweaks::tweaks_import,
             weather::set_weather_location,
+            weather::weather_current,
             audio::set_audio_emit_hz,
             audio::set_waveform_enabled,
             audio::audio_set_source,

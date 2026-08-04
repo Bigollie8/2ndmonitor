@@ -18,7 +18,7 @@ export interface EnergyTileProps {
   setConfig: (next: Record<string, unknown>) => void;
 }
 
-export function EnergyTile({ density, accent, accent2, editing, config, setConfig }: EnergyTileProps) {
+function EnergyTileImpl({ density, accent, accent2, editing, config, setConfig }: EnergyTileProps) {
   const parsed = useMemo(() => parseEnergyConfig(config), [config]);
   const [haUrl, setHaUrl] = useState<string>(getStoredUrl);
   const [haToken, setHaToken] = useState<string>('');
@@ -231,3 +231,7 @@ const inputStyle: React.CSSProperties = {
   border: '1px solid rgba(255,255,255,0.1)',
   fontFamily: '"JetBrains Mono", ui-monospace, monospace', outline: 'none',
 };
+
+/** Memoised (0.7.3 P2): App re-renders on any tweak change, and this tile's
+ *  props are primitives or stable identities, so it can bail out. */
+export const EnergyTile = React.memo(EnergyTileImpl);

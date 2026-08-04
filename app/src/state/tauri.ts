@@ -59,40 +59,57 @@ function startMockSysmon(onSample: (s: SysmonSample) => void): () => void {
   return () => clearInterval(id);
 }
 
+// ─── Shared sysmon subscription (0.7.3 P6) ───────────────────────────────────
+// One backend subscription for the whole app. Previously every useSysmon()
+// caller opened its own Tauri listener and kept its own history, so the app
+// held N listeners and allocated 4N arrays per second for identical data.
+let sysmonHistory: SysmonHistory = emptyHistory();
+const sysmonSubscribers = new Set<(h: SysmonHistory) => void>();
+let sysmonStop: (() => void) | null = null;
+
+function pushSysmonSample(s: SysmonSample): void {
+  const h = sysmonHistory;
+  sysmonHistory = {
+    cpu: [...h.cpu.slice(1), s.cpu],
+    ram: [...h.ram.slice(1), s.ram],
+    gpu: [...h.gpu.slice(1), s.gpu],
+    net: [...h.net.slice(1), s.net],
+    latest: s,
+  };
+  for (const fn of sysmonSubscribers) fn(sysmonHistory);
+}
+
+function startSysmon(): void {
+  if (isTauri) {
+    let unlisten: (() => void) | null = null;
+    let stopped = false;
+    void import('@tauri-apps/api/event')
+      .then(({ listen }) => listen<SysmonSample>('sysmon:tick', (e) => pushSysmonSample(e.payload)))
+      .then((fn) => {
+        if (stopped) { fn(); return; }
+        unlisten = fn;
+      })
+      .catch((err) => console.error('sysmon listen failed', err));
+    sysmonStop = () => { stopped = true; unlisten?.(); };
+  } else {
+    sysmonStop = startMockSysmon(pushSysmonSample);
+  }
+}
+
 export function useSysmon(): SysmonHistory {
-  const [history, setHistory] = useState<SysmonHistory>(emptyHistory);
+  const [history, setHistory] = useState<SysmonHistory>(sysmonHistory);
 
   useEffect(() => {
-    let cancelled = false;
-    let cleanup: (() => void) | null = null;
-
-    const handleSample = (s: SysmonSample) => {
-      if (cancelled) return;
-      setHistory((h) => ({
-        cpu: [...h.cpu.slice(1), s.cpu],
-        ram: [...h.ram.slice(1), s.ram],
-        gpu: [...h.gpu.slice(1), s.gpu],
-        net: [...h.net.slice(1), s.net],
-        latest: s,
-      }));
-    };
-
-    if (isTauri) {
-      // Live sysmon from the Rust backend.
-      import('@tauri-apps/api/event')
-        .then(({ listen }) => listen<SysmonSample>('sysmon:tick', (e) => handleSample(e.payload)))
-        .then((unlisten) => {
-          if (cancelled) { unlisten(); return; }
-          cleanup = unlisten;
-        })
-        .catch((err) => console.error('sysmon listen failed', err));
-    } else {
-      cleanup = startMockSysmon(handleSample);
-    }
-
+    sysmonSubscribers.add(setHistory);
+    if (sysmonSubscribers.size === 1) startSysmon();
+    // Adopt whatever has already accumulated so a late mount isn't blank.
+    setHistory(sysmonHistory);
     return () => {
-      cancelled = true;
-      if (cleanup) cleanup();
+      sysmonSubscribers.delete(setHistory);
+      if (sysmonSubscribers.size === 0) {
+        sysmonStop?.();
+        sysmonStop = null;
+      }
     };
   }, []);
 
@@ -400,6 +417,12 @@ export function useWeather(): Weather | null {
     if (!isTauri) return;
     let cancelled = false;
     let cleanup: (() => void) | null = null;
+    // Attach the listener FIRST, then prime from the cached value. In this
+    // order a tick landing mid-prime is still received, and the prime only
+    // ever fills a still-empty slot, so it cannot clobber a fresher payload.
+    // Without this, the poll thread's t=0 emit was lost whenever Rust won the
+    // race against this hook's dynamic import + IPC registration, leaving the
+    // forecast blank until the next tick (0.7.3).
     import('@tauri-apps/api/event')
       .then(({ listen }) => listen<Weather>('weather:tick', (e) => {
         if (cancelled) return;
@@ -408,6 +431,13 @@ export function useWeather(): Weather | null {
       .then((unlisten) => {
         if (cancelled) { unlisten(); return; }
         cleanup = unlisten;
+        return import('@tauri-apps/api/core')
+          .then(({ invoke }) => invoke<Weather | null>('weather_current'))
+          .then((cached) => {
+            if (cancelled || !cached) return;
+            setWeather((prev) => prev ?? cached);
+          })
+          .catch((err) => console.warn('weather_current failed', err));
       })
       .catch((err) => console.error('weather listen failed', err));
     return () => { cancelled = true; cleanup?.(); };
