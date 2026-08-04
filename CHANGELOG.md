@@ -5,6 +5,65 @@ All notable changes to 2ndMonitor are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-08-03
+
+Market v2. The marketplace was hard to browse because the signed index carried
+almost nothing — no summary, no category, no tags, no dates — so the catalog
+synthesised a description from the author's masked email and had no sort
+control at all. This release fixes the data first and then builds the surfaces
+that data makes possible.
+
+### Added
+- **Store**: a full-bleed browsing surface with a Discover home of shelves
+  (Updates, Featured, New this month, Most installed, Top rated, plus curated
+  collections), a filterable and sortable grid, and a detail page per bundle.
+  Esc pops one level at a time and only closes at the root.
+- **Combinable filters**: "Installed" and "Weather" are now facets rather than
+  mutually exclusive rail rows, so you can ask for installed weather tiles —
+  a combination the old catalog could not express. Active facets show as
+  chips you can clear individually.
+- **Six sort orders**: best match, most installed, top rated, newest, recently
+  updated, A–Z. Unknown values always sort last — an unrated bundle at the top
+  of "Top rated" would be a lie.
+- **Weighted search** over name, tags, summary, author and description,
+  replacing a substring match that searched a synthesised "by oli***" string.
+- **Library**: managing what you have moved out of the browsing surface into
+  its own view with Installed / Updates / Needs setup / Removed sections,
+  an "Update all" that runs sequentially, and per-item restore.
+- **Written reviews** with a moderation path, **curated collections** with
+  attributed multi-install consent, and **author pages**.
+- **Media galleries**: bundles can publish up to six preview assets including
+  an animation, with a hero and thumbnail strip in the detail view.
+- **Offline catalog**: the last good signed index is cached and re-verified
+  through the same Rust path a live fetch uses, so the Store works with the
+  marketplace unreachable — shown as a banner, not an error.
+- **Permissions up front**: capabilities appear as badges on every card and in
+  plain English on the detail page, not for the first time in the install
+  dialog.
+- **Compatibility gate**: a bundle declaring a minimum app version is not
+  offered an Install button the running app would fail at install time.
+
+### Changed
+- The catalog now takes descriptive text from the marketplace index rather
+  than from an installed folder's synthesised author line.
+- Preview frames use the capture stage's 576x194 aspect. They had been 16:9,
+  which cropped roughly 40% off the width of every preview image.
+- All 37 published bundles carry a real summary, description, category, tags
+  and icon.
+
+### Fixed
+- The seven declarative tile bundles that had never had a preview image
+  (`tile-birds`, `tile-githubprs`, `tile-launches`, `tile-onthisday`,
+  `tile-phonenotifs`, `tile-randomwiki`, `tile-stocks`) now have one. The
+  capture harness only ever handled visualizers, because a declarative tile
+  has no `main.js` to drive.
+- Four marketplace commands were registered without being added to the app's
+  ACL manifest, which would have rejected them at runtime.
+
+### Removed
+- The 864-line combined catalog modal. It did two jobs — browsing and
+  managing — and its information architecture had to serve both.
+
 ## [0.7.3] - 2026-08-03
 
 ### Fixed
