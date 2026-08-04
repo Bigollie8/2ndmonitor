@@ -4,14 +4,16 @@ import type { Density } from '../types';
 import { type Weather, useWeather } from '../state/tauri';
 import { redactLocation } from '../state/streamer';
 import { formatClockParts, formatHourLabel } from '../state/dateTime';
-import { formatTemp, type TempUnit } from '../state/units';
+import { formatTemp, type TempUnit, formatWind, type WindUnit } from '../state/units';
 
-function NowAndForecastTileImpl({ density, accent, accent2, streamer = false, hour12, tempUnit }: {
+function NowAndForecastTileImpl({ density, accent, accent2, streamer = false, hour12, tempUnit, windUnit }: {
   density: Density; accent: string; accent2: string; streamer?: boolean;
   /** Resolved platform clock format (0.7.2 §3) — resolveHour12 in App. */
   hour12: boolean;
   /** Resolved platform temperature unit — resolveTempUnit in App. */
   tempUnit: TempUnit;
+  /** Resolved platform wind-speed unit (0.8.1) — resolveWindUnit in App. */
+  windUnit: WindUnit;
 }) {
   const weather = useWeather();
   const [time, setTime] = useState(() => new Date());
@@ -76,7 +78,7 @@ function NowAndForecastTileImpl({ density, accent, accent2, streamer = false, ho
                 <Stat icon="☀" label="rise" value={weather.sunrise} />
                 <Stat icon="☾" label="set"  value={weather.sunset} />
                 <Stat icon="◐" label="hum"  value={`${weather.humidity}%`} />
-                <Stat icon="≋" label="wind" value={`${Math.round(weather.wind_mph)} mph`} />
+                <Stat icon="≋" label="wind" value={formatWind(weather.wind_mph, 'mph', windUnit)} />
               </div>
             )}
           </div>

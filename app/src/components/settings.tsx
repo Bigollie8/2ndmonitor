@@ -4,7 +4,7 @@ import type { ReactNode } from 'react';
 import type { VizMode, AccentTheme, Density, WeatherLocation } from '../types';
 import type { AudioSource } from '../state/audioSource';
 import type { ClockFormatSetting } from '../state/dateTime';
-import type { TempUnitSetting } from '../state/units';
+import type { TempUnitSetting, WindUnitSetting } from '../state/units';
 import { effectiveSensitivity, sourceKey } from '../state/audioSource';
 import { AudioSourcePicker } from './AudioSourcePicker';
 import { useAudioSource } from '../state/useAudioSource';
@@ -76,6 +76,8 @@ export interface SettingsValues {
   clockFormat: ClockFormatSetting;
   /** Platform-wide temperature unit — weather tiles + temps strip (0.7.2 §3). */
   tempUnit: TempUnitSetting;
+  /** Platform-wide wind-speed unit — forecast tile (0.8.1). */
+  windUnit: WindUnitSetting;
   /** The catalog removal list — see state/removedContent.ts. Needed here
    *  because the Visualizer pane's style dropdown is a picker. */
   catalogRemoved: string[];
@@ -387,6 +389,19 @@ export function SettingsWindow({
               options={['system', 'f', 'c']}
               labels={{ system: 'System', f: '°F', c: '°C' }}
               onChange={(x) => set('tempUnit', x)}
+              accent={accent}
+            />
+          ),
+        },
+        {
+          id: 'weather-wind-unit', label: 'Wind speed',
+          hint: 'Forecast tile — System resolves by locale',
+          control: (
+            <Segmented<WindUnitSetting>
+              value={v.windUnit}
+              options={['system', 'mph', 'kph']}
+              labels={{ system: 'System', mph: 'mph', kph: 'km/h' }}
+              onChange={(x) => set('windUnit', x)}
               accent={accent}
             />
           ),

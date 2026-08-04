@@ -38,7 +38,10 @@ import { useTweaks } from './state/useTweaks';
 import type { AudioSource } from './state/audioSource';
 import { describeAudioSource, effectiveSensitivity, migrateAudioSource, migrateSensitivity } from './state/audioSource';
 import { resolveHour12, type ClockFormatSetting } from './state/dateTime';
-import { resolveTempUnit, type TempUnit, type TempUnitSetting } from './state/units';
+import {
+  resolveTempUnit, type TempUnit, type TempUnitSetting,
+  resolveWindUnit, type WindUnit, type WindUnitSetting,
+} from './state/units';
 import { useAudioSource } from './state/useAudioSource';
 import { UpdateToast } from './components/UpdateToast';
 import { useSysmon, useNowPlaying, useSpectrumRef } from './state/tauri';
@@ -185,6 +188,9 @@ interface TweakState extends Record<string, unknown> {
   /** Platform-wide temperature unit (0.7.2 §3). 'system' resolves by locale
    *  (en-US → °F, most others → °C) — see state/units.ts. */
   tempUnit: TempUnitSetting;
+  /** Platform-wide wind-speed unit (0.8.1). 'system' resolves by locale
+   *  (US/UK → mph, most others → km/h) — see state/units.ts. */
+  windUnit: WindUnitSetting;
 }
 
 /** How long the viz surface will wait for boot seeding before giving up and
@@ -234,6 +240,7 @@ const TWEAK_DEFAULTS: TweakState = {
   streamerMode: false,
   clockFormat: 'system',
   tempUnit: 'system',
+  windUnit: 'system',
 };
 
 
@@ -577,21 +584,29 @@ export default function App() {
   // pointermove. Runs on mount too, so a persisted glass-on state is applied
   // right after tweaks hydrate (there is a brief opaque first paint before
   // hydration flips glassEnabled — acceptable, it matches today's boot frame).
+  // Live glass settings, readable from callbacks (the F11 handler) without
+  // making them depend on the tweak values.
+  const glassRef = useRef({ enabled: t.glassEnabled, strength: t.glassStrength });
+  glassRef.current = { enabled: t.glassEnabled, strength: t.glassStrength };
+
+  /** Push the current glass state to the OS. Shared by the settings effect
+   *  below and the F11 handler, which must re-apply because Windows drops the
+   *  DWM backdrop across a fullscreen transition. */
+  const applyGlassNow = useCallback(async () => {
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      await invoke('set_glass', {
+        enabled: glassRef.current.enabled,
+        tintAlpha: glassTintAlpha(glassRef.current.strength),
+      });
+    } catch { /* browser dev — no tauri */ }
+  }, []);
+
   useEffect(() => {
     applySurfaces(computeSurfaces(t.glassEnabled, t.glassStrength));
-    const timer = setTimeout(() => {
-      void (async () => {
-        try {
-          const { invoke } = await import('@tauri-apps/api/core');
-          await invoke('set_glass', {
-            enabled: t.glassEnabled,
-            tintAlpha: glassTintAlpha(t.glassStrength),
-          });
-        } catch { /* browser dev — no tauri */ }
-      })();
-    }, 150);
+    const timer = setTimeout(() => { void applyGlassNow(); }, 150);
     return () => clearTimeout(timer);
-  }, [t.glassEnabled, t.glassStrength]);
+  }, [t.glassEnabled, t.glassStrength, applyGlassNow]);
 
   // Push the chosen audio source to Rust whenever it changes. The tweak
   // store stays the single source of truth; Rust is a follower here — the
@@ -783,6 +798,16 @@ export default function App() {
             const { getCurrentWindow } = await import('@tauri-apps/api/window');
             const win = getCurrentWindow();
             await win.setFullscreen(!(await win.isFullscreen()));
+            // Re-apply acrylic after the toggle. Windows drops the DWM
+            // backdrop when a window changes fullscreen state, and the glass
+            // effect below only re-runs when glassEnabled/glassStrength
+            // change — so before 0.8.1 F11 silently left you on clear glass
+            // until you touched the setting. Re-applying is a no-op if the
+            // backdrop survived. Deliberately after the await so the window
+            // has already changed state; a short delay lets DWM settle.
+            if (glassRef.current.enabled) {
+              setTimeout(() => { void applyGlassNow(); }, 120);
+            }
           } catch (err) {
             // Browser dev has no Tauri — but in the real app a rejection here
             // is a permission denial and must be visible, not swallowed
@@ -846,6 +871,22 @@ export default function App() {
   const canvas = useCanvas();
 
   const overlaysOpen = editMode || showSwitcher || showOnboarding;
+
+  /** Every full-screen surface that can cover the canvas.
+   *
+   *  The video tile runs in a native Tauri CHILD WEBVIEW, which paints above
+   *  all HTML regardless of z-index — Settings is `position:fixed; z-index:2000`
+   *  and still loses to it. So the webview has to be suppressed whenever any
+   *  of these opens, and a panel that forgets to say so renders *underneath*
+   *  the video.
+   *
+   *  Derived once rather than hand-enumerated at each call site: that list has
+   *  already been wrong twice (0.7.3 added `showSettings`; 0.8.1 found
+   *  `showSwitcher`, `showOnboarding` and `showShortcuts` still missing). Add
+   *  new overlays HERE and every consumer stays correct. Distinct from
+   *  `overlaysOpen` above, which is only the top-bar pin predicate. */
+  const anyOverlayOpen = showGallery || editMode || showContentLibrary
+    || showSettings || showMarket || showSwitcher || showOnboarding || showShortcuts;
   // Pin/hide decision for the auto-hiding top bar. Pinned ⇒ never hidden.
   // Hiding does NOT reflow tiles: the bar overlays the same reserved space
   // when revealed (like the Windows taskbar) — CHROME_TOP_PX stays as-is.
@@ -961,6 +1002,7 @@ export default function App() {
   // threaded to tiles as plain props — tiles never read tweaks directly.
   const hour12 = useMemo(() => resolveHour12(t.clockFormat), [t.clockFormat]);
   const tempUnit: TempUnit = useMemo(() => resolveTempUnit(t.tempUnit), [t.tempUnit]);
+  const windUnit: WindUnit = useMemo(() => resolveWindUnit(t.windUnit), [t.windUnit]);
 
   // ── Stable callback identities (0.7.3 P2) ─────────────────────────────────
   // renderTile handed every tile a fresh arrow closure each render, which
@@ -1013,7 +1055,7 @@ export default function App() {
       case 'sysmon':
         return <SysMonTile density={t.density} accent={accent} accent2={accent2} tempUnit={tempUnit} />;
       case 'clock':
-        return <NowAndForecastTile density={t.density} accent={accent} accent2={accent2} streamer={t.streamerMode} hour12={hour12} tempUnit={tempUnit} />;
+        return <NowAndForecastTile density={t.density} accent={accent} accent2={accent2} streamer={t.streamerMode} hour12={hour12} tempUnit={tempUnit} windUnit={windUnit} />;
       case 'viz':
         return (
           <VizHero
@@ -1035,14 +1077,14 @@ export default function App() {
             onToggleVideo={() => setTweak('videoEnabled', !t.videoEnabled)}
             onNavigate={(url) => setTweak('videoCurrentUrl', url)}
             onExit={() => setTweak('videoEnabled', false)}
-            overlaysOpen={showGallery || editMode || showContentLibrary || showSettings || showMarket}
+            overlaysOpen={anyOverlayOpen}
             // Anything that covers the canvas pauses the visualizer — those
             // panels are opaque, so drawing behind them is pure waste. Before
             // 0.7.3 only the gallery counted, and opening Settings left the
             // visualizer rendering at full FPS behind it. The Market joins the
             // set for the same reason, and more so: it is full-bleed, so it
             // covers the canvas completely rather than partially.
-            paused={(t.videoEnabled && t.videoBookmarks.length > 0) || showGallery || showSettings || showContentLibrary || showMarket || (t.perfMode !== 'uncapped' && livePlayback?.playing !== true)}
+            paused={(t.videoEnabled && t.videoBookmarks.length > 0) || anyOverlayOpen || (t.perfMode !== 'uncapped' && livePlayback?.playing !== true)}
             onConfigure={() => setShowGallery(true)}
             audioDebug={t.audioDebug}
             catalogRemoved={t.catalogRemoved}
