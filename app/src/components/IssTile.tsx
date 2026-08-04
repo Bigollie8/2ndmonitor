@@ -1,6 +1,7 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useCallback, useEffect, useRef } from 'react';
 import { HFTile } from './tiles';
 import { MapView, RecenterButton, type ProjectFn } from './map/MapView';
+import { drawHomeDot } from './map/homeDot';
 import { useMapView } from './map/useMapView';
 import { distanceKm, fetchIssPosition } from '../state/iss';
 import { usePoll } from '../state/usePoll';
@@ -25,7 +26,7 @@ export interface IssTileProps {
   redacted?: boolean;
 }
 
-export function IssTile({ density, accent, location, config, setConfig, redacted = false }: IssTileProps) {
+function IssTileImpl({ density, accent, location, config, setConfig, redacted = false }: IssTileProps) {
   const { data: pos } = usePoll(
     async () => {
       // fetchIssPosition returns null on failure; usePoll drives backoff off
@@ -65,7 +66,7 @@ export function IssTile({ density, accent, location, config, setConfig, redacted
     setConfig,
   });
 
-  const drawIss = (ctx: CanvasRenderingContext2D, projectPt: ProjectFn) => {
+  const drawIss = useCallback((ctx: CanvasRenderingContext2D, projectPt: ProjectFn) => {
     // Trail, oldest → newest, alpha ramping toward the head. Segments that
     // jump the antimeridian are skipped (project takes the short way around,
     // so a >180° lon jump would draw a line across the whole map).
@@ -86,11 +87,7 @@ export function IssTile({ density, accent, location, config, setConfig, redacted
     }
     ctx.globalAlpha = 1;
     // User pin.
-    const home = projectPt(location.lat, location.lon);
-    ctx.fillStyle = 'rgba(255,255,255,0.7)';
-    ctx.beginPath();
-    ctx.arc(home.x, home.y, 3, 0, Math.PI * 2);
-    ctx.fill();
+    drawHomeDot(ctx, projectPt, location.lat, location.lon);
     // ISS glyph at the current position.
     if (pos) {
       const pt = projectPt(pos.lat, pos.lon);
@@ -102,7 +99,7 @@ export function IssTile({ density, accent, location, config, setConfig, redacted
       ctx.fill();
       ctx.shadowBlur = 0;
     }
-  };
+  }, [accent, pos, location.lat, location.lon]);
 
   const headRight = (
     <span style={{
@@ -158,3 +155,7 @@ export function IssTile({ density, accent, location, config, setConfig, redacted
     </HFTile>
   );
 }
+
+/** Memoised (0.7.3 P2): App re-renders on any tweak change, and this tile's
+ *  props are primitives or stable identities, so it can bail out. */
+export const IssTile = React.memo(IssTileImpl);

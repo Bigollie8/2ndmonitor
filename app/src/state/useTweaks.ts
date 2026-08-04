@@ -104,8 +104,19 @@ export function useTweaks<T extends Record<string, unknown>>(
   useEffect(() => {
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
-      try { localStorage.setItem(STORAGE_KEY, JSON.stringify(values)); } catch { /* noop */ }
-      void tauriSave(values).catch((err) => console.warn('tweaks_save failed:', err));
+      // Under Tauri the file IS the store — the localStorage copy is only a
+      // browser-dev fallback and the one-time migration source read on first
+      // run (see the hydrate effect above, which writes the file when it finds
+      // no file but a localStorage blob). Writing both meant stringifying the
+      // entire state twice per save, the localStorage half synchronously on
+      // the main thread (0.7.3 P3). This stops WRITING the legacy copy; it
+      // never deletes one, so an install that somehow never migrated still
+      // has its blob intact.
+      if (isTauri) {
+        void tauriSave(values).catch((err) => console.warn('tweaks_save failed:', err));
+      } else {
+        try { localStorage.setItem(STORAGE_KEY, JSON.stringify(values)); } catch { /* noop */ }
+      }
     }, 300);
     return () => {
       if (saveTimer.current) clearTimeout(saveTimer.current);

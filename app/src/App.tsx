@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { TileType, BuiltinTileType, Layout, TileInstance, OrientationLayout, Orientation, Rect } from './state/layout';
 import {
   DEFAULT_LANDSCAPE_LAYOUT,
@@ -940,14 +940,49 @@ export default function App() {
   // Streamer mode (0.7.1 §2): every location-aware tile gets this instead of
   // the raw saved location. lat/lon are byte-identical (fetches and usePoll
   // deps unaffected) — only the human-readable label is masked.
-  const displayLocation: WeatherLocation = t.streamerMode
-    ? { ...t.weatherLocation, label: redactLocation(t.weatherLocation.label, t.streamerMode) }
-    : t.weatherLocation;
+  // Memoised (0.7.3 P2): this object is passed to all four map tiles plus
+  // Sun/Tides/Aurora, so rebuilding it every render would defeat their memos.
+  const displayLocation: WeatherLocation = useMemo(
+    () => (t.streamerMode
+      ? { ...t.weatherLocation, label: redactLocation(t.weatherLocation.label, t.streamerMode) }
+      : t.weatherLocation),
+    [t.streamerMode, t.weatherLocation],
+  );
 
   // Platform-wide formats (0.7.2 §3), resolved once per setting change and
   // threaded to tiles as plain props — tiles never read tweaks directly.
   const hour12 = useMemo(() => resolveHour12(t.clockFormat), [t.clockFormat]);
   const tempUnit: TempUnit = useMemo(() => resolveTempUnit(t.tempUnit), [t.tempUnit]);
+
+  // ── Stable callback identities (0.7.3 P2) ─────────────────────────────────
+  // renderTile handed every tile a fresh arrow closure each render, which
+  // would defeat React.memo entirely. These refs let the handlers below stay
+  // referentially stable while still reading live state.
+  const activeOrientationRef = useRef(activeOrientation);
+  activeOrientationRef.current = activeOrientation;
+  const updateActiveOrientationRef = useRef(updateActiveOrientation);
+  updateActiveOrientationRef.current = updateActiveOrientation;
+
+  /** One stable setter per instance id — the closure captures only the id, and
+   *  reads the live tile list through a ref at call time. */
+  const configSettersRef = useRef(new Map<string, (next: Record<string, unknown>) => void>());
+  const configSetterFor = useCallback((instanceId: string) => {
+    const map = configSettersRef.current;
+    let fn = map.get(instanceId);
+    if (!fn) {
+      fn = (next: Record<string, unknown>) => {
+        updateActiveOrientationRef.current({
+          tiles: updateInstance(activeOrientationRef.current.tiles, instanceId, { config: next }),
+        });
+      };
+      map.set(instanceId, fn);
+    }
+    return fn;
+  }, []);
+
+  // setTweak is already useCallback-stable inside useTweaks, so these are too.
+  const setAudioSource = useCallback((s: AudioSource) => setTweak('vizAudioSource', s), [setTweak]);
+  const setVizModeStable = useCallback((m: VizMode) => setTweak('vizMode', m), [setTweak]);
 
   const renderTile = (instance: TileInstance) => {
     switch (instance.type) {
@@ -962,7 +997,7 @@ export default function App() {
           <AudioMixerTile
             density={t.density} accent={accent} accent2={accent2} spectrumRef={spectrumRef}
             audioSource={t.vizAudioSource}
-            onSetAudioSource={(s) => setTweak('vizAudioSource', s)}
+            onSetAudioSource={setAudioSource}
           />
         );
       case 'notes':
@@ -975,7 +1010,7 @@ export default function App() {
         return (
           <VizHero
             mode={t.vizMode}
-            setMode={(m) => setTweak('vizMode', m)}
+            setMode={setVizModeStable}
             accent={vizAccent}
             accent2={vizAccent2}
             track={track}
@@ -992,8 +1027,12 @@ export default function App() {
             onToggleVideo={() => setTweak('videoEnabled', !t.videoEnabled)}
             onNavigate={(url) => setTweak('videoCurrentUrl', url)}
             onExit={() => setTweak('videoEnabled', false)}
-            overlaysOpen={showGallery || editMode || showContentLibrary}
-            paused={(t.videoEnabled && t.videoBookmarks.length > 0) || showGallery || (t.perfMode !== 'uncapped' && livePlayback?.playing !== true)}
+            overlaysOpen={showGallery || editMode || showContentLibrary || showSettings}
+            // Anything that covers the canvas pauses the visualizer — those
+            // panels are opaque, so drawing behind them is pure waste. Before
+            // 0.7.3 only the gallery counted, and opening Settings left the
+            // visualizer rendering at full FPS behind it.
+            paused={(t.videoEnabled && t.videoBookmarks.length > 0) || showGallery || showSettings || showContentLibrary || (t.perfMode !== 'uncapped' && livePlayback?.playing !== true)}
             onConfigure={() => setShowGallery(true)}
             audioDebug={t.audioDebug}
             catalogRemoved={t.catalogRemoved}
@@ -1011,7 +1050,7 @@ export default function App() {
             density={t.density}
             accent={accent}
             vizMode={t.vizMode}
-            setVizMode={(m) => setTweak('vizMode', m)}
+            setVizMode={setVizModeStable}
             profiles={t.profiles}
             setActiveProfileId={(id) => setTweak('activeProfileId', id)}
             catalogRemoved={t.catalogRemoved}
@@ -1024,9 +1063,7 @@ export default function App() {
             accent={accent}
             location={displayLocation}
             config={instance.config as Record<string, unknown> | undefined}
-            setConfig={(next) => updateActiveOrientation({
-              tiles: updateInstance(activeOrientation.tiles, instance.instanceId, { config: next }),
-            })}
+            setConfig={configSetterFor(instance.instanceId)}
             redacted={t.streamerMode}
             hour12={hour12}
           />
@@ -1077,9 +1114,7 @@ export default function App() {
             accent={accent}
             editing={editMode}
             config={instance.config as Record<string, unknown> | undefined}
-            setConfig={(next) => updateActiveOrientation({
-              tiles: updateInstance(activeOrientation.tiles, instance.instanceId, { config: next }),
-            })}
+            setConfig={configSetterFor(instance.instanceId)}
           />
         );
       case 'tides':
@@ -1089,9 +1124,7 @@ export default function App() {
             accent={accent}
             editing={editMode}
             config={instance.config as Record<string, unknown> | undefined}
-            setConfig={(next) => updateActiveOrientation({
-              tiles: updateInstance(activeOrientation.tiles, instance.instanceId, { config: next }),
-            })}
+            setConfig={configSetterFor(instance.instanceId)}
             streamer={t.streamerMode}
             hour12={hour12}
           />
@@ -1104,9 +1137,7 @@ export default function App() {
             accent={accent}
             editing={editMode}
             config={instance.config as Record<string, unknown> | undefined}
-            setConfig={(next) => updateActiveOrientation({
-              tiles: updateInstance(activeOrientation.tiles, instance.instanceId, { config: next }),
-            })}
+            setConfig={configSetterFor(instance.instanceId)}
           />
         );
       case 'homeAssistant':
@@ -1134,9 +1165,7 @@ export default function App() {
             accent={accent}
             location={displayLocation}
             config={instance.config as Record<string, unknown> | undefined}
-            setConfig={(next) => updateActiveOrientation({
-              tiles: updateInstance(activeOrientation.tiles, instance.instanceId, { config: next }),
-            })}
+            setConfig={configSetterFor(instance.instanceId)}
             redacted={t.streamerMode}
           />
         );
@@ -1151,9 +1180,7 @@ export default function App() {
             accent={accent}
             location={displayLocation}
             config={instance.config as Record<string, unknown> | undefined}
-            setConfig={(next) => updateActiveOrientation({
-              tiles: updateInstance(activeOrientation.tiles, instance.instanceId, { config: next }),
-            })}
+            setConfig={configSetterFor(instance.instanceId)}
             redacted={t.streamerMode}
           />
         );
@@ -1164,9 +1191,7 @@ export default function App() {
             accent={accent}
             location={displayLocation}
             config={instance.config as Record<string, unknown> | undefined}
-            setConfig={(next) => updateActiveOrientation({
-              tiles: updateInstance(activeOrientation.tiles, instance.instanceId, { config: next }),
-            })}
+            setConfig={configSetterFor(instance.instanceId)}
             redacted={t.streamerMode}
           />
         );
@@ -1182,9 +1207,7 @@ export default function App() {
             accent2={accent2}
             editing={editMode}
             config={instance.config as Record<string, unknown> | undefined}
-            setConfig={(next) => updateActiveOrientation({
-              tiles: updateInstance(activeOrientation.tiles, instance.instanceId, { config: next }),
-            })}
+            setConfig={configSetterFor(instance.instanceId)}
           />
         );
       case 'dateTime':
@@ -1193,9 +1216,7 @@ export default function App() {
             density={t.density}
             accent={accent}
             config={instance.config as Record<string, unknown> | undefined}
-            setConfig={(next) => updateActiveOrientation({
-              tiles: updateInstance(activeOrientation.tiles, instance.instanceId, { config: next }),
-            })}
+            setConfig={configSetterFor(instance.instanceId)}
             hour12={hour12}
           />
         );

@@ -12,6 +12,24 @@ use tauri::{AppHandle, Emitter, Manager, Runtime, State};
 
 const POLL_INTERVAL_SECS: u64 = 30 * 60;
 
+/// First retry delay after a failed fetch, doubling per consecutive failure.
+const RETRY_BASE_SECS: u64 = 30;
+/// Ceiling for the retry backoff. Must stay below POLL_INTERVAL_SECS so a
+/// failing endpoint is still retried more often than the healthy cadence.
+const RETRY_MAX_SECS: u64 = 300;
+
+/// Delay before the next attempt after `failures` consecutive errors:
+/// 30/60/120/240 s, capped at 300 s. Mirrors usePoll's backoffDelay on the TS
+/// side — before 0.7.3 this loop had no retry at all, so a single failed fetch
+/// at launch left the forecast tile empty for the full 30-minute interval and
+/// only an app refresh (which re-pushes the location) recovered it.
+fn retry_delay_secs(failures: u32) -> u64 {
+    // min(16) only guards the shift itself from overflowing; RETRY_MAX_SECS is
+    // what actually caps the delay.
+    let shifted = RETRY_BASE_SECS.saturating_mul(1u64 << failures.min(16));
+    shifted.min(RETRY_MAX_SECS)
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WeatherLocation {
     pub label: String,
@@ -27,6 +45,11 @@ impl Default for WeatherLocation {
 
 pub struct WeatherState {
     pub location: Mutex<WeatherLocation>,
+    /// Last successful payload, replayed to a late-attaching frontend via
+    /// `weather_current`. Tauri events have no replay, so a webview that
+    /// finishes booting after the first emit would otherwise see nothing
+    /// until the next poll (0.7.3).
+    pub last: Mutex<Option<Weather>>,
     /// One-shot signaler — the poll loop refetches immediately when this flips.
     /// std Mutex (not parking_lot) because it pairs with `refetch_cv`: the
     /// worker blocks on the Condvar instead of polling the flag every 200 ms.
@@ -111,43 +134,62 @@ struct DailyResp {
 pub fn spawn<R: Runtime>(app: AppHandle<R>) {
     let state = Arc::new(WeatherState {
         location: Mutex::new(WeatherLocation::default()),
+        last: Mutex::new(None),
         refetch_now: StdMutex::new(false),
         refetch_cv: Condvar::new(),
     });
     app.manage(state.clone());
 
-    std::thread::spawn(move || loop {
-        let loc = state.location.lock().clone();
-        match fetch(&loc) {
-            Ok(w) => {
-                let _ = app.emit("weather:tick", &w);
-            }
-            Err(e) => eprintln!("weather: {e}"),
-        }
-        // Sleep up to POLL_INTERVAL_SECS, but wake early if `refetch_now`
-        // flips. Condvar wait means zero wakeups while idle — the thread only
-        // runs on notify (location change) or when the 30-min deadline passes.
-        let deadline = Instant::now() + Duration::from_secs(POLL_INTERVAL_SECS);
-        let mut refetch = state
-            .refetch_now
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+    std::thread::spawn(move || {
+        let mut failures: u32 = 0;
         loop {
-            if *refetch {
-                break;
-            }
-            let remaining = deadline.saturating_duration_since(Instant::now());
-            if remaining.is_zero() {
-                break;
-            }
-            // Loop guards against spurious wakeups: re-check flag + deadline.
-            let (guard, _timed_out) = state
-                .refetch_cv
-                .wait_timeout(refetch, remaining)
+            let loc = state.location.lock().clone();
+            let wait_secs = match fetch(&loc) {
+                Ok(w) => {
+                    failures = 0;
+                    // Cache before emitting: a webview that finishes booting
+                    // after this emit replays it via `weather_current`.
+                    *state.last.lock() = Some(w.clone());
+                    let _ = app.emit("weather:tick", &w);
+                    POLL_INTERVAL_SECS
+                }
+                Err(e) => {
+                    eprintln!("weather: {e}");
+                    let d = retry_delay_secs(failures);
+                    failures = failures.saturating_add(1);
+                    d
+                }
+            };
+            // Sleep up to `wait_secs`, but wake early if `refetch_now` flips.
+            // Condvar wait means zero wakeups while idle — the thread only
+            // runs on notify (location change) or when the deadline passes.
+            let deadline = Instant::now() + Duration::from_secs(wait_secs);
+            let mut refetch = state
+                .refetch_now
+                .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
-            refetch = guard;
+            loop {
+                if *refetch {
+                    break;
+                }
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                if remaining.is_zero() {
+                    break;
+                }
+                // Loop guards against spurious wakeups: re-check flag + deadline.
+                let (guard, _timed_out) = state
+                    .refetch_cv
+                    .wait_timeout(refetch, remaining)
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                refetch = guard;
+            }
+            // A manual refetch (location change) resets the backoff: the user
+            // asked for this one, so don't make them wait out a stale penalty.
+            if *refetch {
+                failures = 0;
+            }
+            *refetch = false;
         }
-        *refetch = false;
     });
 }
 
@@ -164,6 +206,15 @@ pub fn set_weather_location<R: Runtime>(
         .unwrap_or_else(|poisoned| poisoned.into_inner()) = true;
     state.refetch_cv.notify_one();
     Ok(())
+}
+
+/// Last successful forecast, or None if none has landed yet. Lets a freshly
+/// mounted frontend paint immediately instead of waiting for the next tick —
+/// `weather:tick` is fire-and-forget, so an emit that beats the listener
+/// registration is lost outright (0.7.3).
+#[tauri::command]
+pub fn weather_current(state: State<'_, Arc<WeatherState>>) -> Option<Weather> {
+    state.last.lock().clone()
 }
 
 fn fetch(loc: &WeatherLocation) -> Result<Weather, String> {
@@ -326,7 +377,20 @@ fn format_clock(iso: Option<&String>) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{format_hour_label, parse_hour};
+    use super::{format_hour_label, parse_hour, retry_delay_secs, POLL_INTERVAL_SECS};
+
+    #[test]
+    fn retry_delay_backs_off_then_caps() {
+        assert_eq!(retry_delay_secs(0), 30);
+        assert_eq!(retry_delay_secs(1), 60);
+        assert_eq!(retry_delay_secs(2), 120);
+        assert_eq!(retry_delay_secs(3), 240);
+        // capped — a permanently dead endpoint is retried at a civilised rate
+        assert_eq!(retry_delay_secs(4), 300);
+        assert_eq!(retry_delay_secs(50), 300);
+        // and never longer than the normal poll interval
+        assert!(retry_delay_secs(50) < POLL_INTERVAL_SECS);
+    }
 
     #[test]
     fn parse_hour_reads_the_iso_hour() {

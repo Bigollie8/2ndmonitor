@@ -14,7 +14,7 @@ const SAVE_MS = 30 * 1000;
 
 interface UsageMap { [appName: string]: number }
 
-export function ActiveWindowTile({ density, accent }: { density: Density; accent: string }) {
+function ActiveWindowTileImpl({ density, accent }: { density: Density; accent: string }) {
   const [usage, setUsage] = useState<UsageMap>(() => loadUsage().perApp);
   const lastTickRef = useRef<number>(Date.now());
   const lastPersistRef = useRef<number>(Date.now());
@@ -149,3 +149,7 @@ function formatTime(sec: number): string {
   const h = Math.floor(m / 60);
   return `${h}h ${m % 60}m`;
 }
+
+/** Memoised (0.7.3 P2): App re-renders on any tweak change, and this tile's
+ *  props are primitives or stable identities, so it can bail out. */
+export const ActiveWindowTile = React.memo(ActiveWindowTileImpl);

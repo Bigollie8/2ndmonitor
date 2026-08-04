@@ -6,7 +6,7 @@ import type { Density } from '../types';
 
 const REFRESH_MS = 30 * 1000;
 
-export function DockerTile({ density, accent }: { density: Density; accent: string }) {
+function DockerTileImpl({ density, accent }: { density: Density; accent: string }) {
   const { data: result } = usePoll(
     async () => {
       // fetchDockerContainers returns null outside Tauri / on invoke failure;
@@ -103,3 +103,7 @@ function ContainerRow({ c, accent }: { c: DockerContainer; accent: string }) {
     </div>
   );
 }
+
+/** Memoised (0.7.3 P2): App re-renders on any tweak change, and this tile's
+ *  props are primitives or stable identities, so it can bail out. */
+export const DockerTile = React.memo(DockerTileImpl);

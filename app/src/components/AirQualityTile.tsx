@@ -16,7 +16,7 @@ export interface AirQualityTileProps {
   location: WeatherLocation;
 }
 
-export function AirQualityTile({ density, accent, location }: AirQualityTileProps) {
+function AirQualityTileImpl({ density, accent, location }: AirQualityTileProps) {
   // fetchAirQuality returns null on failure; throw so usePoll backs off while
   // keeping the last good sample visible.
   const { data: sample } = usePoll(
@@ -118,3 +118,7 @@ function Pillar({
     </div>
   );
 }
+
+/** Memoised (0.7.3 P2): App re-renders on any tweak change, and this tile's
+ *  props are primitives or stable identities, so it can bail out. */
+export const AirQualityTile = React.memo(AirQualityTileImpl);

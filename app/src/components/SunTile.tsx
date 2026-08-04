@@ -25,7 +25,7 @@ export interface SunTileProps {
   hour12: boolean;
 }
 
-export function SunTile({ density, accent, location, hour12 }: SunTileProps) {
+function SunTileImpl({ density, accent, location, hour12 }: SunTileProps) {
   // Re-render every minute. Real time math comes from Date.now().
   const [, setTick] = useState(0);
   useEffect(() => {
@@ -165,3 +165,7 @@ function dayKey(d: Date): string {
   const day = String(d.getDate()).padStart(2, '0');
   return `${d.getFullYear()}-${m}-${day}`;
 }
+
+/** Memoised (0.7.3 P2): App re-renders on any tweak change, and this tile's
+ *  props are primitives or stable identities, so it can bail out. */
+export const SunTile = React.memo(SunTileImpl);
