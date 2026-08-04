@@ -400,6 +400,12 @@ export function useWeather(): Weather | null {
     if (!isTauri) return;
     let cancelled = false;
     let cleanup: (() => void) | null = null;
+    // Attach the listener FIRST, then prime from the cached value. In this
+    // order a tick landing mid-prime is still received, and the prime only
+    // ever fills a still-empty slot, so it cannot clobber a fresher payload.
+    // Without this, the poll thread's t=0 emit was lost whenever Rust won the
+    // race against this hook's dynamic import + IPC registration, leaving the
+    // forecast blank until the next tick (0.7.3).
     import('@tauri-apps/api/event')
       .then(({ listen }) => listen<Weather>('weather:tick', (e) => {
         if (cancelled) return;
@@ -408,6 +414,13 @@ export function useWeather(): Weather | null {
       .then((unlisten) => {
         if (cancelled) { unlisten(); return; }
         cleanup = unlisten;
+        return import('@tauri-apps/api/core')
+          .then(({ invoke }) => invoke<Weather | null>('weather_current'))
+          .then((cached) => {
+            if (cancelled || !cached) return;
+            setWeather((prev) => prev ?? cached);
+          })
+          .catch((err) => console.warn('weather_current failed', err));
       })
       .catch((err) => console.error('weather listen failed', err));
     return () => { cancelled = true; cleanup?.(); };
