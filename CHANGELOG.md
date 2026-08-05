@@ -5,6 +5,49 @@ All notable changes to 2ndMonitor are documented here. Format follows
 
 ## [Unreleased]
 
+### Fixed
+- **Aircraft Overhead no longer throttles for some users.** The tile relied
+  on OpenSky's anonymous access, which grants a small daily budget per IP
+  address — anyone behind a shared or VPN'd address was sharing an
+  exhausted budget and saw the limit message permanently. Flight data now
+  comes from adsb.lol, a community feed with no key and no per-IP budget;
+  OpenSky remains only as an automatic fallback
+- **Weather radar on slow connections no longer glitches.** When radar
+  imagery arrived slower than the animation played (the New Zealand
+  report), frames flashed empty because each one drew only what had already
+  downloaded. The map now keeps showing the previous frame's imagery in any
+  spot the new frame hasn't loaded yet, and downloads the next frame ahead
+  of the animation
+- **F11 fullscreen, third round.** On some machines the window settles a few
+  pixels away from where it was told to go, leaving the reported gap on the
+  left and top. Fullscreen now measures where the window actually landed,
+  reapplies the correct rectangle up to three times, and — if the system
+  still refuses — logs the exact numbers so a beta tester's console output
+  pinpoints the cause. Also fixed: exiting fullscreen restores the window's
+  true previous frame instead of a slightly-shifted one
+- **macOS: the system-audio recording prompt should stop reappearing.**
+  macOS re-asks for permission when it thinks a *different* device is being
+  tapped. The app compared the default output device by its numeric ID,
+  which macOS reassigns freely (sleep/wake, AirPods reconnecting, display
+  changes), so a routine re-check looked like a new device and restarted
+  the tap — triggering a fresh permission prompt roughly every 20 minutes
+  for some setups. Devices are now compared by their stable unique ID, and
+  every tap creation is logged so testers can confirm from Console.app
+
+### Performance
+- **Full pre-0.9.0 performance audit.** Measured result: an edit-mode tile
+  drag now costs 1 map repaint and zero long tasks (was 246 repaints before
+  the 0.7.3 pass — that fix has held through eight releases)
+- **Stereo audio data is now sent only to visualizers that use it.** The
+  two-channel waveform stream — roughly double the audio traffic — was
+  broadcast whenever any visualizer ran, though only the Vectorscope and
+  Loudness console read it. Those two now declare it and everyone else
+  stops paying for it
+- **Closing one visualizer no longer freezes the waveform in another.**
+  Any visualizer being closed switched the waveform stream off globally,
+  even with other visualizers still on screen — a long-standing latent bug
+  the audit surfaced
+
 ## [0.8.6] - 2026-08-05
 
 ### Added

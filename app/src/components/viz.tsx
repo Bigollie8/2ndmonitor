@@ -70,10 +70,20 @@ export function makeSpectrumReader(
     bands,
     onset,
     /** Call once per frame; mutates `out`, `bands`, `onset` in place.
-     *  Returns the bass scalar (mean of low ~12.5% of bins). */
-    read(): number {
-      t += 0.04;
-      beatPhase += 0.04;
+     *  Returns the bass scalar (mean of low ~12.5% of bins).
+     *
+     *  `dtSec` is the real elapsed time since the previous call (clamped by
+     *  the caller). Before 0.8.7 every call assumed a fixed 40ms step while
+     *  actually running at the display FPS cap, so the AGC's time constants,
+     *  the onset decay, and the fallback's 120bpm clock all ran 2-6x fast
+     *  depending on Performance Mode and refresh rate. All per-frame decay
+     *  factors below were tuned against that 40ms step, so they are rescaled
+     *  by pow(k, dtSec/0.04) — behaviour at a true 25fps is bit-identical to
+     *  the old tuning, and every other rate now matches it in wall-clock. */
+    read(dtSec = 0.04): number {
+      const dtScale = dtSec / 0.04;
+      t += dtSec;
+      beatPhase += dtSec;
       const live = spectrumRef?.current.live === true;
       const liveBands = spectrumRef?.current.bands;
       const srcLen = liveBands?.length ?? 64;
@@ -88,8 +98,9 @@ export function makeSpectrumReader(
           const v = liveBands[i] ?? 0;
           if (v > peak) peak = v;
         }
-        gain = agc.step(peak, 0.04);
+        gain = agc.step(peak, dtSec);
       }
+      const smDt = Math.pow(sm, dtScale);
       let bassSum = 0, midSum = 0, trebleSum = 0;
       // Musical thirds in log-frequency space (Rust emits 30Hz–16kHz log-spaced).
       // bass = 30–250Hz (kick, bass guitar), mid = 250Hz–2kHz (vocals, snare body),
@@ -123,7 +134,7 @@ export function makeSpectrumReader(
         }
         const scaled = raw * sensitivity * gain;
         const prev = smoothed[i] ?? 0;
-        const v = prev * sm + scaled * (1 - sm);
+        const v = prev * smDt + scaled * (1 - smDt);
         smoothed[i] = v;
         const clamped = Math.max(0.04, Math.min(1, v));
         out[i] = clamped;
@@ -140,15 +151,17 @@ export function makeSpectrumReader(
 
       // Onset detection: spike above slow baseline triggers a peak that
       // decays over ~150ms. Threshold and decay tuned so kicks read distinctly.
-      bassBaseline = bassBaseline * 0.92 + bass * 0.08;
-      midBaseline = midBaseline * 0.92 + mid * 0.08;
-      trebleBaseline = trebleBaseline * 0.92 + treble * 0.08;
+      const baseDt = Math.pow(0.92, dtScale);
+      const envDt = Math.pow(0.82, dtScale);
+      bassBaseline = bassBaseline * baseDt + bass * (1 - baseDt);
+      midBaseline = midBaseline * baseDt + mid * (1 - baseDt);
+      trebleBaseline = trebleBaseline * baseDt + treble * (1 - baseDt);
       const kickHit = Math.max(0, bass - bassBaseline * 1.25);
       const snareHit = Math.max(0, mid - midBaseline * 1.25);
       const hatHit = Math.max(0, treble - trebleBaseline * 1.25);
-      kickEnv = Math.max(kickEnv * 0.82, Math.min(1, kickHit * 4));
-      snareEnv = Math.max(snareEnv * 0.82, Math.min(1, snareHit * 4));
-      hatEnv = Math.max(hatEnv * 0.82, Math.min(1, hatHit * 4));
+      kickEnv = Math.max(kickEnv * envDt, Math.min(1, kickHit * 4));
+      snareEnv = Math.max(snareEnv * envDt, Math.min(1, snareHit * 4));
+      hatEnv = Math.max(hatEnv * envDt, Math.min(1, hatHit * 4));
       onset.kick = kickEnv;
       onset.snare = snareEnv;
       onset.hat = hatEnv;

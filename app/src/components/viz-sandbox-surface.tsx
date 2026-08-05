@@ -5,7 +5,7 @@ import { paceFrame, type PaceState } from '../state/framePace';
 import { SANDBOX_ATTR, SANDBOX_SRC } from '../sandbox/sandbox-html';
 import { validateManifest } from '../sandbox/manifest';
 import type { InitMessage, SandboxToHost } from '../sandbox/manifest';
-import { buildFrameMessage, toVizPlayback } from '../sandbox/frame';
+import { buildFrameMessage, clampDt, toVizPlayback } from '../sandbox/frame';
 import { makeBrokerHandler, permissionsOf, type RpcRequest } from '../sandbox/broker';
 
 const settingsKey = (id: string) => `scripted.settings.${id}`;
@@ -416,7 +416,9 @@ export function SandboxVizSurface({
       if (maxFps && !paceFrame(now, paceState, 1000 / maxFps)) return;
       const dtMs = now - last;
       last = now;
-      reader.read();
+      // Real elapsed time, not an assumed 40ms step — the reader's AGC and
+      // onset decays are wall-clock-true since 0.8.7 (see read()'s doc).
+      reader.read(clampDt(dtMs));
       const rect = hostRef.current.getBoundingClientRect();
       const msg = buildFrameMessage({
         spectrum: reader.out,
