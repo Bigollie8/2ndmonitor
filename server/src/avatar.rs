@@ -15,6 +15,7 @@ use axum::response::Response;
 use axum::Json;
 use base64::Engine;
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 
 use crate::auth::bearer_user;
 use crate::AppState;
@@ -82,6 +83,7 @@ pub async fn put_avatar(
 /// of a suspension, and a face is the most visible thing they have.
 pub async fn get_avatar(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Path(handle): Path<String>,
 ) -> Result<Response, StatusCode> {
     let handle = crate::handle::normalise(&handle);
@@ -95,11 +97,39 @@ pub async fn get_avatar(
         .map_err(|_| StatusCode::NOT_FOUND)?;
 
     let mime = sniff(&bytes).ok_or(StatusCode::NOT_FOUND)?;
+
+    // An ETag over the bytes, and revalidate-before-use rather than a timed
+    // cache.
+    //
+    // The first version used `max-age=300`, which meant changing your picture
+    // left the old one on screen for five minutes everywhere except the one
+    // panel that appended a cache-busting query. Every other surface — the
+    // directory, creator pages, the shoutbox, the forum, comments, the staff
+    // panel — showed a stale face, and it read as a broken upload.
+    //
+    // `no-cache` does NOT mean "do not store": it means ask first. So a page
+    // of unchanged avatars costs one 304 each (no body), while a changed one
+    // is picked up immediately. That is the behaviour a profile picture wants,
+    // and it needs no bookkeeping in any caller.
+    let etag = format!("\"{}\"", &hex::encode(Sha256::digest(&bytes))[..16]);
+    let fresh = headers
+        .get(header::IF_NONE_MATCH)
+        .and_then(|v| v.to_str().ok())
+        .map(|v| v == etag)
+        .unwrap_or(false);
+    if fresh {
+        return Response::builder()
+            .status(StatusCode::NOT_MODIFIED)
+            .header(header::ETAG, etag)
+            .header(header::CACHE_CONTROL, "no-cache")
+            .body(Body::empty())
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
     Response::builder()
         .header(header::CONTENT_TYPE, mime)
-        // Short cache: long enough that a page of avatars is one fetch each,
-        // short enough that changing your picture shows up promptly.
-        .header(header::CACHE_CONTROL, "public, max-age=300")
+        .header(header::ETAG, etag)
+        .header(header::CACHE_CONTROL, "no-cache")
         .body(Body::from(bytes))
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }

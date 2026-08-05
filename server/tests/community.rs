@@ -642,3 +642,57 @@ async fn the_forum_is_searchable_over_title_and_body() {
     let (_, all) = call(&app, "GET", "/topics", None, None).await;
     assert_eq!(all["topics"].as_array().unwrap().len(), 2, "no query means everything");
 }
+
+
+// A changed picture must appear immediately everywhere, not in five minutes.
+// The first version cached for 300s and only ONE panel appended a
+// cache-busting query, so every other surface showed a stale face and it read
+// as a broken upload.
+#[tokio::test]
+async fn a_changed_avatar_is_served_immediately_and_an_unchanged_one_revalidates() {
+    use axum::body::Body;
+    use axum::http::{header, Request};
+
+    let app = router(test_state());
+    let me = account(&app, "etag@x.y", Some("etaguser")).await;
+
+    fn png_of(fill: u8) -> String {
+        use base64::Engine;
+        let mut v = vec![0x89u8, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
+        v.extend_from_slice(&[fill; 64]);
+        base64::engine::general_purpose::STANDARD.encode(&v)
+    }
+
+    async fn get_avatar(app: &axum::Router, inm: Option<&str>) -> (StatusCode, Option<String>) {
+        let mut req = Request::builder().method("GET").uri("/creators/etaguser/avatar");
+        if let Some(v) = inm {
+            req = req.header(header::IF_NONE_MATCH, v);
+        }
+        let res = app.clone().oneshot(req.body(Body::empty()).unwrap()).await.unwrap();
+        let status = res.status();
+        let etag = res
+            .headers()
+            .get(header::ETAG)
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s.to_string());
+        (status, etag)
+    }
+
+    call(&app, "POST", "/account/avatar", Some(&me),
+        Some(serde_json::json!({ "image": png_of(1) }))).await;
+    let (st, first) = get_avatar(&app, None).await;
+    assert_eq!(st, StatusCode::OK);
+    let first = first.expect("an ETag so the client can revalidate");
+
+    // Unchanged: 304, no body. A page of avatars costs one of these each.
+    let (st, _) = get_avatar(&app, Some(&first)).await;
+    assert_eq!(st, StatusCode::NOT_MODIFIED);
+
+    // Changed: the SAME conditional request must now return the new bytes,
+    // which is the whole bug.
+    call(&app, "POST", "/account/avatar", Some(&me),
+        Some(serde_json::json!({ "image": png_of(2) }))).await;
+    let (st, second) = get_avatar(&app, Some(&first)).await;
+    assert_eq!(st, StatusCode::OK, "a new picture must not wait for a cache to expire");
+    assert_ne!(second.unwrap(), first, "and it gets a new ETag");
+}
