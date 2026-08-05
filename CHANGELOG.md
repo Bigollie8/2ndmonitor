@@ -49,6 +49,15 @@ This adds the person behind the work, and everything that follows from that.
   create an account at all without using the command line
 
 ### Fixed
+- **Auto-updates and downloads work again.** Making the source repository
+  private also made its GitHub release assets private, and the updater sends
+  no credentials — so every update check got a 404 ("can't reach the update
+  server") and the installer links stopped resolving. Artifacts are now
+  published to a separate public repository that holds nothing but releases,
+  and the update manifest points there. The release workflow verifies the
+  endpoint anonymously before finishing, so this cannot break silently again.
+  **Installs on 0.8.1 or earlier have the old address compiled in and will not
+  find this update — they need a manual reinstall**
 - **The store no longer goes black when the marketplace is reachable.** The
   server answers one endpoint with a wrapper the app did not expect, and
   reading it crashed the whole store mid-render. It only ever appeared when
@@ -297,17 +306,6 @@ because that is genuinely what it measures.
 - The app now declares its licence everywhere it should — the installer shows
   it, and the built executable finally carries a real publisher and copyright
   instead of blank fields
-
-### Fixed
-- **Auto-updates and downloads work again.** Making the source repository
-  private also made its GitHub release assets private, and the updater sends
-  no credentials — so every update check got a 404 ("can't reach the update
-  server") and the installer links stopped resolving. Artifacts are now
-  published to a separate public repository that holds nothing but releases,
-  and the update manifest points there. The release workflow verifies the
-  endpoint anonymously before finishing, so this cannot break silently again.
-  **Installs on 0.8.1 or earlier have the old address compiled in and will not
-  find this update — they need a manual reinstall**
 
 ### Added
 - **Third-party licence notices**: `THIRD-PARTY-LICENSES.md` lists every
