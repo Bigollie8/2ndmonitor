@@ -5,6 +5,38 @@ All notable changes to 2ndMonitor are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.8.4] - 2026-08-05
+
+### Added
+- **Two new visualizers for people who want the data**: **Vectorscope** shows
+  the stereo image as engineers see it — a tall trace means mono, a wide one
+  means spacious — with live correlation and width meters. **Loudness console**
+  gives you L/R meters with peak-hold, a rolling level history and live peak,
+  RMS, crest-factor and correlation numbers. Both install themselves when you
+  open 0.8.4
+- **Arrow keys move tiles in edit mode**: select a tile and nudge it with the
+  arrow keys, or hold Shift for pixel-level adjustment
+
+### Fixed
+- **Scrolling quickly through visualizers no longer freezes the app**: each
+  preview that came into view immediately started a full live render, so a
+  fast scroll started and stopped dozens of them in a row. Previews now wait
+  until you actually settle on them
+- **Connecting Discord tells you when the ID is wrong**: pasting the wrong
+  value sent you to Discord only to be met with "unknown application", which
+  never said what was wrong. The tile now checks it first and names the
+  mistake — the Public Key and the Application ID sit next to each other in
+  Discord's portal and are easy to mix up. Setup steps rewritten to say
+  exactly which field to copy
+
+### Note on the stereo visualizers
+Vectorscope and Loudness console read both audio channels, which the app now
+captures. Two things are expected rather than faults: a **per-app audio
+source** is combined to mono before the app sees it, so the vectorscope will
+show a vertical line and correlation will read 1.00 — pick the system-wide
+source for a true stereo image. And the console is labelled **RMS**, not LUFS,
+because that is genuinely what it measures.
+
 ## [0.8.3] - 2026-08-05
 
 ### Added
