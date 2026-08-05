@@ -21,6 +21,8 @@ export function EditModeOverlay({
   tiles, setTiles,
   selectedInstanceId, setSelectedInstanceId,
   snap, setSnap,
+  showGuides, setShowGuides,
+  showGrid, setShowGrid,
   profileName,
   catalogRemoved,
   topInsetPx,
@@ -42,14 +44,19 @@ export function EditModeOverlay({
   setSelectedInstanceId: (id: string) => void;
   snap: boolean;
   setSnap: (enabled: boolean) => void;
+  /** Guides and grid are owned and persisted by App (0.8.5). They used to be
+   *  local state here, so every choice was forgotten the moment edit mode
+   *  closed — you had to turn them off again on every visit. */
+  showGuides: boolean;
+  setShowGuides: (enabled: boolean) => void;
+  showGrid: boolean;
+  setShowGrid: (enabled: boolean) => void;
   profileName: string;
   /** The catalog removal list — see state/removedContent.ts. */
   catalogRemoved: string[];
   /** Top reserved band in px — 0 when auto-hide frees the space (0.7.2 §2). */
   topInsetPx: number;
 }) {
-  const [showGuides, setShowGuides] = useState(true);
-  const [showGrid, setShowGrid] = useState(true);
 
   // Labels/icons come from the shared registry — this used to be a third
   // hand-maintained copy of the tile metadata. A plain `Record<TileType, ...>`
