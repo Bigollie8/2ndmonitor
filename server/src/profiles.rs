@@ -34,7 +34,7 @@ pub async fn get_account(
 ) -> Result<Json<Value>, StatusCode> {
     let user_id = bearer_user(&state, &headers)?;
     let db = state.db.lock();
-    let (email, handle, display_name, bio, links, avatar_seed, suspended, accent, badges): (
+    let (email, handle, display_name, bio, links, avatar_seed, suspended, accent, badges, has_avatar): (
         String,
         Option<String>,
         Option<String>,
@@ -44,9 +44,11 @@ pub async fn get_account(
         i64,
         Option<String>,
         String,
+        bool,
     ) = db
         .query_row(
-            "SELECT email, handle, display_name, bio, links, avatar_seed, suspended, accent, badges
+            "SELECT email, handle, display_name, bio, links, avatar_seed, suspended, accent, badges,
+                    avatar IS NOT NULL
              FROM users WHERE id = ?1",
             [user_id],
             |r| {
@@ -60,6 +62,7 @@ pub async fn get_account(
                     r.get(6)?,
                     r.get(7)?,
                     r.get(8)?,
+                    r.get(9)?,
                 ))
             },
         )
@@ -75,6 +78,7 @@ pub async fn get_account(
         "suspended": suspended != 0,
         "accent": accent,
         "badges": serde_json::from_str::<Value>(&badges).unwrap_or(json!([])),
+        "hasAvatar": has_avatar,
     })))
 }
 
@@ -218,7 +222,7 @@ pub async fn get_creator(
     let handle = crate::handle::normalise(&handle);
     let db = state.db.lock();
 
-    let (user_id, display_name, bio, links, avatar_seed, created_at, accent, badges): (
+    let (user_id, display_name, bio, links, avatar_seed, created_at, accent, badges, has_avatar): (
         i64,
         Option<String>,
         Option<String>,
@@ -227,12 +231,14 @@ pub async fn get_creator(
         i64,
         Option<String>,
         String,
+        bool,
     ) = db
         .query_row(
-            "SELECT id, display_name, bio, links, avatar_seed, created_at, accent, badges
+            "SELECT id, display_name, bio, links, avatar_seed, created_at, accent, badges,
+                    avatar IS NOT NULL
              FROM users WHERE handle = ?1 AND suspended = 0",
             [&handle],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?)),
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?, r.get(8)?)),
         )
         .map_err(|_| StatusCode::NOT_FOUND)?;
 
@@ -286,5 +292,6 @@ pub async fn get_creator(
         "totalDownloads": total_downloads,
         "accent": accent,
         "badges": serde_json::from_str::<Value>(&badges).unwrap_or(json!([])),
+        "hasAvatar": has_avatar,
     })))
 }

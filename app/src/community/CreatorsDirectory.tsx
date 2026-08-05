@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { fetchCreators, type DirectoryCreator } from '../state/community';
-import { identiconDataUri } from '../state/identicon';
+import { avatarSrc } from '../state/avatarUrl';
 import { BadgeChips } from '../market/BadgeChips';
 
 const MONO = '"JetBrains Mono", ui-monospace, monospace';
@@ -74,9 +74,9 @@ export function CreatorsDirectory({ accent, onOpenCreator }: {
                 }}
               >
                 <img
-                  src={identiconDataUri(c.avatarSeed || c.handle, 38)}
+                  src={avatarSrc({ handle: c.handle, hasAvatar: c.hasAvatar, seed: c.avatarSeed, size: 38 })}
                   alt="" width={38} height={38}
-                  style={{ borderRadius: 9, border: `1px solid ${tint}55`, flexShrink: 0 }}
+                  style={{ borderRadius: 9, border: `1px solid ${tint}55`, flexShrink: 0, objectFit: 'cover' }}
                 />
                 <div style={{ minWidth: 0, flex: 1 }}>
                   <div style={{

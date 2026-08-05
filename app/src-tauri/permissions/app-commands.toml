@@ -180,6 +180,7 @@ commands.allow = [
   "marketplace_set_block",
   "marketplace_report",
   # Directory, forum and shoutbox (src/state/community.ts).
+  "marketplace_set_avatar",
   "marketplace_fetch_creators",
   "marketplace_fetch_topics",
   "marketplace_create_topic",

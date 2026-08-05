@@ -40,7 +40,7 @@ pub async fn list(
 
     let mut stmt = db
         .prepare(
-            "SELECT u.handle, u.display_name, u.avatar_seed, u.accent, u.badges, u.created_at,
+            "SELECT u.handle, u.display_name, u.avatar_seed, u.accent, u.badges, u.created_at, (u.avatar IS NOT NULL) AS has_avatar,
                     (SELECT COUNT(DISTINCT b.id) FROM bundles b
                       WHERE b.author_id = u.id AND b.status = 'approved') AS published,
                     (SELECT COUNT(*) FROM follows f WHERE f.creator_id = u.id) AS followers
@@ -65,8 +65,9 @@ pub async fn list(
                 "accent": r.get::<_, Option<String>>(3)?,
                 "badges": serde_json::from_str::<Value>(&badges).unwrap_or(json!([])),
                 "createdAt": r.get::<_, i64>(5)?,
-                "published": r.get::<_, i64>(6)?,
-                "followers": r.get::<_, i64>(7)?,
+                "hasAvatar": r.get::<_, bool>(6)?,
+                "published": r.get::<_, i64>(7)?,
+                "followers": r.get::<_, i64>(8)?,
             }))
         })
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?

@@ -13,6 +13,7 @@ pub mod index;
 pub mod profiles;
 pub mod comments;
 pub mod moderation;
+pub mod avatar;
 pub mod directory;
 pub mod forum;
 pub mod shouts;
@@ -46,6 +47,8 @@ pub fn router(state: AppState) -> Router {
         .route("/account/handle", post(profiles::claim_handle))
         .route("/creators/:handle", get(profiles::get_creator))
         .route("/creators", get(directory::list))
+        .route("/account/avatar", post(avatar::put_avatar))
+        .route("/creators/:handle/avatar", get(avatar::get_avatar))
         .route("/topics", get(forum::list_topics).post(forum::create_topic))
         .route("/topics/replies", get(forum::list_replies).post(forum::create_reply))
         .route("/shouts", get(shouts::list).post(shouts::post))

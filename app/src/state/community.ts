@@ -17,6 +17,7 @@ export interface DirectoryCreator {
   createdAt: number;
   published: number;
   followers: number;
+  hasAvatar?: boolean;
 }
 
 export interface Topic {
@@ -54,6 +55,11 @@ export interface Shout {
 }
 
 const invoke = async () => (await import('@tauri-apps/api/core')).invoke;
+
+/** Upload a picture (base64, no data: prefix) or clear it with ''. */
+export async function setAvatar(image: string): Promise<void> {
+  await (await invoke())('marketplace_set_avatar', { url: cfgUrl(), image });
+}
 
 export async function fetchCreators(query?: string): Promise<DirectoryCreator[]> {
   const res = await (await invoke())<{ creators: DirectoryCreator[] }>(

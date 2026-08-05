@@ -239,6 +239,10 @@ fn migrate(conn: &Connection) {
     // stored as a JSON array so granting a new kind needs no migration.
     ensure_column(conn, "users", "accent", "TEXT");
     ensure_column(conn, "users", "badges", "TEXT NOT NULL DEFAULT '[]'");
+    // Profile picture bytes, PNG or JPEG, sniffed on the way in. In the
+    // database rather than a directory: one file to back up, and no
+    // filesystem path ever derived from user input.
+    ensure_column(conn, "users", "avatar", "BLOB");
     // Uniqueness is the database's job, not a handler's: two concurrent
     // claims that both pass an application-level "is it taken?" check would
     // both succeed. The WHERE clause says out loud that unclaimed accounts

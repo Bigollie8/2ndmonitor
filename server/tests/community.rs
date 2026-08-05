@@ -303,3 +303,110 @@ async fn a_hidden_shout_stops_being_served() {
     let (_, body) = call(&app, "GET", "/shouts", None, None).await;
     assert_eq!(body["shouts"].as_array().unwrap().len(), 0);
 }
+
+// ── avatars ─────────────────────────────────────────────────────────────────
+
+/// Smallest valid PNG: signature + a stub. Only the magic number is checked,
+/// which is the whole point — the sniff decides, not a declared type.
+fn png_bytes() -> Vec<u8> {
+    let mut v = vec![0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
+    v.extend_from_slice(&[0u8; 32]);
+    v
+}
+
+fn b64(bytes: &[u8]) -> String {
+    use base64::Engine;
+    base64::engine::general_purpose::STANDARD.encode(bytes)
+}
+
+#[tokio::test]
+async fn an_avatar_uploads_serves_and_clears() {
+    let app = router(test_state());
+    let me = account(&app, "av1@x.y", Some("pictured")).await;
+
+    // No picture yet: 404, so the client falls back to the identicon rather
+    // than rendering a broken image.
+    let (st, _) = call(&app, "GET", "/creators/pictured/avatar", None, None).await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+
+    let (st, body) = call(&app, "POST", "/account/avatar", Some(&me),
+        Some(serde_json::json!({ "image": b64(&png_bytes()) }))).await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(body["hasAvatar"], true);
+
+    let (st, _) = call(&app, "GET", "/creators/pictured/avatar", None, None).await;
+    assert_eq!(st, StatusCode::OK);
+
+    let (_, page) = call(&app, "GET", "/creators/pictured", None, None).await;
+    assert_eq!(page["hasAvatar"], true);
+
+    // Empty clears it — how someone goes back to their identicon.
+    call(&app, "POST", "/account/avatar", Some(&me),
+        Some(serde_json::json!({ "image": "" }))).await;
+    let (st, _) = call(&app, "GET", "/creators/pictured/avatar", None, None).await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+}
+
+// Sniffed, never trusted. There is no content-type header here, just base64
+// in a JSON field, so a caller's say-so about the format means nothing.
+#[tokio::test]
+async fn only_png_and_jpeg_bytes_are_accepted() {
+    let app = router(test_state());
+    let me = account(&app, "av2@x.y", Some("sniffed")).await;
+
+    for bad in [
+        b64(b"<svg xmlns='http://www.w3.org/2000/svg'><script/></svg>"),
+        b64(b"GIF89a not really"),
+        b64(b"%PDF-1.4"),
+        "not base64 at all!!".to_string(),
+    ] {
+        let (st, _) = call(&app, "POST", "/account/avatar", Some(&me),
+            Some(serde_json::json!({ "image": bad }))).await;
+        assert_eq!(st, StatusCode::BAD_REQUEST);
+    }
+}
+
+#[tokio::test]
+async fn an_oversize_avatar_is_refused() {
+    let app = router(test_state());
+    let me = account(&app, "av3@x.y", Some("bigpic")).await;
+    let mut huge = png_bytes();
+    huge.resize(600 * 1024, 0);
+    let (st, _) = call(&app, "POST", "/account/avatar", Some(&me),
+        Some(serde_json::json!({ "image": b64(&huge) }))).await;
+    assert_eq!(st, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn uploading_an_avatar_needs_a_session() {
+    let app = router(test_state());
+    let (st, _) = call(&app, "POST", "/account/avatar", None,
+        Some(serde_json::json!({ "image": b64(&png_bytes()) }))).await;
+    assert_eq!(st, StatusCode::UNAUTHORIZED);
+}
+
+// A face is the most visible thing somebody has, so hiding them has to hide
+// it. And an admin can remove one picture WITHOUT suspending the person,
+// which would take all their work down too.
+#[tokio::test]
+async fn suspension_hides_an_avatar_and_admins_can_remove_one_on_its_own() {
+    let app = router(test_state());
+    let me = account(&app, "av4@x.y", Some("suspendee")).await;
+    call(&app, "POST", "/account/avatar", Some(&me),
+        Some(serde_json::json!({ "image": b64(&png_bytes()) }))).await;
+
+    call(&app, "POST", "/admin/moderate", Some(ADMIN),
+        Some(serde_json::json!({ "action": "suspend", "handle": "suspendee" }))).await;
+    let (st, _) = call(&app, "GET", "/creators/suspendee/avatar", None, None).await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+
+    call(&app, "POST", "/admin/moderate", Some(ADMIN),
+        Some(serde_json::json!({ "action": "unsuspend", "handle": "suspendee" }))).await;
+    let (st, _) = call(&app, "GET", "/creators/suspendee/avatar", None, None).await;
+    assert_eq!(st, StatusCode::OK, "unsuspending restores it");
+
+    call(&app, "POST", "/admin/moderate", Some(ADMIN),
+        Some(serde_json::json!({ "action": "remove-avatar", "handle": "suspendee" }))).await;
+    let (st, _) = call(&app, "GET", "/creators/suspendee/avatar", None, None).await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+}

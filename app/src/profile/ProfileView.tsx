@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useMarketplaceAuth } from '../state/marketplaceAuth';
-import { identiconDataUri } from '../state/identicon';
+import { avatarSrc } from '../state/avatarUrl';
+import { AvatarEditor } from './AvatarEditor';
 import { cfgUrl } from '../state/marketplaceConfig';
 import { useCatalogData } from '../state/useCatalogData';
 import {
@@ -21,6 +22,7 @@ interface AccountSummary {
   avatarSeed: string | null;
   accent?: string | null;
   badges?: unknown;
+  hasAvatar?: boolean;
 }
 
 /** The profile hub: who you are on the marketplace and who you care about.
@@ -52,6 +54,8 @@ export function ProfileView({ accent, catalogRemoved, onClose }: {
   const [favIds, setFavIds] = useState<string[] | null>(null);
   const [favCounts, setFavCounts] = useState<Record<string, number>>({});
   const [actionError, setActionError] = useState('');
+  // Bumped after an avatar change so the header re-reads /account.
+  const [accountReload, setAccountReload] = useState(0);
 
   const data = useCatalogData({ catalogRemoved });
 
@@ -86,7 +90,7 @@ export function ProfileView({ accent, catalogRemoved, onClose }: {
       }
     })();
     return () => { cancelled = true; };
-  }, [signedIn]);
+  }, [signedIn, accountReload]);
 
   useEffect(() => {
     if (!signedIn || tab !== 'following') return;
@@ -214,11 +218,11 @@ export function ProfileView({ accent, catalogRemoved, onClose }: {
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
                   <div style={{ display: 'flex', gap: 14, alignItems: 'center' }}>
                     <img
-                      src={identiconDataUri(account?.avatarSeed || account?.handle || '?', 72)}
+                      src={avatarSrc({ handle: account?.handle, hasAvatar: account?.hasAvatar, seed: account?.avatarSeed, size: 72 })}
                       alt=""
                       width={72}
                       height={72}
-                      style={{ borderRadius: 12, border: `1px solid ${account?.accent ?? 'rgba(255,255,255,0.09)'}` }}
+                      style={{ borderRadius: 12, objectFit: 'cover', border: `1px solid ${account?.accent ?? 'rgba(255,255,255,0.09)'}` }}
                     />
                     <div style={{ minWidth: 0 }}>
                       <div style={{ fontSize: 16, fontWeight: 700, color: 'rgba(255,255,255,0.95)' }}>
@@ -239,15 +243,17 @@ export function ProfileView({ accent, catalogRemoved, onClose }: {
                   </div>
 
                   <div style={{ height: 1, background: 'rgba(255,255,255,0.06)' }} />
+                  {account?.handle && (
+                    <AvatarEditor
+                      accent={tint}
+                      handle={account.handle}
+                      hasAvatar={account.hasAvatar ?? false}
+                      seed={account.avatarSeed}
+                      onChanged={() => setAccountReload((n) => n + 1)}
+                    />
+                  )}
                   <AccountPanel accent={accent} signedIn={signedIn} />
-                  {/* Said here because "upload a picture" is what everyone
-                      reaches for: the avatar is GENERATED, on purpose. Zero
-                      image moderation, and it can never be a slur, a logo,
-                      or a photograph of someone. */}
-                  <div style={{ fontSize: 10, fontFamily: MONO, color: 'rgba(255,255,255,0.35)', lineHeight: 1.5 }}>
-                    Your avatar is generated from your handle — there is nothing to upload.
-                  </div>
-                </div>
+                                  </div>
               )}
 
               {tab === 'following' && (
@@ -266,7 +272,7 @@ export function ProfileView({ accent, catalogRemoved, onClose }: {
                         background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.06)',
                       }}>
                         <img
-                          src={identiconDataUri(c.avatarSeed || c.handle, 30)}
+                          src={avatarSrc({ handle: c.handle, seed: c.avatarSeed, size: 30 })}
                           alt="" width={30} height={30}
                           style={{ borderRadius: 7, border: '1px solid rgba(255,255,255,0.09)' }}
                         />

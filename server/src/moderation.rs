@@ -126,6 +126,17 @@ pub async fn act(
             db.execute("UPDATE shouts SET hidden = 1 WHERE id = ?1", [id])
                 .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
         }
+        "remove-avatar" => {
+            // The proportionate response to one bad picture. Suspending
+            // somebody over their avatar removes all their work too.
+            let handle = crate::handle::normalise(body.get("handle").and_then(Value::as_str).unwrap_or(""));
+            let n = db
+                .execute("UPDATE users SET avatar = NULL WHERE handle = ?1", [&handle])
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            if n == 0 {
+                return Err((StatusCode::NOT_FOUND, "no such creator".into()));
+            }
+        }
         "grant-badge" | "revoke-badge" => {
             // Badges are admin-granted only -- there is no self-service path
             // anywhere, which is the entire point of a badge. Stored as a

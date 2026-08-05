@@ -642,6 +642,26 @@ pub fn marketplace_post_review<R: Runtime>(
     Ok(())
 }
 
+/// Upload or clear your profile picture. An empty string clears it, which is
+/// how someone goes back to their generated identicon.
+///
+/// The bytes are validated server-side on their magic number; this only caps
+/// the request so an obviously-too-big file fails instantly rather than after
+/// a pointless upload.
+#[tauri::command]
+pub fn marketplace_set_avatar<R: Runtime>(
+    app: AppHandle<R>,
+    url: String,
+    image: String,
+) -> Result<(), String> {
+    // 512 KB of raw bytes is ~700 KB of base64.
+    if image.len() > 720_000 {
+        return Err("that picture is too large — 512 KB maximum".into());
+    }
+    let base = url.trim_end_matches('/');
+    post_social(&app, &format!("{base}/account/avatar"), &serde_json::json!({ "image": image }))
+}
+
 /// The creator directory, optionally searched. Public: a signed-out browse
 /// still gets the full list, because discovering people is the point.
 #[tauri::command]

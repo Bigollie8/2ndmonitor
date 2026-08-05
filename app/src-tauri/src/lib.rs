@@ -135,6 +135,7 @@ pub fn run() {
             marketplace::marketplace_post_comment,
             marketplace::marketplace_set_block,
             marketplace::marketplace_report,
+            marketplace::marketplace_set_avatar,
             marketplace::marketplace_fetch_creators,
             marketplace::marketplace_fetch_topics,
             marketplace::marketplace_create_topic,

@@ -177,8 +177,16 @@ export function MarketView({
 
   // The community sent us to somebody's page. Applied once and then
   // released, so back/forward inside the store behaves normally.
+  //
+  // The ref is load-bearing, not a nicety. `onCreatorConsumed` is an inline
+  // arrow in App, so it is a new function on every render; without a guard
+  // that identity change re-runs this effect, which dispatches, which
+  // re-renders, which re-runs it — an infinite loop that took the whole app
+  // down the moment anyone clicked a creator in the directory.
+  const consumedCreator = useRef<string | null>(null);
   useEffect(() => {
-    if (!initialCreator) return;
+    if (!initialCreator || consumedCreator.current === initialCreator) return;
+    consumedCreator.current = initialCreator;
     dispatch({ type: 'open-author', author: `@${initialCreator}` });
     onCreatorConsumed?.();
   }, [initialCreator, onCreatorConsumed]);

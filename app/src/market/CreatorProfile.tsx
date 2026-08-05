@@ -1,7 +1,7 @@
 import { useEffect, useState, type MutableRefObject } from 'react';
 import type { CatalogItem } from '../state/catalog';
 import type { SpectrumState } from '../state/tauri';
-import { identiconDataUri } from '../state/identicon';
+import { avatarSrc } from '../state/avatarUrl';
 import { cfgUrl } from '../state/marketplaceConfig';
 import { MarketCard } from './MarketCard';
 import { FollowButton } from './FollowButton';
@@ -23,6 +23,8 @@ export interface CreatorBundle {
 
 export interface Creator {
   handle: string;
+  /** Whether they have uploaded a picture; false means identicon. */
+  hasAvatar?: boolean;
   /** Their chosen profile colour, or null. Server guarantees #rrggbb. */
   accent?: string | null;
   /** Admin-granted. Unknown slugs still render (state/badges.ts). */
@@ -111,7 +113,7 @@ export function CreatorProfile({
     <div style={{ flex: 1, overflowY: 'auto', padding: 18 }}>
       <div style={{ display: 'flex', gap: 14, alignItems: 'flex-start' }}>
         <img
-          src={identiconDataUri(creator.avatarSeed || creator.handle, 72)}
+          src={avatarSrc({ handle: creator.handle, hasAvatar: creator.hasAvatar, seed: creator.avatarSeed, size: 72 })}
           alt=""
           width={72}
           height={72}
