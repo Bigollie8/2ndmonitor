@@ -20,6 +20,8 @@ import {
   remapRetiredTileType,
   repairPileTiles,
   reclampProfilesBelowChrome,
+  SNAP_FRAC,
+  clampRectFrac,
 } from './state/layout';
 import { seedStarterProfiles, PROFILE_DEFAULT_COLORS } from './state/starterProfiles';
 import { shouldPinTopBar } from './state/topBar';
@@ -79,6 +81,10 @@ import { parseStreamDeckConfig } from './state/actions';
 // './components/tiles' (Spotify/Notes/Sysmon — entangled with boot), VizHero,
 // TileFrame, EditModeOverlay, ContentLibrary, ProfileSwitcher, Onboarding,
 // SettingsWindow (see imports above/below).
+/** Shift+arrow step in canvas fractions — roughly one pixel at the design
+ *  width, for the last nudge after the grid step has got you close (0.8.4). */
+const FINE_NUDGE_FRAC = 1 / 2560;
+
 const VizGallery = lazy(() => import('./components/viz-gallery').then((m) => ({ default: m.VizGallery })));
 const ClaudeCodeTile = lazy(() => import('./components/claude-tile').then((m) => ({ default: m.ClaudeCodeTile })));
 const DiscordTile = lazy(() => import('./components/discord-tile').then((m) => ({ default: m.DiscordTile })));
@@ -862,6 +868,42 @@ export default function App() {
       const target = e.target as HTMLElement | null;
       const tag = target?.tagName ?? '';
       const editing = tag === 'INPUT' || tag === 'TEXTAREA' || target?.isContentEditable === true;
+      // Arrow keys nudge the selected tile while editing (0.8.4). Placed
+      // before every other binding so a held arrow can't fall through to a
+      // profile/overlay shortcut, and gated on `editing` so typing in a tile's
+      // own input still moves the caret.
+      if (editMode && selectedInstanceId && !editing && !cmd
+          && (e.key === 'ArrowLeft' || e.key === 'ArrowRight' || e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
+        e.preventDefault();
+        // One snap cell by default; Shift gives a fine step for the last
+        // pixel or two. Both go through clampRectFrac, so a nudged tile obeys
+        // exactly the same bounds (and top inset) as a dragged one.
+        const { canvas: nudgeCanvas, topInsetPx: nudgeInset } = nudgeCtxRef.current;
+        const stepX = e.shiftKey ? FINE_NUDGE_FRAC : SNAP_FRAC;
+        // Rects are fractions of a non-square canvas, so an equal-looking
+        // vertical step needs the aspect correction — otherwise Up/Down moves
+        // visibly further than Left/Right.
+        const stepY = stepX * (nudgeCanvas.w / Math.max(1, nudgeCanvas.h));
+        const dx = e.key === 'ArrowLeft' ? -stepX : e.key === 'ArrowRight' ? stepX : 0;
+        const dy = e.key === 'ArrowUp' ? -stepY : e.key === 'ArrowDown' ? stepY : 0;
+        // Read the live layout through the refs rather than the closure: this
+        // listener is only re-bound on a handful of deps, so a captured
+        // `activeOrientation` would go stale and a nudge would write back a
+        // rect from an earlier edit, clobbering anything moved since.
+        const tiles = activeOrientationRef.current.tiles;
+        const inst = tiles.find((x) => x.instanceId === selectedInstanceId);
+        if (inst) {
+          const moved = clampRectFrac(
+            { ...inst.rect, x: inst.rect.x + dx, y: inst.rect.y + dy },
+            nudgeCanvas,
+            nudgeInset,
+          );
+          updateActiveOrientationRef.current({
+            tiles: updateInstance(tiles, selectedInstanceId, { rect: moved }),
+          });
+        }
+        return;
+      }
       if (cmd && e.key === 'e') { e.preventDefault(); setEditMode((m) => !m); }
       else if (cmd && e.key === ',') { e.preventDefault(); setShowSettings((s) => !s); }
       else if (cmd && (e.key === '1' || e.key === '2' || e.key === '3')) {
@@ -928,7 +970,11 @@ export default function App() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [showSwitcher, editMode, showOnboarding, showGallery, showSettings, showContentLibrary, showShortcuts, t.vizMode, t.profiles, setTweak, vizStyles, vizStylesLoaded]);
+  }, [showSwitcher, editMode, showOnboarding, showGallery, showSettings, showContentLibrary, showShortcuts, t.vizMode, t.profiles, setTweak, vizStyles, vizStylesLoaded,
+    // Arrow-key nudge (0.8.4). Everything else it needs (live tiles, canvas,
+    // top inset) is read through refs, because those are declared further down
+    // the component body than this listener is bound.
+    selectedInstanceId]);
 
   const orientation = useOrientation();
   const canvas = useCanvas();
@@ -963,6 +1009,10 @@ export default function App() {
   // clamps/placement use 0 inset. When it's off, the bar is always painted so
   // the reserved band stays CHROME_TOP_PX (unchanged pre-0.7.2 behavior).
   const topInsetPx = t.autoHideTopBar ? 0 : CHROME_TOP_PX;
+  /** Live canvas + top inset for the arrow-key nudge handler, which is bound
+   *  earlier in the component body than either value is declared (0.8.4). */
+  const nudgeCtxRef = useRef({ canvas, topInsetPx });
+  nudgeCtxRef.current = { canvas, topInsetPx };
   const fallbackProfile = useMemo<Profile>(() => ({
     id: '_fallback', name: 'Default', color: '#a78bfa',
     landscape: { tiles: ALL_TILE_TYPES.map((type) => ({ instanceId: newId(), type, rect: DEFAULT_LANDSCAPE_LAYOUT[type] })) },
