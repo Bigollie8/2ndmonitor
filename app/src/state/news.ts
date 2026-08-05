@@ -1,0 +1,73 @@
+import { isTauri } from './tauri';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// News tile state (0.8.6). Mirrors state/stocks.ts: a thin invoke wrapper plus
+// a pure, tested config parser. Headlines come from the Rust
+// `fetch_news_headlines` proxy — public BBC/Guardian RSS, no API key. RSS
+// feeds send no CORS headers, so a direct browser fetch is off the table for
+// the same reason the OpenSky and Yahoo proxies exist.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface Headline {
+  title: string;
+  link: string;
+  source: string;
+  published: string | null;
+}
+
+export interface NewsResult {
+  headlines: Headline[];
+  error: string | null;
+}
+
+/** Category ids the Rust side maps to feeds. Display labels for the picker. */
+export const NEWS_CATEGORIES = [
+  { id: 'top', label: 'Top stories' },
+  { id: 'world', label: 'World' },
+  { id: 'politics', label: 'Politics' },
+  { id: 'business', label: 'Business' },
+  { id: 'tech', label: 'Tech' },
+  { id: 'science', label: 'Science' },
+  { id: 'sports', label: 'Sports' },
+  { id: 'entertainment', label: 'Entertainment' },
+] as const;
+
+export type NewsCategory = (typeof NEWS_CATEGORIES)[number]['id'];
+
+export interface NewsConfig {
+  category: NewsCategory;
+}
+
+export const DEFAULT_NEWS_CONFIG: NewsConfig = { category: 'top' };
+
+/** Parse a persisted `instance.config` blob — same parse-with-fallback
+ *  pattern as parseStocksConfig / parseRadarConfig. */
+export function parseNewsConfig(raw: unknown): NewsConfig {
+  if (!raw || typeof raw !== 'object') return DEFAULT_NEWS_CONFIG;
+  const c = raw as Record<string, unknown>;
+  const valid = NEWS_CATEGORIES.some((k) => k.id === c.category);
+  return valid ? { category: c.category as NewsCategory } : DEFAULT_NEWS_CONFIG;
+}
+
+/** "Sat, 05 Aug 2026 06:00:00 GMT" → "2h" style age, or null when unknown /
+ *  unparsable / in the future (clock skew reads as "now", not "-3m"). */
+export function headlineAge(published: string | null, nowMs: number): string | null {
+  if (!published) return null;
+  const t = Date.parse(published);
+  if (Number.isNaN(t)) return null;
+  const mins = Math.floor((nowMs - t) / 60_000);
+  if (mins < 0) return 'now';
+  if (mins < 1) return 'now';
+  if (mins < 60) return `${mins}m`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h`;
+  return `${Math.floor(hours / 24)}d`;
+}
+
+export async function fetchNewsHeadlines(category: NewsCategory): Promise<NewsResult> {
+  if (!isTauri) return { headlines: [], error: null };
+  const { invoke } = await import('@tauri-apps/api/core');
+  // No catch: usePoll drives its backoff off thrown errors, and unlike stocks
+  // there IS a meaningful whole-fetch failure here (both feeds down).
+  return await invoke<NewsResult>('fetch_news_headlines', { category });
+}

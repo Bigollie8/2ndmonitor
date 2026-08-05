@@ -158,7 +158,7 @@ test('DEFAULT_PORTRAIT_LAYOUT contains all tile types', () => {
   assert.deepEqual(ids, [
     'activeWindow', 'airQuality', 'aircraft', 'aurora', 'claude',
     'clock', 'dateTime', 'discord', 'docker', 'energy',
-    'homeAssistant', 'iss', 'lightning', 'mixer', 'notes',
+    'homeAssistant', 'iss', 'lightning', 'mixer', 'news', 'notes',
     'onThisDay', 'pollen', 'pomodoro',
     'scratchpad', 'solarFlare', 'spotify', 'stocks', 'streamChat',
     'streamDeck', 'sun', 'sysmon', 'tides', 'viz', 'weatherRadar',
