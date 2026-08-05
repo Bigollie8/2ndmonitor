@@ -135,6 +135,9 @@ interface TweakState extends Record<string, unknown> {
    *  below) so switching sources doesn't clobber a tuned gain. */
   vizSensitivityBySource: Record<string, number>;
   vizSmoothing: number;
+  /** Adaptive gain (0.8.6): boost quiet sources so reactivity doesn't depend
+   *  on app volume. Boost-only, so loud playback is unchanged. */
+  vizAutoGain: boolean;
   vizColorOverride: VizColorOverride;
   lyricsOverlayEnabled: boolean;
   /** When true AND there's at least one bookmark, the viz tile renders the
@@ -227,6 +230,7 @@ const TWEAK_DEFAULTS: TweakState = {
   vizAudioSource: { mode: 'mix' },
   vizSensitivityBySource: {},
   vizSmoothing: 0.0,
+  vizAutoGain: true,
   vizColorOverride: { enabled: false, accent: '#a78bfa', accent2: '#ec4899' },
   lyricsOverlayEnabled: true,
   videoEnabled: false,
@@ -1203,6 +1207,7 @@ export default function App() {
             playback={livePlayback}
             showArtBg={t.vizArtBg}
             sensitivity={vizSensitivity}
+            autoGain={t.vizAutoGain}
             smoothing={t.vizSmoothing}
             lyricsOverlayEnabled={t.lyricsOverlayEnabled}
             videoEnabled={t.videoEnabled}
@@ -1595,6 +1600,7 @@ export default function App() {
               spectrumRef={spectrumRef}
               currentMode={t.vizMode}
               sensitivity={vizSensitivity}
+            autoGain={t.vizAutoGain}
               smoothing={t.vizSmoothing}
               onPick={(m) => setTweak('vizMode', m)}
               onClose={() => setShowGallery(false)}
