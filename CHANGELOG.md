@@ -298,6 +298,17 @@ because that is genuinely what it measures.
   it, and the built executable finally carries a real publisher and copyright
   instead of blank fields
 
+### Fixed
+- **Auto-updates and downloads work again.** Making the source repository
+  private also made its GitHub release assets private, and the updater sends
+  no credentials — so every update check got a 404 ("can't reach the update
+  server") and the installer links stopped resolving. Artifacts are now
+  published to a separate public repository that holds nothing but releases,
+  and the update manifest points there. The release workflow verifies the
+  endpoint anonymously before finishing, so this cannot break silently again.
+  **Installs on 0.8.1 or earlier have the old address compiled in and will not
+  find this update — they need a manual reinstall**
+
 ### Added
 - **Third-party licence notices**: `THIRD-PARTY-LICENSES.md` lists every
   runtime dependency the app ships — 30 JavaScript packages and 428 Rust
