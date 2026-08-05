@@ -316,6 +316,98 @@ fn patch_capped_json(
     }
 }
 
+/// Creates an account. Returns the dev-mode verification token when the
+/// server is configured to hand one back, and `null` when it sent a real
+/// email instead — the caller uses that to decide whether it can finish the
+/// flow itself or has to say "check your email".
+///
+/// `password` is used only to build the outgoing request body and is dropped
+/// when this function returns, exactly as in `marketplace_login` below.
+#[tauri::command]
+pub fn marketplace_register(
+    url: String,
+    email: String,
+    password: String,
+) -> Result<serde_json::Value, String> {
+    let base = url.trim_end_matches('/');
+    let body = serde_json::json!({ "email": email, "password": password });
+    let (status, buf) = post_capped_json(&format!("{base}/auth/register"), &body, AUTH_CAP, None)?;
+    let text = String::from_utf8_lossy(&buf).into_owned();
+
+    if !(200..300).contains(&status) {
+        // 503 is the server saying it cannot deliver mail, which is its way
+        // of refusing to create an account nobody could ever verify. Say that
+        // rather than showing a bare status code.
+        if status == 503 {
+            return Err(
+                "the marketplace is not accepting new accounts right now (it cannot send                  verification email)"
+                    .into(),
+            );
+        }
+        if status == 409 {
+            return Err("an account already exists for that address".into());
+        }
+        return Err(if text.trim().is_empty() { format!("HTTP {status}") } else { text });
+    }
+
+    let parsed: serde_json::Value =
+        serde_json::from_str(&text).map_err(|e| format!("register response not JSON: {e}"))?;
+    Ok(serde_json::json!({
+        "verifyToken": parsed.get("verify_token").and_then(|t| t.as_str()),
+    }))
+}
+
+/// Confirms an address with the token from the verification email — or, in
+/// dev mode, the one `marketplace_register` just handed back.
+#[tauri::command]
+pub fn marketplace_verify_account(url: String, token: String) -> Result<(), String> {
+    if token.trim().is_empty() {
+        return Err("verification token required".into());
+    }
+    let base = url.trim_end_matches('/');
+    let endpoint = format!("{base}/auth/verify?token={}", urlencoding::encode(token.trim()));
+    let (status, buf) = get_capped_status(&endpoint, AUTH_CAP)?;
+    if !(200..300).contains(&status) {
+        let text = String::from_utf8_lossy(&buf).into_owned();
+        return Err(if status == 404 {
+            "that verification link has expired or was already used".into()
+        } else if text.trim().is_empty() {
+            format!("HTTP {status}")
+        } else {
+            text
+        });
+    }
+    Ok(())
+}
+
+/// Unauthenticated GET that reports the status rather than erroring on 4xx —
+/// verification needs to tell an expired link apart from a network failure.
+fn get_capped_status(url: &str, cap: usize) -> Result<(u16, Vec<u8>), String> {
+    if !url.starts_with("https://") {
+        return Err("only https URLs are allowed".into());
+    }
+    fn read_capped(resp: ureq::Response, cap: usize) -> Result<Vec<u8>, String> {
+        let mut buf = Vec::new();
+        resp.into_reader()
+            .take((cap + 1) as u64)
+            .read_to_end(&mut buf)
+            .map_err(|e| format!("read failed: {e}"))?;
+        if buf.len() > cap {
+            return Err("response too large".into());
+        }
+        Ok(buf)
+    }
+    let agent = ureq::AgentBuilder::new().redirects(0).build();
+    match agent.get(url).timeout(std::time::Duration::from_secs(10)).call() {
+        Ok(resp) => {
+            let status = resp.status();
+            Ok((status, read_capped(resp, cap)?))
+        }
+        Err(ureq::Error::Status(code, resp)) => Ok((code, read_capped(resp, cap)?)),
+        Err(ureq::Error::Transport(t)) => Err(format!("request failed: {t}")),
+    }
+}
+
 /// Signs in against the marketplace server and stores the session token.
 ///
 /// Returns nothing on success — see the module-level comment above for why.

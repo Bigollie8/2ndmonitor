@@ -164,6 +164,8 @@ commands.allow = [
   # `cargo test --lib`'s ACL test catches a missing entry, and the runtime
   # failure is "not allowed by ACL" everywhere.
   "marketplace_fetch_creator",
+  "marketplace_register",
+  "marketplace_verify_account",
   "marketplace_publish_layout",
   "marketplace_account_get",
   "marketplace_claim_handle",

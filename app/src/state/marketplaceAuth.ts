@@ -93,6 +93,31 @@ export async function logout(): Promise<void> {
   await invoke('marketplace_logout');
 }
 
+/** Creates an account.
+ *
+ *  Returns the verification token when the server is in dev-email mode and
+ *  handed one back, and `null` when it sent a real email instead. The caller
+ *  uses that to decide whether it can finish the flow immediately or has to
+ *  say "check your email" — the app cannot know which mode a server is in
+ *  without asking it. */
+export async function register(
+  url: string,
+  email: string,
+  password: string,
+): Promise<{ verifyToken: string | null }> {
+  const { invoke } = await import('@tauri-apps/api/core');
+  const res = await invoke<{ verifyToken: string | null }>('marketplace_register', {
+    url, email, password,
+  });
+  return { verifyToken: res?.verifyToken ?? null };
+}
+
+/** Confirms an address with the token from the verification email. */
+export async function verifyAccount(url: string, token: string): Promise<void> {
+  const { invoke } = await import('@tauri-apps/api/core');
+  await invoke('marketplace_verify_account', { url, token });
+}
+
 // ---------------------------------------------------------------------------
 // React binding.
 // ---------------------------------------------------------------------------

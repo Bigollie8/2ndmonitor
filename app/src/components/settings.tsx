@@ -19,7 +19,7 @@ import { IS_MAC } from '../state/platform';
 import {
   LS_URL, LS_PUBKEY, DEFAULT_URL, DEFAULT_PUBKEY, cfgUrl, cfgPubkey, isDefaultServer,
 } from '../state/marketplaceConfig';
-import { useMarketplaceAuth } from '../state/marketplaceAuth';
+import { useMarketplaceAuth, register, verifyAccount } from '../state/marketplaceAuth';
 import { AccountPanel } from '../market/AccountPanel';
 
 const MONO = '"JetBrains Mono", ui-monospace, monospace';
@@ -886,8 +886,15 @@ function MarketplaceAccountEditor({ accent }: { accent: string }) {
   const { state, signIn, signOut } = useMarketplaceAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  // Until 0.9.0 there was no way to create an account from inside the app at
+  // all -- the only one that existed had been made by hand with curl. A
+  // marketplace built around a community of creators needs a door.
+  const [mode, setMode] = useState<'sign-in' | 'register'>('sign-in');
+  const [registering, setRegistering] = useState(false);
+  const [registerNote, setRegisterNote] = useState('');
+  const [registerError, setRegisterError] = useState('');
 
-  const busy = state.status === 'checking' || state.status === 'signing-in';
+  const busy = state.status === 'checking' || state.status === 'signing-in' || registering;
   const canSubmit = !busy && email.trim() !== '' && password !== '';
 
   // The password only ever needs to live in this state for the duration of
@@ -916,6 +923,34 @@ function MarketplaceAccountEditor({ accent }: { accent: string }) {
     void signIn(email.trim(), password);
   };
 
+  const handleRegister = async () => {
+    if (!canSubmit) return;
+    setRegistering(true);
+    setRegisterError('');
+    setRegisterNote('');
+    try {
+      const { verifyToken } = await register(cfgUrl(), email.trim(), password);
+      if (verifyToken) {
+        // The server is in dev-email mode and handed the token straight back,
+        // so finish the job rather than asking someone to go and find an
+        // email that was only ever printed to a log.
+        await verifyAccount(cfgUrl(), verifyToken);
+        setRegisterNote('Account created and confirmed. You can sign in now.');
+        setMode('sign-in');
+      } else {
+        setRegisterNote('Account created. Check your email for the confirmation link, then sign in.');
+      }
+      setPassword('');
+    } catch (e) {
+      // The server's own words: "already exists", "not accepting new
+      // accounts", a password rule. All different problems that read
+      // differently, so none of them become a generic failure message.
+      setRegisterError(String(e));
+    } finally {
+      setRegistering(false);
+    }
+  };
+
   if (state.status === 'signed-in') {
     return (
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -930,7 +965,8 @@ function MarketplaceAccountEditor({ accent }: { accent: string }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 10, maxWidth: 460 }}>
       <div style={{ fontSize: 10.5, color: 'rgba(255,255,255,0.45)' }}>
-        Signing in to <span style={{ fontFamily: MONO, color: accent }}>{targetHost}</span>
+        {mode === 'register' ? 'Creating an account on' : 'Signing in to'}{' '}
+        <span style={{ fontFamily: MONO, color: accent }}>{targetHost}</span>
       </div>
       <div>
         <label style={fieldLabelStyle}>Email</label>
@@ -949,10 +985,18 @@ function MarketplaceAccountEditor({ accent }: { accent: string }) {
           type="password" value={password}
           onChange={(e) => setPassword(e.target.value)}
           disabled={busy}
-          autoComplete="current-password"
-          onKeyDown={(e) => { if (e.key === 'Enter') handleSignIn(); }}
+          autoComplete={mode === 'register' ? 'new-password' : 'current-password'}
+          onKeyDown={(e) => {
+            if (e.key !== 'Enter') return;
+            if (mode === 'register') void handleRegister(); else handleSignIn();
+          }}
           style={fieldInputStyle}
         />
+        {mode === 'register' && (
+          <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.35)', marginTop: 4 }}>
+            At least 8 characters. You will need to confirm your address before you can sign in.
+          </div>
+        )}
       </div>
       {/* On failure, the server's own message (wrong password vs. unverified
          vs. unreachable server are different problems and read differently
@@ -961,12 +1005,39 @@ function MarketplaceAccountEditor({ accent }: { accent: string }) {
       {state.status === 'error' && (
         <div style={{ color: '#fb7185', fontSize: 11 }}>{state.message}</div>
       )}
-      <div>
-        <SettingsButton
-          label={state.status === 'signing-in' ? 'Signing in…' : 'Sign in'}
-          onClick={handleSignIn}
-          accent={canSubmit ? accent : undefined}
-        />
+      {registerError && (
+        <div style={{ color: '#fb7185', fontSize: 11 }}>{registerError}</div>
+      )}
+      {registerNote && (
+        <div style={{ color: '#7cf5d4', fontSize: 11 }}>{registerNote}</div>
+      )}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        {mode === 'sign-in' ? (
+          <SettingsButton
+            label={state.status === 'signing-in' ? 'Signing in…' : 'Sign in'}
+            onClick={handleSignIn}
+            accent={canSubmit ? accent : undefined}
+          />
+        ) : (
+          <SettingsButton
+            label={registering ? 'Creating…' : 'Create account'}
+            onClick={() => { void handleRegister(); }}
+            accent={canSubmit ? accent : undefined}
+          />
+        )}
+        <button
+          onClick={() => {
+            setMode(mode === 'sign-in' ? 'register' : 'sign-in');
+            setRegisterError('');
+            setRegisterNote('');
+          }}
+          style={{
+            background: 'transparent', border: 'none', padding: 0, cursor: 'pointer',
+            fontSize: 11, color: 'rgba(255,255,255,0.5)', textDecoration: 'underline',
+          }}
+        >
+          {mode === 'sign-in' ? 'Create an account' : 'I already have an account'}
+        </button>
       </div>
     </div>
   );
