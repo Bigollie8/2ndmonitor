@@ -126,7 +126,11 @@ export function buildShelves(args: {
   // its members to an earlier shelf would defeat the curation. They do not
   // claim items either, for the same reason.
   const byId = new Map(items.map((i) => [i.id, i]));
-  for (const c of collections) {
+  // Defence in depth. Callers normalise (state/catalogCollections.ts), but a
+  // non-array here throws DURING RENDER and takes the entire Market down --
+  // which is exactly what shipped twice. An empty list costs a few shelves;
+  // a throw costs the store.
+  for (const c of Array.isArray(collections) ? collections : []) {
     const picked = c.items
       .map((id) => byId.get(id))
       .filter((i): i is CatalogItem => i != null && !i.removed);

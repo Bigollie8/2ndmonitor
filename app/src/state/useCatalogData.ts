@@ -28,6 +28,7 @@ import { readCachedIndex, writeCachedIndex, clearCachedIndex } from './indexCach
 import { buildVersionHistory, dateMapOf, type BundleHistory } from './catalogVersions';
 import type { DateMap } from './catalogSort';
 import type { Collection } from './catalogShelves';
+import { normaliseCollections } from './catalogCollections';
 
 export interface CatalogData {
   items: CatalogItem[];
@@ -165,7 +166,12 @@ export function useCatalogData(args: { catalogRemoved: string[] }): CatalogData 
   const fetchCollections = useCallback(async (): Promise<Collection[]> => {
     try {
       const { invoke } = await import('@tauri-apps/api/core');
-      return await invoke<Collection[]>('marketplace_fetch_collections', { url: cfgUrl() });
+      // Normalised at the boundary: the server answers with an ENVELOPE
+      // ({collections: [...]}), not a bare array, and iterating the object
+      // during render black-screened the whole Market. See
+      // state/catalogCollections.ts.
+      const raw = await invoke<unknown>('marketplace_fetch_collections', { url: cfgUrl() });
+      return normaliseCollections(raw);
     } catch {
       return [];
     }

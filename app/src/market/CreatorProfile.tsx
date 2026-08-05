@@ -105,9 +105,19 @@ export function CreatorProfile({
   // it to #rrggbb, so this can only ever be a colour.
   const tint = creator.accent ?? accent;
   const byId = new Map(items.map((i) => [i.id, i]));
+  // Deduped by key. The endpoint returns a row per VERSION, so a bundle
+  // published twice resolves to the same catalog item twice -- React then
+  // warns about duplicate keys and may drop or duplicate cards. One card per
+  // bundle is what the page means anyway.
+  const seenKeys = new Set<string>();
   const cards = creator.bundles
     .map((b) => byId.get(b.id))
-    .filter((i): i is CatalogItem => i != null && !i.removed);
+    .filter((i): i is CatalogItem => i != null && !i.removed)
+    .filter((i) => {
+      if (seenKeys.has(i.key)) return false;
+      seenKeys.add(i.key);
+      return true;
+    });
 
   return (
     <div style={{ flex: 1, overflowY: 'auto', padding: 18 }}>
