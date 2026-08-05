@@ -32,6 +32,7 @@ export interface Topic {
   displayName: string | null;
   avatarSeed: string | null;
   accent: string | null;
+  hasAvatar?: boolean;
 }
 
 export interface Reply {
@@ -42,6 +43,7 @@ export interface Reply {
   displayName: string | null;
   avatarSeed: string | null;
   accent: string | null;
+  hasAvatar?: boolean;
 }
 
 export interface Shout {
@@ -52,6 +54,7 @@ export interface Shout {
   displayName: string | null;
   avatarSeed: string | null;
   accent: string | null;
+  hasAvatar?: boolean;
 }
 
 const invoke = async () => (await import('@tauri-apps/api/core')).invoke;

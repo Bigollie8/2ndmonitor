@@ -5,10 +5,20 @@ import { avatarSrc } from '../state/avatarUrl';
 import { cfgUrl } from '../state/marketplaceConfig';
 import { MarketCard } from './MarketCard';
 import { FollowButton } from './FollowButton';
+import { CardCarousel } from './CardCarousel';
 import { BadgeChips } from './BadgeChips';
 import { ProfileDashboard } from '../community/ProfileDashboard';
 
 const MONO = '"JetBrains Mono", ui-monospace, monospace';
+
+/** One carousel per kind, in browse order. A kind with nothing in it renders
+ *  nothing — CardCarousel returns null at count 0. */
+const KIND_SECTIONS: { kind: string; title: string }[] = [
+  { kind: 'layout', title: 'Layouts' },
+  { kind: 'tile', title: 'Tiles' },
+  { kind: 'visualizer', title: 'Visualizers' },
+  { kind: 'preset', title: 'Presets' },
+];
 
 export interface CreatorBundle {
   id: string;
@@ -165,22 +175,31 @@ export function CreatorProfile({
       </div>
 
       {cards.length > 0 ? (
-        <div style={{
-          display: 'grid', gap: 12, marginTop: 18,
-          gridTemplateColumns: `repeat(auto-fill, minmax(${cardMin}px, 1fr))`,
-        }}>
-          {cards.map((item) => (
-            <MarketCard
-              key={item.key}
-              item={item}
-              accent={accent}
-              accent2={accent2}
-              spectrumRef={spectrumRef}
-              appVersion={appVersion}
-              glyph={glyphOf(item)}
-              onOpen={() => onOpen(item)}
-            />
-          ))}
+        <div>
+          {/* Grouped by kind and scrolled sideways rather than stacked. A
+              creator with 400 presets should not turn their profile into a
+              wall you scroll past to reach anything else. Order puts the
+              things people browse for first. */}
+          {KIND_SECTIONS.map(({ kind, title }) => {
+            const ofKind = cards.filter((i) => i.kind === kind);
+            return (
+              <CardCarousel key={kind} title={title} count={ofKind.length} accent={tint}>
+                {ofKind.map((item) => (
+                  <div key={item.key} style={{ flex: `0 0 ${cardMin}px`, scrollSnapAlign: 'start' }}>
+                    <MarketCard
+                      item={item}
+                      accent={accent}
+                      accent2={accent2}
+                      spectrumRef={spectrumRef}
+                      appVersion={appVersion}
+                      glyph={glyphOf(item)}
+                      onOpen={() => onOpen(item)}
+                    />
+                  </div>
+                ))}
+              </CardCarousel>
+            );
+          })}
         </div>
       ) : (
         <div style={{ fontSize: 11.5, color: 'rgba(255,255,255,0.45)', marginTop: 18 }}>

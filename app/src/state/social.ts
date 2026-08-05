@@ -35,6 +35,9 @@ export interface CommentEntry {
   displayName: string | null;
   body: string;
   createdAt: number;
+  avatarSeed?: string | null;
+  accent?: string | null;
+  hasAvatar?: boolean;
 }
 
 const invoke = async () => (await import('@tauri-apps/api/core')).invoke;

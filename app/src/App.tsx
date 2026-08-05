@@ -1350,6 +1350,8 @@ export default function App() {
           onSwitcher={() => setShowSwitcher(true)}
           onOnboarding={() => setShowOnboarding(true)}
           onSettings={() => setShowSettings(true)}
+          onProfile={() => setShowProfile(true)}
+          onCommunity={() => setShowCommunity(true)}
           onShortcuts={() => setShowShortcuts(true)}
         />
         {topBarHidden && (
@@ -1604,7 +1606,7 @@ export default function App() {
   );
 }
 
-function TopChrome({ accent, editMode, setEditMode, streamerMode, setStreamerMode, profiles, activeProfileId, setActiveProfileId, onSwitcher, onOnboarding, onSettings, onShortcuts, hidden, onBarEnter, onBarLeave, onMenuOpenChange }: {
+function TopChrome({ accent, editMode, setEditMode, streamerMode, setStreamerMode, profiles, activeProfileId, setActiveProfileId, onSwitcher, onOnboarding, onSettings, onShortcuts, onProfile, onCommunity, hidden, onBarEnter, onBarLeave, onMenuOpenChange }: {
   accent: string;
   editMode: boolean;
   setEditMode: (b: boolean) => void;
@@ -1619,6 +1621,11 @@ function TopChrome({ accent, editMode, setEditMode, streamerMode, setStreamerMod
   onOnboarding: () => void;
   onSettings: () => void;
   onShortcuts: () => void;
+  /** Your marketplace identity. In the top bar rather than behind Settings:
+   *  it is a place you go, not a preference you configure. */
+  onProfile: () => void;
+  /** The community home — same reasoning. */
+  onCommunity: () => void;
   /** Auto-hide (0.6.7 §3): when true the bar translates up out of view.
    *  App owns the decision — see topBarHidden in App(). */
   hidden: boolean;
@@ -1757,6 +1764,16 @@ function TopChrome({ accent, editMode, setEditMode, streamerMode, setStreamerMod
           border: streamerMode ? '1px solid transparent' : '1px solid rgba(255,255,255,0.1)',
         }}
       >⊘</button>
+      <button
+        onClick={onCommunity}
+        title="Community — creators, forum, shoutbox"
+        style={{ ...ghostButton, padding: '5px 9px' }}
+      >⌘</button>
+      <button
+        onClick={onProfile}
+        title="Your profile — marketplace account, creators you follow, favourites"
+        style={{ ...ghostButton, padding: '5px 9px', color: accent }}
+      >☺</button>
       <button onClick={onSettings} title="Settings (⌘,)" style={{ ...ghostButton, padding: '5px 9px' }}>⚙</button>
       <div ref={menuRef} style={{ position: 'relative' }}>
         <button

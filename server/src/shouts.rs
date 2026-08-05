@@ -43,7 +43,7 @@ pub async fn list(
     let db = state.db.lock();
     let mut stmt = db
         .prepare(
-            "SELECT s.id, s.body, s.created_at, u.handle, u.display_name, u.avatar_seed, u.accent
+            "SELECT s.id, s.body, s.created_at, u.handle, u.display_name, u.avatar_seed, u.accent, (u.avatar IS NOT NULL)
              FROM shouts s JOIN users u ON u.id = s.author_id
              WHERE s.hidden = 0 AND u.suspended = 0
                AND (?1 IS NULL OR s.author_id NOT IN
@@ -63,6 +63,7 @@ pub async fn list(
                 "displayName": r.get::<_, Option<String>>(4)?,
                 "avatarSeed": r.get::<_, Option<String>>(5)?,
                 "accent": r.get::<_, Option<String>>(6)?,
+                "hasAvatar": r.get::<_, bool>(7)?,
             }))
         })
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { fetchShouts, postShout, type Shout } from '../state/community';
-import { identiconDataUri } from '../state/identicon';
+import { avatarSrc } from '../state/avatarUrl';
 import { report, setBlock } from '../state/social';
 
 const MONO = '"JetBrains Mono", ui-monospace, monospace';
@@ -115,9 +115,9 @@ export function ShoutBox({ accent, signedIn }: { accent: string; signedIn: boole
               return (
                 <div key={s.id} style={{ display: 'flex', gap: 7, alignItems: 'flex-start' }}>
                   <img
-                    src={identiconDataUri(s.avatarSeed || s.handle || '?', 18)}
+                    src={avatarSrc({ handle: s.handle, hasAvatar: s.hasAvatar, seed: s.avatarSeed, size: 18 })}
                     alt="" width={18} height={18}
-                    style={{ borderRadius: 4, marginTop: 1, flexShrink: 0, border: `1px solid ${tint}44` }}
+                    style={{ borderRadius: 4, marginTop: 1, flexShrink: 0, objectFit: 'cover', border: `1px solid ${tint}44` }}
                   />
                   <div style={{ minWidth: 0, flex: 1 }}>
                     <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>

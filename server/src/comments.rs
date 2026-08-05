@@ -44,7 +44,8 @@ pub async fn list(
 
     let mut stmt = db
         .prepare(
-            "SELECT c.id, u.handle, u.display_name, c.body, c.created_at, c.user_id
+            "SELECT c.id, u.handle, u.display_name, c.body, c.created_at, c.user_id,
+                    u.avatar_seed, u.accent, (u.avatar IS NOT NULL)
              FROM comments c JOIN users u ON u.id = c.user_id
              WHERE c.bundle_id = ?1 AND c.hidden = 0 AND u.suspended = 0
              ORDER BY c.created_at DESC
@@ -63,6 +64,9 @@ pub async fn list(
                 r.get::<_, String>(3)?,
                 r.get::<_, i64>(4)?,
                 r.get::<_, i64>(5)?,
+                r.get::<_, Option<String>>(6)?,
+                r.get::<_, Option<String>>(7)?,
+                r.get::<_, bool>(8)?,
             ))
         })
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
@@ -86,14 +90,17 @@ pub async fn list(
 
     let comments: Vec<Value> = rows
         .into_iter()
-        .filter(|(_, _, _, _, _, author)| !blocked.contains(author))
-        .map(|(cid, handle, display, body, created, _)| {
+        .filter(|(_, _, _, _, _, author, _, _, _)| !blocked.contains(author))
+        .map(|(cid, handle, display, body, created, _, avatar_seed, accent, has_avatar)| {
             json!({
                 "id": cid,
                 "handle": handle,
                 "displayName": display,
                 "body": body,
                 "createdAt": created,
+                "avatarSeed": avatar_seed,
+                "accent": accent,
+                "hasAvatar": has_avatar,
             })
         })
         .collect();

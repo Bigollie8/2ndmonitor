@@ -61,7 +61,7 @@ pub async fn list_topics(
     let mut stmt = db
         .prepare(
             "SELECT t.id, t.title, t.body, t.bundle_id, t.created_at, t.last_at, t.reply_count,
-                    u.handle, u.display_name, u.avatar_seed, u.accent
+                    u.handle, u.display_name, u.avatar_seed, u.accent, (u.avatar IS NOT NULL)
              FROM topics t JOIN users u ON u.id = t.author_id
              WHERE t.hidden = 0 AND u.suspended = 0
                AND (?1 IS NULL OR t.bundle_id = ?1)
@@ -88,6 +88,7 @@ pub async fn list_topics(
                 "displayName": r.get::<_, Option<String>>(8)?,
                 "avatarSeed": r.get::<_, Option<String>>(9)?,
                 "accent": r.get::<_, Option<String>>(10)?,
+                "hasAvatar": r.get::<_, bool>(11)?,
             }))
         })
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
@@ -144,7 +145,7 @@ pub async fn list_replies(
     let db = state.db.lock();
     let mut stmt = db
         .prepare(
-            "SELECT r.id, r.body, r.created_at, u.handle, u.display_name, u.avatar_seed, u.accent
+            "SELECT r.id, r.body, r.created_at, u.handle, u.display_name, u.avatar_seed, u.accent, (u.avatar IS NOT NULL)
              FROM topic_replies r JOIN users u ON u.id = r.author_id
              WHERE r.topic_id = ?1 AND r.hidden = 0 AND u.suspended = 0
                AND (?2 IS NULL OR r.author_id NOT IN
@@ -164,6 +165,7 @@ pub async fn list_replies(
                 "displayName": r.get::<_, Option<String>>(4)?,
                 "avatarSeed": r.get::<_, Option<String>>(5)?,
                 "accent": r.get::<_, Option<String>>(6)?,
+                "hasAvatar": r.get::<_, bool>(7)?,
             }))
         })
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?

@@ -3,27 +3,28 @@ import {
   fetchTopics, createTopic, fetchReplies, createReply,
   type Topic, type Reply,
 } from '../state/community';
-import { identiconDataUri } from '../state/identicon';
+import { avatarSrc } from '../state/avatarUrl';
 import { report, setBlock } from '../state/social';
 
 const MONO = '"JetBrains Mono", ui-monospace, monospace';
 
 const when = (sec: number) => new Date(sec * 1000).toLocaleDateString();
 
-function Author({ handle, displayName, avatarSeed, accent, fallbackAccent }: {
+function Author({ handle, displayName, avatarSeed, accent, hasAvatar, fallbackAccent }: {
   handle: string | null;
   displayName: string | null;
   avatarSeed: string | null;
   accent: string | null;
+  hasAvatar?: boolean;
   fallbackAccent: string;
 }) {
   const tint = accent ?? fallbackAccent;
   return (
     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
       <img
-        src={identiconDataUri(avatarSeed || handle || '?', 20)}
+        src={avatarSrc({ handle, hasAvatar, seed: avatarSeed, size: 20 })}
         alt="" width={20} height={20}
-        style={{ borderRadius: 5, border: `1px solid ${tint}44` }}
+        style={{ borderRadius: 5, objectFit: 'cover', border: `1px solid ${tint}44` }}
       />
       <span style={{ fontSize: 10.5, fontFamily: MONO, color: tint }}>
         {handle ? `@${handle}` : displayName ?? 'someone'}
