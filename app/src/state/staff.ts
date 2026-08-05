@@ -118,3 +118,30 @@ export async function fetchAudit(): Promise<AuditEntry[]> {
 export async function undoAction(id: number): Promise<void> {
   await (await invoke())('marketplace_undo', { url: cfgUrl(), id });
 }
+
+export interface Invite {
+  code: string;
+  note: string | null;
+  maxUses: number;
+  uses: number;
+  expiresAt: number | null;
+  revoked: boolean;
+  createdAt: number;
+  createdBy: string | null;
+}
+
+export async function createInvite(
+  note?: string, maxUses?: number, expiresInDays?: number,
+): Promise<string> {
+  const res = await (await invoke())<{ code: string }>('marketplace_create_invite', {
+    url: cfgUrl(), note: note ?? null, maxUses: maxUses ?? 1, expiresInDays: expiresInDays ?? null,
+  });
+  return res.code;
+}
+
+export async function fetchInvites(): Promise<Invite[]> {
+  const res = await (await invoke())<{ invites: Invite[] }>(
+    'marketplace_list_invites', { url: cfgUrl() },
+  );
+  return res.invites ?? [];
+}

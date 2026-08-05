@@ -17,6 +17,7 @@ pub mod avatar;
 pub mod directory;
 pub mod forum;
 pub mod shouts;
+pub mod invites;
 pub mod notify;
 pub mod roles;
 pub mod social;
@@ -65,6 +66,7 @@ pub fn router(state: AppState) -> Router {
         .route("/notifications/read", post(notify::mark_read))
         .route("/blocks", post(comments::set_block))
         .route("/reports", post(comments::report))
+        .route("/admin/invites", get(invites::list).post(invites::create))
         .route("/admin/users", get(staff::users))
         .route("/admin/whoami", get(staff::whoami))
         .route("/admin/reports", get(moderation::queue))

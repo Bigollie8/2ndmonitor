@@ -49,6 +49,7 @@ export function AccountSignIn({ accent }: { accent: string }) {
   const [registering, setRegistering] = useState(false);
   const [registerNote, setRegisterNote] = useState('');
   const [registerError, setRegisterError] = useState('');
+  const [invite, setInvite] = useState('');
 
   const busy = state.status === 'checking' || state.status === 'signing-in' || registering;
   const canSubmit = !busy && email.trim() !== '' && password !== '';
@@ -84,8 +85,15 @@ export function AccountSignIn({ accent }: { accent: string }) {
     setRegisterError('');
     setRegisterNote('');
     try {
-      const { verifyToken } = await register(cfgUrl(), email.trim(), password);
-      if (verifyToken) {
+      const { verifyToken, verified } = await register(
+        cfgUrl(), email.trim(), password, invite,
+      );
+      if (verified) {
+        // An invite already proved a human vouched for them, so there is
+        // nothing left to confirm and no email to wait for.
+        setRegisterNote('Account created. You can sign in now.');
+        setMode('sign-in');
+      } else if (verifyToken) {
         // The server is in dev-email mode and handed the token straight back,
         // so finish the job rather than asking someone to go and find an
         // email that was only ever printed to a log.
@@ -149,10 +157,30 @@ export function AccountSignIn({ accent }: { accent: string }) {
         />
         {mode === 'register' && (
           <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.35)', marginTop: 4 }}>
-            At least 8 characters. You will need to confirm your address before you can sign in.
+            At least 8 characters.
           </div>
         )}
       </div>
+      {mode === 'register' && (
+        <div>
+          <label style={fieldLabelStyle}>Invite code</label>
+          <input
+            value={invite}
+            onChange={(e) => setInvite(e.target.value)}
+            placeholder="XXXX-XXXX-XXXX"
+            disabled={busy}
+            spellCheck={false}
+            autoCapitalize="characters"
+            style={{ ...fieldInputStyle, fontFamily: MONO, letterSpacing: '0.06em' }}
+          />
+          {/* Said plainly, because "leave it blank" only works on a server
+              that can send mail — and this one may not be able to. */}
+          <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.35)', marginTop: 4, lineHeight: 1.5 }}>
+            A code gets you in straight away. Without one, this marketplace has to
+            email you a confirmation — which only works if its owner has set up mail.
+          </div>
+        </div>
+      )}
       {/* On failure, the server's own message (wrong password vs. unverified
          vs. unreachable server are different problems and read differently
          here) — never a generic "sign-in failed". See login_status_message

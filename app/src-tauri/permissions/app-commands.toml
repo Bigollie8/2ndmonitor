@@ -192,6 +192,8 @@ commands.allow = [
   "marketplace_moderate",
   "marketplace_staff_audit",
   "marketplace_undo",
+  "marketplace_create_invite",
+  "marketplace_list_invites",
   "marketplace_notifications",
   "marketplace_mark_read",
   "marketplace_delete_comment",

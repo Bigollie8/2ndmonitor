@@ -101,6 +101,22 @@ pub fn init(conn: &Connection) {
         -- commented on your work, or a moderator acted on your account.
         -- actor_handle is snapshotted so the inbox still reads correctly
         -- after a rename.
+        -- An invite proves a human vouched for you, which is the same thing
+        -- email verification proves -- so an invited account is created
+        -- already verified. Codes and email coexist: a code lets people in
+        -- without a mail relay, and configuring SMTP later widens the door
+        -- rather than replacing it.
+        CREATE TABLE IF NOT EXISTS invites (
+            code       TEXT PRIMARY KEY,
+            created_by INTEGER,           -- NULL = the shared ADMIN_TOKEN
+            created_at INTEGER NOT NULL,
+            note       TEXT,              -- who it was meant for
+            max_uses   INTEGER NOT NULL DEFAULT 1,
+            uses       INTEGER NOT NULL DEFAULT 0,
+            expires_at INTEGER,
+            revoked    INTEGER NOT NULL DEFAULT 0
+        );
+
         CREATE TABLE IF NOT EXISTS notifications (
             id           INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id      INTEGER NOT NULL,

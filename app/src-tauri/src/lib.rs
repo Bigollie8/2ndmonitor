@@ -145,6 +145,8 @@ pub fn run() {
             marketplace::marketplace_moderate,
             marketplace::marketplace_staff_audit,
             marketplace::marketplace_undo,
+            marketplace::marketplace_create_invite,
+            marketplace::marketplace_list_invites,
             marketplace::marketplace_notifications,
             marketplace::marketplace_mark_read,
             marketplace::marketplace_delete_comment,

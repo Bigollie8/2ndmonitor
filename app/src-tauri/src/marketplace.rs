@@ -328,9 +328,13 @@ pub fn marketplace_register(
     url: String,
     email: String,
     password: String,
+    invite: Option<String>,
 ) -> Result<serde_json::Value, String> {
     let base = url.trim_end_matches('/');
-    let body = serde_json::json!({ "email": email, "password": password });
+    let mut body = serde_json::json!({ "email": email, "password": password });
+    if let Some(code) = invite.as_deref().map(str::trim).filter(|c| !c.is_empty()) {
+        body["invite"] = serde_json::Value::String(code.to_string());
+    }
     let (status, buf) = post_capped_json(&format!("{base}/auth/register"), &body, AUTH_CAP, None)?;
     let text = String::from_utf8_lossy(&buf).into_owned();
 
@@ -346,6 +350,9 @@ pub fn marketplace_register(
         }
         if status == 409 {
             return Err("an account already exists for that address".into());
+        }
+        if status == 403 {
+            return Err("that invite code is not valid, already used, or expired".into());
         }
         return Err(if text.trim().is_empty() { format!("HTTP {status}") } else { text });
     }
@@ -756,6 +763,41 @@ pub fn marketplace_moderate<R: Runtime>(
     body["action"] = serde_json::Value::String(action);
     let base = url.trim_end_matches('/');
     post_social(&app, &format!("{base}/admin/moderate"), &body)
+}
+
+/// Mint an invite code. Any moderator may — handing out invites is everyday
+/// work, and every code is attributed in the list.
+#[tauri::command]
+pub fn marketplace_create_invite<R: Runtime>(
+    app: AppHandle<R>,
+    url: String,
+    note: Option<String>,
+    max_uses: Option<i64>,
+    expires_in_days: Option<i64>,
+) -> Result<serde_json::Value, String> {
+    let token = session_token(&app)?;
+    let base = url.trim_end_matches('/');
+    let body = serde_json::json!({
+        "note": note.unwrap_or_default(),
+        "maxUses": max_uses.unwrap_or(1),
+        "expiresInDays": expires_in_days,
+    });
+    let (status, buf) = post_capped_json(&format!("{base}/admin/invites"), &body, AUTH_CAP, Some(&token))?;
+    let text = String::from_utf8_lossy(&buf).into_owned();
+    if !(200..300).contains(&status) {
+        return Err(if text.trim().is_empty() { format!("HTTP {status}") } else { text });
+    }
+    serde_json::from_str(&text).map_err(|e| format!("not JSON: {e}"))
+}
+
+#[tauri::command]
+pub fn marketplace_list_invites<R: Runtime>(
+    app: AppHandle<R>,
+    url: String,
+) -> Result<serde_json::Value, String> {
+    let token = session_token(&app)?;
+    let base = url.trim_end_matches('/');
+    get_social(&format!("{base}/admin/invites"), Some(token))
 }
 
 /// Your inbox, with the unread count for the badge.

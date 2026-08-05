@@ -428,3 +428,177 @@ async fn the_undo_is_logged_too() {
     assert!(!original["undoneAt"].is_null(), "and the original is marked");
     assert_eq!(original["undoneBy"], "historian");
 }
+
+
+// ── invites ─────────────────────────────────────────────────────────────────
+
+async fn make_invite(app: &axum::Router, token: &str, max_uses: i64) -> String {
+    let (st, body) = call(app, "POST", "/admin/invites", Some(token),
+        Some(serde_json::json!({ "note": "test", "maxUses": max_uses }))).await;
+    assert_eq!(st, StatusCode::OK, "creating an invite");
+    body["code"].as_str().unwrap().to_string()
+}
+
+// The whole point: somebody can get an account with NO mail relay configured.
+#[tokio::test]
+async fn an_invite_creates_a_verified_account_without_any_email() {
+    let app = router(test_state());
+    let code = make_invite(&app, ADMIN, 1).await;
+
+    let (st, body) = call(&app, "POST", "/auth/register", None, Some(serde_json::json!({
+        "email": "invited@x.y", "password": "hunter22222", "invite": code,
+    }))).await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(body["verified"], true, "the code IS the proof — nothing left to confirm");
+
+    // And they can sign in immediately, with no verification step.
+    let (st, login) = call(&app, "POST", "/auth/login", None, Some(serde_json::json!({
+        "email": "invited@x.y", "password": "hunter22222",
+    }))).await;
+    assert_eq!(st, StatusCode::OK);
+    assert!(login["token"].as_str().is_some());
+}
+
+#[tokio::test]
+async fn a_single_use_code_cannot_be_spent_twice() {
+    let app = router(test_state());
+    let code = make_invite(&app, ADMIN, 1).await;
+
+    let (st, _) = call(&app, "POST", "/auth/register", None, Some(serde_json::json!({
+        "email": "first@x.y", "password": "hunter22222", "invite": code.clone(),
+    }))).await;
+    assert_eq!(st, StatusCode::OK);
+
+    let (st, _) = call(&app, "POST", "/auth/register", None, Some(serde_json::json!({
+        "email": "second@x.y", "password": "hunter22222", "invite": code,
+    }))).await;
+    assert_eq!(st, StatusCode::FORBIDDEN, "the second attempt must be refused");
+}
+
+#[tokio::test]
+async fn a_multi_use_code_admits_exactly_its_allowance() {
+    let app = router(test_state());
+    let code = make_invite(&app, ADMIN, 2).await;
+
+    for who in ["a@x.y", "b@x.y"] {
+        let (st, _) = call(&app, "POST", "/auth/register", None, Some(serde_json::json!({
+            "email": who, "password": "hunter22222", "invite": code.clone(),
+        }))).await;
+        assert_eq!(st, StatusCode::OK, "{who}");
+    }
+    let (st, _) = call(&app, "POST", "/auth/register", None, Some(serde_json::json!({
+        "email": "c@x.y", "password": "hunter22222", "invite": code,
+    }))).await;
+    assert_eq!(st, StatusCode::FORBIDDEN, "the third is one too many");
+}
+
+// Typed from a screenshot, read aloud, pasted from chat — all must work.
+#[tokio::test]
+async fn a_code_is_accepted_however_it_was_typed() {
+    let app = router(test_state());
+    let code = make_invite(&app, ADMIN, 1).await;
+    let mangled = code.to_lowercase().replace('-', " ");
+
+    let (st, _) = call(&app, "POST", "/auth/register", None, Some(serde_json::json!({
+        "email": "mangled@x.y", "password": "hunter22222", "invite": mangled,
+    }))).await;
+    assert_eq!(st, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn a_bad_or_revoked_code_is_refused_and_leaves_no_account_behind() {
+    let app = router(test_state());
+
+    let (st, _) = call(&app, "POST", "/auth/register", None, Some(serde_json::json!({
+        "email": "nope@x.y", "password": "hunter22222", "invite": "ZZZZ-ZZZZ-ZZZZ",
+    }))).await;
+    assert_eq!(st, StatusCode::FORBIDDEN);
+
+    // The address must still be free — a rejected attempt that left a row
+    // behind would lock it out forever, since email is UNIQUE.
+    let code = make_invite(&app, ADMIN, 1).await;
+    let (st, _) = call(&app, "POST", "/auth/register", None, Some(serde_json::json!({
+        "email": "nope@x.y", "password": "hunter22222", "invite": code,
+    }))).await;
+    assert_eq!(st, StatusCode::OK, "a failed redemption must not consume the address");
+
+    let revokable = make_invite(&app, ADMIN, 1).await;
+    call(&app, "POST", "/admin/moderate", Some(ADMIN),
+        Some(serde_json::json!({ "action": "revoke-invite", "code": revokable.clone() }))).await;
+    let (st, _) = call(&app, "POST", "/auth/register", None, Some(serde_json::json!({
+        "email": "revoked@x.y", "password": "hunter22222", "invite": revokable,
+    }))).await;
+    assert_eq!(st, StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn invites_are_staff_only_to_mint_and_to_read() {
+    let app = router(test_state());
+    let nobody = account(&app, "inv1@x.y", "nobodyhere").await;
+
+    let (st, _) = call(&app, "POST", "/admin/invites", Some(&nobody),
+        Some(serde_json::json!({ "maxUses": 99 }))).await;
+    assert_eq!(st, StatusCode::FORBIDDEN);
+    let (st, _) = call(&app, "GET", "/admin/invites", Some(&nobody), None).await;
+    assert_eq!(st, StatusCode::FORBIDDEN);
+}
+
+// ── admin password reset ────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn an_admin_can_reset_a_password_and_it_kills_the_old_sessions() {
+    let app = router(test_state());
+    let admin = account(&app, "pw1@x.y", "pwadmin").await;
+    let victim = account(&app, "pw2@x.y", "forgetful").await;
+    call(&app, "POST", "/admin/moderate", Some(ADMIN),
+        Some(serde_json::json!({ "action": "set-role", "handle": "pwadmin", "role": "admin" }))).await;
+
+    // Their existing session works right now.
+    let (st, _) = call(&app, "GET", "/account", Some(&victim), None).await;
+    assert_eq!(st, StatusCode::OK);
+
+    let (st, _) = call(&app, "POST", "/admin/moderate", Some(&admin), Some(serde_json::json!({
+        "action": "set-password", "handle": "forgetful", "password": "temporary123",
+    }))).await;
+    assert_eq!(st, StatusCode::OK);
+
+    // A reset that leaves the old session alive does not lock anybody out.
+    let (st, _) = call(&app, "GET", "/account", Some(&victim), None).await;
+    assert_eq!(st, StatusCode::UNAUTHORIZED, "the old session must die with the password");
+
+    let (st, login) = call(&app, "POST", "/auth/login", None, Some(serde_json::json!({
+        "email": "pw2@x.y", "password": "temporary123",
+    }))).await;
+    assert_eq!(st, StatusCode::OK, "and the new one works");
+    assert!(login["token"].as_str().is_some());
+}
+
+#[tokio::test]
+async fn a_password_reset_is_recorded_but_marked_unreversible() {
+    let app = router(test_state());
+    account(&app, "pw3@x.y", "logged2").await;
+    call(&app, "POST", "/admin/moderate", Some(ADMIN), Some(serde_json::json!({
+        "action": "set-password", "handle": "logged2", "password": "temporary123",
+    }))).await;
+
+    let (_, log) = call(&app, "GET", "/admin/audit", Some(ADMIN), None).await;
+    let entry = log["entries"].as_array().unwrap().iter()
+        .find(|e| e["action"] == "set-password").unwrap();
+    // Storing the old hash to enable an undo would mean keeping a way back
+    // into somebody's account long after the reset.
+    assert_eq!(entry["undoable"], false);
+}
+
+#[tokio::test]
+async fn a_moderator_cannot_reset_anybody_password() {
+    let app = router(test_state());
+    let mod_token = account(&app, "pw4@x.y", "justmod2").await;
+    account(&app, "pw5@x.y", "target9").await;
+    call(&app, "POST", "/admin/moderate", Some(ADMIN),
+        Some(serde_json::json!({ "action": "set-role", "handle": "justmod2", "role": "moderator" }))).await;
+
+    let (st, _) = call(&app, "POST", "/admin/moderate", Some(&mod_token), Some(serde_json::json!({
+        "action": "set-password", "handle": "target9", "password": "temporary123",
+    }))).await;
+    assert_eq!(st, StatusCode::FORBIDDEN);
+}

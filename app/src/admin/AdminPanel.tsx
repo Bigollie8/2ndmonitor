@@ -1,14 +1,15 @@
 import { useEffect, useState } from 'react';
 import {
   fetchStaffRole, fetchManagedUsers, fetchReports, moderate, fetchAudit, undoAction,
-  type StaffCapabilities, type ManagedUser, type Report, type AuditEntry,
+  createInvite, fetchInvites,
+  type StaffCapabilities, type ManagedUser, type Report, type AuditEntry, type Invite,
 } from '../state/staff';
 import { avatarSrc } from '../state/avatarUrl';
 import { BadgeChips } from '../market/BadgeChips';
 
 const MONO = '"JetBrains Mono", ui-monospace, monospace';
 
-type Tab = 'users' | 'reports' | 'log';
+type Tab = 'users' | 'invites' | 'reports' | 'log';
 
 const GRANTABLE = ['founder', 'moderator', 'creator', 'verified', 'supporter', 'staff'];
 
@@ -46,6 +47,8 @@ export function AdminPanel({ accent, onClose, onOpenCreator }: {
   const [users, setUsers] = useState<ManagedUser[] | null>(null);
   const [reports, setReports] = useState<Report[] | null>(null);
   const [log, setLog] = useState<AuditEntry[] | null>(null);
+  const [invites, setInvites] = useState<Invite[] | null>(null);
+  const [minted, setMinted] = useState('');
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
   const [note, setNote] = useState('');
@@ -85,6 +88,51 @@ export function AdminPanel({ accent, onClose, onOpenCreator }: {
       .catch(() => { if (!cancelled) setLog([]); });
     return () => { cancelled = true; };
   }, [caps, tab, reload]);
+
+  useEffect(() => {
+    if (caps === 'loading' || !caps || tab !== 'invites') return;
+    let cancelled = false;
+    setInvites(null);
+    void fetchInvites()
+      .then((l) => { if (!cancelled) setInvites(l); })
+      .catch(() => { if (!cancelled) setInvites([]); });
+    return () => { cancelled = true; };
+  }, [caps, tab, reload]);
+
+  const mint = async (maxUses: number) => {
+    setBusy('mint');
+    setError('');
+    setMinted('');
+    try {
+      const code = await createInvite('', maxUses);
+      // Shown big and kept on screen: this is the ONE moment the code exists
+      // somewhere the person minting it can copy from.
+      setMinted(code);
+      setReload((n) => n + 1);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy('');
+    }
+  };
+
+  const resetPassword = async (u: ManagedUser) => {
+    if (!u.handle) return;
+    // Generated rather than typed: an admin inventing a password on the spot
+    // picks a weak one, and this is only ever a temporary credential.
+    const temp = `reset-${Math.random().toString(36).slice(2, 10)}`;
+    setBusy(`pw-${u.id}`);
+    setError('');
+    setMinted('');
+    try {
+      await moderate('set-password', { handle: u.handle, password: temp });
+      setNote(`Temporary password for @${u.handle}: ${temp} — send it to them out of band; their old sessions are now signed out.`);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy('');
+    }
+  };
 
   const undo = async (entry: AuditEntry) => {
     setBusy(`undo-${entry.id}`);
@@ -156,7 +204,7 @@ export function AdminPanel({ accent, onClose, onOpenCreator }: {
         }}>{caps.role}</span>
       )}
       <div style={{ width: 6 }} />
-      {caps && caps !== 'loading' && (['users', 'reports', 'log'] as Tab[]).map((t) => (
+      {caps && caps !== 'loading' && (['users', 'invites', 'reports', 'log'] as Tab[]).map((t) => (
         <button
           key={t}
           onClick={() => setTab(t)}
@@ -199,7 +247,80 @@ export function AdminPanel({ accent, onClose, onOpenCreator }: {
         {error && <div style={{ fontSize: 11, color: '#fb7185', marginBottom: 10 }}>{error}</div>}
         {note && <div style={{ fontSize: 11, color: '#7cf5d4', marginBottom: 10 }}>{note}</div>}
 
-        {tab === 'log' ? (
+        {tab === 'invites' ? (
+          <>
+            <div style={{ display: 'flex', gap: 7, alignItems: 'center', flexWrap: 'wrap' }}>
+              <button disabled={!!busy} onClick={() => void mint(1)} style={smallBtn(true)}>
+                New code (1 use)
+              </button>
+              <button disabled={!!busy} onClick={() => void mint(5)} style={smallBtn(true)}>
+                New code (5 uses)
+              </button>
+              <span style={{ fontSize: 10, fontFamily: MONO, color: 'rgba(255,255,255,0.35)' }}>
+                a code lets somebody register with no email at all
+              </span>
+            </div>
+
+            {minted && (
+              <div style={{
+                marginTop: 12, padding: '10px 12px', borderRadius: 9,
+                background: `${accent}14`, border: `1px solid ${accent}44`,
+              }}>
+                <div style={{ fontSize: 9.5, fontFamily: MONO, color: 'rgba(255,255,255,0.5)' }}>
+                  Send this to whoever you are inviting
+                </div>
+                <div style={{
+                  fontSize: 18, fontFamily: MONO, fontWeight: 700, color: accent,
+                  letterSpacing: '0.08em', marginTop: 3, userSelect: 'all',
+                }}>{minted}</div>
+              </div>
+            )}
+
+            {invites == null ? (
+              <div style={{ fontSize: 11.5, color: 'rgba(255,255,255,0.35)', marginTop: 14 }}>Loading…</div>
+            ) : invites.length === 0 ? (
+              <div style={{ fontSize: 11.5, color: 'rgba(255,255,255,0.45)', marginTop: 14 }}>
+                No codes yet.
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 14 }}>
+                {invites.map((inv) => {
+                  const spent = inv.uses >= inv.maxUses;
+                  const dead = inv.revoked || spent;
+                  return (
+                    <div key={inv.code} style={{
+                      display: 'flex', alignItems: 'center', gap: 10,
+                      padding: '8px 11px', borderRadius: 8,
+                      background: 'rgba(255,255,255,0.025)',
+                      border: '1px solid rgba(255,255,255,0.06)',
+                      opacity: dead ? 0.5 : 1,
+                    }}>
+                      <span style={{
+                        fontSize: 12, fontFamily: MONO, fontWeight: 700,
+                        color: dead ? 'rgba(255,255,255,0.4)' : accent,
+                        letterSpacing: '0.05em', userSelect: 'all',
+                        textDecoration: inv.revoked ? 'line-through' : 'none',
+                      }}>{inv.code}</span>
+                      <span style={{ fontSize: 9.5, fontFamily: MONO, color: 'rgba(255,255,255,0.35)' }}>
+                        {inv.uses}/{inv.maxUses} used
+                        {inv.createdBy ? ` · by @${inv.createdBy}` : ' · by shared token'}
+                        {inv.revoked ? ' · revoked' : spent ? ' · spent' : ''}
+                      </span>
+                      <div style={{ flex: 1 }} />
+                      {!inv.revoked && (
+                        <button
+                          disabled={!!busy}
+                          onClick={() => void act(`Revoked ${inv.code}`, 'revoke-invite', { code: inv.code })}
+                          style={smallBtn(false)}
+                        >Revoke</button>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </>
+        ) : tab === 'log' ? (
           log == null ? (
             <div style={{ fontSize: 11.5, color: 'rgba(255,255,255,0.35)' }}>Loading…</div>
           ) : log.length === 0 ? (
@@ -371,6 +492,12 @@ export function AdminPanel({ accent, onClose, onOpenCreator }: {
                             )}
                             style={smallBtn(!u.suspended)}
                           >{u.suspended ? 'Unsuspend' : 'Suspend'}</button>
+
+                          <button
+                            disabled={!!busy}
+                            onClick={() => void resetPassword(u)}
+                            style={smallBtn(true)}
+                          >Reset password</button>
 
                           <select
                             value={u.role}

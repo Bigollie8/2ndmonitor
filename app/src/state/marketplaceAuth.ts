@@ -104,12 +104,14 @@ export async function register(
   url: string,
   email: string,
   password: string,
-): Promise<{ verifyToken: string | null }> {
+  invite?: string,
+): Promise<{ verifyToken: string | null; verified?: boolean }> {
   const { invoke } = await import('@tauri-apps/api/core');
-  const res = await invoke<{ verifyToken: string | null }>('marketplace_register', {
-    url, email, password,
-  });
-  return { verifyToken: res?.verifyToken ?? null };
+  const res = await invoke<{ verifyToken: string | null; verified?: boolean }>(
+    'marketplace_register',
+    { url, email, password, invite: invite ?? null },
+  );
+  return { verifyToken: res?.verifyToken ?? null, verified: res?.verified };
 }
 
 /** Confirms an address with the token from the verification email. */

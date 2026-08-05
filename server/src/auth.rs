@@ -108,6 +108,20 @@ fn deliver(state: &AppState, kind: &str, email: &str, token: &str) -> Result<Opt
 pub struct RegisterBody {
     email: String,
     password: String,
+    /// Optional invite code. Present and valid, it stands in for email
+    /// verification entirely — see invites.rs.
+    #[serde(default)]
+    invite: Option<String>,
+}
+
+/// Argon2 with a fresh salt. Shared so registration and an admin reset can
+/// never disagree about how a password is stored.
+pub fn hash_password(password: &str) -> Result<String, ()> {
+    let salt = SaltString::generate(&mut OsRng);
+    Argon2::default()
+        .hash_password(password.as_bytes(), &salt)
+        .map(|h| h.to_string())
+        .map_err(|_| ())
 }
 
 pub async fn register(
@@ -125,6 +139,18 @@ pub async fn register(
     if body.password.len() < 8 {
         return Err(StatusCode::BAD_REQUEST);
     }
+    // An invite is redeemed BEFORE the account exists, so a bad code cannot
+    // leave a half-made row behind — and a good one is spent exactly once
+    // even if two people race the last use.
+    let invited = match body.invite.as_deref().map(str::trim).filter(|c| !c.is_empty()) {
+        Some(code) => {
+            let db = state.db.lock();
+            crate::invites::redeem(&db, code).map_err(|_| StatusCode::FORBIDDEN)?;
+            true
+        }
+        None => false,
+    };
+
     let salt = SaltString::generate(&mut OsRng);
     let hash = Argon2::default()
         .hash_password(body.password.as_bytes(), &salt)
@@ -134,13 +160,20 @@ pub async fn register(
     let user_id: i64 = {
         let db = state.db.lock();
         match db.execute(
-            "INSERT INTO users (email, pass_hash, created_at) VALUES (?1, ?2, ?3)",
-            rusqlite::params![email, hash, now()],
+            "INSERT INTO users (email, pass_hash, created_at, verified) VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params![email, hash, now(), i64::from(invited)],
         ) {
             Ok(_) => db.last_insert_rowid(),
             Err(_) => return Err(StatusCode::CONFLICT),
         }
     };
+
+    // An invited account is already verified: the code IS the proof, and
+    // asking for an emailed confirmation on top would demand a second proof
+    // of the same fact through a channel that may not even be configured.
+    if invited {
+        return Ok(Json(json!({ "ok": true, "verified": true })));
+    }
 
     let token = rand_token();
     state.db.lock().execute(

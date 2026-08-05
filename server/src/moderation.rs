@@ -42,7 +42,7 @@ fn now() -> i64 {
 pub fn needed_for(action: &str) -> Role {
     match action {
         "suspend" | "unsuspend" | "rename-handle" | "grant-badge" | "revoke-badge"
-        | "set-role" => Role::Admin,
+        | "set-role" | "set-password" => Role::Admin,
         _ => Role::Moderator,
     }
 }
@@ -94,6 +94,9 @@ fn inverse(action: &str, args: &Value, prior: &Value) -> Option<(String, Value)>
         }),
         "remove-avatar" => Some(("restore-avatar".into(), json!({ "handle": handle }))),
         "restore-avatar" => Some(("remove-avatar".into(), json!({ "handle": handle }))),
+        "revoke-invite" => Some(("restore-invite".into(), json!({ "code": args.get("code") }))),
+        "restore-invite" => Some(("revoke-invite".into(), json!({ "code": args.get("code") }))),
+        // "set-password" has NO inverse on purpose -- see the arm in `apply`.
         "resolve" => Some(("reopen".into(), json!({ "id": id }))),
         "reopen" => Some(("resolve".into(), json!({ "id": id }))),
         _ => None,
@@ -310,6 +313,52 @@ fn apply(db: &rusqlite::Connection, actor: Actor, action: &str, body: &Value) ->
                 )
                 .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
             touched(n, "creator")?;
+        }
+        "revoke-invite" | "restore-invite" => {
+            let code = crate::invites::normalise(
+                body.get("code").and_then(Value::as_str).unwrap_or(""),
+            );
+            let revoked = i64::from(action == "revoke-invite");
+            let n = db
+                .execute(
+                    "UPDATE invites SET revoked = ?1 WHERE code = ?2",
+                    rusqlite::params![revoked, code],
+                )
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            touched(n, "invite code")?;
+        }
+        "set-password" => {
+            // The recovery path while there is no mail relay. An admin sets a
+            // temporary password and tells the person out of band; they change
+            // it once they are in.
+            //
+            // NOT undoable, and marked so: the previous hash is deliberately
+            // not recorded anywhere. Keeping it to enable an undo would mean
+            // storing a way back into somebody's account long after the reset,
+            // which is a worse thing to own than a lost password.
+            let handle = want_handle();
+            let password = body.get("password").and_then(Value::as_str).unwrap_or("");
+            if password.len() < 8 {
+                return Err((StatusCode::BAD_REQUEST, "password must be at least 8 characters".into()));
+            }
+            let hash = crate::auth::hash_password(password)
+                .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "could not hash".to_string()))?;
+            let n = db
+                .execute(
+                    "UPDATE users SET pass_hash = ?1 WHERE handle = ?2",
+                    rusqlite::params![hash, handle],
+                )
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            touched(n, "creator")?;
+
+            // Every existing session dies with the password. A reset that
+            // leaves the old sessions alive does not lock anyone out.
+            let _ = db.execute(
+                "DELETE FROM tokens
+                 WHERE kind = 'session'
+                   AND user_id = (SELECT id FROM users WHERE handle = ?1)",
+                [&handle],
+            );
         }
         "resolve" | "reopen" => {
             let status = if action == "resolve" { "closed" } else { "open" };
