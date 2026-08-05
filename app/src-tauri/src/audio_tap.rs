@@ -379,7 +379,8 @@ pub fn start(
     eprintln!(
         "audio_tap: creating process tap ({})",
         match &target {
-            TapTarget::Except(_) => "system mix".to_string(),
+            TapTarget::AllProcesses => "system mix".to_string(),
+            TapTarget::Except(pids) => format!("system mix minus {} pid(s)", pids.len()),
             TapTarget::Only(pids) => format!("{} pid(s)", pids.len()),
         }
     );
