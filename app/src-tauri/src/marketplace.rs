@@ -642,6 +642,131 @@ pub fn marketplace_post_review<R: Runtime>(
     Ok(())
 }
 
+/// The creator directory, optionally searched. Public: a signed-out browse
+/// still gets the full list, because discovering people is the point.
+#[tauri::command]
+pub fn marketplace_fetch_creators(
+    url: String,
+    query: Option<String>,
+) -> Result<serde_json::Value, String> {
+    let base = url.trim_end_matches('/');
+    let q = query.unwrap_or_default();
+    let endpoint = if q.trim().is_empty() {
+        format!("{base}/creators")
+    } else {
+        format!("{base}/creators?q={}", urlencoding::encode(q.trim()))
+    };
+    let (status, buf) = get_capped_status(&endpoint, FETCH_CAP)?;
+    let text = String::from_utf8_lossy(&buf).into_owned();
+    if !(200..300).contains(&status) {
+        return Err(if text.trim().is_empty() { format!("HTTP {status}") } else { text });
+    }
+    serde_json::from_str(&text).map_err(|e| format!("not JSON: {e}"))
+}
+
+/// Forum topics, optionally scoped to one bundle's discussion.
+#[tauri::command]
+pub fn marketplace_fetch_topics<R: Runtime>(
+    app: AppHandle<R>,
+    url: String,
+    bundle_id: Option<String>,
+) -> Result<serde_json::Value, String> {
+    let base = url.trim_end_matches('/');
+    let endpoint = match bundle_id.as_deref().filter(|b| !b.is_empty()) {
+        Some(b) => {
+            if !is_safe_id(b) {
+                return Err("invalid bundle id".into());
+            }
+            format!("{base}/topics?bundleId={b}")
+        }
+        None => format!("{base}/topics"),
+    };
+    get_social(&endpoint, session_token(&app).ok())
+}
+
+#[tauri::command]
+pub fn marketplace_create_topic<R: Runtime>(
+    app: AppHandle<R>,
+    url: String,
+    title: String,
+    body: String,
+    bundle_id: Option<String>,
+) -> Result<(), String> {
+    if title.trim().is_empty() || body.trim().is_empty() {
+        return Err("a topic needs a title and a body".into());
+    }
+    if title.chars().count() > 120 {
+        return Err("title must be at most 120 characters".into());
+    }
+    if body.chars().count() > 4000 {
+        return Err("body must be at most 4000 characters".into());
+    }
+    let base = url.trim_end_matches('/');
+    let mut payload = serde_json::json!({ "title": title, "body": body });
+    if let Some(b) = bundle_id.filter(|b| !b.is_empty()) {
+        if !is_safe_id(&b) {
+            return Err("invalid bundle id".into());
+        }
+        payload["bundleId"] = serde_json::Value::String(b);
+    }
+    post_social(&app, &format!("{base}/topics"), &payload)
+}
+
+#[tauri::command]
+pub fn marketplace_fetch_replies<R: Runtime>(
+    app: AppHandle<R>,
+    url: String,
+    topic_id: i64,
+) -> Result<serde_json::Value, String> {
+    let base = url.trim_end_matches('/');
+    get_social(&format!("{base}/topics/replies?topicId={topic_id}"), session_token(&app).ok())
+}
+
+#[tauri::command]
+pub fn marketplace_create_reply<R: Runtime>(
+    app: AppHandle<R>,
+    url: String,
+    topic_id: i64,
+    body: String,
+) -> Result<(), String> {
+    if body.trim().is_empty() {
+        return Err("reply must not be blank".into());
+    }
+    if body.chars().count() > 4000 {
+        return Err("reply must be at most 4000 characters".into());
+    }
+    let base = url.trim_end_matches('/');
+    post_social(&app, &format!("{base}/topics/replies"),
+        &serde_json::json!({ "topicId": topic_id, "body": body }))
+}
+
+/// The shoutbox window. Polled by the client, so this stays cheap and never
+/// errors loudly — a dead fetch leaves the last window on screen.
+#[tauri::command]
+pub fn marketplace_fetch_shouts<R: Runtime>(
+    app: AppHandle<R>,
+    url: String,
+) -> Result<serde_json::Value, String> {
+    let base = url.trim_end_matches('/');
+    get_social(&format!("{base}/shouts"), session_token(&app).ok())
+}
+
+#[tauri::command]
+pub fn marketplace_post_shout<R: Runtime>(
+    app: AppHandle<R>,
+    url: String,
+    body: String,
+) -> Result<(), String> {
+    if body.trim().is_empty() {
+        return Err("shout must not be blank".into());
+    }
+    if body.chars().count() > 240 {
+        return Err("shout must be at most 240 characters".into());
+    }
+    let base = url.trim_end_matches('/');
+    post_social(&app, &format!("{base}/shouts"), &serde_json::json!({ "body": body }))
+}
+
 /// Shared shape for the social GETs: attach the session when one exists,
 /// go anonymous otherwise. Counts are public; "is it mine / am I following"
 /// needs the token; a signed-out browse must still get the numbers.
@@ -827,10 +952,17 @@ pub fn marketplace_publish_layout<R: Runtime>(
     url: String,
     manifest: String,
     layout: String,
+    // Base64 PNG wireframe. Optional: a layout with no preview publishes
+    // fine and falls back to the letter block, exactly like any other
+    // previewless bundle.
+    preview: Option<String>,
 ) -> Result<(), String> {
     let token = session_token(&app)?;
     let base = url.trim_end_matches('/');
-    let body = serde_json::json!({ "kind": "layout", "manifest": manifest, "code": layout });
+    let mut body = serde_json::json!({ "kind": "layout", "manifest": manifest, "code": layout });
+    if let Some(p) = preview.filter(|p| !p.is_empty()) {
+        body["preview"] = serde_json::Value::String(p);
+    }
     let (status, buf) = post_capped_json(&format!("{base}/submissions"), &body, AUTH_CAP, Some(&token))?;
     if !(200..300).contains(&status) {
         let text = String::from_utf8_lossy(&buf).into_owned();

@@ -49,7 +49,7 @@ const isEditableTarget = (t: EventTarget | null): boolean => {
  *  is here is composition and effects. */
 export function MarketView({
   accent, accent2, spectrumRef, catalogRemoved, setCatalogRemoved, onClose, onOpenLibrary,
-  onOpenProfile, initialFacets,
+  onOpenProfile, onOpenCommunity, initialCreator, onCreatorConsumed, initialFacets,
 }: {
   accent: string;
   accent2: string;
@@ -62,6 +62,12 @@ export function MarketView({
    *  both), so the popout never has to fight this view's capture-phase Esc
    *  handler. */
   onOpenProfile?: () => void;
+  /** Opens the community home (this view closes first — App owns both). */
+  onOpenCommunity?: () => void;
+  /** Deep-link: open straight onto this creator's page. Consumed once, so
+   *  navigating away inside the store does not snap back to it. */
+  initialCreator?: string | null;
+  onCreatorConsumed?: () => void;
   /** Open straight into a filtered grid instead of Discover — e.g. the
    *  MilkDrop picker's "browse presets". Read once at mount, like
    *  `ContentLibrary`'s old `initialRail`: this is the starting point for a
@@ -168,6 +174,14 @@ export function MarketView({
       .catch(() => { if (!cancelled) setFeedIds([]); });
     return () => { cancelled = true; };
   }, [data.signedIn]);
+
+  // The community sent us to somebody's page. Applied once and then
+  // released, so back/forward inside the store behaves normally.
+  useEffect(() => {
+    if (!initialCreator) return;
+    dispatch({ type: 'open-author', author: `@${initialCreator}` });
+    onCreatorConsumed?.();
+  }, [initialCreator, onCreatorConsumed]);
 
   const shelves = useMemo(() => {
     const built = buildShelves({
@@ -534,6 +548,7 @@ export function MarketView({
         onQuery={(q) => dispatch({ type: 'set-query', query: q })}
         onSort={(s: SortMode) => dispatch({ type: 'set-sort', sort: s })}
         onProfile={onOpenProfile}
+        onCommunity={onOpenCommunity}
       />
 
       {(data.indexUnreachable || data.usingCache) && (

@@ -9,6 +9,7 @@ import {
 } from '../state/social';
 import { AccountSignIn } from './AccountSignIn';
 import { AccountPanel } from './AccountPanel';
+import { BadgeChips } from '../market/BadgeChips';
 
 const MONO = '"JetBrains Mono", ui-monospace, monospace';
 
@@ -18,6 +19,8 @@ interface AccountSummary {
   handle: string | null;
   displayName: string | null;
   avatarSeed: string | null;
+  accent?: string | null;
+  badges?: unknown;
 }
 
 /** The profile hub: who you are on the marketplace and who you care about.
@@ -134,6 +137,9 @@ export function ProfileView({ accent, catalogRemoved, onClose }: {
     }
   };
 
+  // Your colour on your page, the app's otherwise — the same rule your
+  // public creator page follows, so the two never disagree.
+  const tint = account?.accent ?? accent;
   const byId = new Map(data.items.map((i) => [i.id, i]));
 
   const tabButton = (t: Tab, label: string) => (
@@ -212,15 +218,18 @@ export function ProfileView({ accent, catalogRemoved, onClose }: {
                       alt=""
                       width={72}
                       height={72}
-                      style={{ borderRadius: 12, border: '1px solid rgba(255,255,255,0.09)' }}
+                      style={{ borderRadius: 12, border: `1px solid ${account?.accent ?? 'rgba(255,255,255,0.09)'}` }}
                     />
                     <div style={{ minWidth: 0 }}>
                       <div style={{ fontSize: 16, fontWeight: 700, color: 'rgba(255,255,255,0.95)' }}>
                         {account?.displayName ?? account?.handle ?? '—'}
                       </div>
                       {account?.handle && (
-                        <div style={{ fontSize: 11, fontFamily: MONO, color: accent, marginTop: 2 }}>
-                          @{account.handle}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 3, flexWrap: 'wrap' }}>
+                          <span style={{ fontSize: 11, fontFamily: MONO, color: tint }}>
+                            @{account.handle}
+                          </span>
+                          <BadgeChips badges={account.badges} />
                         </div>
                       )}
                       <div style={{ fontSize: 10.5, fontFamily: MONO, color: 'rgba(255,255,255,0.4)', marginTop: 6 }}>

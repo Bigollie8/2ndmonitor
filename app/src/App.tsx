@@ -109,6 +109,7 @@ const DeclarativeTile = lazy(() => import('./components/DeclarativeTile').then((
 const MissingTileCard = lazy(() => import('./components/MissingTileCard').then((m) => ({ default: m.MissingTileCard })));
 const MarketView = lazy(() => import('./market/MarketView').then((m) => ({ default: m.MarketView })));
 const ProfileView = lazy(() => import('./profile/ProfileView').then((m) => ({ default: m.ProfileView })));
+const CommunityView = lazy(() => import('./community/CommunityView').then((m) => ({ default: m.CommunityView })));
 
 interface VizColorOverride {
   enabled: boolean;
@@ -508,6 +509,10 @@ export default function App() {
   // The profile popout — sign-in, registration, handle, creator profile.
   // Lived in Settings until 0.9.0; becoming a creator is not a preference.
   const [showProfile, setShowProfile] = useState(false);
+  // The community home: creator directory, forum, shoutbox.
+  const [showCommunity, setShowCommunity] = useState(false);
+  // Set when the community sends us to someone's creator page.
+  const [marketCreator, setMarketCreator] = useState<string | null>(null);
   // Set when the Store was opened by a "browse presets" action rather than
   // plainly — the MilkDrop picker's button. That is a BROWSE action, so it
   // opens the Store filtered to presets; it only ever lived in the old
@@ -826,6 +831,7 @@ export default function App() {
         // MarketView's capture-phase handler), so App must not also act.
         if (showMarket) { /* MarketView owns Esc */ }
         else if (showProfile) setShowProfile(false);
+        else if (showCommunity) setShowCommunity(false);
         else if (showShortcuts) setShowShortcuts(false);
         else if (showContentLibrary) setShowContentLibrary(false);
         else if (showSettings) setShowSettings(false);
@@ -896,7 +902,8 @@ export default function App() {
   // Hiding does NOT reflow tiles: the bar overlays the same reserved space
   // when revealed (like the Windows taskbar) — CHROME_TOP_PX stays as-is.
   const topBarPinned = shouldPinTopBar({
-    editMode, showSettings, showContentLibrary: showContentLibrary || showMarket || showProfile,
+    editMode, showSettings,
+    showContentLibrary: showContentLibrary || showMarket || showProfile || showCommunity,
     showSwitcher, showOnboarding,
     showShortcuts, menuOpen: topBarMenuOpen,
   });
@@ -1495,6 +1502,24 @@ export default function App() {
               onClose={() => { setShowMarket(false); setMarketPresets(false); }}
               onOpenLibrary={() => { setShowMarket(false); setMarketPresets(false); setShowContentLibrary(true); }}
               onOpenProfile={() => { setShowMarket(false); setMarketPresets(false); setShowProfile(true); }}
+              onOpenCommunity={() => { setShowMarket(false); setMarketPresets(false); setShowCommunity(true); }}
+              initialCreator={marketCreator}
+              onCreatorConsumed={() => setMarketCreator(null)}
+            />
+          </Suspense>
+        )}
+        {showCommunity && (
+          <Suspense fallback={null}>
+            <CommunityView
+              accent={accent}
+              onClose={() => setShowCommunity(false)}
+              onOpenCreator={(handle) => {
+                // Close first, then open the store on their page: the same
+                // one-modal-at-a-time rule every other cross-link follows.
+                setShowCommunity(false);
+                setMarketCreator(handle);
+                setShowMarket(true);
+              }}
             />
           </Suspense>
         )}
@@ -1542,6 +1567,7 @@ export default function App() {
           onOpenContentLibrary={() => { setShowSettings(false); setShowContentLibrary(true); }}
           onOpenMarket={() => { setShowSettings(false); setShowMarket(true); }}
           onOpenProfile={() => { setShowSettings(false); setShowProfile(true); }}
+          onOpenCommunity={() => { setShowSettings(false); setShowCommunity(true); }}
           onReplayOnboarding={() => { setShowSettings(false); setShowOnboarding(true); }}
           // Close Settings and drop into edit mode so the empty canvas lands
           // with the "+ Add tile" picker one click away.

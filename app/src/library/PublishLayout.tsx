@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import type { TileInstance } from '../state/layout';
 import { toPublishedLayout, layoutDependencies, type PublishSource } from '../state/layoutPublish';
+import { wireframePngBase64 } from '../state/layoutPreviewPng';
 import { wireframeDataUri } from '../state/layoutWireframe';
 import { cfgUrl } from '../state/marketplaceConfig';
 
@@ -45,6 +46,11 @@ export function PublishLayout({
     setError('');
     try {
       const { invoke } = await import('@tauri-apps/api/core');
+      // A generated wireframe, rasterised to PNG because the catalog sniffs
+      // preview bytes and refuses SVG. Null publishes fine -- the layout just
+      // renders with the same letter-block fallback every other previewless
+      // bundle uses, which beats failing a publish over a thumbnail.
+      const preview = await wireframePngBase64(published);
       await invoke('marketplace_publish_layout', {
         url: cfgUrl(),
         manifest: JSON.stringify({
@@ -52,6 +58,7 @@ export function PublishLayout({
           category, ...(summary.trim() ? { summary: summary.trim() } : {}),
         }),
         layout: JSON.stringify(published),
+        preview,
       });
       onPublished(id);
     } catch (e) {

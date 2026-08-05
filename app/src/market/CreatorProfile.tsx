@@ -5,6 +5,8 @@ import { identiconDataUri } from '../state/identicon';
 import { cfgUrl } from '../state/marketplaceConfig';
 import { MarketCard } from './MarketCard';
 import { FollowButton } from './FollowButton';
+import { BadgeChips } from './BadgeChips';
+import { ProfileDashboard } from '../community/ProfileDashboard';
 
 const MONO = '"JetBrains Mono", ui-monospace, monospace';
 
@@ -21,6 +23,10 @@ export interface CreatorBundle {
 
 export interface Creator {
   handle: string;
+  /** Their chosen profile colour, or null. Server guarantees #rrggbb. */
+  accent?: string | null;
+  /** Admin-granted. Unknown slugs still render (state/badges.ts). */
+  badges?: unknown;
   displayName: string | null;
   bio: string | null;
   links: string[];
@@ -93,6 +99,9 @@ export function CreatorProfile({
     );
   }
 
+  // Their colour on their page, the app's otherwise. The server constrains
+  // it to #rrggbb, so this can only ever be a colour.
+  const tint = creator.accent ?? accent;
   const byId = new Map(items.map((i) => [i.id, i]));
   const cards = creator.bundles
     .map((b) => byId.get(b.id))
@@ -106,14 +115,15 @@ export function CreatorProfile({
           alt=""
           width={72}
           height={72}
-          style={{ borderRadius: 12, flexShrink: 0, border: '1px solid rgba(255,255,255,0.09)' }}
+          style={{ borderRadius: 12, flexShrink: 0, border: `1px solid ${creator.accent ?? 'rgba(255,255,255,0.09)'}` }}
         />
         <div style={{ minWidth: 0, flex: 1 }}>
           <div style={{ fontSize: 18, fontWeight: 700, color: 'rgba(255,255,255,0.95)' }}>
             {creator.displayName ?? creator.handle}
           </div>
-          <div style={{ fontSize: 11, fontFamily: MONO, color: accent, marginTop: 2 }}>
-            @{creator.handle}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 2, flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 11, fontFamily: MONO, color: tint }}>@{creator.handle}</span>
+            <BadgeChips badges={creator.badges} />
           </div>
           {creator.bio && (
             <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.66)', marginTop: 8, lineHeight: 1.45 }}>
@@ -137,7 +147,7 @@ export function CreatorProfile({
             {creator.bundles.length} published · {creator.totalDownloads} installs
           </div>
           <div style={{ marginTop: 10 }}>
-            <FollowButton handle={creator.handle} accent={accent} signedIn={signedIn} />
+            <FollowButton handle={creator.handle} accent={tint} signedIn={signedIn} />
           </div>
         </div>
       </div>

@@ -2,7 +2,7 @@ import type { CatalogItem } from '../state/catalog';
 import type { PublishedLayout } from '../state/layoutPublish';
 import type { LayoutResolution } from '../state/layoutInstall';
 import { planMultiInstall } from '../state/installPlan';
-import { wireframeDataUri } from '../state/layoutWireframe';
+import { ProfileDashboard } from '../community/ProfileDashboard';
 
 const MONO = '"JetBrains Mono", ui-monospace, monospace';
 
@@ -55,11 +55,7 @@ export function InstallLayoutDialog({
           Install “{layoutName}”?
         </div>
 
-        <img
-          src={wireframeDataUri(layout)}
-          alt=""
-          style={{ width: '100%', marginTop: 12, borderRadius: 8, border: '1px solid rgba(255,255,255,0.09)' }}
-        />
+        <ProfileDashboard layout={layout} accent={accent} height={200} />
 
         {/* The single most reassuring sentence in the dialog. */}
         <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.6)', marginTop: 10, lineHeight: 1.5 }}>

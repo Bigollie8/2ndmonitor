@@ -23,8 +23,10 @@ export const MarketHeader = forwardRef<HTMLInputElement, {
   onSort: (s: SortMode) => void;
   /** Opens the profile popout (the store closes itself first — App owns both). */
   onProfile?: () => void;
+  /** Opens the community home (same close-first rule). */
+  onCommunity?: () => void;
 }>(function MarketHeader(
-  { accent, browse, canGoBack, totalCount, onBack, onClose, onQuery, onSort, onProfile }, ref,
+  { accent, browse, canGoBack, totalCount, onBack, onClose, onQuery, onSort, onProfile, onCommunity }, ref,
 ) {
   const field = {
     padding: '5px 10px', fontSize: 11.5, borderRadius: 6,
@@ -94,6 +96,20 @@ export const MarketHeader = forwardRef<HTMLInputElement, {
           <option key={m} value={m} style={{ background: '#15161a' }}>{SORT_LABELS[m]}</option>
         ))}
       </select>
+
+      {onCommunity && (
+        <button
+          onClick={onCommunity}
+          aria-label="Community"
+          title="Community — creators, forum, shoutbox"
+          style={{
+            padding: '4px 10px', borderRadius: 999, flexShrink: 0,
+            background: 'rgba(255,255,255,0.05)', color: 'rgba(255,255,255,0.7)',
+            border: '1px solid rgba(255,255,255,0.12)',
+            cursor: 'pointer', fontSize: 10.5, fontWeight: 600, whiteSpace: 'nowrap',
+          }}
+        >Community</button>
+      )}
 
       {onProfile && (
         <button

@@ -139,7 +139,7 @@ interface PaneDef {
 
 export function SettingsWindow({
   values: v, set, accent, accent2, accentLinked, trackTitle,
-  onOpenContentLibrary, onOpenMarket, onOpenProfile, onReplayOnboarding, onResetLayout, onExportSettings, onImportSettings, onClose,
+  onOpenContentLibrary, onOpenMarket, onOpenProfile, onOpenCommunity, onReplayOnboarding, onResetLayout, onExportSettings, onImportSettings, onClose,
 }: {
   values: SettingsValues;
   set: SettingsSetter;
@@ -153,6 +153,8 @@ export function SettingsWindow({
   onOpenMarket?: () => void;
   /** Closes Settings and opens the profile popout (App owns both). */
   onOpenProfile?: () => void;
+  /** Closes Settings and opens the community home (App owns both). */
+  onOpenCommunity?: () => void;
   onReplayOnboarding: () => void;
   onResetLayout: () => void;
   onExportSettings?: () => void;
@@ -354,6 +356,11 @@ export function SettingsWindow({
     {
       id: 'marketplace', icon: '⇄', title: 'Marketplace',
       rows: [
+        {
+          id: 'marketplace-community', label: 'Community',
+          hint: 'Creators, the forum and the shoutbox.',
+          control: <SettingsButton label="Open community →" onClick={() => onOpenCommunity?.()} accent={accent} />,
+        },
         {
           id: 'marketplace-profile', label: 'Profile & account',
           hint: 'Sign in, create an account, and manage how you appear on the marketplace. Moved to its own window in 0.9.0 — becoming a creator is not a preference.',

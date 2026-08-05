@@ -12,6 +12,7 @@ import { ReviewList } from './ReviewList';
 import { ReviewForm } from './ReviewForm';
 import { FavouriteButton } from './FavouriteButton';
 import { CommentsSection } from './CommentsSection';
+import { ForumView } from '../community/ForumView';
 import { authorLabelOf } from '../state/authorIndex';
 import { glyphFor } from './MarketCard';
 
@@ -227,6 +228,20 @@ export function MarketDetail({
       {item.source !== 'first-party' && (
         <Section title="Comments">
           <CommentsSection bundleId={item.id} accent={accent} signedIn={signedIn} />
+        </Section>
+      )}
+
+      {/* A bundle's own board. Same forum, scoped to this id -- short
+          reactions belong in Comments above, a question that needs an answer
+          belongs in a topic. */}
+      {item.source !== 'first-party' && (
+        <Section title="Discussion">
+          <div style={{
+            borderRadius: 10, border: '1px solid rgba(255,255,255,0.06)',
+            display: 'flex', maxHeight: 420, overflow: 'hidden',
+          }}>
+            <ForumView accent={accent} signedIn={signedIn} bundleId={item.id} />
+          </div>
         </Section>
       )}
 

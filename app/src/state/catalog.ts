@@ -21,7 +21,7 @@ import { isFirstParty } from './firstParty';
 import { isNewer } from './appCompat';
 import { parsePermission } from '../sandbox/manifest';
 
-export type CatalogKind = 'tile' | 'visualizer' | 'preset';
+export type CatalogKind = 'tile' | 'visualizer' | 'preset' | 'layout';
 export type CatalogSource = 'first-party' | 'bundle';
 
 /** One bundle's aggregate rating, as `GET /ratings` reports it (server/src/

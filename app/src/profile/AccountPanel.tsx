@@ -10,6 +10,7 @@ interface Account {
   displayName: string | null;
   bio: string | null;
   links: string[];
+  accent?: string | null;
   avatarSeed: string | null;
   suspended: boolean;
 }
@@ -24,12 +25,24 @@ interface Account {
  *  silently like a missing preview, the user typed something here and
  *  deserves to know if it did not land — the server returns a readable
  *  reason for every rejection and this shows it verbatim. */
+/** The offered colours. A fixed palette rather than a free hex field: every
+ *  one of these is legible against the app's dark surfaces, which an
+ *  arbitrary colour is not. The server still validates #rrggbb, so this is a
+ *  usability choice rather than the security boundary. */
+const PROFILE_COLOURS = [
+  '#7cf5d4', '#7cc6f5', '#a78bfa', '#f5a97c', '#f57c9c', '#8ef58e', '#f5e07c', '#c9d1d9',
+];
+
 export function AccountPanel({ accent, signedIn }: { accent: string; signedIn: boolean }) {
   const [account, setAccount] = useState<Account | null>(null);
   const [handleDraft, setHandleDraft] = useState('');
   const [name, setName] = useState('');
   const [bio, setBio] = useState('');
   const [links, setLinks] = useState('');
+  // Your profile colour. A COLOUR is the whole customisation surface on
+  // purpose: it cannot be a slur, a logo, or a photograph of somebody, which
+  // an uploaded banner can, so it needs no moderation at all.
+  const [profileAccent, setProfileAccent] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState('');
 
@@ -41,6 +54,7 @@ export function AccountPanel({ accent, signedIn }: { accent: string; signedIn: b
       setName(a.displayName ?? '');
       setBio(a.bio ?? '');
       setLinks((a.links ?? []).join('\n'));
+      setProfileAccent(a.accent ?? null);
     } catch (e) {
       setNotice(String(e));
     }
@@ -84,6 +98,8 @@ export function AccountPanel({ accent, signedIn }: { accent: string; signedIn: b
           // One per line, blanks dropped — a textarea is friendlier than
           // three inputs for something most people leave empty.
           links: links.split('\n').map((l) => l.trim()).filter(Boolean),
+          // '' clears it server-side, back to the app's accent.
+          accent: profileAccent ?? '',
         },
       });
       await load();
@@ -153,6 +169,38 @@ export function AccountPanel({ accent, signedIn }: { accent: string; signedIn: b
       <textarea value={links} onChange={(e) => setLinks(e.target.value)}
         placeholder={'https://example.com\nOne link per line, up to three, https only'}
         rows={3} style={{ ...field, resize: 'vertical', fontFamily: MONO, fontSize: 10.5 }} />
+
+      <div>
+        <div style={{ fontSize: 10.5, color: 'rgba(255,255,255,0.45)', marginBottom: 5 }}>
+          Profile colour
+        </div>
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+          {PROFILE_COLOURS.map((c) => (
+            <button
+              key={c}
+              onClick={() => setProfileAccent(c)}
+              aria-label={`Use ${c}`}
+              style={{
+                width: 22, height: 22, borderRadius: 999, cursor: 'pointer',
+                background: c,
+                border: profileAccent === c
+                  ? '2px solid rgba(255,255,255,0.85)'
+                  : '1px solid rgba(255,255,255,0.15)',
+              }}
+            />
+          ))}
+          <button
+            onClick={() => setProfileAccent(null)}
+            style={{
+              padding: '3px 9px', fontSize: 10, borderRadius: 999, cursor: 'pointer',
+              background: 'rgba(255,255,255,0.04)', color: 'rgba(255,255,255,0.6)',
+              border: profileAccent == null
+                ? '2px solid rgba(255,255,255,0.5)'
+                : '1px solid rgba(255,255,255,0.12)',
+            }}
+          >Default</button>
+        </div>
+      </div>
 
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
         {notice && (
