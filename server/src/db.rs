@@ -243,6 +243,9 @@ fn migrate(conn: &Connection) {
     // database rather than a directory: one file to back up, and no
     // filesystem path ever derived from user input.
     ensure_column(conn, "users", "avatar", "BLOB");
+    // Moderation is a property of a PERSON now, not of one shared secret.
+    // 'user' | 'moderator' | 'admin' -- see roles.rs.
+    ensure_column(conn, "users", "role", "TEXT NOT NULL DEFAULT 'user'");
     // Uniqueness is the database's job, not a handler's: two concurrent
     // claims that both pass an application-level "is it taken?" check would
     // both succeed. The WHERE clause says out loud that unclaimed accounts

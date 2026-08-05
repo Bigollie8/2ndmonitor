@@ -662,6 +662,68 @@ pub fn marketplace_set_avatar<R: Runtime>(
     post_social(&app, &format!("{base}/account/avatar"), &serde_json::json!({ "image": image }))
 }
 
+/// Staff surface. Every one of these authenticates with the caller's OWN
+/// session — the shared ADMIN_TOKEN is never shipped to a client, because a
+/// god credential on every machine is a credential you cannot revoke.
+/// Permission is decided server-side (server/src/roles.rs); these commands
+/// only carry the request.
+#[tauri::command]
+pub fn marketplace_staff_whoami<R: Runtime>(
+    app: AppHandle<R>,
+    url: String,
+) -> Result<serde_json::Value, String> {
+    let token = session_token(&app)?;
+    let base = url.trim_end_matches('/');
+    get_social(&format!("{base}/admin/whoami"), Some(token))
+}
+
+#[tauri::command]
+pub fn marketplace_staff_users<R: Runtime>(
+    app: AppHandle<R>,
+    url: String,
+    query: Option<String>,
+) -> Result<serde_json::Value, String> {
+    let token = session_token(&app)?;
+    let base = url.trim_end_matches('/');
+    let q = query.unwrap_or_default();
+    let endpoint = if q.trim().is_empty() {
+        format!("{base}/admin/users")
+    } else {
+        format!("{base}/admin/users?q={}", urlencoding::encode(q.trim()))
+    };
+    get_social(&endpoint, Some(token))
+}
+
+#[tauri::command]
+pub fn marketplace_staff_reports<R: Runtime>(
+    app: AppHandle<R>,
+    url: String,
+) -> Result<serde_json::Value, String> {
+    let token = session_token(&app)?;
+    let base = url.trim_end_matches('/');
+    get_social(&format!("{base}/admin/reports"), Some(token))
+}
+
+/// One moderation action. The action name and its arguments pass straight
+/// through: the server owns the list of valid actions and who may take each
+/// one, so duplicating that here would only create a second place to get it
+/// wrong.
+#[tauri::command]
+pub fn marketplace_moderate<R: Runtime>(
+    app: AppHandle<R>,
+    url: String,
+    action: String,
+    args: serde_json::Value,
+) -> Result<(), String> {
+    let mut body = match args {
+        serde_json::Value::Object(map) => serde_json::Value::Object(map),
+        _ => serde_json::json!({}),
+    };
+    body["action"] = serde_json::Value::String(action);
+    let base = url.trim_end_matches('/');
+    post_social(&app, &format!("{base}/admin/moderate"), &body)
+}
+
 /// The creator directory, optionally searched. Public: a signed-out browse
 /// still gets the full list, because discovering people is the point.
 #[tauri::command]

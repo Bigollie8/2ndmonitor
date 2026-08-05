@@ -110,6 +110,7 @@ const MissingTileCard = lazy(() => import('./components/MissingTileCard').then((
 const MarketView = lazy(() => import('./market/MarketView').then((m) => ({ default: m.MarketView })));
 const ProfileView = lazy(() => import('./profile/ProfileView').then((m) => ({ default: m.ProfileView })));
 const CommunityView = lazy(() => import('./community/CommunityView').then((m) => ({ default: m.CommunityView })));
+const AdminPanel = lazy(() => import('./admin/AdminPanel').then((m) => ({ default: m.AdminPanel })));
 
 interface VizColorOverride {
   enabled: boolean;
@@ -511,8 +512,22 @@ export default function App() {
   const [showProfile, setShowProfile] = useState(false);
   // The community home: creator directory, forum, shoutbox.
   const [showCommunity, setShowCommunity] = useState(false);
+  // The staff panel.  only decides whether the BUTTON exists — the
+  // server refuses every action on its own (server/src/roles.rs), so a
+  // modified client that forces the panel open gets a wall of 403s.
+  const [showAdmin, setShowAdmin] = useState(false);
+  const [isStaff, setIsStaff] = useState(false);
   // Set when the community sends us to someone's creator page.
   const [marketCreator, setMarketCreator] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void import('./state/staff')
+      .then((m) => m.fetchStaffRole())
+      .then((caps) => { if (!cancelled) setIsStaff(!!caps); })
+      .catch(() => { if (!cancelled) setIsStaff(false); });
+    return () => { cancelled = true; };
+  }, []);
   // Set when the Store was opened by a "browse presets" action rather than
   // plainly — the MilkDrop picker's button. That is a BROWSE action, so it
   // opens the Store filtered to presets; it only ever lived in the old
@@ -831,6 +846,7 @@ export default function App() {
         // MarketView's capture-phase handler), so App must not also act.
         if (showMarket) { /* MarketView owns Esc */ }
         else if (showProfile) setShowProfile(false);
+        else if (showAdmin) setShowAdmin(false);
         else if (showCommunity) setShowCommunity(false);
         else if (showShortcuts) setShowShortcuts(false);
         else if (showContentLibrary) setShowContentLibrary(false);
@@ -903,7 +919,7 @@ export default function App() {
   // when revealed (like the Windows taskbar) — CHROME_TOP_PX stays as-is.
   const topBarPinned = shouldPinTopBar({
     editMode, showSettings,
-    showContentLibrary: showContentLibrary || showMarket || showProfile || showCommunity,
+    showContentLibrary: showContentLibrary || showMarket || showProfile || showCommunity || showAdmin,
     showSwitcher, showOnboarding,
     showShortcuts, menuOpen: topBarMenuOpen,
   });
@@ -1352,6 +1368,7 @@ export default function App() {
           onSettings={() => setShowSettings(true)}
           onProfile={() => setShowProfile(true)}
           onCommunity={() => setShowCommunity(true)}
+          onAdmin={isStaff ? () => setShowAdmin(true) : undefined}
           onShortcuts={() => setShowShortcuts(true)}
         />
         {topBarHidden && (
@@ -1510,6 +1527,19 @@ export default function App() {
             />
           </Suspense>
         )}
+        {showAdmin && (
+          <Suspense fallback={null}>
+            <AdminPanel
+              accent={accent}
+              onClose={() => setShowAdmin(false)}
+              onOpenCreator={(handle) => {
+                setShowAdmin(false);
+                setMarketCreator(handle);
+                setShowMarket(true);
+              }}
+            />
+          </Suspense>
+        )}
         {showCommunity && (
           <Suspense fallback={null}>
             <CommunityView
@@ -1606,7 +1636,7 @@ export default function App() {
   );
 }
 
-function TopChrome({ accent, editMode, setEditMode, streamerMode, setStreamerMode, profiles, activeProfileId, setActiveProfileId, onSwitcher, onOnboarding, onSettings, onShortcuts, onProfile, onCommunity, hidden, onBarEnter, onBarLeave, onMenuOpenChange }: {
+function TopChrome({ accent, editMode, setEditMode, streamerMode, setStreamerMode, profiles, activeProfileId, setActiveProfileId, onSwitcher, onOnboarding, onSettings, onShortcuts, onProfile, onCommunity, onAdmin, hidden, onBarEnter, onBarLeave, onMenuOpenChange }: {
   accent: string;
   editMode: boolean;
   setEditMode: (b: boolean) => void;
@@ -1626,6 +1656,9 @@ function TopChrome({ accent, editMode, setEditMode, streamerMode, setStreamerMod
   onProfile: () => void;
   /** The community home — same reasoning. */
   onCommunity: () => void;
+  /** The staff panel. Undefined for everyone who is not staff, so the
+   *  button simply does not exist rather than appearing and refusing. */
+  onAdmin?: () => void;
   /** Auto-hide (0.6.7 §3): when true the bar translates up out of view.
    *  App owns the decision — see topBarHidden in App(). */
   hidden: boolean;
@@ -1764,6 +1797,13 @@ function TopChrome({ accent, editMode, setEditMode, streamerMode, setStreamerMod
           border: streamerMode ? '1px solid transparent' : '1px solid rgba(255,255,255,0.1)',
         }}
       >⊘</button>
+      {onAdmin && (
+        <button
+          onClick={onAdmin}
+          title="Staff — users and reports"
+          style={{ ...ghostButton, padding: '5px 9px' }}
+        >⚔</button>
+      )}
       <button
         onClick={onCommunity}
         title="Community — creators, forum, shoutbox"

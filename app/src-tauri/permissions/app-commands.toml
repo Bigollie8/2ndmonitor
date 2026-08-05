@@ -181,6 +181,12 @@ commands.allow = [
   "marketplace_report",
   # Directory, forum and shoutbox (src/state/community.ts).
   "marketplace_set_avatar",
+  # Staff panel. Authenticated by the caller's own session; the server
+  # decides permission (server/src/roles.rs).
+  "marketplace_staff_whoami",
+  "marketplace_staff_users",
+  "marketplace_staff_reports",
+  "marketplace_moderate",
   "marketplace_fetch_creators",
   "marketplace_fetch_topics",
   "marketplace_create_topic",

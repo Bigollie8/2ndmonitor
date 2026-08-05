@@ -34,7 +34,7 @@ pub async fn get_account(
 ) -> Result<Json<Value>, StatusCode> {
     let user_id = bearer_user(&state, &headers)?;
     let db = state.db.lock();
-    let (email, handle, display_name, bio, links, avatar_seed, suspended, accent, badges, has_avatar): (
+    let (email, handle, display_name, bio, links, avatar_seed, suspended, accent, badges, has_avatar, role): (
         String,
         Option<String>,
         Option<String>,
@@ -45,10 +45,11 @@ pub async fn get_account(
         Option<String>,
         String,
         bool,
+        String,
     ) = db
         .query_row(
             "SELECT email, handle, display_name, bio, links, avatar_seed, suspended, accent, badges,
-                    avatar IS NOT NULL
+                    avatar IS NOT NULL, COALESCE(role, 'user')
              FROM users WHERE id = ?1",
             [user_id],
             |r| {
@@ -63,6 +64,7 @@ pub async fn get_account(
                     r.get(7)?,
                     r.get(8)?,
                     r.get(9)?,
+                    r.get(10)?,
                 ))
             },
         )
@@ -79,6 +81,7 @@ pub async fn get_account(
         "accent": accent,
         "badges": serde_json::from_str::<Value>(&badges).unwrap_or(json!([])),
         "hasAvatar": has_avatar,
+        "role": role,
     })))
 }
 

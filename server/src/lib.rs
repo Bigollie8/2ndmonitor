@@ -17,7 +17,9 @@ pub mod avatar;
 pub mod directory;
 pub mod forum;
 pub mod shouts;
+pub mod roles;
 pub mod social;
+pub mod staff;
 pub mod keys;
 pub mod manifest;
 pub mod media;
@@ -59,6 +61,8 @@ pub fn router(state: AppState) -> Router {
         .route("/comments", get(comments::list).post(comments::post))
         .route("/blocks", post(comments::set_block))
         .route("/reports", post(comments::report))
+        .route("/admin/users", get(staff::users))
+        .route("/admin/whoami", get(staff::whoami))
         .route("/admin/reports", get(moderation::queue))
         .route("/admin/moderate", post(moderation::act))
         .route("/submissions", post(submit::submit))

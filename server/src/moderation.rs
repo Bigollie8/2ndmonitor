@@ -7,7 +7,6 @@
 //! primary key is what stops the same person simply re-posting into a fresh
 //! one.
 
-use crate::admin::require_admin_pub;
 use crate::state::AppState;
 use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
@@ -20,7 +19,10 @@ pub async fn queue(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Json<Value>, (StatusCode, String)> {
-    require_admin_pub(&state, &headers).map_err(|s| (s, "admin token required".to_string()))?;
+    // Moderators read the queue -- triaging reports is the everyday job, and
+    // requiring an admin for it would mean nobody but the owner ever looks.
+    crate::roles::require(&state, &headers, crate::roles::Role::Moderator)
+        .map_err(|s| (s, "you do not have permission for that".to_string()))?;
     let db = state.db.lock();
     let mut stmt = db
         .prepare(
@@ -57,8 +59,20 @@ pub async fn act(
     headers: HeaderMap,
     Json(body): Json<Value>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
-    require_admin_pub(&state, &headers).map_err(|s| (s, "admin token required".to_string()))?;
     let action = body.get("action").and_then(Value::as_str).unwrap_or("");
+
+    // Content actions need a moderator; anything touching a PERSON or their
+    // permissions needs an admin. Enforced here rather than in the UI --
+    // a modified client is not a hypothetical, and this is the only place
+    // that decision is safe to make.
+    let needed = match action {
+        "suspend" | "unsuspend" | "rename-handle" | "grant-badge" | "revoke-badge"
+        | "set-role" => crate::roles::Role::Admin,
+        _ => crate::roles::Role::Moderator,
+    };
+    let actor = crate::roles::require(&state, &headers, needed)
+        .map_err(|s| (s, "you do not have permission for that".to_string()))?;
+
     let db = state.db.lock();
 
     match action {
@@ -159,6 +173,40 @@ pub async fn act(
             let encoded = serde_json::to_string(&list).unwrap_or_else(|_| "[]".into());
             db.execute("UPDATE users SET badges = ?1 WHERE handle = ?2", rusqlite::params![encoded, handle])
                 .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        }
+        "set-role" => {
+            let handle = crate::handle::normalise(body.get("handle").and_then(Value::as_str).unwrap_or(""));
+            let raw = body.get("role").and_then(Value::as_str).unwrap_or("");
+            let role = crate::roles::Role::parse(raw);
+            if role.as_str() != raw.trim().to_lowercase() && raw.trim().to_lowercase() != "mod" {
+                return Err((StatusCode::BAD_REQUEST, "role must be user, moderator or admin".into()));
+            }
+
+            // You cannot demote yourself. Not paternalism: an admin who
+            // removes their own last privilege has locked everyone out of the
+            // panel, and the only way back is the shared token on the server
+            // box. Someone ELSE can always demote them.
+            if let Some(me) = actor.user_id() {
+                let target: Option<i64> = db
+                    .query_row("SELECT id FROM users WHERE handle = ?1", [&handle], |r| r.get(0))
+                    .ok();
+                if target == Some(me) && role < crate::roles::Role::Admin {
+                    return Err((
+                        StatusCode::BAD_REQUEST,
+                        "you cannot remove your own admin role -- ask another admin".into(),
+                    ));
+                }
+            }
+
+            let n = db
+                .execute(
+                    "UPDATE users SET role = ?1 WHERE handle = ?2",
+                    rusqlite::params![role.as_str(), handle],
+                )
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            if n == 0 {
+                return Err((StatusCode::NOT_FOUND, "no such creator".into()));
+            }
         }
         "resolve" => {
             let id = body.get("id").and_then(Value::as_i64)
