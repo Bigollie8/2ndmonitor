@@ -5,6 +5,68 @@ All notable changes to 2ndMonitor are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-08-05
+
+The community release. 2ndMonitor's marketplace had 419 bundles and no people
+in it — you could download somebody's work but never find out who they were.
+This adds the person behind the work, and everything that follows from that.
+
+### Added
+- **You are somebody now**: claim a handle, upload a profile picture, write a
+  bio, pick a colour, and every bundle you publish carries your name. Your
+  creator page shows your work grouped into carousels — layouts, tiles,
+  visualizers, presets — instead of one endless grid. Without a picture you
+  get an identicon generated from your handle, so everybody has a face from
+  the moment they arrive
+- **Follow the people whose work you like**, and a "New from creators you
+  follow" shelf leads the store's Discover page. Favourite anything with a
+  star; the count is public, but that it was *you* is nobody else's business
+- **A community window**: a searchable directory of every creator, a forum
+  for questions that need an answer, and a shoutbox down the side for the
+  ones that don't. Every bundle also has its own discussion board
+- **Comments** on every marketplace item, plain text and nothing else — no
+  markdown, no links, no formatting. One decision that stops abuse of all
+  three kinds at once
+- **Notifications** for follows, comments on your work, replies to your
+  topics and mentions of your name, with an unread count on the bell. Nobody
+  contributes into silence
+- **Publish a layout**, not just a tile or a visualizer. Share the whole
+  arrangement of your second monitor; installing one offers to fetch anything
+  you are missing first. Published layouts carry the STRUCTURE only — every
+  tile's settings are stripped, so your location, your calendar and your keys
+  stay yours
+- **Badges** (founder, moderator, verified…) granted by staff, shown wherever
+  you appear
+- **A staff panel** for moderators and admins: search every account, suspend,
+  rename, grant badges and roles, work the report queue, and read a full
+  audit log of every action taken — with an Undo button on the ones that can
+  be reversed
+
+### Changed
+- Your profile and the community moved OUT of Settings and into the top bar.
+  Becoming a creator is a place you go, not a preference you configure
+- Registration happens in the app now. Until this release there was no way to
+  create an account at all without using the command line
+
+### Fixed
+- **The store no longer goes black when the marketplace is reachable.** The
+  server answers one endpoint with a wrapper the app did not expect, and
+  reading it crashed the whole store mid-render. It only ever appeared when
+  things started *working*, which is why it survived two releases
+- **Hiding reported content actually hides it.** Reports filed from the forum
+  or shoutbox were labelled as comments, so hiding one updated nothing and
+  cheerfully said it had worked. Every moderation action now refuses to
+  report success when it changed nothing
+
+### Security
+- Profile pictures are accepted on their actual bytes rather than their
+  claimed type, resized in the app before upload — which also strips the
+  location data phones bury in photographs
+- Blocking someone now covers following and notifications, not just what you
+  see, so a mention cannot route around it
+- Rate limits on every write surface, and one open report per person per
+  target so nobody can bury the moderation queue
+
 ## [0.8.2] - 2026-08-04
 
 ### Fixed
