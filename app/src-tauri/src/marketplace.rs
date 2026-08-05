@@ -1010,8 +1010,11 @@ pub fn marketplace_report<R: Runtime>(
     target_id: String,
     reason: String,
 ) -> Result<(), String> {
-    if !matches!(target_kind.as_str(), "comment" | "review" | "bundle" | "creator") {
-        return Err("targetKind must be comment, review, bundle or creator".into());
+    if !matches!(
+        target_kind.as_str(),
+        "comment" | "review" | "bundle" | "creator" | "topic" | "reply" | "shout"
+    ) {
+        return Err("targetKind must be comment, review, bundle, creator, topic, reply or shout".into());
     }
     let base = url.trim_end_matches('/');
     post_social(

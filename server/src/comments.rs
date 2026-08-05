@@ -206,8 +206,18 @@ pub async fn report(
         return Err((StatusCode::TOO_MANY_REQUESTS, "slow down".into()));
     }
     let kind = body.get("targetKind").and_then(Value::as_str).unwrap_or("");
-    if !matches!(kind, "comment" | "review" | "bundle" | "creator") {
-        return Err((StatusCode::BAD_REQUEST, "targetKind must be comment, review, bundle or creator".into()));
+    // Every surface that can be reported has its OWN kind. Filing a forum
+    // reply or a shout as "comment" is what made the queue's hide button run
+    // UPDATE comments against an id from a different table, match nothing,
+    // and report success.
+    if !matches!(
+        kind,
+        "comment" | "review" | "bundle" | "creator" | "topic" | "reply" | "shout"
+    ) {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "targetKind must be comment, review, bundle, creator, topic, reply or shout".into(),
+        ));
     }
     let target = body.get("targetId").and_then(Value::as_str).unwrap_or("").to_string();
     if target.is_empty() || target.len() > 128 {

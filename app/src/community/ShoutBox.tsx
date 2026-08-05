@@ -77,7 +77,7 @@ export function ShoutBox({ accent, signedIn }: { accent: string; signedIn: boole
 
   const doReport = async (s: Shout) => {
     try {
-      await report('comment', String(s.id), 'reported from the shoutbox');
+      await report('shout', String(s.id), 'reported from the shoutbox');
       setNote('Reported — a moderator will look at it.');
     } catch (e) { setError(String(e)); }
   };

@@ -41,6 +41,16 @@ async fn account(app: &axum::Router, email: &str, handle: &str) -> String {
     token
 }
 
+/// Posts a real comment and returns its id. The permission tests need
+/// something that actually exists: asserting a hide "worked" against an empty
+/// table is how the no-op-reports-success bug survived.
+async fn a_comment(app: &axum::Router, token: &str) -> i64 {
+    call(app, "POST", "/comments", Some(token),
+        Some(serde_json::json!({ "id": "some-bundle", "body": "a comment" }))).await;
+    let (_, body) = call(app, "GET", "/comments?id=some-bundle", Some(token), None).await;
+    body["comments"][0]["id"].as_i64().expect("comment id")
+}
+
 const ADMIN: &str = "test-admin";
 
 async fn promote(app: &axum::Router, handle: &str, role: &str) {
@@ -82,9 +92,11 @@ async fn a_moderator_handles_content_but_not_people() {
     account(&app, "v1@x.y", "victim").await;
     promote(&app, "themod", "moderator").await;
 
-    // Content: allowed.
+    // Content: allowed. Against a comment that really exists, so this pins
+    // the permission AND the action.
+    let cid = a_comment(&app, &mod_token).await;
     let (st, _) = call(&app, "POST", "/admin/moderate", Some(&mod_token),
-        Some(serde_json::json!({ "action": "hide-comment", "id": 1 }))).await;
+        Some(serde_json::json!({ "action": "hide-comment", "id": cid }))).await;
     assert_eq!(st, StatusCode::OK);
     let (st, _) = call(&app, "GET", "/admin/reports", Some(&mod_token), None).await;
     assert_eq!(st, StatusCode::OK);
@@ -130,8 +142,9 @@ async fn an_admin_can_do_everything_a_moderator_can_and_more() {
     assert_eq!(who["role"], "admin");
     assert_eq!(who["canManagePeople"], true);
 
+    let cid = a_comment(&app, &admin).await;
     for action in [
-        serde_json::json!({ "action": "hide-comment", "id": 1 }),
+        serde_json::json!({ "action": "hide-comment", "id": cid }),
         serde_json::json!({ "action": "grant-badge", "handle": "target2", "badge": "verified" }),
         serde_json::json!({ "action": "suspend", "handle": "target2" }),
         serde_json::json!({ "action": "unsuspend", "handle": "target2" }),

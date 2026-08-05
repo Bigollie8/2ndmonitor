@@ -12,6 +12,19 @@ type Tab = 'users' | 'reports';
 
 const GRANTABLE = ['founder', 'moderator', 'creator', 'verified', 'supporter', 'staff'];
 
+/** Report kind -> the moderation action that hides that kind of thing.
+ *  Kinds with no entry (bundle, creator) are not hideable this way and get
+ *  no button rather than a broken one. */
+const HIDE_ACTIONS: Record<string, string | undefined> = {
+  comment: 'hide-comment',
+  reply: 'hide-reply',
+  topic: 'hide-topic',
+  shout: 'hide-shout',
+  // No 'review' entry on purpose: hide-review is keyed by (bundleId, handle)
+  // rather than an id, so a button here would send the wrong arguments and
+  // fail -- which is the exact class of bug this map exists to remove.
+};
+
 /** The staff panel: people, and the queue of things reported about them.
  *
  *  Rendered only for moderators and admins, but that is presentation. The
@@ -346,12 +359,27 @@ export function AdminPanel({ accent, onClose, onOpenCreator }: {
                     {r.reason}
                   </div>
                   <div style={{ display: 'flex', gap: 6, marginTop: 9, flexWrap: 'wrap' }}>
-                    {r.targetKind === 'comment' && (
+                    {/* The hide action follows the report's OWN kind. It
+                        used to assume every report was a comment, so hiding
+                        a reported shout ran UPDATE comments against a shout
+                        id, matched nothing, and said it worked. */}
+                    {HIDE_ACTIONS[r.targetKind] && (
                       <button
                         disabled={!!busy}
-                        onClick={() => void act('Comment hidden', 'hide-comment', { id: Number(r.targetId) })}
+                        onClick={() => void act(
+                          `${r.targetKind} hidden`,
+                          HIDE_ACTIONS[r.targetKind]!,
+                          { id: Number(r.targetId) },
+                        )}
                         style={smallBtn(false)}
-                      >Hide comment</button>
+                      >Hide {r.targetKind}</button>
+                    )}
+                    {r.targetKind === 'creator' && caps.canManagePeople && (
+                      <button
+                        disabled={!!busy}
+                        onClick={() => void act(`Suspended @${r.targetId}`, 'suspend', { handle: r.targetId })}
+                        style={smallBtn(false)}
+                      >Suspend @{r.targetId}</button>
                     )}
                     <button
                       disabled={!!busy}

@@ -101,7 +101,7 @@ export function ForumView({ accent, signedIn, bundleId }: {
     } finally { setBusy(false); }
   };
 
-  const doReport = async (kind: 'comment', id: number, who: string | null) => {
+  const doReport = async (kind: 'topic' | 'reply', id: number, who: string | null) => {
     try {
       await report(kind, String(id), 'reported from the forum');
       setNote(`Reported ${who ? `@${who}` : 'post'} — a moderator will look at it.`);
@@ -171,7 +171,7 @@ export function ForumView({ accent, signedIn, bundleId }: {
                   <div style={{ flex: 1 }} />
                   {signedIn && (
                     <>
-                      <button onClick={() => void doReport('comment', r.id, r.handle)} style={linkBtn}>report</button>
+                      <button onClick={() => void doReport('reply', r.id, r.handle)} style={linkBtn}>report</button>
                       {r.handle && <button onClick={() => void doBlock(r.handle)} style={linkBtn}>block</button>}
                     </>
                   )}

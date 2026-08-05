@@ -410,3 +410,54 @@ async fn suspension_hides_an_avatar_and_admins_can_remove_one_on_its_own() {
     let (st, _) = call(&app, "GET", "/creators/suspendee/avatar", None, None).await;
     assert_eq!(st, StatusCode::NOT_FOUND);
 }
+
+// ── report kinds ────────────────────────────────────────────────────────────
+
+// The bug this pins: forum replies and shouts were filed as "comment", so the
+// queue's hide button ran UPDATE comments against an id from another table,
+// matched nothing, and reported success.
+#[tokio::test]
+async fn every_reportable_surface_has_its_own_kind() {
+    let app = router(test_state());
+    let me = account(&app, "rk1@x.y", Some("reporter1")).await;
+
+    for kind in ["comment", "review", "bundle", "creator", "topic", "reply", "shout"] {
+        let (st, _) = call(&app, "POST", "/reports", Some(&me), Some(serde_json::json!({
+            "targetKind": kind, "targetId": "1", "reason": "test",
+        }))).await;
+        assert_eq!(st, StatusCode::OK, "{kind} must be reportable");
+    }
+
+    let (st, _) = call(&app, "POST", "/reports", Some(&me), Some(serde_json::json!({
+        "targetKind": "nonsense", "targetId": "1", "reason": "test",
+    }))).await;
+    assert_eq!(st, StatusCode::BAD_REQUEST);
+}
+
+// A moderation action that changed nothing must not report success — that is
+// what made a broken hide button look like a working one.
+#[tokio::test]
+async fn hiding_something_that_does_not_exist_is_a_404_not_an_ok() {
+    let app = router(test_state());
+    for action in ["hide-comment", "hide-reply", "hide-topic", "hide-shout"] {
+        let (st, _) = call(&app, "POST", "/admin/moderate", Some(ADMIN),
+            Some(serde_json::json!({ "action": action, "id": 999_999 }))).await;
+        assert_eq!(st, StatusCode::NOT_FOUND, "{action} on a missing row");
+    }
+}
+
+#[tokio::test]
+async fn hiding_a_real_shout_still_works_and_reports_success() {
+    let app = router(test_state());
+    let a = account(&app, "rk2@x.y", Some("shouty")).await;
+    call(&app, "POST", "/shouts", Some(&a), Some(serde_json::json!({ "body": "hello" }))).await;
+    let (_, body) = call(&app, "GET", "/shouts", None, None).await;
+    let id = body["shouts"][0]["id"].as_i64().unwrap();
+
+    let (st, _) = call(&app, "POST", "/admin/moderate", Some(ADMIN),
+        Some(serde_json::json!({ "action": "hide-shout", "id": id }))).await;
+    assert_eq!(st, StatusCode::OK);
+
+    let (_, after) = call(&app, "GET", "/shouts", None, None).await;
+    assert_eq!(after["shouts"].as_array().unwrap().len(), 0);
+}

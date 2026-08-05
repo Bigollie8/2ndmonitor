@@ -80,8 +80,15 @@ pub async fn act(
             let id = body.get("id").and_then(Value::as_i64)
                 .ok_or((StatusCode::BAD_REQUEST, "id required".to_string()))?;
             let hidden = i64::from(action == "hide-comment");
-            db.execute("UPDATE comments SET hidden = ?1 WHERE id = ?2", rusqlite::params![hidden, id])
+            let n = db
+                .execute("UPDATE comments SET hidden = ?1 WHERE id = ?2", rusqlite::params![hidden, id])
                 .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            // A moderation action that changed NOTHING must not report
+            // success. Silently affecting zero rows is how a mis-typed report
+            // kind looked like a working hide button.
+            if n == 0 {
+                return Err((StatusCode::NOT_FOUND, "no such comment".into()));
+            }
         }
         "hide-review" => {
             let bundle = body.get("bundleId").and_then(Value::as_str).unwrap_or("");
@@ -121,6 +128,12 @@ pub async fn act(
             let id = body.get("id").and_then(Value::as_i64)
                 .ok_or((StatusCode::BAD_REQUEST, "id required".to_string()))?;
             let hidden = i64::from(action == "hide-topic");
+            let existing: i64 = db
+                .query_row("SELECT COUNT(*) FROM topics WHERE id = ?1", [id], |r| r.get(0))
+                .unwrap_or(0);
+            if existing == 0 {
+                return Err((StatusCode::NOT_FOUND, "no such topic".into()));
+            }
             // Hiding a topic silences its replies too -- list_replies is
             // reached through the topic, and create_reply refuses a hidden
             // one, so the whole thread goes quiet in one action.
@@ -131,14 +144,25 @@ pub async fn act(
             let id = body.get("id").and_then(Value::as_i64)
                 .ok_or((StatusCode::BAD_REQUEST, "id required".to_string()))?;
             let hidden = i64::from(action == "hide-reply");
-            db.execute("UPDATE topic_replies SET hidden = ?1 WHERE id = ?2", rusqlite::params![hidden, id])
+            let n = db
+                .execute("UPDATE topic_replies SET hidden = ?1 WHERE id = ?2", rusqlite::params![hidden, id])
                 .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            if n == 0 {
+                return Err((StatusCode::NOT_FOUND, "no such reply".into()));
+            }
         }
         "hide-shout" => {
             let id = body.get("id").and_then(Value::as_i64)
                 .ok_or((StatusCode::BAD_REQUEST, "id required".to_string()))?;
-            db.execute("UPDATE shouts SET hidden = 1 WHERE id = ?1", [id])
+            let n = db
+                .execute("UPDATE shouts SET hidden = 1 WHERE id = ?1", [id])
                 .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            if n == 0 {
+                // Shouts age out of the rolling window, so this is a real
+                // and expected answer rather than a bug: the thing being
+                // reported may simply be gone already.
+                return Err((StatusCode::NOT_FOUND, "that shout is no longer in the window".into()));
+            }
         }
         "remove-avatar" => {
             // The proportionate response to one bad picture. Suspending

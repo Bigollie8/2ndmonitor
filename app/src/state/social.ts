@@ -89,7 +89,7 @@ export async function setBlock(handle: string, blocking: boolean): Promise<void>
 }
 
 export async function report(
-  targetKind: 'comment' | 'review' | 'bundle' | 'creator',
+  targetKind: 'comment' | 'review' | 'bundle' | 'creator' | 'topic' | 'reply' | 'shout',
   targetId: string,
   reason: string,
 ): Promise<void> {
