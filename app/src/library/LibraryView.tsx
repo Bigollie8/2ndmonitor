@@ -5,6 +5,7 @@ import { TILE_META } from '../state/tileMeta';
 import { tileInstanceType } from '../state/catalog';
 import { useCatalogData } from '../state/useCatalogData';
 import { filterItems } from '../state/catalogFilter';
+import { searchItems } from '../components/catalogSearch';
 import { rowPlanFor, sectionFacets, type LibrarySection, type RowAction } from '../state/libraryRows';
 import { parsePermission } from '../sandbox/manifest';
 import { getSecret, bundleSecretKey } from '../state/secrets';
@@ -13,6 +14,17 @@ import { useContentMutations } from './useContentMutations';
 import { LibraryRow } from './LibraryRow';
 
 const MONO = '"JetBrains Mono", ui-monospace, monospace';
+
+/** Content kinds the library can filter by. 'all' is not a CatalogItem.kind —
+ *  it is the no-filter sentinel. */
+type CatalogKind = 'all' | 'visualizer' | 'tile' | 'preset';
+
+const KIND_FILTERS: { id: CatalogKind; label: string }[] = [
+  { id: 'all', label: 'All' },
+  { id: 'visualizer', label: 'Visualizers' },
+  { id: 'tile', label: 'Tiles' },
+  { id: 'preset', label: 'Presets' },
+];
 
 const SECTIONS: { id: LibrarySection; label: string }[] = [
   { id: 'installed', label: 'Installed' },
@@ -60,10 +72,34 @@ export function LibraryView({
     return out;
   }, [data.items, data.appVersion]);
 
-  const rows = useMemo(
-    () => filterItems(data.items, sectionFacets(section), data.appVersion),
-    [data.items, section, data.appVersion],
-  );
+  // Search + kind filter over what you already OWN (0.8.3).
+  //
+  // The 864-line ContentLibrary split put search on the Store side on the
+  // grounds that it is "discovery". That holds for finding something new and
+  // breaks down for management: once you have dozens of installed items,
+  // finding one you already own is the common case, and the sections alone
+  // (Installed / Updates / Needs setup / Removed) do not narrow it. Reuses the
+  // same scored search and the same kind facets the Store uses, so ranking is
+  // identical in both places.
+  const [query, setQuery] = useState('');
+  const [kind, setKind] = useState<CatalogKind>('all');
+
+  const rows = useMemo(() => {
+    const inSection = filterItems(data.items, sectionFacets(section), data.appVersion);
+    const byKind = kind === 'all' ? inSection : inSection.filter((i) => i.kind === kind);
+    return query.trim() === '' ? byKind : searchItems(byKind, query);
+  }, [data.items, section, data.appVersion, kind, query]);
+
+  /** Kind counts for the current section, so a filter that would show nothing
+   *  is visibly empty rather than silently missing. */
+  const kindCounts = useMemo(() => {
+    const inSection = filterItems(data.items, sectionFacets(section), data.appVersion);
+    const out: Record<CatalogKind, number> = { all: inSection.length, visualizer: 0, tile: 0, preset: 0 };
+    for (const i of inSection) {
+      if (i.kind === 'visualizer' || i.kind === 'tile' || i.kind === 'preset') out[i.kind] += 1;
+    }
+    return out;
+  }, [data.items, section, data.appVersion]);
 
   const glyphOf = useCallback((item: CatalogItem): string | null => (
     item.kind === 'tile' && Object.prototype.hasOwnProperty.call(TILE_META, item.id)
@@ -237,6 +273,57 @@ export function LibraryView({
             </div>
           )}
 
+          {/* Find-what-you-own controls (0.8.3). */}
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 8,
+            flexWrap: 'wrap', marginBottom: 12,
+          }}>
+            <div style={{ position: 'relative' }}>
+              <input
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Search installed"
+                aria-label="Search installed content"
+                style={{
+                  width: 200, maxWidth: '100%',
+                  padding: '5px 10px', paddingRight: query ? 24 : 10,
+                  fontSize: 11, fontFamily: MONO, borderRadius: 6,
+                  background: 'rgba(255,255,255,0.05)', color: '#fff',
+                  border: '1px solid rgba(255,255,255,0.12)', outline: 'none',
+                }}
+              />
+              {query && (
+                <button
+                  onClick={() => setQuery('')}
+                  aria-label="Clear search"
+                  style={{
+                    position: 'absolute', right: 4, top: '50%', transform: 'translateY(-50%)',
+                    background: 'transparent', border: 'none', cursor: 'pointer',
+                    color: 'rgba(255,255,255,0.45)', fontSize: 13, lineHeight: 1, padding: '0 4px',
+                  }}
+                >×</button>
+              )}
+            </div>
+            {KIND_FILTERS.map((k) => {
+              const on = kind === k.id;
+              const n = kindCounts[k.id];
+              return (
+                <button
+                  key={k.id}
+                  onClick={() => setKind(k.id)}
+                  aria-pressed={on}
+                  style={{
+                    padding: '4px 10px', fontSize: 10.5, fontWeight: on ? 700 : 500,
+                    fontFamily: MONO, borderRadius: 999, cursor: 'pointer',
+                    background: on ? `${accent}22` : 'transparent',
+                    color: on ? accent : 'rgba(255,255,255,0.55)',
+                    border: `1px solid ${on ? `${accent}55` : 'rgba(255,255,255,0.12)'}`,
+                  }}
+                >{k.label} {n}</button>
+              );
+            })}
+          </div>
+
           {data.items.length === 0 ? (
             // Defensive fallback, not a reachable state: mergeCatalog keeps
             // every removed item (flagged, not dropped) and always emits the
@@ -246,8 +333,23 @@ export function LibraryView({
               The catalog is empty.
             </div>
           ) : rows.length === 0 ? (
+            // Distinguish "this section is empty" from "your filters hid
+            // everything" — otherwise a stale search box reads as data loss.
             <div style={{ fontSize: 11.5, color: 'rgba(255,255,255,0.45)', padding: '24px 0' }}>
-              Nothing here.
+              {query.trim() !== '' || kind !== 'all' ? (
+                <>
+                  No matches{query.trim() !== '' ? ` for “${query.trim()}”` : ''}
+                  {kind !== 'all' ? ` in ${KIND_FILTERS.find((k) => k.id === kind)?.label.toLowerCase()}` : ''}.
+                  {' '}
+                  <button
+                    onClick={() => { setQuery(''); setKind('all'); }}
+                    style={{
+                      background: 'transparent', border: 'none', padding: 0,
+                      color: accent, cursor: 'pointer', fontSize: 11.5,
+                    }}
+                  >Clear filters</button>
+                </>
+              ) : 'Nothing here.'}
             </div>
           ) : rows.map((item) => (
             <LibraryRow

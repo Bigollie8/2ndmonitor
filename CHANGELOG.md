@@ -5,6 +5,39 @@ All notable changes to 2ndMonitor are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.8.3] - 2026-08-05
+
+### Added
+- **Search and filters are back for installed content**: the library has a
+  search box again, plus Visualizers / Tiles / Presets filters with counts.
+  When a search hides everything it now says so and offers to clear the
+  filters, instead of looking empty
+- **Settings shows which build you're running** — System → Version
+
+### Fixed
+- **The visualizer reacts at normal listening volume**: the audio pipeline
+  threw away anything quieter than a fairly loud signal *before* the
+  sensitivity slider was applied, so at around half volume there was nothing
+  left for sensitivity to amplify — turning it up did nothing. The floor is
+  now 20 dB lower, so quiet sources come through and the slider works across
+  the range. Loud content reads a touch stronger than before; turn sensitivity
+  down if you preferred the old feel
+- **F11 no longer turns the app grey**: going fullscreen made Windows drop the
+  window's transparency, taking liquid glass with it. Fullscreen now works a
+  different way that keeps glass intact. One trade-off: while fullscreen the
+  app stays above other windows, which is what keeps the taskbar covered
+- **Liquid glass is restored when you come back to the app** after clicking
+  away. Windows still dims the effect while the app is in the background —
+  that part is the OS, not a setting
+- **Opening tile edit settings no longer restarts what you're watching**: any
+  panel used to close the browser tile entirely, so reopening reloaded the
+  page and lost your signed-in session. The player is now moved aside instead
+  of closed
+- **Update failures say what actually went wrong** instead of always claiming
+  the update server was unreachable
+- **Release announcements list the fixes**, not just new features — a
+  fixes-only release previously announced nothing
+
 ## [0.8.2] - 2026-08-04
 
 ### Fixed

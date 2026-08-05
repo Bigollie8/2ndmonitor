@@ -19,16 +19,26 @@ export function parseChangelog(markdown) {
 
   return entries.map(({ version, date, bodyLines }) => {
     const body = bodyLines.join('\n').trim();
-    return { version, date, body, added: extractAdded(body) };
+    return {
+      version, date, body,
+      added: extractAdded(body),
+      fixed: extractSection(body, 'Fixed'),
+    };
   });
 }
 
 function extractAdded(body) {
-  const m = body.match(/(?:^|\n)### Added\s*\n([\s\S]*?)(?=\n### |$)/);
+  return extractSection(body, 'Added');
+}
+
+/** Pull one `### <name>` section's body out of a changelog entry.
+ *  Returns null when the section is absent or empty. */
+function extractSection(body, name) {
+  const m = body.match(new RegExp(`(?:^|\\n)### ${name}\\s*\\n([\\s\\S]*?)(?=\\n### |$)`));
   if (!m) return null;
-  const added = m[1].trim();
-  if (!added || added.startsWith('### ')) return null;
-  return added;
+  const text = m[1].trim();
+  if (!text || text.startsWith('### ')) return null;
+  return text;
 }
 
 export const CHANGELOG_URL =
@@ -51,11 +61,26 @@ export function buildReleaseEmbed({ version, date, body }) {
   };
 }
 
-export function buildSpotlightEmbed({ version, date, added }) {
-  if (!added) return null;
+export function buildSpotlightEmbed({ version, date, added, fixed }) {
+  // Fall back to Fixed when a release adds nothing (0.8.3). This only ever
+  // read `### Added`, so a fixes-only release posted nothing to the features
+  // channel — and 0.8.2, which shipped four fixes plus one incidental Added
+  // line about licence notices, announced only the licence and read as though
+  // that were the whole release.
+  // Include BOTH sections when both exist. A fallback alone was not enough:
+  // 0.8.2 shipped four fixes plus a single incidental Added line about licence
+  // notices, so an Added-only spotlight announced the licence and nothing else
+  // — which read as though the licence WAS the release.
+  if (!added && !fixed) return null;
+  const body = [
+    added ? (fixed ? `**New**\n${added}` : added) : null,
+    fixed ? (added ? `\n**Fixed**\n${fixed}` : fixed) : null,
+  ].filter(Boolean).join('\n');
   return {
-    title: `✨ New in 2ndMonitor v${version}`,
-    description: truncateDescription(added),
+    title: added
+      ? `✨ New in 2ndMonitor v${version}`
+      : `🔧 Fixed in 2ndMonitor v${version}`,
+    description: truncateDescription(body),
     color: 0x57f287,
     footer: { text: `2ndMonitor Features • ${date}` },
   };

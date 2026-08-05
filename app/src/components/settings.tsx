@@ -429,6 +429,16 @@ export function SettingsWindow({
       id: 'system', icon: '⚙', title: 'System',
       rows: [
         {
+          id: 'system-version', label: 'Version',
+          hint: 'The build you are running right now',
+          control: (
+            <span style={{
+              fontSize: 11.5, fontFamily: MONO, color: 'rgba(255,255,255,0.75)',
+              userSelect: 'text',
+            }}>{__APP_VERSION__}</span>
+          ),
+        },
+        {
           id: 'system-updates', label: 'App updates',
           hint: 'Check GitHub for a newer version — nothing downloads or installs unless you choose to',
           control: <UpdateCheckRow accent={accent} />,

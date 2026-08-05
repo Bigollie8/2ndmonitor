@@ -108,12 +108,52 @@ test('release embed carries title, body, color, dated footer', () => {
   assert.equal(e.footer.text, '2ndMonitor Releases • 2026-05-08');
 });
 
-test('spotlight embed uses only Added bullets; null without them', () => {
+test('spotlight embed uses Added alone when there are no fixes', () => {
   const e = buildSpotlightEmbed(ENTRY);
   assert.equal(e.title, '✨ New in 2ndMonitor v0.4.0');
   assert.equal(e.description, '- Now Playing tile');
   assert.equal(e.color, 0x57f287);
-  assert.equal(buildSpotlightEmbed({ ...ENTRY, added: null }), null);
+});
+
+test('spotlight embed carries BOTH sections when a release adds and fixes', () => {
+  // The 0.8.2 failure mode: four fixes plus one incidental Added line meant
+  // the features channel announced only that line, and read as though the
+  // licence note were the entire release.
+  const e = buildSpotlightEmbed({ ...ENTRY, fixed: '- Radar no longer glitches' });
+  assert.match(e.description, /\*\*New\*\*/);
+  assert.match(e.description, /Now Playing tile/);
+  assert.match(e.description, /\*\*Fixed\*\*/);
+  assert.match(e.description, /Radar no longer glitches/);
+});
+
+test('spotlight embed falls back to Fixed when a release adds nothing', () => {
+  // 0.8.2 shipped four fixes and one incidental Added line about licence
+  // notices; the features channel therefore announced only the licence and
+  // read as though that were the entire release. A fixes-only release used to
+  // post nothing at all.
+  const e = buildSpotlightEmbed({ ...ENTRY, added: null, fixed: '- Radar no longer glitches' });
+  assert.ok(e, 'a fixes-only release must still produce a spotlight');
+  assert.match(e.title, /Fixed in 2ndMonitor v0\.4\.0/);
+  assert.equal(e.description, '- Radar no longer glitches');
+});
+
+test('spotlight embed is null only when there is nothing to say', () => {
+  assert.equal(buildSpotlightEmbed({ ...ENTRY, added: null, fixed: null }), null);
+});
+
+test('parseChangelog exposes the Fixed section alongside Added', () => {
+  const [entry] = parseChangelog([
+    '## [1.2.3] - 2026-01-01',
+    '',
+    '### Added',
+    '- a new thing',
+    '',
+    '### Fixed',
+    '- a broken thing',
+    '',
+  ].join('\n'));
+  assert.equal(entry.added, '- a new thing');
+  assert.equal(entry.fixed, '- a broken thing');
 });
 
 test('dev embed frames in-development work', () => {

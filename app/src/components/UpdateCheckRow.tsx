@@ -60,7 +60,25 @@ export function UpdateCheckRow({ accent }: { accent: string }) {
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 10, justifyContent: 'flex-end' }}>
       {phase.kind === 'current' && status(`Up to date — v${phase.version}`)}
-      {phase.kind === 'error' && status('Couldn’t reach the update server', '#fb7185')}
+      {/* Show the ACTUAL failure, not just a friendly guess (0.8.3).
+          `checkForUpdate` captures the real error into `message` and this row
+          used to discard it, so a signature mismatch, a denied capability, a
+          bad manifest and a genuine network outage all rendered identically —
+          which is why diagnosing a report meant inferring from release
+          timestamps instead of reading the cause. */}
+      {phase.kind === 'error' && (
+        <span
+          title={phase.message}
+          style={{
+            fontSize: 10.5, fontFamily: MONO, color: '#fb7185',
+            textAlign: 'right', maxWidth: 260,
+            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+            userSelect: 'text',
+          }}
+        >
+          Update check failed — {phase.message}
+        </span>
+      )}
       {phase.kind === 'update' && status(`v${phase.version} available`, accent)}
       {phase.kind === 'installing' && status('Downloading… the app restarts when done')}
 
