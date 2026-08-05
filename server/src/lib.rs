@@ -11,6 +11,7 @@ pub mod email;
 pub mod handle;
 pub mod index;
 pub mod profiles;
+pub mod social;
 pub mod keys;
 pub mod manifest;
 pub mod media;
@@ -39,6 +40,9 @@ pub fn router(state: AppState) -> Router {
         .route("/account", get(profiles::get_account).patch(profiles::patch_account))
         .route("/account/handle", post(profiles::claim_handle))
         .route("/creators/:handle", get(profiles::get_creator))
+        .route("/follows", post(social::set_follow).get(social::follow_status))
+        .route("/favourites", post(social::set_favourite).get(social::favourites))
+        .route("/feed", get(social::feed))
         .route("/submissions", post(submit::submit))
         .route("/submissions/mine", get(submit::mine))
         .route("/ratings", post(ratings::rate).get(ratings::ratings))

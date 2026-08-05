@@ -93,6 +93,22 @@ pub fn init(conn: &Connection) {
             blurb TEXT,
             sort  INTEGER NOT NULL DEFAULT 0
         );
+        CREATE TABLE IF NOT EXISTS follows (
+            follower_id INTEGER NOT NULL,
+            creator_id  INTEGER NOT NULL,
+            created_at  INTEGER NOT NULL,
+            -- Counts are public, the LIST is not: showing who follows whom is
+            -- a harassment surface and a moderation job for something nothing
+            -- in the product needs.
+            PRIMARY KEY (follower_id, creator_id)
+        );
+        CREATE TABLE IF NOT EXISTS favourites (
+            user_id    INTEGER NOT NULL,
+            bundle_id  TEXT NOT NULL,   -- no version: same rule as ratings,
+                                        -- a favourite is of the bundle
+            created_at INTEGER NOT NULL,
+            PRIMARY KEY (user_id, bundle_id)
+        );
         CREATE TABLE IF NOT EXISTS collection_items (
             slug      TEXT NOT NULL,
             bundle_id TEXT NOT NULL,
