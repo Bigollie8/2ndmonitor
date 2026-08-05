@@ -7,6 +7,28 @@ All notable changes to 2ndMonitor are documented here. Format follows
 
 ## [0.8.2] - 2026-08-04
 
+### Fixed
+- **Aircraft overhead stops running out of API budget**: the tile asked
+  OpenSky for traffic every minute, which is far more than their free tier
+  allows in a day — so it used up the whole day's allowance within a few hours
+  and then showed "too many requests" until the next reset. It now checks
+  every five minutes, which fits comfortably inside the allowance, and when
+  the limit *is* hit it says so plainly instead of claiming the problem will
+  clear in a minute
+- **Weather radar no longer glitches while the loop plays**: the map shared
+  one image cache between the background map and the radar frames, and a
+  two-hour loop needs more images than that cache could hold — so playing it
+  pushed out the map underneath, which then had to be re-downloaded over and
+  over. The two now have their own caches
+- **Zooming a map no longer stops it following**: one scroll wheel click used
+  to permanently detach a map from what it was tracking, so the ISS tile
+  stopped following the station and the radar and aircraft maps stopped
+  centring on your location. Zooming now keeps following; only dragging the
+  map takes manual control, and Recentre still returns you to the default view
+- **Switching what's playing in the browser tile releases its memory**: moving
+  from one site to another could leave the previous page alive in the
+  background instead of closing it, so memory climbed as you switched
+
 ### Changed
 - **Licence: 2ndMonitor is now under the Business Source License 1.1.** You can
   still read, modify and redistribute the source, and you can use the app for
