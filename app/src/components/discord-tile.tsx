@@ -346,8 +346,10 @@ function VoiceSection({ voice, accent, selfUserId }: { voice: VoiceState; accent
         />
       </div>
 
-      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-        {voice.members.slice(0, 8).map((m) => (
+      {/* Every member, scrollable past ~3 rows — the old .slice(0, 8) simply
+          hid the 9th person in a large call (0.8.6). */}
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', maxHeight: 96, overflowY: 'auto' }}>
+        {voice.members.map((m) => (
           <VoiceMemberPill key={m.user_id} member={m} isSelf={m.user_id === selfUserId} />
         ))}
       </div>
@@ -439,7 +441,11 @@ function NotificationsSection({ notifications, accent }: { notifications: RpcNot
         <span>{notifications.length}</span>
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-        {notifications.slice(0, 4).map((n, i) => (
+        {/* All retained notifications (Rust keeps MAX_NOTIFICATIONS = 20).
+            This container has been maxHeight+overflow:auto all along — the
+            old .slice(0, 4) meant it never held enough rows to scroll, which
+            read as "the tile can't scroll" (0.8.6). */}
+        {notifications.map((n, i) => (
           <NotificationRow key={`${n.timestamp_ms}-${i}`} n={n} accent={accent} />
         ))}
       </div>
