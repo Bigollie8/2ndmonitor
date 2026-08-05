@@ -218,7 +218,16 @@ export function ProfileView({ accent, catalogRemoved, onClose }: {
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
                   <div style={{ display: 'flex', gap: 14, alignItems: 'center' }}>
                     <img
-                      src={avatarSrc({ handle: account?.handle, hasAvatar: account?.hasAvatar, seed: account?.avatarSeed, size: 72 })}
+                      src={avatarSrc({
+                        handle: account?.handle,
+                        hasAvatar: account?.hasAvatar,
+                        seed: account?.avatarSeed,
+                        size: 72,
+                        // The server caches avatars for 300s, so without this
+                        // an upload would leave the old face on screen and
+                        // read as a failure.
+                        cacheBust: accountReload,
+                      })}
                       alt=""
                       width={72}
                       height={72}
@@ -246,9 +255,7 @@ export function ProfileView({ accent, catalogRemoved, onClose }: {
                   {account?.handle && (
                     <AvatarEditor
                       accent={tint}
-                      handle={account.handle}
                       hasAvatar={account.hasAvatar ?? false}
-                      seed={account.avatarSeed}
                       onChanged={() => setAccountReload((n) => n + 1)}
                     />
                   )}

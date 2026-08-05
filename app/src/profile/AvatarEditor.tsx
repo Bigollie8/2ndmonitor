@@ -1,6 +1,5 @@
 import { useRef, useState } from 'react';
 import { setAvatar } from '../state/community';
-import { avatarSrc } from '../state/avatarUrl';
 
 const MONO = '"JetBrains Mono", ui-monospace, monospace';
 /** Stored square. Big enough to look sharp at 72px on a HiDPI screen, small
@@ -14,20 +13,14 @@ const TARGET = 256;
  *  ~60 KB square instead of failing the cap, every stored avatar is the same
  *  size and shape, and re-encoding through a canvas drops all EXIF — so
  *  nobody publishes the GPS coordinates of their house with their face. */
-export function AvatarEditor({ accent, handle, hasAvatar, seed, onChanged }: {
+export function AvatarEditor({ accent, hasAvatar, onChanged }: {
   accent: string;
-  handle: string | null;
   hasAvatar: boolean;
-  seed: string | null;
   onChanged: () => void;
 }) {
   const fileRef = useRef<HTMLInputElement | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  // Bumped after a change so the <img> refetches — the server sends a 300s
-  // cache header, and without this someone would upload a picture, see the
-  // old one, and reasonably conclude it had failed.
-  const [bust, setBust] = useState(0);
 
   const pick = () => fileRef.current?.click();
 
@@ -55,7 +48,6 @@ export function AvatarEditor({ accent, handle, hasAvatar, seed, onChanged }: {
       const dataUri = canvas.toDataURL('image/png');
       const base64 = dataUri.slice(dataUri.indexOf(',') + 1);
       await setAvatar(base64);
-      setBust((n) => n + 1);
       onChanged();
     } catch (e) {
       // A picture the user chose — its failure is theirs to see.
@@ -71,7 +63,6 @@ export function AvatarEditor({ accent, handle, hasAvatar, seed, onChanged }: {
     setError('');
     try {
       await setAvatar('');
-      setBust((n) => n + 1);
       onChanged();
     } catch (e) {
       setError(String(e));
@@ -81,17 +72,10 @@ export function AvatarEditor({ accent, handle, hasAvatar, seed, onChanged }: {
   };
 
   return (
-    <div style={{ display: 'flex', gap: 14, alignItems: 'center' }}>
-      <img
-        src={avatarSrc({ handle, hasAvatar, seed, size: 72, cacheBust: bust })}
-        alt=""
-        width={72}
-        height={72}
-        style={{
-          borderRadius: 12, objectFit: 'cover', flexShrink: 0,
-          border: `1px solid ${accent}55`,
-        }}
-      />
+    // No thumbnail here on purpose: the popout header renders the avatar
+    // directly above these buttons, so a second copy was just the same face
+    // twice. The header IS the preview -- onChanged bumps it.
+    <div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 6, minWidth: 0 }}>
         <div style={{ display: 'flex', gap: 7, flexWrap: 'wrap' }}>
           <button onClick={pick} disabled={busy} style={btn(accent, busy)}>

@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useState } from 'react';
-import { identiconDataUri } from '../state/identicon';
 import { cfgUrl } from '../state/marketplaceConfig';
 
 const MONO = '"JetBrains Mono", ui-monospace, monospace';
@@ -116,6 +115,9 @@ export function AccountPanel({ accent, signedIn }: { accent: string; signedIn: b
     background: 'rgba(255,255,255,0.05)', color: 'rgba(255,255,255,0.9)',
     border: '1px solid rgba(255,255,255,0.1)', outline: 'none', fontFamily: 'inherit',
   } as const;
+  const label = {
+    display: 'block', fontSize: 10.5, color: 'rgba(255,255,255,0.45)', marginBottom: 3,
+  } as const;
   const button = (enabled: boolean) => ({
     padding: '4px 12px', fontSize: 11, fontWeight: 600, borderRadius: 6,
     background: `${accent}22`, color: accent, border: `1px solid ${accent}44`,
@@ -124,19 +126,15 @@ export function AccountPanel({ accent, signedIn }: { accent: string; signedIn: b
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-      <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
-        <img
-          src={identiconDataUri(account?.avatarSeed || account?.handle || '?', 48)}
-          alt=""
-          width={48}
-          height={48}
-          style={{ borderRadius: 10, border: '1px solid rgba(255,255,255,0.09)' }}
-        />
-        <div style={{ fontSize: 11, fontFamily: MONO, color: 'rgba(255,255,255,0.45)' }}>
-          {account?.handle ? `@${account.handle}` : 'no handle yet'}
-          <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.3)' }}>{account?.email}</div>
+      {/* No avatar or handle here: the popout header above already shows
+          both, and three copies of the same face on one panel is what
+          testing turned up. The masked email stays because it is the one
+          identity fact the header does not carry. */}
+      {account?.email && (
+        <div style={{ fontSize: 10, fontFamily: MONO, color: 'rgba(255,255,255,0.3)' }}>
+          {account.email}
         </div>
-      </div>
+      )}
 
       {account?.handle ? (
         <div style={{ fontSize: 10.5, color: 'rgba(255,255,255,0.4)' }}>
@@ -161,14 +159,32 @@ export function AccountPanel({ accent, signedIn }: { accent: string; signedIn: b
         </div>
       )}
 
-      <input value={name} onChange={(e) => setName(e.target.value)}
-        placeholder="Display name" maxLength={40} style={field} />
-      <textarea value={bio} onChange={(e) => setBio(e.target.value)}
-        placeholder="A line about what you make" rows={2} maxLength={280}
-        style={{ ...field, resize: 'vertical' }} />
-      <textarea value={links} onChange={(e) => setLinks(e.target.value)}
-        placeholder={'https://example.com\nOne link per line, up to three, https only'}
-        rows={3} style={{ ...field, resize: 'vertical', fontFamily: MONO, fontSize: 10.5 }} />
+      {/* Labelled rather than placeholder-only: a placeholder disappears the
+          moment you type, so a filled-in form became three unexplained
+          boxes. */}
+      <div>
+        <label style={label}>Display name</label>
+        <input value={name} onChange={(e) => setName(e.target.value)}
+          placeholder="Shown instead of your handle" maxLength={40} style={field} />
+      </div>
+      <div>
+        <label style={label}>Bio</label>
+        <textarea value={bio} onChange={(e) => setBio(e.target.value)}
+          placeholder="A line about what you make" rows={2} maxLength={280}
+          style={{ ...field, resize: 'vertical' }} />
+        <div style={{ fontSize: 9.5, fontFamily: MONO, color: 'rgba(255,255,255,0.28)', marginTop: 3 }}>
+          {bio.length}/280
+        </div>
+      </div>
+      <div>
+        <label style={label}>Links</label>
+        <textarea value={links} onChange={(e) => setLinks(e.target.value)}
+          placeholder="https://example.com"
+          rows={3} style={{ ...field, resize: 'vertical', fontFamily: MONO, fontSize: 10.5 }} />
+        <div style={{ fontSize: 9.5, fontFamily: MONO, color: 'rgba(255,255,255,0.28)', marginTop: 3 }}>
+          One per line, up to three, https only
+        </div>
+      </div>
 
       <div>
         <div style={{ fontSize: 10.5, color: 'rgba(255,255,255,0.45)', marginBottom: 5 }}>
