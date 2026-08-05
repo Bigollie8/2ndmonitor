@@ -9,9 +9,11 @@ import type { Playback } from '../state/tauri';
 export interface FrameInput {
   spectrum: Float32Array;
   waveform: Uint8Array;
-  /** Per-channel time domain (0.8.4). Equal for a mono source. */
-  waveformL: Uint8Array;
-  waveformR: Uint8Array;
+  /** Per-channel time domain (0.8.4). Equal for a mono source. Absent unless
+   *  the bundle's manifest declared "stereo": true AND live stereo frames have
+   *  arrived — bundles fall back to `f.waveformL || f.waveform`. */
+  waveformL?: Uint8Array;
+  waveformR?: Uint8Array;
   bands: { bass: number; mid: number; treble: number };
   onset: { kick: number; snare: number; hat: number };
   level: number;

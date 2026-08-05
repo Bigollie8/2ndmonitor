@@ -122,7 +122,8 @@ export function SandboxVizSurface({
 }) {
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const hostRef = useRef<HTMLDivElement | null>(null);
-  const waveRef = useWaveformRef();
+  const [wantsStereo, setWantsStereo] = useState(false);
+  const waveRef = useWaveformRef({ stereo: wantsStereo });
   // Label the perf-debug draw-rate bucket with the concrete bundle (or the
   // authoring surface's fixed id) rather than a hardcoded 'scripted' — all 12
   // installed bundle styles otherwise collapse into a single indistinguishable
@@ -237,6 +238,10 @@ export function SandboxVizSurface({
             manifestErr = v.error;
           } else {
             surfaceRef.current = v.manifest.surface ?? 'canvas';
+            // Stereo waveform is opt-in per manifest (0.8.7): only bundles
+            // declaring "stereo": true turn the second emit on, so the ~8 KB
+            // per-frame stereo IPC is paid only while a stereo meter is up.
+            setWantsStereo(v.manifest.stereo === true);
             brokerRef.current = makeBrokerHandler(permissionsOf(v.manifest.permissions), {
               fetch: async (url) => {
                 const { invoke } = await import('@tauri-apps/api/core');
@@ -416,8 +421,8 @@ export function SandboxVizSurface({
       const msg = buildFrameMessage({
         spectrum: reader.out,
         waveform: waveRef.current.mono,
-        waveformL: waveRef.current.left,
-        waveformR: waveRef.current.right,
+        waveformL: waveRef.current.stereoLive ? waveRef.current.left : undefined,
+        waveformR: waveRef.current.stereoLive ? waveRef.current.right : undefined,
         bands: reader.bands,
         onset: reader.onset,
         level: spectrumRef?.current.level ?? 0,
