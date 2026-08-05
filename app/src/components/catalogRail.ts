@@ -68,6 +68,18 @@ export function buildRail(items: CatalogItem[], appVersion = '0.0.0'): RailSecti
     }
   }
 
+  // Layouts get one selectable row for the same reason presets do: every
+  // layout shares one category, so a per-category breakdown would just
+  // repeat the heading.
+  const layouts = filterItems(items, { ...EMPTY_FACETS, kind: 'layout' }, appVersion);
+  if (layouts.length > 0) {
+    rows.push({
+      id: 'heading:layout', heading: true, count: layouts.length,
+      label: 'Layouts', facets: EMPTY_FACETS,
+    });
+    push('layout:all', 'Layouts', { ...EMPTY_FACETS, kind: 'layout' });
+  }
+
   // MilkDrop presets get one selectable row, not a row per category — unlike
   // tiles/visualizers, every preset shares the single 'milkdrop' category, so
   // a per-category breakdown would just be one row repeating the heading.

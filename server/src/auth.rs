@@ -2,10 +2,15 @@
 //! password reset. Argon2 hashes; tokens are random 32-byte hex rows in
 //! `tokens` with a kind + expiry.
 //!
-//! Email: when SMTP_URL is unset (dev mode / home-server bootstrap) the
-//! verification and reset links are RETURNED IN THE RESPONSE and logged.
-//! That is a deliberate contract for a self-hosted, friends-scale service —
-//! see server/README.md before exposing registration publicly.
+//! Email: delivery mode is decided by `email::email_mode`. A configured
+//! SMTP_URL sends real mail; an explicit DEV_EMAIL=1 returns the token in the
+//! response for local work; anything else REFUSES with 503.
+//!
+//! That default changed in 0.9.0. It used to be that an unset SMTP_URL simply
+//! returned the token — a defensible contract for a friends-scale service,
+//! and exactly wrong once strangers can register, because it lets anyone
+//! self-verify unlimited accounts and email verification is the only sybil
+//! control the marketplace has.
 
 use crate::db::{now, rand_token};
 use crate::state::AppState;
@@ -61,15 +66,41 @@ pub fn bearer_user(state: &AppState, headers: &HeaderMap) -> Result<i64, StatusC
     .map_err(|_| StatusCode::UNAUTHORIZED)
 }
 
-fn email_or_log(state: &AppState, kind: &str, email: &str, token: &str) -> Option<String> {
-    if state.cfg.smtp_url.is_some() {
-        // Relay wiring is deployment-specific; see README. Until configured,
-        // running with SMTP_URL set but no relay integration logs loudly.
-        eprintln!("SMTP_URL set but relay not integrated — {kind} token for {email}: {token}");
-        None
-    } else {
-        println!("[dev-email] {kind} for {email}: token={token}");
-        Some(token.to_string())
+/// Deliver an account email. `Ok(Some(token))` only in explicitly enabled dev
+/// mode, `Ok(None)` when a relay accepted it, and `Err` when nothing can be
+/// delivered — in which case the caller MUST fail the request rather than
+/// proceed, or it creates an account that can never verify.
+fn deliver(state: &AppState, kind: &str, email: &str, token: &str) -> Result<Option<String>, StatusCode> {
+    use crate::email::{email_mode, reset_body, send, verify_body, EmailMode};
+
+    match email_mode(state.cfg.smtp_url.as_deref(), state.cfg.dev_email) {
+        EmailMode::DevReturnToken => {
+            println!("[dev-email] {kind} for {email}: token={token}");
+            Ok(Some(token.to_string()))
+        }
+        EmailMode::Smtp => {
+            let (subject, body) = if kind == "verify" {
+                verify_body(&state.cfg.public_base_url, token)
+            } else {
+                reset_body(&state.cfg.public_base_url, token)
+            };
+            match send(&state.cfg, email, &subject, &body) {
+                Ok(()) => Ok(None),
+                Err(e) => {
+                    // Loud, and a failure: silently swallowing this leaves the
+                    // user staring at "check your email" forever.
+                    eprintln!("[email] {kind} to {email} failed: {e}");
+                    Err(StatusCode::SERVICE_UNAVAILABLE)
+                }
+            }
+        }
+        EmailMode::Refuse => {
+            eprintln!(
+                "[email] refusing to {kind} {email}: no SMTP_URL and DEV_EMAIL is not set. \
+                 Returning the token would let anyone self-verify an account."
+            );
+            Err(StatusCode::SERVICE_UNAVAILABLE)
+        }
     }
 }
 
@@ -77,6 +108,20 @@ fn email_or_log(state: &AppState, kind: &str, email: &str, token: &str) -> Optio
 pub struct RegisterBody {
     email: String,
     password: String,
+    /// Optional invite code. Present and valid, it stands in for email
+    /// verification entirely — see invites.rs.
+    #[serde(default)]
+    invite: Option<String>,
+}
+
+/// Argon2 with a fresh salt. Shared so registration and an admin reset can
+/// never disagree about how a password is stored.
+pub fn hash_password(password: &str) -> Result<String, ()> {
+    let salt = SaltString::generate(&mut OsRng);
+    Argon2::default()
+        .hash_password(password.as_bytes(), &salt)
+        .map(|h| h.to_string())
+        .map_err(|_| ())
 }
 
 pub async fn register(
@@ -94,6 +139,18 @@ pub async fn register(
     if body.password.len() < 8 {
         return Err(StatusCode::BAD_REQUEST);
     }
+    // An invite is redeemed BEFORE the account exists, so a bad code cannot
+    // leave a half-made row behind — and a good one is spent exactly once
+    // even if two people race the last use.
+    let invited = match body.invite.as_deref().map(str::trim).filter(|c| !c.is_empty()) {
+        Some(code) => {
+            let db = state.db.lock();
+            crate::invites::redeem(&db, code).map_err(|_| StatusCode::FORBIDDEN)?;
+            true
+        }
+        None => false,
+    };
+
     let salt = SaltString::generate(&mut OsRng);
     let hash = Argon2::default()
         .hash_password(body.password.as_bytes(), &salt)
@@ -103,13 +160,20 @@ pub async fn register(
     let user_id: i64 = {
         let db = state.db.lock();
         match db.execute(
-            "INSERT INTO users (email, pass_hash, created_at) VALUES (?1, ?2, ?3)",
-            rusqlite::params![email, hash, now()],
+            "INSERT INTO users (email, pass_hash, created_at, verified) VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params![email, hash, now(), i64::from(invited)],
         ) {
             Ok(_) => db.last_insert_rowid(),
             Err(_) => return Err(StatusCode::CONFLICT),
         }
     };
+
+    // An invited account is already verified: the code IS the proof, and
+    // asking for an emailed confirmation on top would demand a second proof
+    // of the same fact through a channel that may not even be configured.
+    if invited {
+        return Ok(Json(json!({ "ok": true, "verified": true })));
+    }
 
     let token = rand_token();
     state.db.lock().execute(
@@ -117,7 +181,18 @@ pub async fn register(
         rusqlite::params![token, user_id, now() + EMAIL_TOKEN_TTL],
     ).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    let dev_token = email_or_log(&state, "verify", &email, &token);
+    // The user row is already inserted above, so a delivery failure has to
+    // roll it back: leaving an unverifiable account behind would also block
+    // the address from ever registering again (email is UNIQUE).
+    let dev_token = match deliver(&state, "verify", &email, &token) {
+        Ok(t) => t,
+        Err(status) => {
+            let db = state.db.lock();
+            let _ = db.execute("DELETE FROM tokens WHERE user_id = ?1 AND kind = 'verify'", [user_id]);
+            let _ = db.execute("DELETE FROM users WHERE id = ?1", [user_id]);
+            return Err(status);
+        }
+    };
     Ok(Json(match dev_token {
         Some(t) => json!({ "ok": true, "verify_token": t }),
         None => json!({ "ok": true }),
@@ -203,6 +278,19 @@ pub async fn request_reset(
     if !rate_ok(&state, &client_ip(&headers), "request-reset") {
         return Err(StatusCode::TOO_MANY_REQUESTS);
     }
+    // Checked BEFORE the account lookup, deliberately. "Cannot send mail at
+    // all" is a property of the server, not of this address, so failing here
+    // reveals nothing. Failing AFTER the lookup would 503 for addresses that
+    // exist and 200 for ones that don't — an account-enumeration oracle, and
+    // this endpoint returns an identical body either way precisely to avoid
+    // being one.
+    if matches!(
+        crate::email::email_mode(state.cfg.smtp_url.as_deref(), state.cfg.dev_email),
+        crate::email::EmailMode::Refuse
+    ) {
+        eprintln!("[email] refusing password reset: no SMTP_URL and DEV_EMAIL is not set");
+        return Err(StatusCode::SERVICE_UNAVAILABLE);
+    }
     let email = body.email.trim().to_lowercase();
     let user_id: Option<i64> = state
         .db
@@ -218,7 +306,11 @@ pub async fn request_reset(
         "INSERT INTO tokens (token, user_id, kind, expires_at) VALUES (?1, ?2, 'reset', ?3)",
         rusqlite::params![token, user_id, now() + EMAIL_TOKEN_TTL],
     ).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let dev_token = email_or_log(&state, "reset", &email, &token);
+    // A send failure here returns 200 anyway, unlike register. Distinguishing
+    // "relay hiccuped for a real address" from "no such address" would leak
+    // account existence, which this endpoint is built not to do. It is logged
+    // loudly instead, and the user can press the button again.
+    let dev_token = deliver(&state, "reset", &email, &token).unwrap_or(None);
     Ok(Json(match dev_token {
         Some(t) => json!({ "ok": true, "reset_token": t }),
         None => json!({ "ok": true }),

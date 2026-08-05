@@ -10,6 +10,9 @@ import { InstallButton } from './InstallButton';
 import { MediaGallery } from './MediaGallery';
 import { ReviewList } from './ReviewList';
 import { ReviewForm } from './ReviewForm';
+import { FavouriteButton } from './FavouriteButton';
+import { CommentsSection } from './CommentsSection';
+import { ForumView } from '../community/ForumView';
 import { authorLabelOf } from '../state/authorIndex';
 import { glyphFor } from './MarketCard';
 
@@ -107,12 +110,16 @@ export function MarketDetail({
           leading to an empty page. */}
       {authorLabel ? (
         <button
-          onClick={() => onAuthor(authorLabel)}
+          // A claimed handle routes to the real, server-backed creator page;
+          // the '@' prefix is what MarketView switches on. Without one we
+          // fall back to the derived author page, which is every bundle
+          // published before 0.9.0.
+          onClick={() => onAuthor(item.authorHandle ? `@${item.authorHandle}` : authorLabel)}
           style={{
             background: 'transparent', border: 'none', padding: 0, marginTop: 3, cursor: 'pointer',
             fontSize: 11, fontFamily: MONO, color: accent, textAlign: 'left',
           }}
-        >by {authorLabel} ›</button>
+        >by {item.authorHandle ? `@${item.authorHandle}` : authorLabel} ›</button>
       ) : item.authorDisplay ? (
         <div style={{ fontSize: 11, fontFamily: MONO, color: 'rgba(255,255,255,0.4)', marginTop: 3 }}>
           by {item.authorDisplay}
@@ -142,6 +149,11 @@ export function MarketDetail({
           busy={ratingBusy}
           onRate={onRate}
         />
+        {/* Marketplace bundles only: a first-party built-in has no server
+            row for a favourite to attach to. */}
+        {item.source !== 'first-party' && (
+          <FavouriteButton bundleId={item.id} accent={accent} signedIn={signedIn} />
+        )}
       </div>
 
       {item.tags.length > 0 && (
@@ -212,6 +224,26 @@ export function MarketDetail({
           <ReviewList bundleId={item.id} accent={accent} reloadKey={reviewKey} />
         </div>
       </Section>
+
+      {item.source !== 'first-party' && (
+        <Section title="Comments">
+          <CommentsSection bundleId={item.id} accent={accent} signedIn={signedIn} />
+        </Section>
+      )}
+
+      {/* A bundle's own board. Same forum, scoped to this id -- short
+          reactions belong in Comments above, a question that needs an answer
+          belongs in a topic. */}
+      {item.source !== 'first-party' && (
+        <Section title="Discussion">
+          <div style={{
+            borderRadius: 10, border: '1px solid rgba(255,255,255,0.06)',
+            display: 'flex', maxHeight: 420, overflow: 'hidden',
+          }}>
+            <ForumView accent={accent} signedIn={signedIn} bundleId={item.id} />
+          </div>
+        </Section>
+      )}
 
       <Section title="Details">
         <div style={{

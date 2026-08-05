@@ -7,7 +7,21 @@ pub mod ai_review;
 pub mod auth;
 pub mod collections;
 pub mod db;
+pub mod email;
+pub mod handle;
 pub mod index;
+pub mod profiles;
+pub mod comments;
+pub mod moderation;
+pub mod avatar;
+pub mod directory;
+pub mod forum;
+pub mod shouts;
+pub mod invites;
+pub mod notify;
+pub mod roles;
+pub mod social;
+pub mod staff;
 pub mod keys;
 pub mod manifest;
 pub mod media;
@@ -33,6 +47,32 @@ pub fn router(state: AppState) -> Router {
         .route("/auth/request-reset", post(auth::request_reset))
         .route("/auth/reset", post(auth::reset))
         .route("/auth/whoami", get(auth::whoami))
+        .route("/account", get(profiles::get_account).patch(profiles::patch_account))
+        .route("/account/handle", post(profiles::claim_handle))
+        .route("/creators/:handle", get(profiles::get_creator))
+        .route("/creators", get(directory::list))
+        .route("/account/avatar", post(avatar::put_avatar))
+        .route("/creators/:handle/avatar", get(avatar::get_avatar))
+        .route("/topics", get(forum::list_topics).post(forum::create_topic))
+        .route("/topics/replies", get(forum::list_replies).post(forum::create_reply))
+        .route("/shouts", get(shouts::list).post(shouts::post))
+        .route("/follows", post(social::set_follow).get(social::follow_status))
+        .route("/follows/mine", get(social::follows_mine))
+        .route("/favourites", post(social::set_favourite).get(social::favourites))
+        .route("/feed", get(social::feed))
+        .route("/comments", get(comments::list).post(comments::post))
+        .route("/comments/mine", axum::routing::delete(comments::delete_own))
+        .route("/notifications", get(notify::list))
+        .route("/notifications/read", post(notify::mark_read))
+        .route("/blocks", post(comments::set_block))
+        .route("/reports", post(comments::report))
+        .route("/admin/invites", get(invites::list).post(invites::create))
+        .route("/admin/users", get(staff::users))
+        .route("/admin/whoami", get(staff::whoami))
+        .route("/admin/reports", get(moderation::queue))
+        .route("/admin/moderate", post(moderation::act))
+        .route("/admin/audit", get(moderation::audit))
+        .route("/admin/undo", post(moderation::undo))
         .route("/submissions", post(submit::submit))
         .route("/submissions/mine", get(submit::mine))
         .route("/ratings", post(ratings::rate).get(ratings::ratings))

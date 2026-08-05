@@ -200,6 +200,14 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
           TAG: ${{ github.ref_name }}
+          # The SOURCE repo is private, which makes its release assets private
+          # too — and the Tauri updater sends no credentials, so it gets a 404.
+          # Artifacts are therefore mirrored to a public repo that holds
+          # nothing else, and latest.json's URLs point THERE. Changing only the
+          # endpoint would not be enough: the assets it names have to be
+          # publicly readable as well.
+          RELEASES_REPO: Bigollie8/2ndmonitor-releases
+          RELEASES_TOKEN: ${{ secrets.RELEASES_TOKEN }}
         run: |
           set -euo pipefail
           shopt -s nullglob
@@ -249,7 +257,8 @@ jobs:
 
           version="${TAG#v}"
           pub_date=$(date -u +"%Y-%m-%dT%H:%M:%S.%3NZ")
-          base_url="https://github.com/${GH_REPO}/releases/download/${TAG}"
+          # Points at the PUBLIC mirror, not this repo — see RELEASES_REPO above.
+          base_url="https://github.com/${RELEASES_REPO}/releases/download/${TAG}"
 
           platforms='{}'
 
@@ -308,3 +317,56 @@ jobs:
           cat latest.json
 
           gh release upload "$TAG" latest.json --clobber
+
+      # Mirror every artifact to the public releases repo. Without this the
+      # updater resolves latest.json (public) to asset URLs that 404, which is
+      # a worse failure than no manifest at all: the client believes an update
+      # exists and then cannot fetch it.
+      - name: Mirror artifacts to the public releases repo
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+          RELEASES_REPO: Bigollie8/2ndmonitor-releases
+          RELEASES_TOKEN: ${{ secrets.RELEASES_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          # Fail loudly rather than shipping a release nobody can update to.
+          # GITHUB_TOKEN is scoped to THIS repo only, so cross-repo publishing
+          # needs a PAT with contents:write on the releases repo.
+          if [ -z "${RELEASES_TOKEN:-}" ]; then
+            echo "::error::RELEASES_TOKEN is not set. The source repo is private, so its release assets are unreachable to the updater; artifacts must be mirrored to ${RELEASES_REPO}. Create a fine-grained PAT with Contents: read+write on that repo and add it as the RELEASES_TOKEN secret."
+            exit 1
+          fi
+
+          # Pull everything this tag produced, from the private release.
+          mkdir -p mirror
+          gh release download "$TAG" --dir mirror --clobber
+          cp latest.json mirror/latest.json
+          echo "mirroring $(ls -1 mirror | wc -l) assets to ${RELEASES_REPO}"
+          ls -1 mirror
+
+          # The releases repo carries no source, so the tag is cut from its
+          # default branch; it exists purely to hang assets off.
+          GH_TOKEN="$RELEASES_TOKEN" GH_REPO="$RELEASES_REPO" \
+            gh release view "$TAG" >/dev/null 2>&1 || \
+          GH_TOKEN="$RELEASES_TOKEN" GH_REPO="$RELEASES_REPO" \
+            gh release create "$TAG" \
+              --title "2ndMonitor ${TAG}" \
+              --notes "Installers below. Source is in a private repository; see CHANGELOG in the app for details." \
+              --target main
+
+          GH_TOKEN="$RELEASES_TOKEN" GH_REPO="$RELEASES_REPO" \
+            gh release upload "$TAG" mirror/* --clobber
+
+          # Prove the updater's own URL resolves anonymously, which is the
+          # thing that actually broke. curl without credentials, exactly as a
+          # client would.
+          url="https://github.com/${RELEASES_REPO}/releases/latest/download/latest.json"
+          code=$(curl -sL -o /dev/null -w '%{http_code}' "$url")
+          if [ "$code" != "200" ]; then
+            echo "::error::${url} returned ${code} to an anonymous request. Every client's update check will fail. Is ${RELEASES_REPO} public?"
+            exit 1
+          fi
+          echo "anonymous updater endpoint OK: $url"

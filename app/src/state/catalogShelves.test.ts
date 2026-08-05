@@ -10,7 +10,7 @@ const item = (o: Partial<CatalogItem> = {}): CatalogItem => ({
   updateAvailable: false, permissions: [], needsSetup: false, downloads: 0, brokenReason: null,
   removed: false, hasPreview: false, rating: null,
   summary: null, tags: [], icon: null, changelog: null, minAppVersion: null,
-  featured: false, approvedAt: null, mediaCount: 0, authorDisplay: null, ...o,
+  featured: false, approvedAt: null, mediaCount: 0, authorDisplay: null, authorHandle: null, ...o,
 });
 
 const many = (n: number, o: (i: number) => Partial<CatalogItem>) =>
@@ -133,4 +133,37 @@ test('buildShelves survives a raw wire value handed straight in', () => {
     nowSec: 0,
     appVersion: '1.0.0',
   }));
+});
+
+// Folded in from the 0.9.0 branch, which fixed this same crash independently
+// and pinned a few shapes these tests did not: malformed entries, non-string
+// ids inside a collection, and buildShelves surviving a raw wire value.
+test('parseCollections drops malformed entries rather than repairing them', () => {
+  const got = parseCollections({
+    collections: [
+      { slug: 'good', title: 'Good', blurb: null, items: [] },
+      { slug: '', title: 'no slug', blurb: null, items: [] },
+      { slug: 'no-title', blurb: null, items: [] },
+      { slug: 'no-items', title: 'x', blurb: null },
+      null,
+      'string',
+    ],
+  });
+  assert.deepEqual(got.map((c) => c.slug), ['good']);
+});
+
+test('parseCollections filters non-string ids inside a collection', () => {
+  const got = parseCollections({
+    collections: [{ slug: 's', title: 't', blurb: null, items: ['a', 1, null, 'b'] }],
+  });
+  assert.deepEqual(got[0].items, ['a', 'b']);
+});
+
+// Defence in depth: even if a caller skips the parser, rendering must not
+// throw. A throw costs the whole store; an empty list costs a few shelves.
+test('buildShelves survives a non-array collections argument', () => {
+  const args = { items: [], dates: {}, nowSec: 1_800_000_000, appVersion: '0.9.0' };
+  assert.doesNotThrow(() => buildShelves({ ...args, collections: { collections: [] } as never }));
+  assert.doesNotThrow(() => buildShelves({ ...args, collections: null as never }));
+  assert.doesNotThrow(() => buildShelves({ ...args, collections: undefined as never }));
 });

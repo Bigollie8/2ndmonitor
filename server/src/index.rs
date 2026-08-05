@@ -28,7 +28,8 @@ pub async fn index_json(State(state): State<AppState>) -> Result<Response, Statu
                         b.summary, b.description, b.category, b.tags, b.icon, b.changelog,
                         b.min_app_version, b.featured, b.approved_at, u.display_name,
                         (SELECT COUNT(*) FROM bundle_media m
-                          WHERE m.bundle_id = b.id AND m.version = b.version) AS media_count
+                          WHERE m.bundle_id = b.id AND m.version = b.version) AS media_count,
+                        u.handle
                  FROM bundles b JOIN users u ON u.id = b.author_id
                  WHERE b.status = 'approved' ORDER BY b.id, b.created_at",
             )
@@ -41,6 +42,9 @@ pub async fn index_json(State(state): State<AppState>) -> Result<Response, Statu
                 let display: Option<String> = r.get(19)?;
                 let has_preview_blob: bool = r.get(9)?;
                 let media_count: i64 = r.get(20)?;
+                // Appended to the SELECT rather than inserted, so every
+                // existing positional index above stays valid.
+                let author_handle: Option<String> = r.get(21)?;
                 // `hasPreview` must stay true for the bundles published before
                 // Market v2, whose image lives in the legacy `bundles.preview`
                 // blob and not in `bundle_media`.
@@ -68,6 +72,10 @@ pub async fn index_json(State(state): State<AppState>) -> Result<Response, Statu
                     "featured": r.get::<_, i64>(17)? != 0,
                     "approvedAt": r.get::<_, Option<i64>>(18)?,
                     "authorDisplay": display.unwrap_or(masked),
+                    // Null until the author claims one. Attribution rides the
+                    // SIGNED payload, so a card links to a creator with no
+                    // second fetch and the link cannot be altered in transit.
+                    "authorHandle": author_handle,
                     "mediaCount": media_count,
                 }))
             })

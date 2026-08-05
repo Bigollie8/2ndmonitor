@@ -24,9 +24,12 @@ import { MarketShelf } from './MarketShelf';
 import { MarketDetail } from './MarketDetail';
 import { CollectionDetail } from './CollectionDetail';
 import { AuthorPage } from './AuthorPage';
+import { CreatorProfile } from './CreatorProfile';
 import { MultiInstallDialog } from './MultiInstallDialog';
 import { authorIndexOf } from '../state/authorIndex';
 import { planMultiInstall, type InstallPlan } from '../state/installPlan';
+import { fetchFeedIds } from '../state/social';
+import { feedShelf } from '../state/socialFeed';
 
 const MONO = '"JetBrains Mono", ui-monospace, monospace';
 
@@ -46,7 +49,7 @@ const isEditableTarget = (t: EventTarget | null): boolean => {
  *  is here is composition and effects. */
 export function MarketView({
   accent, accent2, spectrumRef, catalogRemoved, setCatalogRemoved, onClose, onOpenLibrary,
-  initialFacets,
+  onOpenProfile, onOpenCommunity, initialCreator, onCreatorConsumed, initialFacets,
 }: {
   accent: string;
   accent2: string;
@@ -55,6 +58,16 @@ export function MarketView({
   setCatalogRemoved: (next: string[]) => void;
   onClose: () => void;
   onOpenLibrary: () => void;
+  /** Opens the profile popout. The store closes itself first (App owns
+   *  both), so the popout never has to fight this view's capture-phase Esc
+   *  handler. */
+  onOpenProfile?: () => void;
+  /** Opens the community home (this view closes first — App owns both). */
+  onOpenCommunity?: () => void;
+  /** Deep-link: open straight onto this creator's page. Consumed once, so
+   *  navigating away inside the store does not snap back to it. */
+  initialCreator?: string | null;
+  onCreatorConsumed?: () => void;
   /** Open straight into a filtered grid instead of Discover — e.g. the
    *  MilkDrop picker's "browse presets". Read once at mount, like
    *  `ContentLibrary`'s old `initialRail`: this is the starting point for a
@@ -150,13 +163,48 @@ export function MarketView({
     [data.items, data.appVersion],
   );
 
-  const shelves = useMemo(() => buildShelves({
-    items: data.items,
-    collections: data.collections,
-    dates: data.dates,
-    nowSec: Math.floor(Date.now() / 1000),
-    appVersion: data.appVersion,
-  }), [data.items, data.collections, data.dates, data.appVersion]);
+  // The personal shelf's ids. Signed out there is no feed; a failed fetch is
+  // an empty one — a read, so silent, like every other social read.
+  const [feedIds, setFeedIds] = useState<string[]>([]);
+  useEffect(() => {
+    if (!data.signedIn) { setFeedIds([]); return; }
+    let cancelled = false;
+    void fetchFeedIds()
+      .then((ids) => { if (!cancelled) setFeedIds(ids); })
+      .catch(() => { if (!cancelled) setFeedIds([]); });
+    return () => { cancelled = true; };
+  }, [data.signedIn]);
+
+  // The community sent us to somebody's page. Applied once and then
+  // released, so back/forward inside the store behaves normally.
+  //
+  // The ref is load-bearing, not a nicety. `onCreatorConsumed` is an inline
+  // arrow in App, so it is a new function on every render; without a guard
+  // that identity change re-runs this effect, which dispatches, which
+  // re-renders, which re-runs it — an infinite loop that took the whole app
+  // down the moment anyone clicked a creator in the directory.
+  const consumedCreator = useRef<string | null>(null);
+  useEffect(() => {
+    if (!initialCreator || consumedCreator.current === initialCreator) return;
+    consumedCreator.current = initialCreator;
+    dispatch({ type: 'open-author', author: `@${initialCreator}` });
+    onCreatorConsumed?.();
+  }, [initialCreator, onCreatorConsumed]);
+
+  const shelves = useMemo(() => {
+    const built = buildShelves({
+      items: data.items,
+      collections: data.collections,
+      dates: data.dates,
+      nowSec: Math.floor(Date.now() / 1000),
+      appVersion: data.appVersion,
+    });
+    // Prepended rather than folded into buildShelves' dedupe: this shelf is
+    // PERSONAL — something you follow appearing here must not vanish just
+    // because it is also Featured.
+    const feed = feedShelf(feedIds, data.items);
+    return feed ? [feed, ...built] : built;
+  }, [data.items, data.collections, data.dates, data.appVersion, feedIds]);
 
   const selected = browse.selectedKey
     ? data.items.find((i) => i.key === browse.selectedKey)
@@ -463,12 +511,27 @@ export function MarketView({
         )
         : browse.view === 'author'
           ? (
-            <AuthorPage
-              summary={browse.author ? authorIndex.get(browse.author) : undefined}
-              cardMin={layout.cardMin}
-              onOpen={(item) => dispatch({ type: 'open-detail', key: item.key })}
-              {...cardProps}
-            />
+            // A handle means a real, server-backed creator page. Falling
+            // back to AuthorPage keeps every bundle published before 0.9.0
+            // (and any author who has not claimed a handle) reachable
+            // instead of dead-ending on a 404.
+            browse.author?.startsWith('@') ? (
+              <CreatorProfile
+                handle={browse.author.slice(1)}
+                items={data.items}
+                cardMin={layout.cardMin}
+                signedIn={data.signedIn}
+                onOpen={(item) => dispatch({ type: 'open-detail', key: item.key })}
+                {...cardProps}
+              />
+            ) : (
+              <AuthorPage
+                summary={browse.author ? authorIndex.get(browse.author) : undefined}
+                cardMin={layout.cardMin}
+                onOpen={(item) => dispatch({ type: 'open-detail', key: item.key })}
+                {...cardProps}
+              />
+            )
           )
           : <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>{gridBody}</div>;
 
@@ -492,6 +555,8 @@ export function MarketView({
         onClose={onClose}
         onQuery={(q) => dispatch({ type: 'set-query', query: q })}
         onSort={(s: SortMode) => dispatch({ type: 'set-sort', sort: s })}
+        onProfile={onOpenProfile}
+        onCommunity={onOpenCommunity}
       />
 
       {(data.indexUnreachable || data.usingCache) && (

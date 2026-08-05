@@ -232,6 +232,189 @@ fn post_capped_json(
     }
 }
 
+/// The stored session token, or a fail-fast error. Mirrors the read
+/// `marketplace_rate` does: the token is resolved Rust-side from the DPAPI/
+/// Keychain-backed secret store and is never accepted as a command parameter,
+/// so the frontend cannot supply (or leak) one.
+fn session_token<R: Runtime>(app: &AppHandle<R>) -> Result<String, String> {
+    let raw = crate::secrets::secret_get_inner(app, SESSION_SECRET_KEY)
+        .ok_or_else(|| "not signed in".to_string())?;
+    serde_json::from_str::<serde_json::Value>(&raw)
+        .ok()
+        .and_then(|v| v.get("token").and_then(|t| t.as_str()).map(str::to_string))
+        .ok_or_else(|| "not signed in".to_string())
+}
+
+/// Authenticated GET. Same https-only and redirects(0) reasoning as
+/// `post_capped_json` — a followed redirect would carry the Authorization
+/// header to wherever `Location` pointed.
+fn get_capped_auth(url: &str, cap: usize, bearer: &str) -> Result<(u16, Vec<u8>), String> {
+    if !url.starts_with("https://") {
+        return Err("only https URLs are allowed".into());
+    }
+    fn read_capped(resp: ureq::Response, cap: usize) -> Result<Vec<u8>, String> {
+        let mut buf = Vec::new();
+        resp.into_reader()
+            .take((cap + 1) as u64)
+            .read_to_end(&mut buf)
+            .map_err(|e| format!("read failed: {e}"))?;
+        if buf.len() > cap {
+            return Err("response too large".into());
+        }
+        Ok(buf)
+    }
+    let agent = ureq::AgentBuilder::new().redirects(0).build();
+    match agent
+        .get(url)
+        .timeout(std::time::Duration::from_secs(10))
+        .set("Authorization", &format!("Bearer {bearer}"))
+        .call()
+    {
+        Ok(resp) => {
+            let status = resp.status();
+            Ok((status, read_capped(resp, cap)?))
+        }
+        Err(ureq::Error::Status(code, resp)) => Ok((code, read_capped(resp, cap)?)),
+        Err(ureq::Error::Transport(t)) => Err(format!("request failed: {t}")),
+    }
+}
+
+/// Authenticated PATCH, same contract as `post_capped_json`.
+fn patch_capped_json(
+    url: &str,
+    body: &serde_json::Value,
+    cap: usize,
+    bearer: &str,
+) -> Result<(u16, Vec<u8>), String> {
+    if !url.starts_with("https://") {
+        return Err("only https URLs are allowed".into());
+    }
+    fn read_capped(resp: ureq::Response, cap: usize) -> Result<Vec<u8>, String> {
+        let mut buf = Vec::new();
+        resp.into_reader()
+            .take((cap + 1) as u64)
+            .read_to_end(&mut buf)
+            .map_err(|e| format!("read failed: {e}"))?;
+        if buf.len() > cap {
+            return Err("response too large".into());
+        }
+        Ok(buf)
+    }
+    let agent = ureq::AgentBuilder::new().redirects(0).build();
+    match agent
+        .request("PATCH", url)
+        .timeout(std::time::Duration::from_secs(10))
+        .set("Authorization", &format!("Bearer {bearer}"))
+        .send_json(body.clone())
+    {
+        Ok(resp) => {
+            let status = resp.status();
+            Ok((status, read_capped(resp, cap)?))
+        }
+        Err(ureq::Error::Status(code, resp)) => Ok((code, read_capped(resp, cap)?)),
+        Err(ureq::Error::Transport(t)) => Err(format!("request failed: {t}")),
+    }
+}
+
+/// Creates an account. Returns the dev-mode verification token when the
+/// server is configured to hand one back, and `null` when it sent a real
+/// email instead — the caller uses that to decide whether it can finish the
+/// flow itself or has to say "check your email".
+///
+/// `password` is used only to build the outgoing request body and is dropped
+/// when this function returns, exactly as in `marketplace_login` below.
+#[tauri::command]
+pub fn marketplace_register(
+    url: String,
+    email: String,
+    password: String,
+    invite: Option<String>,
+) -> Result<serde_json::Value, String> {
+    let base = url.trim_end_matches('/');
+    let mut body = serde_json::json!({ "email": email, "password": password });
+    if let Some(code) = invite.as_deref().map(str::trim).filter(|c| !c.is_empty()) {
+        body["invite"] = serde_json::Value::String(code.to_string());
+    }
+    let (status, buf) = post_capped_json(&format!("{base}/auth/register"), &body, AUTH_CAP, None)?;
+    let text = String::from_utf8_lossy(&buf).into_owned();
+
+    if !(200..300).contains(&status) {
+        // 503 is the server saying it cannot deliver mail, which is its way
+        // of refusing to create an account nobody could ever verify. Say that
+        // rather than showing a bare status code.
+        if status == 503 {
+            return Err(
+                "the marketplace is not accepting new accounts right now (it cannot send                  verification email)"
+                    .into(),
+            );
+        }
+        if status == 409 {
+            return Err("an account already exists for that address".into());
+        }
+        if status == 403 {
+            return Err("that invite code is not valid, already used, or expired".into());
+        }
+        return Err(if text.trim().is_empty() { format!("HTTP {status}") } else { text });
+    }
+
+    let parsed: serde_json::Value =
+        serde_json::from_str(&text).map_err(|e| format!("register response not JSON: {e}"))?;
+    Ok(serde_json::json!({
+        "verifyToken": parsed.get("verify_token").and_then(|t| t.as_str()),
+    }))
+}
+
+/// Confirms an address with the token from the verification email — or, in
+/// dev mode, the one `marketplace_register` just handed back.
+#[tauri::command]
+pub fn marketplace_verify_account(url: String, token: String) -> Result<(), String> {
+    if token.trim().is_empty() {
+        return Err("verification token required".into());
+    }
+    let base = url.trim_end_matches('/');
+    let endpoint = format!("{base}/auth/verify?token={}", urlencoding::encode(token.trim()));
+    let (status, buf) = get_capped_status(&endpoint, AUTH_CAP)?;
+    if !(200..300).contains(&status) {
+        let text = String::from_utf8_lossy(&buf).into_owned();
+        return Err(if status == 404 {
+            "that verification link has expired or was already used".into()
+        } else if text.trim().is_empty() {
+            format!("HTTP {status}")
+        } else {
+            text
+        });
+    }
+    Ok(())
+}
+
+/// Unauthenticated GET that reports the status rather than erroring on 4xx —
+/// verification needs to tell an expired link apart from a network failure.
+fn get_capped_status(url: &str, cap: usize) -> Result<(u16, Vec<u8>), String> {
+    if !url.starts_with("https://") {
+        return Err("only https URLs are allowed".into());
+    }
+    fn read_capped(resp: ureq::Response, cap: usize) -> Result<Vec<u8>, String> {
+        let mut buf = Vec::new();
+        resp.into_reader()
+            .take((cap + 1) as u64)
+            .read_to_end(&mut buf)
+            .map_err(|e| format!("read failed: {e}"))?;
+        if buf.len() > cap {
+            return Err("response too large".into());
+        }
+        Ok(buf)
+    }
+    let agent = ureq::AgentBuilder::new().redirects(0).build();
+    match agent.get(url).timeout(std::time::Duration::from_secs(10)).call() {
+        Ok(resp) => {
+            let status = resp.status();
+            Ok((status, read_capped(resp, cap)?))
+        }
+        Err(ureq::Error::Status(code, resp)) => Ok((code, read_capped(resp, cap)?)),
+        Err(ureq::Error::Transport(t)) => Err(format!("request failed: {t}")),
+    }
+}
+
 /// Signs in against the marketplace server and stores the session token.
 ///
 /// Returns nothing on success — see the module-level comment above for why.
@@ -472,6 +655,645 @@ pub async fn marketplace_post_review<R: Runtime>(
         } else {
             text
         });
+    }
+    Ok(())
+}
+
+/// Upload or clear your profile picture. An empty string clears it, which is
+/// how someone goes back to their generated identicon.
+///
+/// The bytes are validated server-side on their magic number; this only caps
+/// the request so an obviously-too-big file fails instantly rather than after
+/// a pointless upload.
+#[tauri::command]
+pub fn marketplace_set_avatar<R: Runtime>(
+    app: AppHandle<R>,
+    url: String,
+    image: String,
+) -> Result<(), String> {
+    // 512 KB of raw bytes is ~700 KB of base64.
+    if image.len() > 720_000 {
+        return Err("that picture is too large — 512 KB maximum".into());
+    }
+    let base = url.trim_end_matches('/');
+    post_social(&app, &format!("{base}/account/avatar"), &serde_json::json!({ "image": image }))
+}
+
+/// Staff surface. Every one of these authenticates with the caller's OWN
+/// session — the shared ADMIN_TOKEN is never shipped to a client, because a
+/// god credential on every machine is a credential you cannot revoke.
+/// Permission is decided server-side (server/src/roles.rs); these commands
+/// only carry the request.
+#[tauri::command]
+pub fn marketplace_staff_whoami<R: Runtime>(
+    app: AppHandle<R>,
+    url: String,
+) -> Result<serde_json::Value, String> {
+    let token = session_token(&app)?;
+    let base = url.trim_end_matches('/');
+    get_social(&format!("{base}/admin/whoami"), Some(token))
+}
+
+#[tauri::command]
+pub fn marketplace_staff_users<R: Runtime>(
+    app: AppHandle<R>,
+    url: String,
+    query: Option<String>,
+) -> Result<serde_json::Value, String> {
+    let token = session_token(&app)?;
+    let base = url.trim_end_matches('/');
+    let q = query.unwrap_or_default();
+    let endpoint = if q.trim().is_empty() {
+        format!("{base}/admin/users")
+    } else {
+        format!("{base}/admin/users?q={}", urlencoding::encode(q.trim()))
+    };
+    get_social(&endpoint, Some(token))
+}
+
+#[tauri::command]
+pub fn marketplace_staff_reports<R: Runtime>(
+    app: AppHandle<R>,
+    url: String,
+) -> Result<serde_json::Value, String> {
+    let token = session_token(&app)?;
+    let base = url.trim_end_matches('/');
+    get_social(&format!("{base}/admin/reports"), Some(token))
+}
+
+/// The moderation log.
+#[tauri::command]
+pub fn marketplace_staff_audit<R: Runtime>(
+    app: AppHandle<R>,
+    url: String,
+) -> Result<serde_json::Value, String> {
+    let token = session_token(&app)?;
+    let base = url.trim_end_matches('/');
+    get_social(&format!("{base}/admin/audit"), Some(token))
+}
+
+/// Reverse one logged action. The server works out the inverse from what it
+/// recorded -- the client never guesses, because an undo derived from a
+/// half-remembered argument list is how you restore the wrong thing.
+#[tauri::command]
+pub fn marketplace_undo<R: Runtime>(
+    app: AppHandle<R>,
+    url: String,
+    id: i64,
+) -> Result<(), String> {
+    let base = url.trim_end_matches('/');
+    post_social(&app, &format!("{base}/admin/undo"), &serde_json::json!({ "id": id }))
+}
+
+/// One moderation action. The action name and its arguments pass straight
+/// through: the server owns the list of valid actions and who may take each
+/// one, so duplicating that here would only create a second place to get it
+/// wrong.
+#[tauri::command]
+pub fn marketplace_moderate<R: Runtime>(
+    app: AppHandle<R>,
+    url: String,
+    action: String,
+    args: serde_json::Value,
+) -> Result<(), String> {
+    let mut body = match args {
+        serde_json::Value::Object(map) => serde_json::Value::Object(map),
+        _ => serde_json::json!({}),
+    };
+    body["action"] = serde_json::Value::String(action);
+    let base = url.trim_end_matches('/');
+    post_social(&app, &format!("{base}/admin/moderate"), &body)
+}
+
+/// Mint an invite code. Any moderator may — handing out invites is everyday
+/// work, and every code is attributed in the list.
+#[tauri::command]
+pub fn marketplace_create_invite<R: Runtime>(
+    app: AppHandle<R>,
+    url: String,
+    note: Option<String>,
+    max_uses: Option<i64>,
+    expires_in_days: Option<i64>,
+) -> Result<serde_json::Value, String> {
+    let token = session_token(&app)?;
+    let base = url.trim_end_matches('/');
+    let body = serde_json::json!({
+        "note": note.unwrap_or_default(),
+        "maxUses": max_uses.unwrap_or(1),
+        "expiresInDays": expires_in_days,
+    });
+    let (status, buf) = post_capped_json(&format!("{base}/admin/invites"), &body, AUTH_CAP, Some(&token))?;
+    let text = String::from_utf8_lossy(&buf).into_owned();
+    if !(200..300).contains(&status) {
+        return Err(if text.trim().is_empty() { format!("HTTP {status}") } else { text });
+    }
+    serde_json::from_str(&text).map_err(|e| format!("not JSON: {e}"))
+}
+
+#[tauri::command]
+pub fn marketplace_list_invites<R: Runtime>(
+    app: AppHandle<R>,
+    url: String,
+) -> Result<serde_json::Value, String> {
+    let token = session_token(&app)?;
+    let base = url.trim_end_matches('/');
+    get_social(&format!("{base}/admin/invites"), Some(token))
+}
+
+/// Your inbox, with the unread count for the badge.
+#[tauri::command]
+pub fn marketplace_notifications<R: Runtime>(
+    app: AppHandle<R>,
+    url: String,
+) -> Result<serde_json::Value, String> {
+    let token = session_token(&app)?;
+    let base = url.trim_end_matches('/');
+    get_social(&format!("{base}/notifications"), Some(token))
+}
+
+/// Mark one notification read, or all of them when `id` is absent.
+#[tauri::command]
+pub fn marketplace_mark_read<R: Runtime>(
+    app: AppHandle<R>,
+    url: String,
+    id: Option<i64>,
+) -> Result<(), String> {
+    let base = url.trim_end_matches('/');
+    let body = match id {
+        Some(n) => serde_json::json!({ "id": n }),
+        None => serde_json::json!({}),
+    };
+    post_social(&app, &format!("{base}/notifications/read"), &body)
+}
+
+/// Retract your own comment. A separate command from the moderation one on
+/// purpose: this is somebody deleting their own words, not staff hiding
+/// somebody else's, and conflating the two in one call would make the
+/// permission question ambiguous.
+#[tauri::command]
+pub fn marketplace_delete_comment<R: Runtime>(
+    app: AppHandle<R>,
+    url: String,
+    id: i64,
+) -> Result<(), String> {
+    let token = session_token(&app)?;
+    let base = url.trim_end_matches('/');
+    let (status, buf) = delete_capped_json(
+        &format!("{base}/comments/mine"),
+        &serde_json::json!({ "id": id }),
+        AUTH_CAP,
+        &token,
+    )?;
+    if !(200..300).contains(&status) {
+        let text = String::from_utf8_lossy(&buf).into_owned();
+        return Err(if text.trim().is_empty() { format!("HTTP {status}") } else { text });
+    }
+    Ok(())
+}
+
+/// DELETE with a JSON body. `ureq` has no delete-with-body helper, and the
+/// endpoint takes the id in the body rather than the path so that a bad id
+/// cannot end up in a proxy access log.
+fn delete_capped_json(
+    url: &str,
+    body: &serde_json::Value,
+    cap: usize,
+    token: &str,
+) -> Result<(u16, Vec<u8>), String> {
+    if !url.starts_with("https://") {
+        return Err("only https URLs are allowed".into());
+    }
+    let agent = ureq::AgentBuilder::new().redirects(0).build();
+    let req = agent
+        .delete(url)
+        .timeout(std::time::Duration::from_secs(15))
+        .set("authorization", &format!("Bearer {token}"))
+        .set("content-type", "application/json");
+    let resp = match req.send_string(&body.to_string()) {
+        Ok(r) => r,
+        Err(ureq::Error::Status(code, r)) => {
+            let mut buf = Vec::new();
+            r.into_reader().take((cap + 1) as u64).read_to_end(&mut buf).ok();
+            return Ok((code, buf));
+        }
+        Err(ureq::Error::Transport(t)) => return Err(format!("request failed: {t}")),
+    };
+    let status = resp.status();
+    let mut buf = Vec::new();
+    resp.into_reader()
+        .take((cap + 1) as u64)
+        .read_to_end(&mut buf)
+        .map_err(|e| format!("read failed: {e}"))?;
+    Ok((status, buf))
+}
+
+/// The creator directory, optionally searched. Public: a signed-out browse
+/// still gets the full list, because discovering people is the point.
+#[tauri::command]
+pub fn marketplace_fetch_creators(
+    url: String,
+    query: Option<String>,
+) -> Result<serde_json::Value, String> {
+    let base = url.trim_end_matches('/');
+    let q = query.unwrap_or_default();
+    let endpoint = if q.trim().is_empty() {
+        format!("{base}/creators")
+    } else {
+        format!("{base}/creators?q={}", urlencoding::encode(q.trim()))
+    };
+    let (status, buf) = get_capped_status(&endpoint, FETCH_CAP)?;
+    let text = String::from_utf8_lossy(&buf).into_owned();
+    if !(200..300).contains(&status) {
+        return Err(if text.trim().is_empty() { format!("HTTP {status}") } else { text });
+    }
+    serde_json::from_str(&text).map_err(|e| format!("not JSON: {e}"))
+}
+
+/// Forum topics, optionally scoped to one bundle's discussion.
+#[tauri::command]
+pub fn marketplace_fetch_topics<R: Runtime>(
+    app: AppHandle<R>,
+    url: String,
+    bundle_id: Option<String>,
+    query: Option<String>,
+) -> Result<serde_json::Value, String> {
+    let base = url.trim_end_matches('/');
+    let mut params: Vec<String> = Vec::new();
+    if let Some(b) = bundle_id.as_deref().filter(|b| !b.is_empty()) {
+        if !is_safe_id(b) {
+            return Err("invalid bundle id".into());
+        }
+        params.push(format!("bundleId={b}"));
+    }
+    if let Some(q) = query.as_deref().map(str::trim).filter(|q| !q.is_empty()) {
+        params.push(format!("q={}", urlencoding::encode(q)));
+    }
+    let endpoint = if params.is_empty() {
+        format!("{base}/topics")
+    } else {
+        format!("{base}/topics?{}", params.join("&"))
+    };
+    get_social(&endpoint, session_token(&app).ok())
+}
+
+#[tauri::command]
+pub fn marketplace_create_topic<R: Runtime>(
+    app: AppHandle<R>,
+    url: String,
+    title: String,
+    body: String,
+    bundle_id: Option<String>,
+) -> Result<(), String> {
+    if title.trim().is_empty() || body.trim().is_empty() {
+        return Err("a topic needs a title and a body".into());
+    }
+    if title.chars().count() > 120 {
+        return Err("title must be at most 120 characters".into());
+    }
+    if body.chars().count() > 4000 {
+        return Err("body must be at most 4000 characters".into());
+    }
+    let base = url.trim_end_matches('/');
+    let mut payload = serde_json::json!({ "title": title, "body": body });
+    if let Some(b) = bundle_id.filter(|b| !b.is_empty()) {
+        if !is_safe_id(&b) {
+            return Err("invalid bundle id".into());
+        }
+        payload["bundleId"] = serde_json::Value::String(b);
+    }
+    post_social(&app, &format!("{base}/topics"), &payload)
+}
+
+#[tauri::command]
+pub fn marketplace_fetch_replies<R: Runtime>(
+    app: AppHandle<R>,
+    url: String,
+    topic_id: i64,
+) -> Result<serde_json::Value, String> {
+    let base = url.trim_end_matches('/');
+    get_social(&format!("{base}/topics/replies?topicId={topic_id}"), session_token(&app).ok())
+}
+
+#[tauri::command]
+pub fn marketplace_create_reply<R: Runtime>(
+    app: AppHandle<R>,
+    url: String,
+    topic_id: i64,
+    body: String,
+) -> Result<(), String> {
+    if body.trim().is_empty() {
+        return Err("reply must not be blank".into());
+    }
+    if body.chars().count() > 4000 {
+        return Err("reply must be at most 4000 characters".into());
+    }
+    let base = url.trim_end_matches('/');
+    post_social(&app, &format!("{base}/topics/replies"),
+        &serde_json::json!({ "topicId": topic_id, "body": body }))
+}
+
+/// The shoutbox window. Polled by the client, so this stays cheap and never
+/// errors loudly — a dead fetch leaves the last window on screen.
+#[tauri::command]
+pub fn marketplace_fetch_shouts<R: Runtime>(
+    app: AppHandle<R>,
+    url: String,
+) -> Result<serde_json::Value, String> {
+    let base = url.trim_end_matches('/');
+    get_social(&format!("{base}/shouts"), session_token(&app).ok())
+}
+
+#[tauri::command]
+pub fn marketplace_post_shout<R: Runtime>(
+    app: AppHandle<R>,
+    url: String,
+    body: String,
+) -> Result<(), String> {
+    if body.trim().is_empty() {
+        return Err("shout must not be blank".into());
+    }
+    if body.chars().count() > 240 {
+        return Err("shout must be at most 240 characters".into());
+    }
+    let base = url.trim_end_matches('/');
+    post_social(&app, &format!("{base}/shouts"), &serde_json::json!({ "body": body }))
+}
+
+/// Shared shape for the social GETs: attach the session when one exists,
+/// go anonymous otherwise. Counts are public; "is it mine / am I following"
+/// needs the token; a signed-out browse must still get the numbers.
+fn get_social(url: &str, token: Option<String>) -> Result<serde_json::Value, String> {
+    let (status, buf) = match token {
+        Some(t) => get_capped_auth(url, FETCH_CAP, &t)?,
+        None => get_capped_status(url, FETCH_CAP)?,
+    };
+    let text = String::from_utf8_lossy(&buf).into_owned();
+    if !(200..300).contains(&status) {
+        return Err(if text.trim().is_empty() { format!("HTTP {status}") } else { text });
+    }
+    serde_json::from_str(&text).map_err(|e| format!("not JSON: {e}"))
+}
+
+/// POST with the session token, surfacing the server's own error words —
+/// social writes are user actions and must never fail silently.
+fn post_social<R: Runtime>(
+    app: &AppHandle<R>,
+    url: &str,
+    body: &serde_json::Value,
+) -> Result<(), String> {
+    let token = session_token(app)?;
+    let (status, buf) = post_capped_json(url, body, AUTH_CAP, Some(&token))?;
+    if !(200..300).contains(&status) {
+        let text = String::from_utf8_lossy(&buf).into_owned();
+        return Err(if text.trim().is_empty() { format!("HTTP {status}") } else { text });
+    }
+    Ok(())
+}
+
+fn is_safe_handle(h: &str) -> bool {
+    !h.is_empty()
+        && h.len() <= 24
+        && h.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'_')
+}
+
+/// Follower count + whether the caller follows this creator.
+#[tauri::command]
+pub fn marketplace_follow_status<R: Runtime>(
+    app: AppHandle<R>,
+    url: String,
+    handle: String,
+) -> Result<serde_json::Value, String> {
+    if !is_safe_handle(&handle) {
+        return Err("invalid handle".into());
+    }
+    let base = url.trim_end_matches('/');
+    get_social(&format!("{base}/follows?handle={handle}"), session_token(&app).ok())
+}
+
+#[tauri::command]
+pub fn marketplace_set_follow<R: Runtime>(
+    app: AppHandle<R>,
+    url: String,
+    handle: String,
+    following: bool,
+) -> Result<(), String> {
+    if !is_safe_handle(&handle) {
+        return Err("invalid handle".into());
+    }
+    let base = url.trim_end_matches('/');
+    post_social(&app, &format!("{base}/follows"), &serde_json::json!({ "handle": handle, "following": following }))
+}
+
+/// The creators the caller follows — the profile popout's Following tab.
+#[tauri::command]
+pub fn marketplace_follows_mine<R: Runtime>(app: AppHandle<R>, url: String) -> Result<serde_json::Value, String> {
+    let token = session_token(&app)?;
+    let base = url.trim_end_matches('/');
+    get_social(&format!("{base}/follows/mine"), Some(token))
+}
+
+/// Public per-bundle favourite counts plus the caller's own list.
+#[tauri::command]
+pub fn marketplace_fetch_favourites<R: Runtime>(app: AppHandle<R>, url: String) -> Result<serde_json::Value, String> {
+    let base = url.trim_end_matches('/');
+    get_social(&format!("{base}/favourites"), session_token(&app).ok())
+}
+
+#[tauri::command]
+pub fn marketplace_set_favourite<R: Runtime>(
+    app: AppHandle<R>,
+    url: String,
+    id: String,
+    favourite: bool,
+) -> Result<(), String> {
+    if !is_safe_id(&id) {
+        return Err("invalid bundle id".into());
+    }
+    let base = url.trim_end_matches('/');
+    post_social(&app, &format!("{base}/favourites"), &serde_json::json!({ "id": id, "favourite": favourite }))
+}
+
+/// Bundle ids from creators the caller follows, newest first. Ids only — the
+/// client already holds the catalog and resolves them itself.
+#[tauri::command]
+pub fn marketplace_fetch_feed<R: Runtime>(app: AppHandle<R>, url: String) -> Result<serde_json::Value, String> {
+    let token = session_token(&app)?;
+    let base = url.trim_end_matches('/');
+    get_social(&format!("{base}/feed"), Some(token))
+}
+
+/// Comments on one bundle. The session rides along when present so the
+/// server can apply the caller's blocks — enforced there, not here, so a
+/// modified client cannot un-block anyone.
+#[tauri::command]
+pub fn marketplace_fetch_comments<R: Runtime>(
+    app: AppHandle<R>,
+    url: String,
+    id: String,
+) -> Result<serde_json::Value, String> {
+    if !is_safe_id(&id) {
+        return Err("invalid bundle id".into());
+    }
+    let base = url.trim_end_matches('/');
+    get_social(&format!("{base}/comments?id={id}"), session_token(&app).ok())
+}
+
+#[tauri::command]
+pub fn marketplace_post_comment<R: Runtime>(
+    app: AppHandle<R>,
+    url: String,
+    id: String,
+    body: String,
+) -> Result<(), String> {
+    if !is_safe_id(&id) {
+        return Err("invalid bundle id".into());
+    }
+    if body.trim().is_empty() {
+        return Err("comment must not be blank".into());
+    }
+    if body.chars().count() > 1000 {
+        return Err("comment must be at most 1000 characters".into());
+    }
+    let base = url.trim_end_matches('/');
+    post_social(&app, &format!("{base}/comments"), &serde_json::json!({ "id": id, "body": body }))
+}
+
+#[tauri::command]
+pub fn marketplace_set_block<R: Runtime>(
+    app: AppHandle<R>,
+    url: String,
+    handle: String,
+    blocking: bool,
+) -> Result<(), String> {
+    if !is_safe_handle(&handle) {
+        return Err("invalid handle".into());
+    }
+    let base = url.trim_end_matches('/');
+    post_social(&app, &format!("{base}/blocks"), &serde_json::json!({ "handle": handle, "blocking": blocking }))
+}
+
+#[tauri::command]
+pub fn marketplace_report<R: Runtime>(
+    app: AppHandle<R>,
+    url: String,
+    target_kind: String,
+    target_id: String,
+    reason: String,
+) -> Result<(), String> {
+    if !matches!(
+        target_kind.as_str(),
+        "comment" | "review" | "bundle" | "creator" | "topic" | "reply" | "shout"
+    ) {
+        return Err("targetKind must be comment, review, bundle, creator, topic, reply or shout".into());
+    }
+    let base = url.trim_end_matches('/');
+    post_social(
+        &app,
+        &format!("{base}/reports"),
+        &serde_json::json!({ "targetKind": target_kind, "targetId": target_id, "reason": reason }),
+    )
+}
+
+/// Publish a layout. `manifest` and `layout` are both JSON strings, matching
+/// the wire shape `POST /submissions` already uses for every other kind.
+///
+/// The caller has already stripped tile config (state/layoutPublish.ts) and
+/// the server validates that again — a tile object carrying anything beyond
+/// `type` and `rect` is refused, not quietly cleaned, since anyone can POST
+/// to that endpoint without going through this command.
+#[tauri::command]
+pub fn marketplace_publish_layout<R: Runtime>(
+    app: AppHandle<R>,
+    url: String,
+    manifest: String,
+    layout: String,
+    // Base64 PNG wireframe. Optional: a layout with no preview publishes
+    // fine and falls back to the letter block, exactly like any other
+    // previewless bundle.
+    preview: Option<String>,
+) -> Result<(), String> {
+    let token = session_token(&app)?;
+    let base = url.trim_end_matches('/');
+    let mut body = serde_json::json!({ "kind": "layout", "manifest": manifest, "code": layout });
+    if let Some(p) = preview.filter(|p| !p.is_empty()) {
+        body["preview"] = serde_json::Value::String(p);
+    }
+    let (status, buf) = post_capped_json(&format!("{base}/submissions"), &body, AUTH_CAP, Some(&token))?;
+    if !(200..300).contains(&status) {
+        let text = String::from_utf8_lossy(&buf).into_owned();
+        return Err(if text.trim().is_empty() { format!("publish failed: HTTP {status}") } else { text });
+    }
+    Ok(())
+}
+
+/// A creator's public profile plus what they have published. Unsigned browse
+/// data, same silent-failure contract as ratings: callers treat any `Err` as
+/// "no profile", never as an error worth interrupting browsing over.
+#[tauri::command]
+pub async fn marketplace_fetch_creator(url: String, handle: String) -> Result<serde_json::Value, String> {
+    // Same shape as is_safe_id, but handles allow underscores too.
+    if handle.is_empty()
+        || handle.len() > 24
+        || !handle.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'_')
+    {
+        return Err("invalid handle".into());
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        let base = url.trim_end_matches('/');
+        let bytes = get_capped(&format!("{base}/creators/{handle}"), FETCH_CAP)?;
+        let body = String::from_utf8(bytes).map_err(|_| "creator not UTF-8".to_string())?;
+        serde_json::from_str(&body).map_err(|e| format!("creator not JSON: {e}"))
+    })
+    .await
+    .map_err(|e| format!("fetch task failed: {e}"))?
+}
+
+/// The signed-in account's own profile. Requires a session; the token is read
+/// Rust-side and never crosses the IPC boundary as a parameter.
+#[tauri::command]
+pub fn marketplace_account_get<R: Runtime>(app: AppHandle<R>, url: String) -> Result<serde_json::Value, String> {
+    let token = session_token(&app)?;
+    let base = url.trim_end_matches('/');
+    let (status, buf) = get_capped_auth(&format!("{base}/account"), FETCH_CAP, &token)?;
+    let text = String::from_utf8_lossy(&buf).into_owned();
+    if !(200..300).contains(&status) {
+        return Err(if text.trim().is_empty() { format!("HTTP {status}") } else { text });
+    }
+    serde_json::from_str(&text).map_err(|e| format!("account not JSON: {e}"))
+}
+
+/// Claim a handle. One-time — the server refuses a second claim.
+#[tauri::command]
+pub fn marketplace_claim_handle<R: Runtime>(
+    app: AppHandle<R>,
+    url: String,
+    handle: String,
+) -> Result<(), String> {
+    let token = session_token(&app)?;
+    let base = url.trim_end_matches('/');
+    let body = serde_json::json!({ "handle": handle });
+    let (status, buf) = post_capped_json(&format!("{base}/account/handle"), &body, AUTH_CAP, Some(&token))?;
+    if !(200..300).contains(&status) {
+        let text = String::from_utf8_lossy(&buf).into_owned();
+        return Err(if text.trim().is_empty() { format!("HTTP {status}") } else { text });
+    }
+    Ok(())
+}
+
+/// Edit display name, bio and links. Every field optional; the server
+/// validates each one and returns a readable reason.
+#[tauri::command]
+pub fn marketplace_account_patch<R: Runtime>(
+    app: AppHandle<R>,
+    url: String,
+    patch: serde_json::Value,
+) -> Result<(), String> {
+    let token = session_token(&app)?;
+    let base = url.trim_end_matches('/');
+    let (status, buf) = patch_capped_json(&format!("{base}/account"), &patch, AUTH_CAP, &token)?;
+    if !(200..300).contains(&status) {
+        let text = String::from_utf8_lossy(&buf).into_owned();
+        return Err(if text.trim().is_empty() { format!("HTTP {status}") } else { text });
     }
     Ok(())
 }

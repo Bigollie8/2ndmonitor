@@ -38,7 +38,16 @@ async fn make_user(app: &axum::Router, email: &str) -> String {
     call(app, "GET", &format!("/auth/verify?token={verify}"), None, None).await;
     let (_, body) = call(app, "POST", "/auth/login", None,
         Some(serde_json::json!({"email": email, "password": "hunter22"}))).await;
-    body["token"].as_str().unwrap().to_string()
+    let token = body["token"].as_str().unwrap().to_string();
+    // 0.9.0: publishing requires a claimed handle. Derived from the address so
+    // every test account gets a distinct, valid one without each test caring.
+    // From the WHOLE address, not just the local part: "a@b.c" has a
+    // one-character local part, and handles have a three-character minimum.
+    let slug: String = email.chars().filter(|c| c.is_ascii_alphanumeric()).collect();
+    let handle: String = format!("u{slug}").chars().take(24).collect();
+    call(app, "POST", "/account/handle", Some(&token),
+        Some(serde_json::json!({ "handle": handle }))).await;
+    token
 }
 
 /// Smallest valid PNG: 1x1. Needed because both the media sniff and the legacy

@@ -37,7 +37,16 @@ pub async fn make_user(app: &axum::Router, email: &str) -> String {
     call(app, "GET", &format!("/auth/verify?token={verify}"), None, None).await;
     let (_, body) = call(app, "POST", "/auth/login", None,
         Some(serde_json::json!({"email": email, "password": "hunter22"}))).await;
-    body["token"].as_str().unwrap().to_string()
+    let token = body["token"].as_str().unwrap().to_string();
+    // 0.9.0: publishing requires a claimed handle. Derived from the address so
+    // every test account gets a distinct, valid one without each test caring.
+    // From the WHOLE address, not just the local part: "a@b.c" has a
+    // one-character local part, and handles have a three-character minimum.
+    let slug: String = email.chars().filter(|c| c.is_ascii_alphanumeric()).collect();
+    let handle: String = format!("u{slug}").chars().take(24).collect();
+    call(app, "POST", "/account/handle", Some(&token),
+        Some(serde_json::json!({ "handle": handle }))).await;
+    token
 }
 
 fn viz_manifest(id: &str, version: &str) -> String {
@@ -241,4 +250,110 @@ async fn unauthenticated_401_and_mine_lists() {
     assert_eq!(st, StatusCode::OK);
     assert_eq!(body["bundles"][0]["id"], "mine-viz");
     assert_eq!(body["bundles"][0]["status"], "pending");
+}
+
+// ── layouts (0.9.0) ─────────────────────────────────────────────────────────
+
+fn layout_manifest(id: &str) -> String {
+    serde_json::json!({
+        "id": id, "name": "Work setup", "version": "1.0.0", "api": 1,
+        "permissions": [], "category": "work"
+    })
+    .to_string()
+}
+
+fn layout_payload() -> String {
+    serde_json::json!({
+        "v": 1,
+        "landscape": [{ "type": "clock", "rect": {"x":0.0,"y":0.0,"w":0.5,"h":0.5} }],
+        "portrait": [],
+        "theme": { "accent": "#7cf5d4", "accent2": "#a5b4fc", "density": "comfortable", "glass": true, "vizMode": "aurora" }
+    })
+    .to_string()
+}
+
+#[tokio::test]
+async fn a_layout_publishes_and_auto_approves() {
+    let app = router(test_state());
+    let t = make_user(&app, "layout@x.y").await;
+    let (st, b) = call(&app, "POST", "/submissions", Some(&t), Some(serde_json::json!({
+        "kind": "layout", "manifest": layout_manifest("work-setup"), "code": layout_payload()
+    }))).await;
+    assert_eq!(st, StatusCode::OK, "{b}");
+
+    // Pure data, so validation is the whole review -- same rule as presets.
+    let (st, idx) = call(&app, "GET", "/index.json", None, None).await;
+    assert_eq!(st, StatusCode::OK);
+    assert!(
+        idx["bundles"].as_array().unwrap().iter().any(|x| x["id"] == "work-setup"),
+        "an auto-approved layout should be in the index immediately"
+    );
+}
+
+// The client strips config before publishing, but anyone can POST here -- so
+// the rule is enforced again on this side. Ignoring the extra field rather
+// than rejecting it would let a hand-crafted payload smuggle coordinates
+// into the catalog.
+#[tokio::test]
+async fn a_layout_carrying_tile_config_is_rejected_not_stripped() {
+    let app = router(test_state());
+    let t = make_user(&app, "sneaky@x.y").await;
+    let payload = serde_json::json!({
+        "v": 1,
+        "landscape": [{
+            "type": "weatherRadar",
+            "rect": {"x":0.0,"y":0.0,"w":0.5,"h":0.5},
+            "config": { "lat": 47.62, "lon": -122.35 }
+        }],
+        "portrait": [],
+        "theme": { "accent": "#fff", "accent2": "#fff", "density": "d", "glass": true, "vizMode": "v" }
+    })
+    .to_string();
+
+    let (st, body) = call(&app, "POST", "/submissions", Some(&t), Some(serde_json::json!({
+        "kind": "layout", "manifest": layout_manifest("leaky"), "code": payload
+    }))).await;
+    assert_eq!(st, StatusCode::BAD_REQUEST, "config must be refused outright: {body}");
+}
+
+#[tokio::test]
+async fn a_layout_with_an_out_of_range_rect_is_rejected() {
+    let app = router(test_state());
+    let t = make_user(&app, "offscreen@x.y").await;
+    let payload = serde_json::json!({
+        "v": 1,
+        "landscape": [{ "type": "clock", "rect": {"x":5.0,"y":0.0,"w":0.5,"h":0.5} }],
+        "portrait": [],
+        "theme": { "accent": "#fff", "accent2": "#fff", "density": "d", "glass": true, "vizMode": "v" }
+    })
+    .to_string();
+    let (st, _) = call(&app, "POST", "/submissions", Some(&t), Some(serde_json::json!({
+        "kind": "layout", "manifest": layout_manifest("offscreen"), "code": payload
+    }))).await;
+    assert_eq!(st, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn a_future_layout_schema_version_is_refused() {
+    let app = router(test_state());
+    let t = make_user(&app, "future@x.y").await;
+    let payload = serde_json::json!({ "v": 2, "landscape": [], "portrait": [], "theme": {} }).to_string();
+    let (st, _) = call(&app, "POST", "/submissions", Some(&t), Some(serde_json::json!({
+        "kind": "layout", "manifest": layout_manifest("futuristic"), "code": payload
+    }))).await;
+    assert_eq!(st, StatusCode::BAD_REQUEST, "refuse what we cannot read, rather than half-read it");
+}
+
+#[tokio::test]
+async fn a_layout_category_from_another_kind_is_rejected() {
+    let app = router(test_state());
+    let t = make_user(&app, "wrongcat@x.y").await;
+    let manifest = serde_json::json!({
+        "id": "miscategorised", "name": "L", "version": "1.0.0", "api": 1,
+        "permissions": [], "category": "milkdrop"
+    }).to_string();
+    let (st, _) = call(&app, "POST", "/submissions", Some(&t), Some(serde_json::json!({
+        "kind": "layout", "manifest": manifest, "code": layout_payload()
+    }))).await;
+    assert_eq!(st, StatusCode::BAD_REQUEST);
 }

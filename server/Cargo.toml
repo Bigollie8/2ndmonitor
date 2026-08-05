@@ -20,6 +20,11 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 parking_lot = "0.12"
 base64 = "0.22"
+# SMTP for account verification and password reset. rustls rather than
+# native-tls so the server keeps its no-OpenSSL build, matching how ureq
+# above is already configured.
+lettre = { version = "0.11", default-features = false, features = ["smtp-transport", "rustls-tls", "builder", "pool"] }
+url = "2"
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }

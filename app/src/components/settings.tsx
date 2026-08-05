@@ -19,7 +19,6 @@ import { IS_MAC } from '../state/platform';
 import {
   LS_URL, LS_PUBKEY, DEFAULT_URL, DEFAULT_PUBKEY, cfgUrl, cfgPubkey, isDefaultServer,
 } from '../state/marketplaceConfig';
-import { useMarketplaceAuth } from '../state/marketplaceAuth';
 
 const MONO = '"JetBrains Mono", ui-monospace, monospace';
 const HAIRLINE = '1px solid rgba(255,255,255,0.05)';
@@ -142,7 +141,7 @@ interface PaneDef {
 
 export function SettingsWindow({
   values: v, set, accent, accent2, accentLinked, trackTitle,
-  onOpenContentLibrary, onOpenMarket, onReplayOnboarding, onResetLayout, onExportSettings, onImportSettings, onClose,
+  onOpenContentLibrary, onOpenMarket, onOpenProfile, onOpenCommunity, onReplayOnboarding, onResetLayout, onExportSettings, onImportSettings, onClose,
 }: {
   values: SettingsValues;
   set: SettingsSetter;
@@ -154,6 +153,10 @@ export function SettingsWindow({
   onOpenContentLibrary?: () => void;
   /** Closes Settings and opens the full-bleed market (App owns both). */
   onOpenMarket?: () => void;
+  /** Closes Settings and opens the profile popout (App owns both). */
+  onOpenProfile?: () => void;
+  /** Closes Settings and opens the community home (App owns both). */
+  onOpenCommunity?: () => void;
   onReplayOnboarding: () => void;
   onResetLayout: () => void;
   onExportSettings?: () => void;
@@ -361,9 +364,14 @@ export function SettingsWindow({
       id: 'marketplace', icon: '⇄', title: 'Marketplace',
       rows: [
         {
-          id: 'marketplace-account', label: 'Account', stacked: true,
-          hint: 'Sign in to rate bundles. Your session token is stored locally, encrypted, and never leaves this device except to the marketplace server itself.',
-          control: <MarketplaceAccountEditor accent={accent} />,
+          id: 'marketplace-community', label: 'Community',
+          hint: 'Creators, the forum and the shoutbox.',
+          control: <SettingsButton label="Open community →" onClick={() => onOpenCommunity?.()} accent={accent} />,
+        },
+        {
+          id: 'marketplace-profile', label: 'Profile & account',
+          hint: 'Sign in, create an account, and manage how you appear on the marketplace. Moved to its own window in 0.9.0 — becoming a creator is not a preference.',
+          control: <SettingsButton label="Open profile →" onClick={() => onOpenProfile?.()} accent={accent} />,
         },
         {
           id: 'marketplace-server', label: 'Server & signing key', stacked: true,
@@ -887,96 +895,6 @@ function AutostartSwitch({ accent }: { accent: string }) {
 // 'signed-in' | 'error'), a masked email, or the server's own failure message
 // — the actual token stays Rust-side in the DPAPI secret store end to end.
 // ---------------------------------------------------------------------------
-
-function MarketplaceAccountEditor({ accent }: { accent: string }) {
-  const { state, signIn, signOut } = useMarketplaceAuth();
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-
-  const busy = state.status === 'checking' || state.status === 'signing-in';
-  const canSubmit = !busy && email.trim() !== '' && password !== '';
-
-  // The password only ever needs to live in this state for the duration of
-  // one sign-in attempt — leaving it in the JS heap for the rest of the
-  // Settings window's lifetime (this component stays mounted after the
-  // early-return below just renders a different tree) is pointless exposure.
-  // Cleared on success; deliberately NOT cleared on failure, so a typo is one
-  // correction away rather than a full retype.
-  useEffect(() => {
-    if (state.status === 'signed-in') { setPassword(''); setEmail(''); }
-  }, [state.status]);
-
-  // The server URL is user-editable (Settings -> Marketplace -> Server &
-  // signing key, or anything else that can write the marketplace.url
-  // localStorage key) and, unlike the signed index, a login POST has no
-  // pinned-key verification of its own — an https:// URL pointed at an
-  // attacker's host is indistinguishable from the real one by the https
-  // check alone. Surfacing the exact host the password is about to be sent
-  // to turns a silent redirect into a visible one.
-  const targetHost = (() => {
-    try { return new URL(cfgUrl()).host; } catch { return cfgUrl(); }
-  })();
-
-  const handleSignIn = () => {
-    if (!canSubmit) return;
-    void signIn(email.trim(), password);
-  };
-
-  if (state.status === 'signed-in') {
-    return (
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-        <div style={{ fontSize: 11.5, color: 'rgba(255,255,255,0.75)' }}>
-          Signed in{state.email ? <> as <span style={{ fontFamily: MONO, color: accent }}>{state.email}</span></> : ''}
-        </div>
-        <SettingsButton label="Sign out" onClick={() => void signOut()} />
-      </div>
-    );
-  }
-
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 10, maxWidth: 460 }}>
-      <div style={{ fontSize: 10.5, color: 'rgba(255,255,255,0.45)' }}>
-        Signing in to <span style={{ fontFamily: MONO, color: accent }}>{targetHost}</span>
-      </div>
-      <div>
-        <label style={fieldLabelStyle}>Email</label>
-        <input
-          type="email" value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          disabled={busy}
-          spellCheck={false}
-          autoComplete="username"
-          style={fieldInputStyle}
-        />
-      </div>
-      <div>
-        <label style={fieldLabelStyle}>Password</label>
-        <input
-          type="password" value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          disabled={busy}
-          autoComplete="current-password"
-          onKeyDown={(e) => { if (e.key === 'Enter') handleSignIn(); }}
-          style={fieldInputStyle}
-        />
-      </div>
-      {/* On failure, the server's own message (wrong password vs. unverified
-         vs. unreachable server are different problems and read differently
-         here) — never a generic "sign-in failed". See login_status_message
-         in marketplace.rs. */}
-      {state.status === 'error' && (
-        <div style={{ color: '#fb7185', fontSize: 11 }}>{state.message}</div>
-      )}
-      <div>
-        <SettingsButton
-          label={state.status === 'signing-in' ? 'Signing in…' : 'Sign in'}
-          onClick={handleSignIn}
-          accent={canSubmit ? accent : undefined}
-        />
-      </div>
-    </div>
-  );
-}
 
 // ---------------------------------------------------------------------------
 // Marketplace server config — URL + pinned signing pubkey. Lifted from the

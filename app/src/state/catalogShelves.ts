@@ -68,7 +68,12 @@ export function parseCollections(raw: unknown): Collection[] {
   for (const c of list) {
     if (!c || typeof c !== 'object') continue;
     const v = c as { slug?: unknown; title?: unknown; blurb?: unknown; items?: unknown };
-    if (typeof v.slug !== 'string' || typeof v.title !== 'string' || !Array.isArray(v.items)) continue;
+    // Empty is as unusable as absent: a blank slug becomes the shelf id
+    // `collection:` with nothing to link to, and a blank title renders a
+    // headless row. Both are dropped rather than rendered.
+    if (!v.slug || typeof v.slug !== 'string') continue;
+    if (!v.title || typeof v.title !== 'string') continue;
+    if (!Array.isArray(v.items)) continue;
     out.push({
       slug: v.slug,
       title: v.title,

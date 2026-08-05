@@ -39,6 +39,9 @@ async fn make_user_and_submit(app: &axum::Router) {
     let (_, body) = call(app, "POST", "/auth/login", None,
         Some(serde_json::json!({"email": "a@b.c", "password": "hunter22"}))).await;
     let t = body["token"].as_str().unwrap().to_string();
+    // 0.9.0: publishing requires a claimed handle.
+    call(app, "POST", "/account/handle", Some(&t),
+        Some(serde_json::json!({ "handle": "reviewer" }))).await;
     let (st, b) = call(app, "POST", "/submissions", Some(&t), Some(serde_json::json!({
         "kind": "visualizer",
         "manifest": serde_json::json!({"id":"my-viz","name":"V","version":"1.0.0","api":1,"permissions":[]}).to_string(),
