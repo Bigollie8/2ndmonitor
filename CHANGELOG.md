@@ -5,6 +5,43 @@ All notable changes to 2ndMonitor are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.8.6] - 2026-08-05
+
+### Added
+- **News ticker tile**: BBC and Guardian headlines, no API key, with
+  category chips — Top stories, World, Politics, Business, Tech, Science,
+  Sports, Entertainment. Two publishers interleaved so neither dominates;
+  click a headline to open the story
+- **Adaptive gain for the visualizer**: reactivity no longer depends on how
+  loud the app is. Quiet playback is boosted toward a target level; loud
+  playback renders exactly as before, and silence is never amplified into a
+  light show. Settings → Visualizer → Adaptive gain, on by default
+- **Discord tile scrolls**: all 20 retained notifications instead of 4, and
+  every voice-call member instead of the first 8
+
+### Fixed
+- **The Marketplace black screen, actually fixed this time.** The error
+  panel added in 0.8.5 finally produced a stack, and it pointed somewhere
+  new: the marketplace server wraps its collections list in an envelope the
+  app didn't expect, and the mismatch crashed the store roughly half a
+  second after opening — the moment the network reply arrived. The app now
+  accepts both shapes and refuses malformed data outright. This bug never
+  reproduced outside the installed app, which is why two earlier fixes
+  missed it
+- **Opening Settings no longer stops your music.** Panels used to close the
+  browser player to keep themselves visible, which killed playback and lost
+  your signed-in session; reopening reloaded the site from scratch — the
+  "settings freezes the app" report. The player is now simply made invisible
+  behind panels: it cannot cover them, and playback and session continue
+  underneath
+- **F11 covers the whole monitor.** Fullscreen used to leave a gap on the
+  left on some monitor/scale combinations — a DPI-conversion error, fixed by
+  using raw pixel coordinates end to end
+- **The auto-hide top bar works in fullscreen.** The invisible strip that
+  reveals it sat exactly inside the window's hidden resize border, which
+  swallowed the mouse; fullscreen windows are now non-resizable, which
+  removes the border
+
 ## [0.8.5] - 2026-08-05
 
 ### Fixed
