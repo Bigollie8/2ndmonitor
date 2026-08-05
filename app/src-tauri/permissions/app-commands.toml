@@ -124,6 +124,7 @@ commands.allow = [
   "weather_current",
   "set_audio_emit_hz",
   "set_waveform_enabled",
+  "set_stereo_waveform_enabled",
 
   # visualizer audio-source picker — apps currently holding a session
   # (audio_source.rs), plus the swap itself (audio.rs, answers on the

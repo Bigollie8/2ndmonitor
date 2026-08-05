@@ -5,6 +5,69 @@ All notable changes to 2ndMonitor are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.8.7] - 2026-08-05
+
+### Fixed
+- **Aircraft Overhead no longer throttles for some users.** The tile relied
+  on OpenSky's anonymous access, which grants a small daily budget per IP
+  address — anyone behind a shared or VPN'd address was sharing an
+  exhausted budget and saw the limit message permanently. Flight data now
+  comes from adsb.lol, a community feed with no key and no per-IP budget;
+  OpenSky remains only as an automatic fallback
+- **Weather radar on slow connections no longer glitches.** When radar
+  imagery arrived slower than the animation played (the New Zealand
+  report), frames flashed empty because each one drew only what had already
+  downloaded. The map now keeps showing the previous frame's imagery in any
+  spot the new frame hasn't loaded yet, and downloads the next frame ahead
+  of the animation
+- **F11 fullscreen, third round.** On some machines the window settles a few
+  pixels away from where it was told to go, leaving the reported gap on the
+  left and top. Fullscreen now measures where the window actually landed,
+  reapplies the correct rectangle up to three times, and — if the system
+  still refuses — logs the exact numbers so a beta tester's console output
+  pinpoints the cause. Also fixed: exiting fullscreen restores the window's
+  true previous frame instead of a slightly-shifted one
+- **macOS: the system-audio recording prompt should stop reappearing.**
+  macOS re-asks for permission when it thinks a *different* device is being
+  tapped. The app compared the default output device by its numeric ID,
+  which macOS reassigns freely (sleep/wake, AirPods reconnecting, display
+  changes), so a routine re-check looked like a new device and restarted
+  the tap — triggering a fresh permission prompt roughly every 20 minutes
+  for some setups. Devices are now compared by their stable unique ID, and
+  every tap creation is logged so testers can confirm from Console.app
+
+### Performance
+- **Full pre-0.9.0 performance audit.** Every native command, background
+  thread, polling loop, and animation path was reviewed. Measured result:
+  an edit-mode tile drag costs 1 map repaint and zero long tasks (was 246
+  repaints before the 0.7.3 pass — that fix has held through eight releases)
+- **Marketplace tiles can no longer freeze the app.** Five native operations
+  still did their network work on the interface thread — worst of all the
+  fetch that every web-backed marketplace tile repeats on its own schedule,
+  which could hold the entire app frozen for up to ten seconds per poll on
+  a slow connection. Installing a bundle, signing in, rating, and posting a
+  review had the same flaw. All five now run off-thread; this is the last
+  of the bug class behind the 0.6.3 Content Library freeze
+- **Visualizers now keep time by the clock, not the frame rate.** The
+  spectrum engine assumed 25 frames per second while actually running at
+  your display cap, so adaptive gain, beat detection decay, and the
+  no-audio demo tempo all ran about 2.4x too fast at the default 60fps
+  setting — and faster still on high-refresh monitors. Everything is now
+  computed from real elapsed time, identical on every monitor and
+  Performance Mode
+- **Slightly faster startup.** A system-monitor warm-up pause ran on the
+  main thread during launch and delayed first paint by 200ms; it now runs
+  in the background
+- **Stereo audio data is now sent only to visualizers that use it.** The
+  two-channel waveform stream — roughly double the audio traffic — was
+  broadcast whenever any visualizer ran, though only the Vectorscope and
+  Loudness console read it. Those two now declare it and everyone else
+  stops paying for it
+- **Closing one visualizer no longer freezes the waveform in another.**
+  Any visualizer being closed switched the waveform stream off globally,
+  even with other visualizers still on screen — a long-standing latent bug
+  the audit surfaced
+
 ## [0.8.6] - 2026-08-05
 
 ### Added

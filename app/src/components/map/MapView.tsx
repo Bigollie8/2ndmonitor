@@ -92,6 +92,17 @@ function getTile(
   return null;
 }
 
+/** Cache-only lookup: a loaded tile or null. Refreshes LRU position so a
+ *  tile being used as a stale-while-loading fallback isn't evicted mid-use;
+ *  never fetches — old radar frames must not be re-downloaded. */
+function peekTile(url: string, cache: Map<string, CacheEntry>): HTMLImageElement | null {
+  const hit = cache.get(url);
+  if (!hit || hit.status !== 'ok') return null;
+  cache.delete(url);
+  cache.set(url, hit);
+  return hit.img;
+}
+
 export interface MapViewProps {
   view: MapViewState;
   onViewChange: (next: MapViewState) => void;
@@ -101,6 +112,17 @@ export interface MapViewProps {
   overlay?: (ctx: CanvasRenderingContext2D, projectPt: ProjectFn) => void;
   /** Optional raster overlay (radar frames), same slippy grid as the base. */
   overlayTileUrl?: ((z: number, x: number, y: number) => string) | null;
+  /** Stale-while-loading fallback (0.8.7): when the CURRENT overlay frame's
+   *  tile hasn't loaded yet, draw the PREVIOUS frame's tile in its place
+   *  instead of a hole. On a high-latency link (the NZ report) the loop
+   *  advances faster than tiles arrive, and holes-then-pops every frame is
+   *  exactly the reported "glitching". Peeked from cache only — an old frame
+   *  is never re-fetched. */
+  overlayTilePrevUrl?: ((z: number, x: number, y: number) => string) | null;
+  /** Warm the NEXT frame's tiles while the current one is on screen (0.8.7),
+   *  so a playing loop advances onto tiles that are already local. Fetch-only;
+   *  nothing from this is drawn this frame. */
+  overlayTilePrefetchUrl?: ((z: number, x: number, y: number) => string) | null;
   overlayTileAlpha?: number;
   /** Streamer mode (0.7.1 §2): when true, draw NO base tiles, fetch nothing,
    *  and skip the overlay callback + raster overlay entirely — just the dark
@@ -113,7 +135,8 @@ export interface MapViewProps {
  *  components/panelDrag.ts), wheel zooms anchored at the cursor, and all
  *  redraws are rAF-batched. */
 function MapViewImpl({
-  view, onViewChange, minZoom, maxZoom, overlay, overlayTileUrl, overlayTileAlpha = 0.7, redacted = false,
+  view, onViewChange, minZoom, maxZoom, overlay, overlayTileUrl,
+  overlayTilePrevUrl, overlayTilePrefetchUrl, overlayTileAlpha = 0.7, redacted = false,
 }: MapViewProps) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -126,6 +149,8 @@ function MapViewImpl({
   const onViewChangeRef = useRef(onViewChange); onViewChangeRef.current = onViewChange;
   const overlayRef = useRef(overlay); overlayRef.current = overlay;
   const overlayTileUrlRef = useRef(overlayTileUrl); overlayTileUrlRef.current = overlayTileUrl;
+  const overlayTilePrevUrlRef = useRef(overlayTilePrevUrl); overlayTilePrevUrlRef.current = overlayTilePrevUrl;
+  const overlayTilePrefetchUrlRef = useRef(overlayTilePrefetchUrl); overlayTilePrefetchUrlRef.current = overlayTilePrefetchUrl;
   const overlayTileAlphaRef = useRef(overlayTileAlpha); overlayTileAlphaRef.current = overlayTileAlpha;
   const redactedRef = useRef(redacted); redactedRef.current = redacted;
 
@@ -162,13 +187,25 @@ function MapViewImpl({
     const urlFn = overlayTileUrlRef.current;
     if (urlFn) {
       ctx.globalAlpha = overlayTileAlphaRef.current;
+      const prevFn = overlayTilePrevUrlRef.current;
       for (const t of tiles) {
         // Overlay cache, NOT the base cache — a playing radar loop must never
         // be able to evict the basemap out from under itself.
-        const img = getTile(urlFn(t.z, t.x, t.y), schedule, overlayCache, OVERLAY_CACHE_MAX);
+        let img = getTile(urlFn(t.z, t.x, t.y), schedule, overlayCache, OVERLAY_CACHE_MAX);
+        // Stale-while-loading (0.8.7): the previous frame's tile beats a hole.
+        if (!img && prevFn) img = peekTile(prevFn(t.z, t.x, t.y), overlayCache);
         if (img) ctx.drawImage(img, t.sx, t.sy, t.size, t.size);
       }
       ctx.globalAlpha = 1;
+      // Warm the NEXT frame's tiles so playback advances onto local data —
+      // on a high-latency link this is the difference between a smooth loop
+      // and holes popping in every frame.
+      const prefetchFn = overlayTilePrefetchUrlRef.current;
+      if (prefetchFn) {
+        for (const t of tiles) {
+          getTile(prefetchFn(t.z, t.x, t.y), schedule, overlayCache, OVERLAY_CACHE_MAX);
+        }
+      }
     }
     const ov = overlayRef.current;
     if (ov) {

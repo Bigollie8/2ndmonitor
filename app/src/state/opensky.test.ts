@@ -8,7 +8,10 @@ test('describeAircraftError: a 429 is the daily anonymous quota, not a blip', ()
   // Must NOT promise a quick recovery - the old copy said "usually clears in a
   // minute", which is wrong for a daily quota and is what made this look like
   // a transient API fault rather than a budget we had exhausted.
-  assert.match(d.hint, /daily/i);
+  // 0.8.7: the hint now explains a shared/VPN IP rather than promising the
+  // user's own daily quota — with adsb.lol primary, a 429 means the fallback
+  // is exhausted, usually by strangers on the same IP.
+  assert.match(d.hint, /shared|VPN/i);
   assert.doesNotMatch(d.hint, /minute/i);
 });
 

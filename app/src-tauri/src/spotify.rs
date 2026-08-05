@@ -523,6 +523,12 @@ pub async fn spotify_set_volume<R: Runtime>(app: AppHandle<R>, percent: u8) -> R
     };
     emit_state(&app);
 
+    // spawn_blocking (0.8.7 audit): this was the one async command issuing
+    // blocking ureq calls in its async body — worst case (401 → refresh POST
+    // → retry PUT) is three sequential 8s-timeout calls parked on a tokio
+    // worker, which a few slider drags on a bad network could multiply into
+    // starving the runtime's small worker pool.
+    tauri::async_runtime::spawn_blocking(move || {
     let token = ensure_fresh_token(&app).ok_or_else(|| "Not connected".to_string())?;
     let mut url = format!(
         "https://api.spotify.com/v1/me/player/volume?volume_percent={percent}"
@@ -588,6 +594,9 @@ pub async fn spotify_set_volume<R: Runtime>(app: AppHandle<R>, percent: u8) -> R
         return classify(r2, &app);
     }
     classify(resp, &app)
+    })
+    .await
+    .map_err(|e| format!("volume task failed: {e}"))?
 }
 
 fn finish_exchange<R: Runtime>(app: &AppHandle<R>, client_id: &str, code: &str, verifier: &str) {

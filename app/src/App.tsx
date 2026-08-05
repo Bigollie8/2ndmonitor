@@ -683,30 +683,51 @@ export default function App() {
       } else {
         const monitor = await currentMonitor();
         if (!monitor) { console.warn('F11: no monitor reported; ignoring'); return; }
-        const pos = await win.innerPosition();
-        const size = await win.innerSize();
+        // Capture the OUTER rect for restore (0.8.7). The previous code
+        // captured innerPosition of the still-DECORATED window and later
+        // restored it as the outer position — so every F11 round trip crept
+        // the window down-right by the title bar + border. Outer-in,
+        // outer-out is symmetric.
+        const pos = await win.outerPosition();
+        const size = await win.outerSize();
         preFullscreenRef.current = {
           x: pos.x, y: pos.y,
           w: size.width, h: size.height,
         };
-        // PHYSICAL units end to end (0.8.6). The first version divided the
-        // monitor's physical origin/size by scaleFactor and passed Logical*,
-        // which Tauri converts back to physical using the WINDOW's scale — a
-        // value that changes mid-move when crossing monitors, and rounds.
-        // Every conversion was a chance to land short, and on real multi-DPI
-        // setups it reliably did: the window sat inset from the monitor edge
-        // (the reported gap on the left, seen across three monitors at three
-        // scales). The monitor's own physical rect needs no arithmetic at all.
         await win.setDecorations(false);
         // An undecorated RESIZABLE window keeps invisible resize handles on
         // its edges — Windows hit-tests the top few pixels as non-client, so
-        // the DOM never sees the pointer there. That is what made the
-        // auto-hide top bar's 4px reveal strip unreachable in F11: the strip
-        // sat exactly inside the resize handle. A fullscreen window has no
-        // business being resizable anyway, so drop it for the duration.
+        // the DOM never sees the pointer there (the 0.8.6 top-bar fix). A
+        // fullscreen window has no business being resizable anyway.
         await win.setResizable(false);
-        await win.setPosition(new PhysicalPosition(monitor.position.x, monitor.position.y));
-        await win.setSize(new PhysicalSize(monitor.size.width, monitor.size.height));
+        // CONVERGE on the monitor rect instead of fire-and-forget (0.8.7).
+        // Physical units alone (0.8.6) did not close the reported gap: moving
+        // and resizing a window across monitors triggers Windows' own DPI /
+        // frame adjustments, which can land AFTER our set* calls and shift
+        // the window — a race no single apply can win. So: apply, let the
+        // window settle, MEASURE where it actually is (inner == outer once
+        // undecorated), and reapply while it disagrees, up to 3 passes. If
+        // it still refuses, the warn logs the exact rect Windows settled on,
+        // which is the evidence for a round-4 diagnosis rather than a guess.
+        const target = {
+          x: monitor.position.x, y: monitor.position.y,
+          w: monitor.size.width, h: monitor.size.height,
+        };
+        for (let attempt = 1; attempt <= 3; attempt++) {
+          await win.setPosition(new PhysicalPosition(target.x, target.y));
+          await win.setSize(new PhysicalSize(target.w, target.h));
+          await new Promise((r) => setTimeout(r, 90));
+          const p = await win.innerPosition();
+          const s = await win.innerSize();
+          const ok = p.x === target.x && p.y === target.y
+            && s.width === target.w && s.height === target.h;
+          if (ok) break;
+          console.warn(
+            `F11: settled at ${p.x},${p.y} ${s.width}x${s.height}, wanted `
+            + `${target.x},${target.y} ${target.w}x${target.h} (pass ${attempt})`
+            + (attempt === 3 ? ' — giving up, please report these numbers' : ' — reapplying'),
+          );
+        }
         await win.setAlwaysOnTop(true);
       }
 

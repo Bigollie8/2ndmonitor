@@ -239,8 +239,10 @@ fn post_capped_json(
 /// login submission IS the credential channel) and to hash-compare nothing
 /// else; it is never logged, never included in an error message, and is
 /// dropped when this function returns.
+// async + spawn_blocking (0.8.7 audit): the sync version froze the UI for the
+// POST round trip, so the login form appeared hung on a slow network.
 #[tauri::command]
-pub fn marketplace_login<R: Runtime>(
+pub async fn marketplace_login<R: Runtime>(
     app: AppHandle<R>,
     url: String,
     email: String,
@@ -249,7 +251,11 @@ pub fn marketplace_login<R: Runtime>(
     let base = url.trim_end_matches('/');
     let endpoint = format!("{base}/auth/login");
     let body = serde_json::json!({ "email": email, "password": password });
-    let (status, buf) = post_capped_json(&endpoint, &body, AUTH_CAP, None)?;
+    let (status, buf) = tauri::async_runtime::spawn_blocking(move || {
+        post_capped_json(&endpoint, &body, AUTH_CAP, None)
+    })
+    .await
+    .map_err(|e| format!("login task failed: {e}"))??;
     if let Some(msg) = login_status_message(status) {
         return Err(msg);
     }
@@ -429,7 +435,7 @@ pub async fn marketplace_fetch_reviews(url: String, id: String) -> Result<serde_
 /// Unlike the fetch above, a failure here MUST reach the user: they typed
 /// something and deserve to know it did not land.
 #[tauri::command]
-pub fn marketplace_post_review<R: Runtime>(
+pub async fn marketplace_post_review<R: Runtime>(
     app: AppHandle<R>,
     url: String,
     id: String,
@@ -454,7 +460,11 @@ pub fn marketplace_post_review<R: Runtime>(
     let base = url.trim_end_matches('/');
     let endpoint = format!("{base}/reviews");
     let payload = serde_json::json!({ "id": id, "body": body });
-    let (status, buf) = post_capped_json(&endpoint, &payload, AUTH_CAP, Some(&token))?;
+    let (status, buf) = tauri::async_runtime::spawn_blocking(move || {
+        post_capped_json(&endpoint, &payload, AUTH_CAP, Some(&token))
+    })
+    .await
+    .map_err(|e| format!("review task failed: {e}"))??;
     if !(200..300).contains(&status) {
         let text = String::from_utf8_lossy(&buf).into_owned();
         return Err(if text.trim().is_empty() {
@@ -480,7 +490,7 @@ pub fn marketplace_post_review<R: Runtime>(
 /// network request is made, the same fail-fast shape `marketplace_install`
 /// uses for `is_safe_id`.
 #[tauri::command]
-pub fn marketplace_rate<R: Runtime>(
+pub async fn marketplace_rate<R: Runtime>(
     app: AppHandle<R>,
     url: String,
     id: String,
@@ -502,7 +512,11 @@ pub fn marketplace_rate<R: Runtime>(
     let base = url.trim_end_matches('/');
     let endpoint = format!("{base}/ratings");
     let body = serde_json::json!({ "id": id, "stars": stars });
-    let (status, buf) = post_capped_json(&endpoint, &body, AUTH_CAP, Some(&token))?;
+    let (status, buf) = tauri::async_runtime::spawn_blocking(move || {
+        post_capped_json(&endpoint, &body, AUTH_CAP, Some(&token))
+    })
+    .await
+    .map_err(|e| format!("rating task failed: {e}"))??;
     let text = String::from_utf8_lossy(&buf).into_owned();
     if let Some(msg) = rate_status_message(status, &text) {
         return Err(msg);
@@ -792,8 +806,11 @@ fn resolve_zip_bytes(
     }
 }
 
+// async + spawn_blocking (0.8.7 audit): the download (up to ZIP_CAP, 10s
+// timeout) plus the unzip-to-disk ran on the main thread and froze the UI for
+// the whole install.
 #[tauri::command]
-pub fn marketplace_install<R: Runtime>(
+pub async fn marketplace_install<R: Runtime>(
     app: AppHandle<R>,
     url: String,
     id: String,
@@ -804,6 +821,21 @@ pub fn marketplace_install<R: Runtime>(
     if !is_safe_id(&id) {
         return Err("invalid bundle id".into());
     }
+    tauri::async_runtime::spawn_blocking(move || {
+        marketplace_install_blocking(&app, &url, &id, &version, &sha256, &kind)
+    })
+    .await
+    .map_err(|e| format!("install task failed: {e}"))?
+}
+
+fn marketplace_install_blocking<R: Runtime>(
+    app: &AppHandle<R>,
+    url: &str,
+    id: &str,
+    version: &str,
+    sha256: &str,
+    kind: &str,
+) -> Result<(), String> {
     let base = url.trim_end_matches('/');
     // Offline reinstall: a network failure (no connection, server down, plane
     // wifi) falls back to the seed copy shipped in resources, if one exists
@@ -817,7 +849,7 @@ pub fn marketplace_install<R: Runtime>(
     // corrupted download would.
     let zip_bytes = resolve_zip_bytes(
         get_capped(&format!("{base}/bundle/{id}/{version}"), ZIP_CAP),
-        || crate::seed::seed_zip_for(&app, &kind, &id, &version),
+        || crate::seed::seed_zip_for(app, kind, id, version),
     )?;
     if zip_bytes.len() > ZIP_CAP {
         return Err("bundle too large".into());
@@ -827,7 +859,7 @@ pub fn marketplace_install<R: Runtime>(
         return Err("bundle hash does not match the signed index — refusing to install".into());
     }
 
-    install_bundle_zip(&app, &kind, &id, &version, &zip_bytes, "marketplace")
+    install_bundle_zip(app, kind, id, version, &zip_bytes, "marketplace")
 }
 
 #[tauri::command]
@@ -1063,8 +1095,12 @@ fn is_redirect_status(status: u16) -> bool {
 /// across the hop (I2). With `redirects(0)` a 3xx is just an ordinary
 /// response ureq hands back without following; it's turned into a clear error
 /// below instead of silently chasing the Location header.
+// async + spawn_blocking (0.8.7 audit): this is the fetch path every
+// HTTP-backed tile polls on its own interval — as a sync command the 10s
+// worst-case round trip ran on the main thread and froze the whole UI, the
+// 0.6.3 bug class on the busiest possible code path.
 #[tauri::command]
-pub fn broker_fetch(
+pub async fn broker_fetch(
     url: String,
     headers: Option<std::collections::HashMap<String, String>>,
 ) -> Result<BrokerResponse, String> {
@@ -1074,32 +1110,36 @@ pub fn broker_fetch(
     if let Some(h) = &headers {
         validate_headers(h)?;
     }
-    let agent = ureq::AgentBuilder::new().redirects(0).build();
-    let mut req = agent.get(&url).timeout(std::time::Duration::from_secs(10));
-    if let Some(h) = &headers {
-        for (name, value) in h {
-            req = req.set(name, value);
+    tauri::async_runtime::spawn_blocking(move || {
+        let agent = ureq::AgentBuilder::new().redirects(0).build();
+        let mut req = agent.get(&url).timeout(std::time::Duration::from_secs(10));
+        if let Some(h) = &headers {
+            for (name, value) in h {
+                req = req.set(name, value);
+            }
         }
-    }
-    let resp = req.call().map_err(|e| format!("request failed: {e}"))?;
-    let status = resp.status();
-    if is_redirect_status(status) {
-        return Err(format!(
-            "server responded with a redirect (HTTP {status}) — redirects are not followed"
-        ));
-    }
-    let mut buf = Vec::new();
-    resp.into_reader()
-        .take((FETCH_CAP + 1) as u64)
-        .read_to_end(&mut buf)
-        .map_err(|e| format!("read failed: {e}"))?;
-    if buf.len() > FETCH_CAP {
-        return Err("response too large".into());
-    }
-    Ok(BrokerResponse {
-        status,
-        body: String::from_utf8_lossy(&buf).into_owned(),
+        let resp = req.call().map_err(|e| format!("request failed: {e}"))?;
+        let status = resp.status();
+        if is_redirect_status(status) {
+            return Err(format!(
+                "server responded with a redirect (HTTP {status}) — redirects are not followed"
+            ));
+        }
+        let mut buf = Vec::new();
+        resp.into_reader()
+            .take((FETCH_CAP + 1) as u64)
+            .read_to_end(&mut buf)
+            .map_err(|e| format!("read failed: {e}"))?;
+        if buf.len() > FETCH_CAP {
+            return Err("response too large".into());
+        }
+        Ok(BrokerResponse {
+            status,
+            body: String::from_utf8_lossy(&buf).into_owned(),
+        })
     })
+    .await
+    .map_err(|e| format!("fetch task failed: {e}"))?
 }
 
 #[cfg(test)]

@@ -142,6 +142,18 @@ pub fn set_waveform_enabled(enabled: bool) {
     WAVEFORM_ENABLED.store(enabled, std::sync::atomic::Ordering::Relaxed);
 }
 
+/// Stereo waveform is opted into SEPARATELY (0.8.7): its payload is ~2x the
+/// mono one and only bundles whose manifest declares "stereo": true consume
+/// it — tying it to the mono flag made every bundle surface pay the IPC for
+/// the two stereo meters' benefit.
+static STEREO_WAVEFORM_ENABLED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+#[tauri::command]
+pub fn set_stereo_waveform_enabled(enabled: bool) {
+    STEREO_WAVEFORM_ENABLED.store(enabled, std::sync::atomic::Ordering::Relaxed);
+}
+
 /// f32 [-1,1] → u8 centered at 128 (Web Audio getByteTimeDomainData convention).
 fn sample_to_byte(s: f32) -> u8 {
     ((s.clamp(-1.0, 1.0) * 127.0) + 128.0) as u8
@@ -1218,10 +1230,11 @@ fn process_loop<R: Runtime>(
         let _ = app.emit("audio:spectrum", AudioFrame { bands, level });
 
         // Stereo waveform (0.8.4) — the vectorscope and the correlation/width
-        // meters need both channels. Rides the same opt-in flag as the mono
-        // waveform so nothing pays for it unless a surface asked, and emits
-        // the two channels de-interleaved so the frontend does no unpacking.
-        if WAVEFORM_ENABLED.load(std::sync::atomic::Ordering::Relaxed)
+        // meters need both channels, de-interleaved so the frontend does no
+        // unpacking. Since 0.8.7 it rides its OWN opt-in flag: only bundles
+        // declaring "stereo": true consume it, and riding the mono flag made
+        // every waveform consumer pay double the event traffic.
+        if STEREO_WAVEFORM_ENABLED.load(std::sync::atomic::Ordering::Relaxed)
             && stereo_tail.len() >= WAVEFORM_LEN * 2
         {
             let tail = &stereo_tail[stereo_tail.len() - WAVEFORM_LEN * 2..];
