@@ -61,6 +61,27 @@ pub async fn set_follow(
     }
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
+    // A block covers following, not just what you see. Otherwise the person
+    // you blocked still lands in your follower count and still gets your work
+    // in their feed.
+    let blocked: i64 = db
+        .query_row(
+            "SELECT COUNT(*) FROM blocks WHERE user_id = ?1 AND blocked_id = ?2",
+            [creator, follower],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
+    if blocked > 0 && following {
+        return Err((StatusCode::FORBIDDEN, "you cannot follow that creator".into()));
+    }
+
+    if following {
+        // "Somebody followed you" is the most encouraging thing a new creator
+        // can receive, and the one notification that fires on a relationship
+        // rather than on content.
+        crate::notify::push(&db, creator, Some(follower), "follow", "creator", &handle, "");
+    }
+
     Ok(Json(json!({ "ok": true, "following": following })))
 }
 

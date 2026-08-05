@@ -461,3 +461,184 @@ async fn hiding_a_real_shout_still_works_and_reports_success() {
     let (_, after) = call(&app, "GET", "/shouts", None, None).await;
     assert_eq!(after["shouts"].as_array().unwrap().len(), 0);
 }
+
+
+// ── notifications ───────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn following_someone_lands_in_their_inbox() {
+    let app = router(test_state());
+    let a = account(&app, "n1@x.y", Some("follower1")).await;
+    let b = account(&app, "n2@x.y", Some("followed1")).await;
+
+    call(&app, "POST", "/follows", Some(&a), Some(serde_json::json!({ "handle": "followed1" }))).await;
+
+    let (st, inbox) = call(&app, "GET", "/notifications", Some(&b), None).await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(inbox["unread"], 1);
+    assert_eq!(inbox["notifications"][0]["kind"], "follow");
+    assert_eq!(inbox["notifications"][0]["actor"], "follower1");
+}
+
+// You are never told about your own actions.
+#[tokio::test]
+async fn your_own_actions_never_notify_you() {
+    let app = router(test_state());
+    let me = account(&app, "n3@x.y", Some("selfy")).await;
+    call(&app, "POST", "/comments", Some(&me),
+        Some(serde_json::json!({ "id": "b1", "body": "talking to @selfy" }))).await;
+
+    let (_, inbox) = call(&app, "GET", "/notifications", Some(&me), None).await;
+    assert_eq!(inbox["unread"], 0);
+}
+
+#[tokio::test]
+async fn a_mention_reaches_the_person_named() {
+    let app = router(test_state());
+    let a = account(&app, "n4@x.y", Some("mentioner")).await;
+    let b = account(&app, "n5@x.y", Some("mentioned")).await;
+
+    call(&app, "POST", "/comments", Some(&a),
+        Some(serde_json::json!({ "id": "b2", "body": "ask @mentioned about it" }))).await;
+
+    let (_, inbox) = call(&app, "GET", "/notifications", Some(&b), None).await;
+    assert_eq!(inbox["unread"], 1);
+    assert_eq!(inbox["notifications"][0]["kind"], "mention");
+}
+
+// Otherwise @-mentioning is simply the way around a block.
+#[tokio::test]
+async fn a_blocked_person_cannot_reach_your_inbox_by_mentioning_you() {
+    let app = router(test_state());
+    let pest = account(&app, "n6@x.y", Some("thepest")).await;
+    let victim = account(&app, "n7@x.y", Some("thevictim")).await;
+
+    call(&app, "POST", "/blocks", Some(&victim),
+        Some(serde_json::json!({ "handle": "thepest", "blocking": true }))).await;
+    call(&app, "POST", "/comments", Some(&pest),
+        Some(serde_json::json!({ "id": "b3", "body": "hey @thevictim" }))).await;
+
+    let (_, inbox) = call(&app, "GET", "/notifications", Some(&victim), None).await;
+    assert_eq!(inbox["unread"], 0);
+}
+
+#[tokio::test]
+async fn a_reply_notifies_the_topic_author() {
+    let app = router(test_state());
+    let author = account(&app, "n8@x.y", Some("topicauthor")).await;
+    let replier = account(&app, "n9@x.y", Some("thereplier")).await;
+
+    let (_, t) = call(&app, "POST", "/topics", Some(&author),
+        Some(serde_json::json!({ "title": "a question", "body": "anyone?" }))).await;
+    let id = t["id"].as_i64().unwrap();
+    call(&app, "POST", "/topics/replies", Some(&replier),
+        Some(serde_json::json!({ "topicId": id, "body": "an answer" }))).await;
+
+    let (_, inbox) = call(&app, "GET", "/notifications", Some(&author), None).await;
+    assert_eq!(inbox["notifications"][0]["kind"], "reply");
+    assert_eq!(inbox["notifications"][0]["actor"], "thereplier");
+}
+
+#[tokio::test]
+async fn marking_read_clears_the_badge_and_only_your_own() {
+    let app = router(test_state());
+    let a = account(&app, "n10@x.y", Some("reader1")).await;
+    let b = account(&app, "n11@x.y", Some("reader2")).await;
+    let c = account(&app, "n12@x.y", Some("actor1")).await;
+
+    call(&app, "POST", "/follows", Some(&c), Some(serde_json::json!({ "handle": "reader1" }))).await;
+    call(&app, "POST", "/follows", Some(&c), Some(serde_json::json!({ "handle": "reader2" }))).await;
+
+    let (_, mine) = call(&app, "GET", "/notifications", Some(&a), None).await;
+    let id = mine["notifications"][0]["id"].as_i64().unwrap();
+
+    // Somebody else's id must not be markable.
+    call(&app, "POST", "/notifications/read", Some(&b), Some(serde_json::json!({ "id": id }))).await;
+    let (_, still) = call(&app, "GET", "/notifications", Some(&a), None).await;
+    assert_eq!(still["unread"], 1, "another user cannot mark your notification read");
+
+    call(&app, "POST", "/notifications/read", Some(&a), Some(serde_json::json!({}))).await;
+    let (_, after) = call(&app, "GET", "/notifications", Some(&a), None).await;
+    assert_eq!(after["unread"], 0);
+}
+
+// ── retracting your own words ───────────────────────────────────────────────
+
+#[tokio::test]
+async fn you_can_delete_your_own_comment_but_not_anybody_elses() {
+    let app = router(test_state());
+    let mine = account(&app, "d1@x.y", Some("owner1")).await;
+    let theirs = account(&app, "d2@x.y", Some("stranger1")).await;
+
+    call(&app, "POST", "/comments", Some(&mine),
+        Some(serde_json::json!({ "id": "bd", "body": "oops my email" }))).await;
+    let (_, list) = call(&app, "GET", "/comments?id=bd", Some(&mine), None).await;
+    let id = list["comments"][0]["id"].as_i64().unwrap();
+
+    let (st, _) = call(&app, "DELETE", "/comments/mine", Some(&theirs),
+        Some(serde_json::json!({ "id": id }))).await;
+    assert_eq!(st, StatusCode::NOT_FOUND, "somebody else's comment is not yours to delete");
+
+    let (st, _) = call(&app, "DELETE", "/comments/mine", Some(&mine),
+        Some(serde_json::json!({ "id": id }))).await;
+    assert_eq!(st, StatusCode::OK);
+
+    let (_, after) = call(&app, "GET", "/comments?id=bd", Some(&mine), None).await;
+    assert_eq!(after["comments"].as_array().unwrap().len(), 0, "gone, not hidden");
+}
+
+// ── queue hygiene ───────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn reporting_the_same_thing_twice_does_not_double_the_queue() {
+    let app = router(test_state());
+    let a = account(&app, "dr1@x.y", Some("doublereporter")).await;
+
+    for _ in 0..3 {
+        let (st, _) = call(&app, "POST", "/reports", Some(&a), Some(serde_json::json!({
+            "targetKind": "comment", "targetId": "77", "reason": "spam",
+        }))).await;
+        assert_eq!(st, StatusCode::OK, "each attempt still reads as success");
+    }
+
+    let (_, queue) = call(&app, "GET", "/admin/reports", Some(ADMIN), None).await;
+    let n = queue["reports"].as_array().unwrap().iter()
+        .filter(|r| r["targetId"] == "77").count();
+    assert_eq!(n, 1, "one open report per person per target");
+}
+
+// A block covers following, not just what you see.
+#[tokio::test]
+async fn a_blocked_person_cannot_follow_you() {
+    let app = router(test_state());
+    let pest = account(&app, "bf1@x.y", Some("blockedpest")).await;
+    let victim = account(&app, "bf2@x.y", Some("blockingone")).await;
+
+    call(&app, "POST", "/blocks", Some(&victim),
+        Some(serde_json::json!({ "handle": "blockedpest", "blocking": true }))).await;
+
+    let (st, _) = call(&app, "POST", "/follows", Some(&pest),
+        Some(serde_json::json!({ "handle": "blockingone" }))).await;
+    assert_eq!(st, StatusCode::FORBIDDEN);
+}
+
+// ── forum search ────────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn the_forum_is_searchable_over_title_and_body() {
+    let app = router(test_state());
+    let a = account(&app, "fs1@x.y", Some("searcher")).await;
+    call(&app, "POST", "/topics", Some(&a),
+        Some(serde_json::json!({ "title": "Weather tile ideas", "body": "radar please" }))).await;
+    call(&app, "POST", "/topics", Some(&a),
+        Some(serde_json::json!({ "title": "Something else", "body": "unrelated" }))).await;
+
+    let (_, by_title) = call(&app, "GET", "/topics?q=weather", None, None).await;
+    assert_eq!(by_title["topics"].as_array().unwrap().len(), 1);
+
+    let (_, by_body) = call(&app, "GET", "/topics?q=radar", None, None).await;
+    assert_eq!(by_body["topics"].as_array().unwrap().len(), 1);
+
+    let (_, all) = call(&app, "GET", "/topics", None, None).await;
+    assert_eq!(all["topics"].as_array().unwrap().len(), 2, "no query means everything");
+}

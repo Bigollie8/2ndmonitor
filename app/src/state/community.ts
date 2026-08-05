@@ -71,9 +71,13 @@ export async function fetchCreators(query?: string): Promise<DirectoryCreator[]>
   return res.creators ?? [];
 }
 
-export async function fetchTopics(bundleId?: string | null): Promise<Topic[]> {
+export async function fetchTopics(
+  bundleId?: string | null,
+  query?: string,
+): Promise<Topic[]> {
   const res = await (await invoke())<{ topics: Topic[] }>(
-    'marketplace_fetch_topics', { url: cfgUrl(), bundleId: bundleId ?? null },
+    'marketplace_fetch_topics',
+    { url: cfgUrl(), bundleId: bundleId ?? null, query: query ?? null },
   );
   return res.topics ?? [];
 }

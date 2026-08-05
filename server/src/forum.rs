@@ -18,7 +18,7 @@ use axum::Json;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 
-use crate::auth::bearer_user;
+use crate::auth::{bearer_user, client_ip, rate_ok};
 use crate::AppState;
 
 pub const MAX_TITLE: usize = 120;
@@ -56,6 +56,10 @@ pub async fn list_topics(
     // guard deadlocks the whole server.
     let caller = bearer_user(&state, &headers).ok();
     let bundle = q.get("bundleId").cloned();
+    // Search over title AND body. A board without search stops being useful
+    // somewhere around fifty topics, which is one busy week.
+    let search = q.get("q").map(|s| s.trim().to_lowercase()).unwrap_or_default();
+    let pattern = format!("%{}%", search.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_"));
 
     let db = state.db.lock();
     let mut stmt = db
@@ -65,6 +69,8 @@ pub async fn list_topics(
              FROM topics t JOIN users u ON u.id = t.author_id
              WHERE t.hidden = 0 AND u.suspended = 0
                AND (?1 IS NULL OR t.bundle_id = ?1)
+               AND (?3 = '' OR LOWER(t.title) LIKE ?4 ESCAPE '\\'
+                    OR LOWER(t.body) LIKE ?4 ESCAPE '\\')
                -- Blocking is enforced HERE, not in the client, so a modified
                -- client cannot un-block anyone.
                AND (?2 IS NULL OR t.author_id NOT IN
@@ -75,7 +81,7 @@ pub async fn list_topics(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let rows: Vec<Value> = stmt
-        .query_map(rusqlite::params![bundle, caller], |r| {
+        .query_map(rusqlite::params![bundle, caller, search, pattern], |r| {
             Ok(json!({
                 "id": r.get::<_, i64>(0)?,
                 "title": r.get::<_, String>(1)?,
@@ -103,6 +109,12 @@ pub async fn create_topic(
     headers: HeaderMap,
     Json(body): Json<Value>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
+    // The forum was the one write surface with no limit at all -- comments,
+    // ratings and auth all had one. A single script could have filled the
+    // board.
+    if !rate_ok(&state, &client_ip(&headers), "topics") {
+        return Err((StatusCode::TOO_MANY_REQUESTS, "slow down".into()));
+    }
     let user = require_handle(&state, &headers)?;
     let title = body.get("title").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
     let text = body.get("body").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
@@ -127,7 +139,10 @@ pub async fn create_topic(
     )
     .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "write failed".to_string()))?;
 
-    Ok(Json(json!({ "ok": true, "id": db.last_insert_rowid() })))
+    let topic_id = db.last_insert_rowid();
+    crate::notify::push_mentions(&db, user, "mention", "topic", &topic_id.to_string(), &text);
+
+    Ok(Json(json!({ "ok": true, "id": topic_id })))
 }
 
 /// One topic's replies, oldest first — a conversation reads forwards.
@@ -180,6 +195,9 @@ pub async fn create_reply(
     headers: HeaderMap,
     Json(body): Json<Value>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
+    if !rate_ok(&state, &client_ip(&headers), "replies") {
+        return Err((StatusCode::TOO_MANY_REQUESTS, "slow down".into()));
+    }
     let user = require_handle(&state, &headers)?;
     let topic = body.get("topicId").and_then(|v| v.as_i64())
         .ok_or((StatusCode::BAD_REQUEST, "topicId required".to_string()))?;
@@ -217,6 +235,16 @@ pub async fn create_reply(
         rusqlite::params![ts, topic],
     )
     .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "write failed".to_string()))?;
+
+    // The person you replied to, plus anyone named. `push` drops
+    // self-notifications, so replying to your own topic is silent.
+    let author: Option<i64> = db
+        .query_row("SELECT author_id FROM topics WHERE id = ?1", [topic], |r| r.get(0))
+        .ok();
+    if let Some(a) = author {
+        crate::notify::push(&db, a, Some(user), "reply", "topic", &topic.to_string(), &text);
+    }
+    crate::notify::push_mentions(&db, user, "mention", "topic", &topic.to_string(), &text);
 
     Ok(Json(json!({ "ok": true })))
 }

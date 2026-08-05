@@ -57,15 +57,19 @@ export function ForumView({ accent, signedIn, bundleId }: {
   const [error, setError] = useState('');
   const [note, setNote] = useState('');
   const [reload, setReload] = useState(0);
+  const [search, setSearch] = useState('');
 
   useEffect(() => {
     let cancelled = false;
-    setTopics(null);
-    void fetchTopics(bundleId)
-      .then((t) => { if (!cancelled) setTopics(t); })
-      .catch(() => { if (!cancelled) setTopics([]); });
-    return () => { cancelled = true; };
-  }, [bundleId, reload]);
+    // Debounced, and searched on the SERVER: filtering a truncated first page
+    // in the client would quietly hide topics.
+    const timer = setTimeout(() => {
+      void fetchTopics(bundleId, search)
+        .then((t) => { if (!cancelled) setTopics(t); })
+        .catch(() => { if (!cancelled) setTopics([]); });
+    }, search ? 220 : 0);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [bundleId, reload, search]);
 
   useEffect(() => {
     if (!open) { setReplies(null); return; }
@@ -226,6 +230,18 @@ export function ForumView({ accent, signedIn, bundleId }: {
         )}
       </div>
 
+      <input
+        value={search}
+        onChange={(e) => setSearch(e.target.value)}
+        placeholder="Search topics…"
+        spellCheck={false}
+        style={{
+          width: '100%', maxWidth: 320, marginTop: 10, padding: '6px 9px', fontSize: 11.5,
+          background: 'rgba(255,255,255,0.05)', color: '#fff', outline: 'none',
+          border: '1px solid rgba(255,255,255,0.1)', borderRadius: 7, boxSizing: 'border-box',
+        }}
+      />
+
       {error && <div style={{ fontSize: 11, color: '#fb7185', marginTop: 10 }}>{error}</div>}
       {note && <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.55)', marginTop: 10 }}>{note}</div>}
 
@@ -259,7 +275,9 @@ export function ForumView({ accent, signedIn, bundleId }: {
         <div style={{ fontSize: 11.5, color: 'rgba(255,255,255,0.35)', marginTop: 16 }}>Loading…</div>
       ) : topics.length === 0 ? (
         <div style={{ fontSize: 11.5, color: 'rgba(255,255,255,0.45)', marginTop: 16 }}>
-          {signedIn ? 'Nothing here yet — start the first topic.' : 'Nothing here yet.'}
+          {search
+            ? `No topics match “${search}”.`
+            : signedIn ? 'Nothing here yet — start the first topic.' : 'Nothing here yet.'}
         </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 16 }}>

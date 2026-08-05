@@ -97,6 +97,24 @@ pub fn init(conn: &Connection) {
         -- ones that are not a simple flag flip. `actor_handle` is a snapshot
         -- rather than a join, so the log still names who acted after a
         -- rename or after the account is gone.
+        -- The feedback loop: somebody followed you, replied to you,
+        -- commented on your work, or a moderator acted on your account.
+        -- actor_handle is snapshotted so the inbox still reads correctly
+        -- after a rename.
+        CREATE TABLE IF NOT EXISTS notifications (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id      INTEGER NOT NULL,
+            kind         TEXT NOT NULL,   -- follow|comment|reply|mention|moderation
+            actor_handle TEXT,
+            target_kind  TEXT,
+            target_id    TEXT,
+            body         TEXT,
+            created_at   INTEGER NOT NULL,
+            read_at      INTEGER
+        );
+        CREATE INDEX IF NOT EXISTS notifications_inbox
+            ON notifications(user_id, id DESC);
+
         CREATE TABLE IF NOT EXISTS audit (
             id           INTEGER PRIMARY KEY AUTOINCREMENT,
             actor_id     INTEGER,          -- NULL = the shared ADMIN_TOKEN

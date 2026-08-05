@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
-import { fetchComments, postComment, setBlock, report, type CommentEntry } from '../state/social';
+import {
+  fetchComments, postComment, setBlock, report, deleteOwnComment, type CommentEntry,
+} from '../state/social';
 
 const MONO = '"JetBrains Mono", ui-monospace, monospace';
 const MAX_BODY = 1000; // mirrors server/src/comments.rs
@@ -13,10 +15,12 @@ const MAX_BODY = 1000; // mirrors server/src/comments.rs
  *  Per-comment actions are the user's half of moderation: report (goes to
  *  the admin queue) and block (their comments stop appearing for you,
  *  enforced server-side so a modified client cannot undo it). */
-export function CommentsSection({ bundleId, accent, signedIn }: {
+export function CommentsSection({ bundleId, accent, signedIn, myHandle }: {
   bundleId: string;
   accent: string;
   signedIn: boolean;
+  /** Your own handle, so your comments offer delete instead of report. */
+  myHandle?: string | null;
 }) {
   const [comments, setComments] = useState<CommentEntry[] | null>(null);
   const [reload, setReload] = useState(0);
@@ -47,6 +51,15 @@ export function CommentsSection({ bundleId, accent, signedIn }: {
       setError(String(e));
     } finally {
       setBusy(false);
+    }
+  };
+
+  const doDelete = async (c: CommentEntry) => {
+    try {
+      await deleteOwnComment(c.id);
+      setReload((n) => n + 1);
+    } catch (e) {
+      setError(String(e));
     }
   };
 
@@ -132,7 +145,18 @@ export function CommentsSection({ bundleId, accent, signedIn }: {
                   {new Date(c.createdAt * 1000).toLocaleDateString()}
                 </span>
                 <div style={{ flex: 1 }} />
-                {signedIn && (
+                {signedIn && myHandle && c.handle === myHandle ? (
+                  // Your own words are yours to retract. Nobody should have
+                  // to ask a moderator to remove their own typo — or their
+                  // own email address.
+                  <button
+                    onClick={() => void doDelete(c)}
+                    style={{
+                      background: 'transparent', border: 'none', padding: 0, cursor: 'pointer',
+                      fontSize: 9.5, fontFamily: MONO, color: 'rgba(255,255,255,0.3)',
+                    }}
+                  >delete</button>
+                ) : signedIn && (
                   <>
                     <button
                       onClick={() => void doReport(c)}

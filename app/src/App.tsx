@@ -111,6 +111,7 @@ const MarketView = lazy(() => import('./market/MarketView').then((m) => ({ defau
 const ProfileView = lazy(() => import('./profile/ProfileView').then((m) => ({ default: m.ProfileView })));
 const CommunityView = lazy(() => import('./community/CommunityView').then((m) => ({ default: m.CommunityView })));
 const AdminPanel = lazy(() => import('./admin/AdminPanel').then((m) => ({ default: m.AdminPanel })));
+const NotificationsPanel = lazy(() => import('./community/NotificationsPanel').then((m) => ({ default: m.NotificationsPanel })));
 
 interface VizColorOverride {
   enabled: boolean;
@@ -517,8 +518,27 @@ export default function App() {
   // modified client that forces the panel open gets a wall of 403s.
   const [showAdmin, setShowAdmin] = useState(false);
   const [isStaff, setIsStaff] = useState(false);
+  const [showNotifications, setShowNotifications] = useState(false);
+  const [unread, setUnread] = useState(0);
   // Set when the community sends us to someone's creator page.
   const [marketCreator, setMarketCreator] = useState<string | null>(null);
+
+  // The unread count. Polled slowly — a badge is ambient, and every mounted
+  // copy is load on a self-hosted box. Silent on failure: a missing badge is
+  // better than an error over a number.
+  useEffect(() => {
+    let cancelled = false;
+    const tick = () => {
+      if (cancelled || document.hidden) return;
+      void import('./state/social')
+        .then((m) => m.fetchNotifications())
+        .then((r) => { if (!cancelled) setUnread(r.unread); })
+        .catch(() => {});
+    };
+    tick();
+    const timer = setInterval(tick, 60_000);
+    return () => { cancelled = true; clearInterval(timer); };
+  }, [showNotifications]);
 
   useEffect(() => {
     let cancelled = false;
@@ -846,6 +866,7 @@ export default function App() {
         // MarketView's capture-phase handler), so App must not also act.
         if (showMarket) { /* MarketView owns Esc */ }
         else if (showProfile) setShowProfile(false);
+        else if (showNotifications) setShowNotifications(false);
         else if (showAdmin) setShowAdmin(false);
         else if (showCommunity) setShowCommunity(false);
         else if (showShortcuts) setShowShortcuts(false);
@@ -1369,6 +1390,8 @@ export default function App() {
           onProfile={() => setShowProfile(true)}
           onCommunity={() => setShowCommunity(true)}
           onAdmin={isStaff ? () => setShowAdmin(true) : undefined}
+          onNotifications={() => setShowNotifications(true)}
+          unread={unread}
           onShortcuts={() => setShowShortcuts(true)}
         />
         {topBarHidden && (
@@ -1527,6 +1550,19 @@ export default function App() {
             />
           </Suspense>
         )}
+        {showNotifications && (
+          <Suspense fallback={null}>
+            <NotificationsPanel
+              accent={accent}
+              onClose={() => setShowNotifications(false)}
+              onOpenCreator={(handle) => {
+                setShowNotifications(false);
+                setMarketCreator(handle);
+                setShowMarket(true);
+              }}
+            />
+          </Suspense>
+        )}
         {showAdmin && (
           <Suspense fallback={null}>
             <AdminPanel
@@ -1636,7 +1672,7 @@ export default function App() {
   );
 }
 
-function TopChrome({ accent, editMode, setEditMode, streamerMode, setStreamerMode, profiles, activeProfileId, setActiveProfileId, onSwitcher, onOnboarding, onSettings, onShortcuts, onProfile, onCommunity, onAdmin, hidden, onBarEnter, onBarLeave, onMenuOpenChange }: {
+function TopChrome({ accent, editMode, setEditMode, streamerMode, setStreamerMode, profiles, activeProfileId, setActiveProfileId, onSwitcher, onOnboarding, onSettings, onShortcuts, onProfile, onCommunity, onAdmin, onNotifications, unread, hidden, onBarEnter, onBarLeave, onMenuOpenChange }: {
   accent: string;
   editMode: boolean;
   setEditMode: (b: boolean) => void;
@@ -1659,6 +1695,9 @@ function TopChrome({ accent, editMode, setEditMode, streamerMode, setStreamerMod
   /** The staff panel. Undefined for everyone who is not staff, so the
    *  button simply does not exist rather than appearing and refusing. */
   onAdmin?: () => void;
+  onNotifications: () => void;
+  /** Unread count for the bell's badge. */
+  unread: number;
   /** Auto-hide (0.6.7 §3): when true the bar translates up out of view.
    *  App owns the decision — see topBarHidden in App(). */
   hidden: boolean;
@@ -1797,6 +1836,22 @@ function TopChrome({ accent, editMode, setEditMode, streamerMode, setStreamerMod
           border: streamerMode ? '1px solid transparent' : '1px solid rgba(255,255,255,0.1)',
         }}
       >⊘</button>
+      <button
+        onClick={onNotifications}
+        title="Notifications"
+        style={{ ...ghostButton, padding: '5px 9px', position: 'relative' }}
+      >
+        ✦
+        {unread > 0 && (
+          <span style={{
+            position: 'absolute', top: 1, right: 1, minWidth: 13, height: 13,
+            borderRadius: 999, background: accent, color: '#06070a',
+            fontSize: 8, fontWeight: 800, lineHeight: '13px', textAlign: 'center',
+            padding: '0 3px',
+          }}>{unread > 99 ? '99+' : unread}</span>
+        )}
+      </button>
+
       {onAdmin && (
         <button
           onClick={onAdmin}

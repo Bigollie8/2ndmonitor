@@ -748,6 +748,93 @@ pub fn marketplace_moderate<R: Runtime>(
     post_social(&app, &format!("{base}/admin/moderate"), &body)
 }
 
+/// Your inbox, with the unread count for the badge.
+#[tauri::command]
+pub fn marketplace_notifications<R: Runtime>(
+    app: AppHandle<R>,
+    url: String,
+) -> Result<serde_json::Value, String> {
+    let token = session_token(&app)?;
+    let base = url.trim_end_matches('/');
+    get_social(&format!("{base}/notifications"), Some(token))
+}
+
+/// Mark one notification read, or all of them when `id` is absent.
+#[tauri::command]
+pub fn marketplace_mark_read<R: Runtime>(
+    app: AppHandle<R>,
+    url: String,
+    id: Option<i64>,
+) -> Result<(), String> {
+    let base = url.trim_end_matches('/');
+    let body = match id {
+        Some(n) => serde_json::json!({ "id": n }),
+        None => serde_json::json!({}),
+    };
+    post_social(&app, &format!("{base}/notifications/read"), &body)
+}
+
+/// Retract your own comment. A separate command from the moderation one on
+/// purpose: this is somebody deleting their own words, not staff hiding
+/// somebody else's, and conflating the two in one call would make the
+/// permission question ambiguous.
+#[tauri::command]
+pub fn marketplace_delete_comment<R: Runtime>(
+    app: AppHandle<R>,
+    url: String,
+    id: i64,
+) -> Result<(), String> {
+    let token = session_token(&app)?;
+    let base = url.trim_end_matches('/');
+    let (status, buf) = delete_capped_json(
+        &format!("{base}/comments/mine"),
+        &serde_json::json!({ "id": id }),
+        AUTH_CAP,
+        &token,
+    )?;
+    if !(200..300).contains(&status) {
+        let text = String::from_utf8_lossy(&buf).into_owned();
+        return Err(if text.trim().is_empty() { format!("HTTP {status}") } else { text });
+    }
+    Ok(())
+}
+
+/// DELETE with a JSON body. `ureq` has no delete-with-body helper, and the
+/// endpoint takes the id in the body rather than the path so that a bad id
+/// cannot end up in a proxy access log.
+fn delete_capped_json(
+    url: &str,
+    body: &serde_json::Value,
+    cap: usize,
+    token: &str,
+) -> Result<(u16, Vec<u8>), String> {
+    if !url.starts_with("https://") {
+        return Err("only https URLs are allowed".into());
+    }
+    let agent = ureq::AgentBuilder::new().redirects(0).build();
+    let req = agent
+        .delete(url)
+        .timeout(std::time::Duration::from_secs(15))
+        .set("authorization", &format!("Bearer {token}"))
+        .set("content-type", "application/json");
+    let resp = match req.send_string(&body.to_string()) {
+        Ok(r) => r,
+        Err(ureq::Error::Status(code, r)) => {
+            let mut buf = Vec::new();
+            r.into_reader().take((cap + 1) as u64).read_to_end(&mut buf).ok();
+            return Ok((code, buf));
+        }
+        Err(ureq::Error::Transport(t)) => return Err(format!("request failed: {t}")),
+    };
+    let status = resp.status();
+    let mut buf = Vec::new();
+    resp.into_reader()
+        .take((cap + 1) as u64)
+        .read_to_end(&mut buf)
+        .map_err(|e| format!("read failed: {e}"))?;
+    Ok((status, buf))
+}
+
 /// The creator directory, optionally searched. Public: a signed-out browse
 /// still gets the full list, because discovering people is the point.
 #[tauri::command]
@@ -776,16 +863,23 @@ pub fn marketplace_fetch_topics<R: Runtime>(
     app: AppHandle<R>,
     url: String,
     bundle_id: Option<String>,
+    query: Option<String>,
 ) -> Result<serde_json::Value, String> {
     let base = url.trim_end_matches('/');
-    let endpoint = match bundle_id.as_deref().filter(|b| !b.is_empty()) {
-        Some(b) => {
-            if !is_safe_id(b) {
-                return Err("invalid bundle id".into());
-            }
-            format!("{base}/topics?bundleId={b}")
+    let mut params: Vec<String> = Vec::new();
+    if let Some(b) = bundle_id.as_deref().filter(|b| !b.is_empty()) {
+        if !is_safe_id(b) {
+            return Err("invalid bundle id".into());
         }
-        None => format!("{base}/topics"),
+        params.push(format!("bundleId={b}"));
+    }
+    if let Some(q) = query.as_deref().map(str::trim).filter(|q| !q.is_empty()) {
+        params.push(format!("q={}", urlencoding::encode(q)));
+    }
+    let endpoint = if params.is_empty() {
+        format!("{base}/topics")
+    } else {
+        format!("{base}/topics?{}", params.join("&"))
     };
     get_social(&endpoint, session_token(&app).ok())
 }

@@ -95,3 +95,32 @@ export async function report(
 ): Promise<void> {
   await (await invoke())('marketplace_report', { url: cfgUrl(), targetKind, targetId, reason });
 }
+
+export interface Notification {
+  id: number;
+  kind: 'follow' | 'comment' | 'reply' | 'mention' | 'moderation' | string;
+  actor: string | null;
+  targetKind: string | null;
+  targetId: string | null;
+  body: string | null;
+  createdAt: number;
+  readAt: number | null;
+}
+
+export async function fetchNotifications(): Promise<{ notifications: Notification[]; unread: number }> {
+  const res = await (await invoke())<{ notifications: Notification[]; unread: number }>(
+    'marketplace_notifications', { url: cfgUrl() },
+  );
+  return { notifications: res.notifications ?? [], unread: res.unread ?? 0 };
+}
+
+/** Mark one read, or all of them when `id` is omitted. */
+export async function markRead(id?: number): Promise<void> {
+  await (await invoke())('marketplace_mark_read', { url: cfgUrl(), id: id ?? null });
+}
+
+/** Retract your own comment. Distinct from the moderation hide: this is a
+ *  person removing their own words, and it really deletes. */
+export async function deleteOwnComment(id: number): Promise<void> {
+  await (await invoke())('marketplace_delete_comment', { url: cfgUrl(), id });
+}

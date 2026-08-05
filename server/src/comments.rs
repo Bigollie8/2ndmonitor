@@ -154,6 +154,44 @@ pub async fn post(
     )
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
+    // Best-effort, after the write that matters: the author of the work,
+    // plus anyone named in the body. Never the poster themselves.
+    if let Some(author) = crate::notify::bundle_author(&db, &bundle_id) {
+        crate::notify::push(&db, author, Some(user), "comment", "bundle", &bundle_id, &text);
+    }
+    crate::notify::push_mentions(&db, user, "mention", "bundle", &bundle_id, &text);
+
+    Ok(Json(json!({ "ok": true })))
+}
+
+/// Delete your OWN comment.
+///
+/// Not a moderator hide: this is somebody retracting their own words, which
+/// they must be able to do without asking anyone. A person who posts their
+/// email address by mistake should not have to file a support request.
+///
+/// A real DELETE rather than a flag, because the point is that it is gone —
+/// unlike moderation, where preserving the evidence is the whole idea.
+pub async fn delete_own(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<Value>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let user = bearer_user(&state, &headers).map_err(|s| (s, "sign in first".to_string()))?;
+    let id = body
+        .get("id")
+        .and_then(Value::as_i64)
+        .ok_or((StatusCode::BAD_REQUEST, "id required".to_string()))?;
+
+    let db = state.db.lock();
+    // The user_id predicate is the authorisation: you can only delete rows
+    // that are yours, and a mismatch is indistinguishable from a missing row.
+    let n = db
+        .execute("DELETE FROM comments WHERE id = ?1 AND user_id = ?2", rusqlite::params![id, user])
+        .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "delete failed".to_string()))?;
+    if n == 0 {
+        return Err((StatusCode::NOT_FOUND, "no comment of yours with that id".into()));
+    }
     Ok(Json(json!({ "ok": true })))
 }
 
@@ -228,15 +266,31 @@ pub async fn report(
         return Err((StatusCode::BAD_REQUEST, "reason must be at most 500 characters".into()));
     }
 
-    state
-        .db
-        .lock()
-        .execute(
-            "INSERT INTO reports (target_kind, target_id, reporter_id, reason, created_at, status)
-             VALUES (?1,?2,?3,?4,?5,'open')",
-            rusqlite::params![kind, target, user, reason, now()],
+    let db = state.db.lock();
+
+    // One OPEN report per person per target. Fifty people reporting the same
+    // comment should raise it once each, not let one person bury the queue in
+    // fifty rows exactly when a moderator most needs to see everything else.
+    let dupe: i64 = db
+        .query_row(
+            "SELECT COUNT(*) FROM reports
+             WHERE reporter_id = ?1 AND target_kind = ?2 AND target_id = ?3 AND status = 'open'",
+            rusqlite::params![user, kind, target],
+            |r| r.get(0),
         )
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        .unwrap_or(0);
+    if dupe > 0 {
+        // Success, not an error: their intent is already recorded, and
+        // "you already reported that" mostly invites an angrier second try.
+        return Ok(Json(json!({ "ok": true, "duplicate": true })));
+    }
+
+    db.execute(
+        "INSERT INTO reports (target_kind, target_id, reporter_id, reason, created_at, status)
+         VALUES (?1,?2,?3,?4,?5,'open')",
+        rusqlite::params![kind, target, user, reason, now()],
+    )
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     Ok(Json(json!({ "ok": true })))
 }

@@ -17,6 +17,7 @@ pub mod avatar;
 pub mod directory;
 pub mod forum;
 pub mod shouts;
+pub mod notify;
 pub mod roles;
 pub mod social;
 pub mod staff;
@@ -59,6 +60,9 @@ pub fn router(state: AppState) -> Router {
         .route("/favourites", post(social::set_favourite).get(social::favourites))
         .route("/feed", get(social::feed))
         .route("/comments", get(comments::list).post(comments::post))
+        .route("/comments/mine", axum::routing::delete(comments::delete_own))
+        .route("/notifications", get(notify::list))
+        .route("/notifications/read", post(notify::mark_read))
         .route("/blocks", post(comments::set_block))
         .route("/reports", post(comments::report))
         .route("/admin/users", get(staff::users))

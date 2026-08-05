@@ -16,7 +16,7 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::Json;
 use serde_json::{json, Value};
 
-use crate::auth::bearer_user;
+use crate::auth::{bearer_user, client_ip, rate_ok};
 use crate::AppState;
 
 pub const MAX_BODY: usize = 240;
@@ -81,6 +81,11 @@ pub async fn post(
     headers: HeaderMap,
     Json(body): Json<Value>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
+    // Belt and braces with the per-author cooldown below: that stops one
+    // person flooding, this stops one MACHINE cycling accounts.
+    if !rate_ok(&state, &client_ip(&headers), "shouts") {
+        return Err((StatusCode::TOO_MANY_REQUESTS, "slow down".into()));
+    }
     let user = bearer_user(&state, &headers)
         .map_err(|s| (s, "sign in first".to_string()))?;
     let text = body.get("body").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
