@@ -3,13 +3,12 @@ import { HFTile } from './tiles';
 import { MapView, RecenterButton, type ProjectFn } from './map/MapView';
 import { drawHomeDot } from './map/homeDot';
 import { useMapView } from './map/useMapView';
-import { fetchAircraftInBox } from '../state/opensky';
+import { fetchAircraftInBox, describeAircraftError, AIRCRAFT_REFRESH_MS } from '../state/opensky';
 import { distanceKm } from '../state/iss';
 import { usePoll } from '../state/usePoll';
 import { redactLocation } from '../state/streamer';
 import type { Density, WeatherLocation } from '../types';
 
-const REFRESH_MS = 60 * 1000;
 const RADIUS_KM = 80;
 const MAP_MIN_ZOOM = 4;
 const MAP_MAX_ZOOM = 12;
@@ -38,10 +37,11 @@ function AircraftTileImpl({ density, accent, location, config, setConfig, redact
       if (result.error) throw new Error(result.error);
       return result.aircraft;
     },
-    REFRESH_MS,
+    AIRCRAFT_REFRESH_MS,
     [location.lat, location.lon],
   );
   const planes = data ?? [];
+  const errInfo = describeAircraftError(error);
 
   // Memoised so drawPlanes' identity is stable between polls (0.7.3 P5).
   const sorted = useMemo(
@@ -92,7 +92,7 @@ function AircraftTileImpl({ density, accent, location, config, setConfig, redact
       color: error ? '#fca5a5' : 'rgba(255,255,255,0.55)',
       fontFamily: '"JetBrains Mono", ui-monospace, monospace',
     }} title={redacted ? undefined : (error ?? undefined)}>
-      {loading ? '…' : error ? 'OpenSky error' : `${planes.length} · ${redactLocation(`${RADIUS_KM} km`, redacted)}`}
+      {loading ? '…' : errInfo ? errInfo.label : `${planes.length} · ${redactLocation(`${RADIUS_KM} km`, redacted)}`}
     </span>
   );
 
@@ -147,11 +147,11 @@ function AircraftTileImpl({ density, accent, location, config, setConfig, redact
                 No aircraft within {RADIUS_KM} km.
               </div>
             )}
-            {error && !loading && (
+            {error && !loading && errInfo && (
               <div style={{ color: '#fca5a5', fontSize: 10.5, padding: 4, lineHeight: 1.4 }}>
-                {error}
+                {errInfo.label}
                 <div style={{ color: 'rgba(255,255,255,0.45)', marginTop: 2 }}>
-                  OpenSky throttles anonymous reads — usually clears in a minute.
+                  {errInfo.hint}
                 </div>
               </div>
             )}
