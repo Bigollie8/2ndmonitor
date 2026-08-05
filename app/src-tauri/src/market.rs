@@ -251,7 +251,66 @@ pub async fn fetch_aircraft_states(
         .map_err(|e| format!("join error: {e}"))
 }
 
+/// One aircraft from adsb.lol's `/v2/lat/{}/lon/{}/dist/{}` response → the
+/// tile's shape (0.8.7). Their units differ from OpenSky's: `alt_baro` is
+/// FEET (or the literal string "ground"), `gs` is KNOTS, `track` is degrees.
+/// Entries without a position are dropped — the map cannot place them.
+fn map_adsb_aircraft(v: &serde_json::Value) -> Option<AircraftState> {
+    let lat = v.get("lat")?.as_f64()?;
+    let lon = v.get("lon")?.as_f64()?;
+    let on_ground = v.get("alt_baro").map(|a| a.as_str() == Some("ground")).unwrap_or(false);
+    let altitude_ft = v.get("alt_baro").and_then(|a| a.as_f64()).unwrap_or(0.0);
+    Some(AircraftState {
+        icao24: v.get("hex").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+        callsign: v.get("flight").and_then(|x| x.as_str()).unwrap_or("").trim().to_string(),
+        // The tile's third column. ADS-B carries no origin country; the
+        // airframe type (e.g. "B738") or the registration is the most useful
+        // thing to show there instead of a blank.
+        origin_country: v.get("t").and_then(|x| x.as_str())
+            .or_else(|| v.get("r").and_then(|x| x.as_str()))
+            .unwrap_or("").to_string(),
+        lat,
+        lon,
+        altitude: altitude_ft * 0.3048,      // feet → metres
+        velocity: v.get("gs").and_then(|x| x.as_f64()).unwrap_or(0.0) * 0.514444, // knots → m/s
+        heading: v.get("track").and_then(|x| x.as_f64()).unwrap_or(0.0),
+        on_ground,
+    })
+}
+
+/// Primary source: adsb.lol — a community ADS-B aggregator with no API key
+/// and no daily quota (0.8.7). OpenSky's anonymous tier has a per-IP daily
+/// credit budget, and users behind CGNAT or a VPN share that IP with
+/// strangers: for them the budget is spent by OTHER people and the tile read
+/// "throttled" forever no matter how gently we polled. That is the
+/// "always throttled for some users" report — unfixable on our side while
+/// OpenSky is primary.
+fn fetch_aircraft_adsb_lol(lat: f64, lon: f64, radius_km: f64) -> Result<Vec<AircraftState>, String> {
+    let dist_nm = (radius_km / 1.852).clamp(1.0, 250.0);
+    let url = format!(
+        "https://api.adsb.lol/v2/lat/{lat:.4}/lon/{lon:.4}/dist/{dist_nm:.0}"
+    );
+    let resp = ureq::get(&url)
+        .set("User-Agent", "SecondMonitorHub (+aircraft tile)")
+        .timeout(std::time::Duration::from_secs(10))
+        .call()
+        .map_err(|e| e.to_string())?;
+    let json: serde_json::Value = resp.into_json().map_err(|e| format!("parse: {e}"))?;
+    let ac = json.get("ac").and_then(|v| v.as_array()).ok_or("no ac array")?;
+    Ok(ac.iter().filter_map(map_adsb_aircraft).collect())
+}
+
 fn fetch_aircraft_blocking(lat: f64, lon: f64, radius_km: f64) -> AircraftResult {
+    // adsb.lol first; the old OpenSky path (below) is the fallback so one
+    // aggregator outage doesn't blank the tile.
+    match fetch_aircraft_adsb_lol(lat, lon, radius_km) {
+        Ok(states) => return AircraftResult { states, error: None },
+        Err(e) => eprintln!("aircraft: adsb.lol failed ({e}), falling back to OpenSky"),
+    }
+    fetch_aircraft_opensky(lat, lon, radius_km)
+}
+
+fn fetch_aircraft_opensky(lat: f64, lon: f64, radius_km: f64) -> AircraftResult {
     let d_lat = radius_km / 111.0;
     let cos_lat = (lat * std::f64::consts::PI / 180.0).cos().max(0.1);
     let d_lon = radius_km / (111.0 * cos_lat);
@@ -307,4 +366,39 @@ fn fetch_aircraft_blocking(lat: f64, lon: f64, radius_km: f64) -> AircraftResult
         })
         .collect();
     AircraftResult { states, error: None }
+}
+
+#[cfg(test)]
+mod aircraft_tests {
+    use super::map_adsb_aircraft;
+
+    #[test]
+    fn maps_the_live_adsb_lol_shape_with_unit_conversions() {
+        // Captured from the live endpoint 2026-08-05.
+        let v: serde_json::Value = serde_json::json!({
+            "hex": "a656bb", "flight": "N5073J  ", "r": "N5073J", "t": "C310",
+            "lat": 35.761615, "lon": -84.682208,
+            "alt_baro": 2700, "gs": 191.0, "track": 19.57
+        });
+        let a = map_adsb_aircraft(&v).expect("maps");
+        assert_eq!(a.callsign, "N5073J"); // trailing spaces trimmed
+        assert_eq!(a.origin_country, "C310"); // type shown in the third column
+        assert!((a.altitude - 2700.0 * 0.3048).abs() < 0.01); // feet -> metres
+        assert!((a.velocity - 191.0 * 0.514444).abs() < 0.01); // knots -> m/s
+        assert!(!a.on_ground);
+    }
+
+    #[test]
+    fn ground_aircraft_and_missing_positions() {
+        let grounded: serde_json::Value = serde_json::json!({
+            "hex": "abc", "lat": 1.0, "lon": 2.0, "alt_baro": "ground"
+        });
+        let a = map_adsb_aircraft(&grounded).expect("maps");
+        assert!(a.on_ground);
+        assert_eq!(a.altitude, 0.0); // "ground" is not a number; altitude 0
+
+        // No position -> unmappable -> dropped, never a 0,0 phantom.
+        let no_pos: serde_json::Value = serde_json::json!({ "hex": "abc", "gs": 100 });
+        assert!(map_adsb_aircraft(&no_pos).is_none());
+    }
 }
