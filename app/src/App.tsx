@@ -45,6 +45,7 @@ import {
   resolveWindUnit, type WindUnit, type WindUnitSetting,
 } from './state/units';
 import { useAudioSource } from './state/useAudioSource';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { UpdateToast } from './components/UpdateToast';
 import { useSysmon, useNowPlaying, useSpectrumRef } from './state/tauri';
 import { applySurfaces, computeSurfaces, glassTintAlpha, DEFAULT_GLASS_STRENGTH } from './state/theme';
@@ -1614,6 +1615,10 @@ export default function App() {
           />
         )}
         {showMarket && (
+          // Guarded (0.8.5): these overlays are lazy behind `fallback={null}`,
+          // so before this a throw inside one unmounted the whole React tree
+          // and the app simply went black with no message.
+          <ErrorBoundary surface="Marketplace" onClose={() => { setShowMarket(false); setMarketPresets(false); }}>
           <Suspense fallback={null}>
             <MarketView
               accent={accent}
@@ -1626,6 +1631,7 @@ export default function App() {
               onOpenLibrary={() => { setShowMarket(false); setMarketPresets(false); setShowContentLibrary(true); }}
             />
           </Suspense>
+          </ErrorBoundary>
         )}
       </div>
 
