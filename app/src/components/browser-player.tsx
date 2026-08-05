@@ -1,5 +1,5 @@
 import React from 'react';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useBrowserWebview } from '../state/browserWebview';
 import { Launchpad } from './launchpad';
 
@@ -54,9 +54,17 @@ export function BrowserPlayer({ enabled, currentUrl, bookmarks, onNavigate, onEx
   const bodyRef = useRef<HTMLDivElement | null>(null);
   const [bounds, setBounds] = useState<DOMRect | null>(null);
 
-  // Webview is only "active" when video is on, a URL is set, and no overlay is
-  // suppressing it. Launchpad is HTML-only so it doesn't need a webview.
-  const webviewActive = enabled && !!currentUrl && !suppress;
+  // The webview EXISTS whenever video is on and a URL is set. `suppress` no
+  // longer destroys it — it parks it offscreen (0.8.3).
+  //
+  // Destroying it meant every overlay tore down the native webview and the
+  // next open reloaded the page from scratch: opening tile edit settings threw
+  // away a logged-in Netflix/Plex session and restarted playback. Overlays
+  // still must not be painted over — a native child webview sits above all
+  // HTML regardless of z-index (0.8.1) — but moving it out of the way achieves
+  // that without losing the session.
+  const webviewActive = enabled && !!currentUrl;
+  const parked = suppress;
 
   // Measure the placeholder div — initial measurement, on ResizeObserver, and on
   // window resize. The hook's reposition effect runs on every bounds change, so
@@ -91,10 +99,21 @@ export function BrowserPlayer({ enabled, currentUrl, bookmarks, onNavigate, onEx
     };
   }, [webviewActive]);
 
+  // While parked, hand the hook an offscreen rect instead of the real one.
+  // Bounds stay NON-null so the webview is never destroyed — only moved. A
+  // 1x1 at a large negative offset is off every monitor arrangement we can
+  // address, and keeping it 1x1 rather than 0x0 avoids platforms that reject a
+  // zero-sized webview.
+  const PARKED_RECT = useMemo(
+    () => new DOMRect(-32000, -32000, 1, 1),
+    [],
+  );
+  const effectiveBounds = parked ? PARKED_RECT : bounds;
+
   const { error } = useBrowserWebview({
     enabled: webviewActive,
     url: currentUrl,
-    bounds,
+    bounds: effectiveBounds,
   });
 
   return (
