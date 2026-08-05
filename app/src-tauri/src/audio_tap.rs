@@ -371,6 +371,19 @@ pub fn start(
     if matches!(&target, TapTarget::Only(pids) if pids.is_empty()) {
         return Err("a tap on an empty process list would capture nothing".to_string());
     }
+    // Every tap creation is a fresh chance for macOS to show the
+    // audio-capture permission prompt, so each one is LOGGED (0.8.7): a user
+    // reporting periodic re-prompts can pull the app's log from Console.app
+    // and the timestamps on these lines identify which trigger is firing —
+    // supervisor device-follow, liveness rebuild, or a real source change.
+    eprintln!(
+        "audio_tap: creating process tap ({})",
+        match &target {
+            TapTarget::AllProcesses => "system mix".to_string(),
+            TapTarget::Except(pids) => format!("system mix minus {} pid(s)", pids.len()),
+            TapTarget::Only(pids) => format!("{} pid(s)", pids.len()),
+        }
+    );
     unsafe {
         let (tap_id, included_pids) = create_tap(&target)?;
 

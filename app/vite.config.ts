@@ -1,4 +1,5 @@
 import { defineConfig } from 'vite';
+import pkg from './package.json';
 import react from '@vitejs/plugin-react';
 
 // This project has no @types/node (tsconfig.node.json's "include" is just
@@ -37,5 +38,11 @@ export default defineConfig({
     // site is synchronous render output, so a build-time constant is simpler
     // than threading an async platform lookup through the component tree.
     __IS_MAC__: JSON.stringify(process?.platform === 'darwin'),
+    // The running build's version, read from package.json at build time
+    // (0.8.3). Build-time rather than the Tauri app API on purpose: that
+    // would need an `app:` capability grant, and a missing grant in this
+    // repo fails SILENTLY (the 0.7.1 F11 bug) - a version string that
+    // quietly renders blank is exactly the bug being fixed here.
+    __APP_VERSION__: JSON.stringify(pkg.version),
   },
 });

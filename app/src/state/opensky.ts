@@ -32,16 +32,16 @@ export function describeAircraftError(message: string | null): AircraftErrorInfo
   if (/\b429\b/.test(message)) {
     return {
       rateLimited: true,
-      label: 'OpenSky limit',
+      label: 'Flight data limit',
       // Deliberately does NOT promise a quick recovery: this is a daily
       // allowance, so it can stay exhausted for hours.
-      hint: 'OpenSky’s free tier has a daily request allowance and this one is used up. It resets on OpenSky’s schedule — the tile keeps retrying in the background.',
+      hint: 'Both flight-data sources were tried; the fallback (OpenSky) is rate-limited too. This usually means a shared or VPN IP address whose free allowance other users have spent. The tile keeps retrying.',
     };
   }
   return {
     rateLimited: false,
-    label: 'OpenSky unavailable',
-    hint: 'Couldn’t reach OpenSky. The tile keeps retrying in the background.',
+    label: 'Flight data unavailable',
+    hint: 'Couldn’t reach either flight-data source (adsb.lol, then OpenSky). The tile keeps retrying in the background.',
   };
 }
 

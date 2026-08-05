@@ -52,6 +52,8 @@ export interface SettingsValues {
   vizAudioSource: AudioSource;
   vizSensitivityBySource: Record<string, number>;
   vizSmoothing: number;
+  /** Adaptive gain for the visualizer (0.8.6). */
+  vizAutoGain: boolean;
   vizColorOverride: VizColorOverride;
   lyricsOverlayEnabled: boolean;
   accentTheme: AccentTheme;
@@ -218,6 +220,11 @@ export function SettingsWindow({
               onChange={(x) => set('vizSensitivityBySource', { ...v.vizSensitivityBySource, [sourceKey(v.vizAudioSource)]: x })}
             />
           ),
+        },
+        {
+          id: 'viz-auto-gain', label: 'Adaptive gain',
+          hint: 'Boost quiet playback so reactivity doesn’t depend on app volume — loud playback is unchanged',
+          control: <Toggle checked={v.vizAutoGain} onChange={(c) => set('vizAutoGain', c)} accent={accent} />,
         },
         {
           id: 'viz-smoothing', label: 'Smoothing',
@@ -436,6 +443,16 @@ export function SettingsWindow({
     {
       id: 'system', icon: '⚙', title: 'System',
       rows: [
+        {
+          id: 'system-version', label: 'Version',
+          hint: 'The build you are running right now',
+          control: (
+            <span style={{
+              fontSize: 11.5, fontFamily: MONO, color: 'rgba(255,255,255,0.75)',
+              userSelect: 'text',
+            }}>{__APP_VERSION__}</span>
+          ),
+        },
         {
           id: 'system-updates', label: 'App updates',
           hint: 'Check GitHub for a newer version — nothing downloads or installs unless you choose to',

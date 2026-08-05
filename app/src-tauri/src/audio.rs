@@ -61,6 +61,62 @@ use crate::audio_source::{match_sessions, Source};
 
 const FFT_SIZE: usize = 2048;
 const SPECTRUM_BANDS: usize = 64;
+
+/// Quietest band level that still maps above zero, in dBFS.
+///
+/// This is the floor of the whole visualizer pipeline and it is applied HERE,
+/// before the frontend's sensitivity multiplier — so anything below it is
+/// clamped to exactly 0.0 and `raw * sensitivity` can never recover it. At the
+/// previous -60 dB the app effectively required near-full playback volume:
+/// with a source at ~50% (perceptual sliders are roughly cubic, so ≈ -18 dB)
+/// most of the 64 log-spaced bands fell under the floor and the visualizer sat
+/// dead no matter how far sensitivity was raised.
+///
+/// -80 dB buys ~20 dB of headroom, which covers a half-volume source, while
+/// staying above the dither/noise floor of a normal desktop mix. Widening it
+/// does make mid-level content read slightly hotter — that is the deliberate
+/// trade, and sensitivity can be turned DOWN, which previously it could not be
+/// turned up enough to matter.
+const SPECTRUM_FLOOR_DB: f32 = -80.0;
+
+/// Map a tilted band level in dBFS onto 0..1: SPECTRUM_FLOOR_DB → 0, 0 dB → 1.
+fn normalize_db(db_tilted: f32) -> f32 {
+    let range = -SPECTRUM_FLOOR_DB;
+    ((db_tilted - SPECTRUM_FLOOR_DB) / range).clamp(0.0, 1.0)
+}
+
+// ─── Stereo (0.8.4) ─────────────────────────────────────────────────────────
+// The capture ring holds INTERLEAVED L/R pairs: [l0, r0, l1, r1, ...]. It used
+// to hold pre-mixed mono, which destroyed the stereo field inside the realtime
+// callback — nothing downstream could recover it, and the vectorscope and the
+// correlation/width meters need both channels.
+//
+// ONE ring rather than two, deliberately: a second Mutex in the WASAPI capture
+// callback is contention on a realtime thread, which is audible glitching for
+// every user rather than a visual bug. Mono is derived at drain instead, which
+// costs one add and one multiply per frame off the realtime path.
+
+/// Pick left/right out of one interleaved frame.
+///
+/// A mono source duplicates its single channel into both, so it reads as
+/// perfectly correlated — the honest display for mono, not a bug. Sources with
+/// more than two channels use the first two, the standard interleave order
+/// (FL, FR, ...).
+fn frame_lr(frame: &[f32]) -> (f32, f32) {
+    match frame.len() {
+        0 => (0.0, 0.0),
+        1 => (frame[0], frame[0]),
+        _ => (frame[0], frame[1]),
+    }
+}
+
+/// Average interleaved L/R pairs down to mono, appending to `out`.
+/// A trailing odd sample (a torn frame at a buffer edge) is ignored.
+fn pairs_to_mono(pairs: &[f32], out: &mut Vec<f32>) {
+    for p in pairs.chunks_exact(2) {
+        out.push((p[0] + p[1]) * 0.5);
+    }
+}
 /// How often we re-emit a spectrum frame to the frontend. Atomic so the
 /// frontend can dial it down via the `set_audio_emit_hz` command tied to
 /// the perf-mode tweak — at 60Hz the FFT thread is a real CPU/IPC cost
@@ -86,12 +142,33 @@ pub fn set_waveform_enabled(enabled: bool) {
     WAVEFORM_ENABLED.store(enabled, std::sync::atomic::Ordering::Relaxed);
 }
 
+/// Stereo waveform is opted into SEPARATELY (0.8.7): its payload is ~2x the
+/// mono one and only bundles whose manifest declares "stereo": true consume
+/// it — tying it to the mono flag made every bundle surface pay the IPC for
+/// the two stereo meters' benefit.
+static STEREO_WAVEFORM_ENABLED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+#[tauri::command]
+pub fn set_stereo_waveform_enabled(enabled: bool) {
+    STEREO_WAVEFORM_ENABLED.store(enabled, std::sync::atomic::Ordering::Relaxed);
+}
+
 /// f32 [-1,1] → u8 centered at 128 (Web Audio getByteTimeDomainData convention).
 fn sample_to_byte(s: f32) -> u8 {
     ((s.clamp(-1.0, 1.0) * 127.0) + 128.0) as u8
 }
 /// Most we'll ever buffer (samples). Caps memory if the processor stalls.
 const RING_CAP: usize = FFT_SIZE * 8;
+
+/// De-interleaved time-domain bytes, same convention as the mono waveform
+/// (0-255 centred at 128). Sent as two arrays so the frontend does no
+/// unpacking (0.8.4).
+#[derive(Debug, Clone, Serialize)]
+pub struct StereoWaveform {
+    pub left: Vec<u8>,
+    pub right: Vec<u8>,
+}
 
 #[derive(Debug, Clone, Serialize)]
 pub struct AudioFrame {
@@ -914,25 +991,45 @@ fn build_stream(
         alive.store(false, Ordering::Relaxed);
     };
 
-    fn push_mono<I, F>(samples: I, channels: usize, buffer: &Arc<Mutex<Vec<f32>>>, to_f32: F)
+    /// Push interleaved L/R pairs into the ring (0.8.4).
+    ///
+    /// Runs on the OS audio thread. It takes ONE lock and does no allocation,
+    /// which is the whole reason the ring carries stereo rather than a second
+    /// ring being added alongside the mono one: a second mutex here is
+    /// contention on a realtime thread, and that is audible for every user.
+    fn push_frames<I, F>(samples: I, channels: usize, buffer: &Arc<Mutex<Vec<f32>>>, to_f32: F)
     where
         I: IntoIterator,
         F: Fn(I::Item) -> f32,
     {
+        if channels == 0 {
+            return; // a device that reports no channels would never complete a frame
+        }
         let mut buf = buffer.lock();
-        let mut pending: f32 = 0.0;
+        let mut frame: [f32; 2] = [0.0, 0.0];
         let mut count: usize = 0;
         for s in samples {
-            pending += to_f32(s);
+            let v = to_f32(s);
+            if count < 2 {
+                frame[count] = v;
+            }
             count += 1;
             if count == channels {
-                buf.push(pending / channels as f32);
-                pending = 0.0;
+                let used = if channels == 1 { &frame[..1] } else { &frame[..2] };
+                let (l, r) = frame_lr(used);
+                buf.push(l);
+                buf.push(r);
                 count = 0;
             }
         }
-        if buf.len() > RING_CAP {
-            let drop = buf.len() - RING_CAP;
+        // RING_CAP counts FRAMES; the ring stores two samples per frame.
+        let cap = RING_CAP * 2;
+        if buf.len() > cap {
+            // Drain an EVEN count so L/R stay aligned. An odd drain would swap
+            // the two channels for the entire remainder of the stream — silent,
+            // permanent, and invisible until someone looked at a vectorscope.
+            let excess = buf.len() - cap;
+            let drop = ((excess + 1) & !1).min(buf.len());
             buf.drain(..drop);
         }
     }
@@ -942,7 +1039,7 @@ fn build_stream(
             .build_input_stream(
                 config,
                 move |data: &[f32], _| {
-                    push_mono(data.iter().copied(), channels, &buffer, |s| s);
+                    push_frames(data.iter().copied(), channels, &buffer, |s| s);
                 },
                 err_fn,
                 None,
@@ -952,7 +1049,7 @@ fn build_stream(
             .build_input_stream(
                 config,
                 move |data: &[i16], _| {
-                    push_mono(data.iter().copied(), channels, &buffer, |s| {
+                    push_frames(data.iter().copied(), channels, &buffer, |s| {
                         s as f32 / i16::MAX as f32
                     });
                 },
@@ -964,7 +1061,7 @@ fn build_stream(
             .build_input_stream(
                 config,
                 move |data: &[u16], _| {
-                    push_mono(data.iter().copied(), channels, &buffer, |s| {
+                    push_frames(data.iter().copied(), channels, &buffer, |s| {
                         (s as f32 - u16::MAX as f32 / 2.0) / (u16::MAX as f32 / 2.0)
                     });
                 },
@@ -995,6 +1092,11 @@ fn process_loop<R: Runtime>(
     let mut workspace = vec![Complex32::default(); FFT_SIZE];
     let mut samples = vec![0f32; FFT_SIZE];
     let mut smoothed = vec![0f32; SPECTRUM_BANDS];
+    // Reused per hop so the FFT path stays allocation-free (0.8.4): the mono
+    // mixdown the FFT consumes, and the raw interleaved tail the stereo
+    // waveform emit needs.
+    let mut mono_scratch: Vec<f32> = Vec::with_capacity(FFT_SIZE);
+    let mut stereo_tail: Vec<f32> = Vec::with_capacity(FFT_SIZE * 2);
 
     // Initial interval; recomputed each iteration so a runtime change in
     // EMIT_HZ takes effect on the next tick.
@@ -1035,26 +1137,51 @@ fn process_loop<R: Runtime>(
                 .collect();
             let mixed = mix_rings(&drained);
             let mut buf = buffer.lock();
+            // Per-app capture is ALREADY mono by the time it reaches here —
+            // Windows sums the app rings in mix_rings, macOS's single tap mixes
+            // the selected processes for us. So each sample is written to both
+            // channels to keep the ring's interleaved shape (0.8.4).
+            //
+            // The consequence is real and worth stating: with a per-app source
+            // selected the vectorscope shows a vertical line and correlation
+            // reads exactly 1.00. That is the honest display of a mono source,
+            // not a bug — only the default-device loopback path can carry a
+            // true stereo image.
             if mixed.is_empty() {
                 let hop = ((rate / hz.max(1) as f32) as usize).max(1);
-                buf.extend(std::iter::repeat(0.0f32).take(hop));
+                buf.extend(std::iter::repeat(0.0f32).take(hop * 2));
             } else {
-                buf.extend_from_slice(&mixed);
+                for s in &mixed {
+                    buf.push(*s);
+                    buf.push(*s);
+                }
             }
-            if buf.len() > RING_CAP {
-                let drop_n = buf.len() - RING_CAP;
+            let cap = RING_CAP * 2;
+            if buf.len() > cap {
+                // Even drain only — see push_frames.
+                let excess = buf.len() - cap;
+                let drop_n = ((excess + 1) & !1).min(buf.len());
                 buf.drain(..drop_n);
             }
         }
 
         // Snapshot the most-recent FFT_SIZE samples without holding the lock
         // across the FFT itself — keeps capture-callback contention minimal.
+        // The ring is interleaved L/R, so an FFT_SIZE window of MONO needs
+        // twice that many ring samples. Both the mono mixdown and the stereo
+        // copy are taken under the same single lock (0.8.4).
+        let need = FFT_SIZE * 2;
         let have_window = {
             let buf = buffer.lock();
-            if buf.len() < FFT_SIZE {
+            if buf.len() < need {
                 false
             } else {
-                samples.copy_from_slice(&buf[buf.len() - FFT_SIZE..]);
+                let tail = &buf[buf.len() - need..];
+                mono_scratch.clear();
+                pairs_to_mono(tail, &mut mono_scratch);
+                samples.copy_from_slice(&mono_scratch);
+                stereo_tail.clear();
+                stereo_tail.extend_from_slice(tail);
                 true
             }
         };
@@ -1084,7 +1211,7 @@ fn process_loop<R: Runtime>(
             // Convert to dB-ish, apply perceptual tilt, then normalize -60 dB → 0, 0 dB → 1.
             let db = 20.0 * (avg + 1e-10).log10() - 20.0 * (FFT_SIZE as f32).log10();
             let db_tilted = db + band_tilt[b];
-            let n = ((db_tilted + 60.0) / 60.0).clamp(0.0, 1.0);
+            let n = normalize_db(db_tilted);
             // Peak-hold with exponential decay — the look most viz folks expect.
             let prev = smoothed[b];
             let next = if n > prev { n } else { prev * 0.86 + n * 0.14 };
@@ -1101,6 +1228,24 @@ fn process_loop<R: Runtime>(
         let level = (rms * 4.0).clamp(0.0, 1.0);
 
         let _ = app.emit("audio:spectrum", AudioFrame { bands, level });
+
+        // Stereo waveform (0.8.4) — the vectorscope and the correlation/width
+        // meters need both channels, de-interleaved so the frontend does no
+        // unpacking. Since 0.8.7 it rides its OWN opt-in flag: only bundles
+        // declaring "stereo": true consume it, and riding the mono flag made
+        // every waveform consumer pay double the event traffic.
+        if STEREO_WAVEFORM_ENABLED.load(std::sync::atomic::Ordering::Relaxed)
+            && stereo_tail.len() >= WAVEFORM_LEN * 2
+        {
+            let tail = &stereo_tail[stereo_tail.len() - WAVEFORM_LEN * 2..];
+            let mut left = Vec::with_capacity(WAVEFORM_LEN);
+            let mut right = Vec::with_capacity(WAVEFORM_LEN);
+            for p in tail.chunks_exact(2) {
+                left.push(sample_to_byte(p[0]));
+                right.push(sample_to_byte(p[1]));
+            }
+            let _ = app.emit("audio:waveform_stereo", StereoWaveform { left, right });
+        }
 
         if WAVEFORM_ENABLED.load(std::sync::atomic::Ordering::Relaxed) {
             let wave: Vec<u8> = samples[FFT_SIZE - WAVEFORM_LEN..]
@@ -1225,5 +1370,77 @@ mod tests {
     fn mix_of_nothing_is_nothing() {
         assert_eq!(mix_rings(&[]), Vec::<f32>::new());
         assert_eq!(mix_rings(&[vec![], vec![]]), Vec::<f32>::new());
+    }
+
+    #[test]
+    fn frame_lr_picks_channels() {
+        // Mono duplicates: a mono source must read as perfectly correlated,
+        // which is the honest vectorscope display for it.
+        assert_eq!(super::frame_lr(&[0.5]), (0.5, 0.5));
+        assert_eq!(super::frame_lr(&[0.25, -0.75]), (0.25, -0.75));
+        // 5.1 and friends: the first two are FL/FR by interleave convention.
+        assert_eq!(super::frame_lr(&[1.0, 2.0, 3.0, 4.0, 5.0, 6.0]), (1.0, 2.0));
+        // Degenerate input must not panic.
+        assert_eq!(super::frame_lr(&[]), (0.0, 0.0));
+    }
+
+    #[test]
+    fn pairs_to_mono_averages_and_ignores_a_torn_frame() {
+        let mut out = Vec::new();
+        super::pairs_to_mono(&[1.0, -1.0, 0.5, 0.5, 2.0, 0.0], &mut out);
+        assert_eq!(out, vec![0.0, 0.5, 1.0]);
+
+        // An odd trailing sample is a frame torn at a buffer edge — drop it
+        // rather than pairing it with whatever arrives next, which would swap
+        // L and R for the rest of the stream.
+        let mut odd = Vec::new();
+        super::pairs_to_mono(&[1.0, 1.0, 9.0], &mut odd);
+        assert_eq!(odd, vec![1.0]);
+
+        let mut empty = Vec::new();
+        super::pairs_to_mono(&[], &mut empty);
+        assert!(empty.is_empty());
+    }
+
+    #[test]
+    fn mono_source_round_trips_unchanged_through_the_stereo_ring() {
+        // Regression guard for the whole point of the change: making the ring
+        // stereo must not alter what the FFT sees for a mono source.
+        let mono_in = [0.3f32, -0.2, 0.9, -0.9];
+        let mut ring = Vec::new();
+        for s in mono_in {
+            let (l, r) = super::frame_lr(&[s]);
+            ring.push(l);
+            ring.push(r);
+        }
+        let mut back = Vec::new();
+        super::pairs_to_mono(&ring, &mut back);
+        assert_eq!(back, mono_in.to_vec());
+    }
+
+    #[test]
+    fn normalize_db_anchors() {
+        // Full scale saturates, the floor is exactly zero, halfway is halfway.
+        assert_eq!(super::normalize_db(0.0), 1.0);
+        assert_eq!(super::normalize_db(super::SPECTRUM_FLOOR_DB), 0.0);
+        assert!((super::normalize_db(-40.0) - 0.5).abs() < 1e-6);
+        // Below the floor still clamps rather than going negative.
+        assert_eq!(super::normalize_db(-200.0), 0.0);
+        assert_eq!(super::normalize_db(12.0), 1.0);
+    }
+
+    #[test]
+    fn quiet_content_survives_for_sensitivity_to_amplify() {
+        // The 0.8.3 bug: the floor is applied BEFORE the frontend's
+        // sensitivity multiplier, so anything clamped to 0 here is gone for
+        // good - `0.0 * 3.0` is still 0.0. A source at roughly half volume
+        // (perceptual sliders are ~cubic, so about -18 dB) pushes ordinary
+        // band levels into the -60s and -70s, which the old -60 dB floor
+        // discarded outright and no amount of sensitivity could bring back.
+        for db in [-62.0f32, -70.0, -78.0] {
+            let n = super::normalize_db(db);
+            assert!(n > 0.0, "{db} dB must survive the floor, got {n}");
+            assert!(n * 3.0 > 0.05, "{db} dB at 3x sensitivity must be visible");
+        }
     }
 }

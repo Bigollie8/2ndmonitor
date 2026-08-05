@@ -51,6 +51,7 @@ export const TILE_META: Record<BuiltinTileType, TileMeta> = {
   aurora: { icon: '◍', label: 'Aurora & moon', description: 'KP index, aurora visibility, moon phase', multiInstance: false, category: 'weather' },
   airQuality: { icon: '▒', label: 'Air quality', description: 'AQI, UV index, PM2.5/PM10 for your saved location', multiInstance: false, category: 'weather' },
   stocks: { icon: '▲', label: 'Stock ticker', description: 'Live quotes for your watchlist (configurable)', multiInstance: true, category: 'productivity' },
+  news: { icon: '¶', label: 'News ticker', description: 'BBC + Guardian headlines by category — no API key', multiInstance: true, category: 'productivity' },
   tides: { icon: '≈', label: 'Tide chart', description: 'Next high/low tides from NOAA station', multiInstance: false, category: 'weather' },
   streamChat: { icon: '◱', label: 'Stream chat', description: 'Live Twitch chat scroll for any channel', multiInstance: true, category: 'integrations' },
   homeAssistant: { icon: '⌂', label: 'Smart home', description: 'Home Assistant entities — toggle, status', multiInstance: false, category: 'integrations', needsKey: true },

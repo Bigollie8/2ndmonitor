@@ -2,7 +2,7 @@
   "id": "tile-phonenotifs",
   "name": "Phone notifs",
   "author": "official",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "api": 1,
   "permissions": [
     "net:ntfy.sh",
@@ -13,7 +13,7 @@
       "key": "ntfy_topic",
       "label": "ntfy topic",
       "kind": "password",
-      "help": "A long random topic name — this IS the credential, ntfy has no separate auth. Subscribe to the same topic from the ntfy app on your phone."
+      "help": "A long random topic name you invent (e.g. 2ndmon-7f3k9q2x). This IS the credential: ntfy has no login, so anyone who guesses the topic can read your notifications. SETUP: 1) install ntfy on your phone and subscribe to this exact topic. 2) ntfy does NOT forward your phone's notifications on its own - you need an automation app (MacroDroid or Tasker on Android) set to POST each notification to https://ntfy.sh/<your-topic>. On iOS, ntfy can only receive messages you or a service send it. 3) Test it: from a browser, open https://ntfy.sh/<your-topic> and click Publish - the message should appear in this tile within a minute."
     }
   ],
   "previewData": {

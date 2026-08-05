@@ -66,6 +66,199 @@ This adds the person behind the work, and everything that follows from that.
   see, so a mention cannot route around it
 - Rate limits on every write surface, and one open report per person per
   target so nobody can bury the moderation queue
+## [0.8.7] - 2026-08-05
+
+### Fixed
+- **Aircraft Overhead no longer throttles for some users.** The tile relied
+  on OpenSky's anonymous access, which grants a small daily budget per IP
+  address — anyone behind a shared or VPN'd address was sharing an
+  exhausted budget and saw the limit message permanently. Flight data now
+  comes from adsb.lol, a community feed with no key and no per-IP budget;
+  OpenSky remains only as an automatic fallback
+- **Weather radar on slow connections no longer glitches.** When radar
+  imagery arrived slower than the animation played (the New Zealand
+  report), frames flashed empty because each one drew only what had already
+  downloaded. The map now keeps showing the previous frame's imagery in any
+  spot the new frame hasn't loaded yet, and downloads the next frame ahead
+  of the animation
+- **F11 fullscreen, third round.** On some machines the window settles a few
+  pixels away from where it was told to go, leaving the reported gap on the
+  left and top. Fullscreen now measures where the window actually landed,
+  reapplies the correct rectangle up to three times, and — if the system
+  still refuses — logs the exact numbers so a beta tester's console output
+  pinpoints the cause. Also fixed: exiting fullscreen restores the window's
+  true previous frame instead of a slightly-shifted one
+- **macOS: the system-audio recording prompt should stop reappearing.**
+  macOS re-asks for permission when it thinks a *different* device is being
+  tapped. The app compared the default output device by its numeric ID,
+  which macOS reassigns freely (sleep/wake, AirPods reconnecting, display
+  changes), so a routine re-check looked like a new device and restarted
+  the tap — triggering a fresh permission prompt roughly every 20 minutes
+  for some setups. Devices are now compared by their stable unique ID, and
+  every tap creation is logged so testers can confirm from Console.app
+
+### Performance
+- **Full pre-0.9.0 performance audit.** Every native command, background
+  thread, polling loop, and animation path was reviewed. Measured result:
+  an edit-mode tile drag costs 1 map repaint and zero long tasks (was 246
+  repaints before the 0.7.3 pass — that fix has held through eight releases)
+- **Marketplace tiles can no longer freeze the app.** Five native operations
+  still did their network work on the interface thread — worst of all the
+  fetch that every web-backed marketplace tile repeats on its own schedule,
+  which could hold the entire app frozen for up to ten seconds per poll on
+  a slow connection. Installing a bundle, signing in, rating, and posting a
+  review had the same flaw. All five now run off-thread; this is the last
+  of the bug class behind the 0.6.3 Content Library freeze
+- **Visualizers now keep time by the clock, not the frame rate.** The
+  spectrum engine assumed 25 frames per second while actually running at
+  your display cap, so adaptive gain, beat detection decay, and the
+  no-audio demo tempo all ran about 2.4x too fast at the default 60fps
+  setting — and faster still on high-refresh monitors. Everything is now
+  computed from real elapsed time, identical on every monitor and
+  Performance Mode
+- **Slightly faster startup.** A system-monitor warm-up pause ran on the
+  main thread during launch and delayed first paint by 200ms; it now runs
+  in the background
+- **Stereo audio data is now sent only to visualizers that use it.** The
+  two-channel waveform stream — roughly double the audio traffic — was
+  broadcast whenever any visualizer ran, though only the Vectorscope and
+  Loudness console read it. Those two now declare it and everyone else
+  stops paying for it
+- **Closing one visualizer no longer freezes the waveform in another.**
+  Any visualizer being closed switched the waveform stream off globally,
+  even with other visualizers still on screen — a long-standing latent bug
+  the audit surfaced
+
+## [0.8.6] - 2026-08-05
+
+### Added
+- **News ticker tile**: BBC and Guardian headlines, no API key, with
+  category chips — Top stories, World, Politics, Business, Tech, Science,
+  Sports, Entertainment. Two publishers interleaved so neither dominates;
+  click a headline to open the story
+- **Adaptive gain for the visualizer**: reactivity no longer depends on how
+  loud the app is. Quiet playback is boosted toward a target level; loud
+  playback renders exactly as before, and silence is never amplified into a
+  light show. Settings → Visualizer → Adaptive gain, on by default
+- **Discord tile scrolls**: all 20 retained notifications instead of 4, and
+  every voice-call member instead of the first 8
+
+### Fixed
+- **The Marketplace black screen, actually fixed this time.** The error
+  panel added in 0.8.5 finally produced a stack, and it pointed somewhere
+  new: the marketplace server wraps its collections list in an envelope the
+  app didn't expect, and the mismatch crashed the store roughly half a
+  second after opening — the moment the network reply arrived. The app now
+  accepts both shapes and refuses malformed data outright. This bug never
+  reproduced outside the installed app, which is why two earlier fixes
+  missed it
+- **Opening Settings no longer stops your music.** Panels used to close the
+  browser player to keep themselves visible, which killed playback and lost
+  your signed-in session; reopening reloaded the site from scratch — the
+  "settings freezes the app" report. The player is now simply made invisible
+  behind panels: it cannot cover them, and playback and session continue
+  underneath
+- **F11 covers the whole monitor.** Fullscreen used to leave a gap on the
+  left on some monitor/scale combinations — a DPI-conversion error, fixed by
+  using raw pixel coordinates end to end
+- **The auto-hide top bar works in fullscreen.** The invisible strip that
+  reveals it sat exactly inside the window's hidden resize border, which
+  swallowed the mouse; fullscreen windows are now non-resizable, which
+  removes the border
+
+## [0.8.5] - 2026-08-05
+
+### Fixed
+- **A problem in the Marketplace no longer blanks the whole app.** The app had
+  no crash guard anywhere, so any fault while a panel was open took the entire
+  interface down to a black screen with no message. Panels now show what went
+  wrong, with Try again and Close, and everything else keeps running
+- **Searching the Marketplace no longer crashes it.** Some listings have no
+  description, and searching one of those threw an error — which, before the
+  change above, is exactly what blanked the screen
+- **Snap, Grid and Guides remember your choice.** All three reset to on every
+  time you reopened edit mode; they now persist
+
+### Changed
+- **Phone notifications setup rewritten.** The name oversold what the tile
+  does: it shows the latest message published to an ntfy topic, and ntfy does
+  not forward your phone's notifications by itself. Getting that to work needs
+  an automation app on the phone (MacroDroid or Tasker on Android; iOS has no
+  equivalent and can only receive). The setup text now says so, names the
+  field people usually mis-copy, and gives a one-line test so you can tell a
+  misconfigured tile from one nothing is publishing to
+
+## [0.8.4] - 2026-08-05
+
+### Added
+- **Two new visualizers for people who want the data**: **Vectorscope** shows
+  the stereo image as engineers see it — a tall trace means mono, a wide one
+  means spacious — with live correlation and width meters. **Loudness console**
+  gives you L/R meters with peak-hold, a rolling level history and live peak,
+  RMS, crest-factor and correlation numbers. Both install themselves when you
+  open 0.8.4
+- **Arrow keys move tiles in edit mode**: select a tile and nudge it with the
+  arrow keys, or hold Shift for pixel-level adjustment
+
+### Fixed
+- **The Marketplace no longer goes black after a moment** (regression in
+  0.8.3). 0.8.3 started keeping the browser tile alive behind panels instead of
+  closing it, so switching sources wouldn't lose your session — but the browser
+  runs in a native window that sits above everything the app draws, and when
+  moving it aside didn't take, it ended up covering the Marketplace. Panels
+  that fill the screen now close it properly again; tile edit settings still
+  keep your session, which is what that change was for
+- **Scrolling quickly through visualizers no longer freezes the app**: each
+  preview that came into view immediately started a full live render, so a
+  fast scroll started and stopped dozens of them in a row. Previews now wait
+  until you actually settle on them
+- **Connecting Discord tells you when the ID is wrong**: pasting the wrong
+  value sent you to Discord only to be met with "unknown application", which
+  never said what was wrong. The tile now checks it first and names the
+  mistake — the Public Key and the Application ID sit next to each other in
+  Discord's portal and are easy to mix up. Setup steps rewritten to say
+  exactly which field to copy
+
+### Note on the stereo visualizers
+Vectorscope and Loudness console read both audio channels, which the app now
+captures. Two things are expected rather than faults: a **per-app audio
+source** is combined to mono before the app sees it, so the vectorscope will
+show a vertical line and correlation will read 1.00 — pick the system-wide
+source for a true stereo image. And the console is labelled **RMS**, not LUFS,
+because that is genuinely what it measures.
+
+## [0.8.3] - 2026-08-05
+
+### Added
+- **Search and filters are back for installed content**: the library has a
+  search box again, plus Visualizers / Tiles / Presets filters with counts.
+  When a search hides everything it now says so and offers to clear the
+  filters, instead of looking empty
+- **Settings shows which build you're running** — System → Version
+
+### Fixed
+- **The visualizer reacts at normal listening volume**: the audio pipeline
+  threw away anything quieter than a fairly loud signal *before* the
+  sensitivity slider was applied, so at around half volume there was nothing
+  left for sensitivity to amplify — turning it up did nothing. The floor is
+  now 20 dB lower, so quiet sources come through and the slider works across
+  the range. Loud content reads a touch stronger than before; turn sensitivity
+  down if you preferred the old feel
+- **F11 no longer turns the app grey**: going fullscreen made Windows drop the
+  window's transparency, taking liquid glass with it. Fullscreen now works a
+  different way that keeps glass intact. One trade-off: while fullscreen the
+  app stays above other windows, which is what keeps the taskbar covered
+- **Liquid glass is restored when you come back to the app** after clicking
+  away. Windows still dims the effect while the app is in the background —
+  that part is the OS, not a setting
+- **Opening tile edit settings no longer restarts what you're watching**: any
+  panel used to close the browser tile entirely, so reopening reloaded the
+  page and lost your signed-in session. The player is now moved aside instead
+  of closed
+- **Update failures say what actually went wrong** instead of always claiming
+  the update server was unreachable
+- **Release announcements list the fixes**, not just new features — a
+  fixes-only release previously announced nothing
 
 ## [0.8.2] - 2026-08-04
 

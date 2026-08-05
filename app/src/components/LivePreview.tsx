@@ -3,6 +3,12 @@ import type { SpectrumState } from '../state/tauri';
 import { SandboxVizSurface, type ScriptError } from './viz-sandbox-surface';
 import { previewBudget } from './previewBudget';
 
+/** How long a card must stay in the viewport before it claims a preview slot.
+ *  Long enough that a fast scroll mounts nothing, short enough that stopping
+ *  on a card feels immediate (0.8.4). */
+const PREVIEW_SETTLE_MS = 220;
+
+
 // ─────────────────────────────────────────────────────────────────────────────
 // A catalog card's `live` preview treatment (spec C §6, task 7): the real
 // sandbox surface (`viz-sandbox-surface.tsx`), mounted at card size, reacting
@@ -82,8 +88,21 @@ export function LivePreview({
     };
   }, []);
 
-  // Budget: acquire on entering the viewport, release on leaving it. Errored
-  // cards never ask again — `erroredRef` short-circuits before `acquire`.
+  // Budget: acquire after the card has SETTLED in the viewport, release the
+  // moment it leaves. Errored cards never ask again — `erroredRef`
+  // short-circuits before `acquire`.
+  //
+  // The settle delay is the fix for scroll freezes (0.8.4). Claiming a slot
+  // mounts a real iframe sandbox: a fresh document, a fresh JS realm and a
+  // ~30fps postMessage pump. Acquiring the instant a card intersected meant a
+  // fast scroll through a long grid mounted and tore down dozens of them in
+  // succession, all on the main thread — which is what stalled the UI. Cards
+  // that merely flick past the viewport now never mount anything; you have to
+  // actually come to rest on one.
+  //
+  // Release stays immediate and un-debounced on purpose: freeing the budget
+  // must never lag, or a stationary card below could be starved of a slot that
+  // a long-gone card still nominally holds.
   useEffect(() => {
     if (erroredRef.current) return;
     if (!intersecting) {
@@ -94,9 +113,13 @@ export function LivePreview({
       }
       return;
     }
-    const got = previewBudget.acquire(key);
-    heldRef.current = got;
-    setHasSlot(got);
+    const timer = setTimeout(() => {
+      if (erroredRef.current) return;
+      const got = previewBudget.acquire(key);
+      heldRef.current = got;
+      setHasSlot(got);
+    }, PREVIEW_SETTLE_MS);
+    return () => clearTimeout(timer);
   }, [intersecting, key]);
 
   // Release on every teardown path this effect doesn't already cover —

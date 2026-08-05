@@ -17,6 +17,12 @@ export interface VizManifest {
    *  bundles may (they were reviewed with these permissions and the user
    *  approved at install). */
   permissions: string[];
+  /** Declares that this bundle reads f.waveformL/R, so the host should turn
+   *  the stereo waveform emit on while it is mounted (0.8.7). Absent = mono
+   *  only, which is every bundle except the stereo meters — the stereo IPC
+   *  (~8 KB of JSON per frame at 30 Hz) is not paid by bundles that never
+   *  read it. */
+  stereo?: boolean;
   /** Named credentials this tile needs. The host renders an input per entry,
    *  stores the value, and injects it into outgoing requests — the bundle
    *  itself never receives it. Every key here must also appear as a
@@ -220,6 +226,9 @@ export function validateManifest(
       secrets,
       config,
       surface,
+      // Lenient: anything other than literal true means mono-only, so an old
+      // manifest (no field) and a malformed one behave identically.
+      stereo: m.stereo === true,
     },
   };
 }
@@ -281,6 +290,13 @@ export interface FrameMessage {
   spectrum: Float32Array;
   /** 1024 time-domain bytes, 0-255 centered 128. */
   waveform: Uint8Array;
+  /** Per-channel time domain (0.8.4). Equal for a mono source — including any
+   *  per-app capture, which is mixed before it reaches the ring — so a
+   *  vectorscope drawn from these correctly shows a vertical line there.
+   *  Absent (0.8.7) unless the manifest declared "stereo": true and live
+   *  stereo frames have arrived; fall back to `f.waveformL || f.waveform`. */
+  waveformL?: Uint8Array;
+  waveformR?: Uint8Array;
   bands: { bass: number; mid: number; treble: number };
   onset: { kick: number; snare: number; hat: number };
   level: number;

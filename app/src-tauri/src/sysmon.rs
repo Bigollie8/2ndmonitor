@@ -97,24 +97,30 @@ pub fn spawn<R: Runtime>(app: AppHandle<R>) {
     let state = Arc::new(Mutex::new(State { sys, networks, nvml, last_gpu_sample_ts: 0 }));
 
     // Prime CPU readings — sysinfo needs two refreshes to compute deltas.
-    {
-        let mut s = state.lock();
-        s.sys.refresh_cpu_all();
-    }
-    thread::sleep(Duration::from_millis(200));
-    {
-        let mut s = state.lock();
-        s.sys.refresh_cpu_all();
-        s.networks.refresh();
-    }
-
-    thread::spawn(move || loop {
-        thread::sleep(Duration::from_secs(1));
-        let sample = collect(&state);
-        if let Some(window) = app.get_webview_window("main") {
-            let _ = window.emit("sysmon:tick", &sample);
-        } else {
-            let _ = app.emit("sysmon:tick", &sample);
+    // Both refreshes (and the 200ms wait between them) happen INSIDE the
+    // sampler thread: this function is called from Tauri's setup() on the
+    // main thread, and sleeping there delayed first paint by 200ms (0.8.7
+    // audit). The first tick is a second later anyway, so nothing observes
+    // the priming any earlier than this.
+    thread::spawn(move || {
+        {
+            let mut s = state.lock();
+            s.sys.refresh_cpu_all();
+        }
+        thread::sleep(Duration::from_millis(200));
+        {
+            let mut s = state.lock();
+            s.sys.refresh_cpu_all();
+            s.networks.refresh();
+        }
+        loop {
+            thread::sleep(Duration::from_secs(1));
+            let sample = collect(&state);
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.emit("sysmon:tick", &sample);
+            } else {
+                let _ = app.emit("sysmon:tick", &sample);
+            }
         }
     });
 }

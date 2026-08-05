@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { checkDiscordClientId } from '../state/discordId';
 import { HFTile } from './tiles';
 import type { Density } from '../types';
 import {
@@ -345,8 +346,10 @@ function VoiceSection({ voice, accent, selfUserId }: { voice: VoiceState; accent
         />
       </div>
 
-      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-        {voice.members.slice(0, 8).map((m) => (
+      {/* Every member, scrollable past ~3 rows — the old .slice(0, 8) simply
+          hid the 9th person in a large call (0.8.6). */}
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', maxHeight: 96, overflowY: 'auto' }}>
+        {voice.members.map((m) => (
           <VoiceMemberPill key={m.user_id} member={m} isSelf={m.user_id === selfUserId} />
         ))}
       </div>
@@ -438,7 +441,11 @@ function NotificationsSection({ notifications, accent }: { notifications: RpcNot
         <span>{notifications.length}</span>
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-        {notifications.slice(0, 4).map((n, i) => (
+        {/* All retained notifications (Rust keeps MAX_NOTIFICATIONS = 20).
+            This container has been maxHeight+overflow:auto all along — the
+            old .slice(0, 4) meant it never held enough rows to scroll, which
+            read as "the tile can't scroll" (0.8.6). */}
+        {notifications.map((n, i) => (
           <NotificationRow key={`${n.timestamp_ms}-${i}`} n={n} accent={accent} />
         ))}
       </div>
@@ -532,8 +539,15 @@ function ConnectView({ connecting, error, accent, connect, getStoredClientId }: 
     });
   }, []);
 
+  // Validate BEFORE opening the browser (0.8.4). Discord answers a bad id with
+  // a bare "unknown application" page that never says which field was wrong,
+  // and the Application ID sits right beside the Public Key in the portal — so
+  // the wrong paste is easy to make and impossible to diagnose from Discord's
+  // own error.
+  const idCheck = checkDiscordClientId(clientId);
+
   const submit = () => {
-    if (!clientId.trim() || connecting) return;
+    if (connecting || !idCheck.ok) return;
     connect(clientId.trim()).catch((err) => console.error('connect failed', err));
   };
 
@@ -546,12 +560,12 @@ function ConnectView({ connecting, error, accent, connect, getStoredClientId }: 
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
         <label style={{ fontSize: 9, color: 'rgba(255,255,255,0.5)', textTransform: 'uppercase', letterSpacing: '.08em', fontWeight: 600 }}>
-          Discord application client_id
+          Discord Application ID
         </label>
         <input
           value={clientId}
           onChange={(e) => setClientId(e.target.value)}
-          placeholder="paste your client_id"
+          placeholder="e.g. 123456789012345678"
           spellCheck={false}
           style={{
             background: 'rgba(0,0,0,0.3)',
@@ -565,12 +579,19 @@ function ConnectView({ connecting, error, accent, connect, getStoredClientId }: 
           }}
           onKeyDown={(e) => { if (e.key === 'Enter') submit(); }}
         />
+        {/* Only nag once they've typed something — an empty field on first
+            paint is the normal state, not a mistake. */}
+        {clientId.trim() !== '' && idCheck.problem && (
+          <span style={{ fontSize: 10.5, color: '#fca5a5', lineHeight: 1.45 }}>
+            {idCheck.problem}
+          </span>
+        )}
       </div>
 
       <div style={{ display: 'flex', gap: 8 }}>
         <button
           onClick={submit}
-          disabled={!clientId.trim() || connecting}
+          disabled={!idCheck.ok || connecting}
           style={{
             flex: 1,
             padding: '8px 12px', fontSize: 12, fontWeight: 700,
@@ -617,7 +638,10 @@ function ConnectView({ connecting, error, accent, connect, getStoredClientId }: 
               <span style={{ color: accent, fontFamily: '"JetBrains Mono", ui-monospace, monospace' }}>http://localhost:14201/callback</span>{' '}
               and save.
             </li>
-            <li>Copy the <b>Application ID</b> (top of the OAuth2 page) and paste it above.</li>
+            <li>Go to <b>General Information</b> and copy <b>Application ID</b> —
+              a long number. Not the <b>Public Key</b> just below it, and never a
+              bot token. (The OAuth2 page shows the same number labelled
+              <b> Client ID</b>.)</li>
             <li>Click Connect — the browser opens, you click Authorize, you're done.</li>
           </ol>
         </div>

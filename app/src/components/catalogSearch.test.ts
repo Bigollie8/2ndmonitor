@@ -82,3 +82,17 @@ test('searchItems: a blank query is still identity, in the original order', () =
 test('scoreItem returns 0 for a miss', () => {
   assert.equal(scoreItem(item({ name: 'Radar' }), 'zzz'), 0);
 });
+
+test('scoreItem survives the null fields the live index actually carries', () => {
+  // The marketplace index returns `"description": null` (and null summary /
+  // authorDisplay) on submitted items. Before 0.8.5 description was the one
+  // field accessed without optional chaining, so searching threw a TypeError
+  // mid-render — and with no error boundary that blanked the whole app.
+  const item = {
+    key: 'v:x', kind: 'visualizer', id: 'x', name: 'Nebula',
+    tags: [], description: null, summary: null, authorDisplay: null,
+  } as unknown as Parameters<typeof scoreItem>[0];
+  assert.doesNotThrow(() => scoreItem(item, 'neb'));
+  assert.ok(scoreItem(item, 'neb') > 0, 'name match must still score');
+  assert.equal(scoreItem(item, 'zzzz'), 0);
+});

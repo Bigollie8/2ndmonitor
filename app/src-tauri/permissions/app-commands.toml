@@ -95,6 +95,8 @@ commands.allow = [
   # market — outbound HTTP for the built-in data tiles
   # (src/state/{stocks,tides,opensky}.ts).
   "fetch_stock_quotes",
+  # News tile: category RSS headlines via the BBC/Guardian proxy (0.8.6).
+  "fetch_news_headlines",
   "fetch_tide_predictions",
   "fetch_aircraft_states",
 
@@ -122,6 +124,7 @@ commands.allow = [
   "weather_current",
   "set_audio_emit_hz",
   "set_waveform_enabled",
+  "set_stereo_waveform_enabled",
 
   # visualizer audio-source picker — apps currently holding a session
   # (audio_source.rs), plus the swap itself (audio.rs, answers on the

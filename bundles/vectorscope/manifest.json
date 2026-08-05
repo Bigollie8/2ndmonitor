@@ -1,0 +1,9 @@
+{
+  "id": "vectorscope",
+  "name": "Vectorscope",
+  "author": "official",
+  "version": "1.0.1",
+  "api": 1,
+  "stereo": true,
+  "permissions": []
+}

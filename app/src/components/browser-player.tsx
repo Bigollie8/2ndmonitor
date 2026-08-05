@@ -46,7 +46,11 @@ interface BrowserPlayerProps {
   bookmarks: Bookmark[];
   onNavigate: (url: string | null) => void;
   onExit: () => void;
-  /** When true, suppress the child webview entirely (gallery / edit / profile-switcher open). */
+  /** Any overlay open: hide the native webview (Webview.hide) so it cannot
+   *  paint over the panel, while the page — its logged-in session AND its
+   *  audio — stays alive underneath (0.8.6). One mechanism for every overlay;
+   *  the park-offscreen and hard-close variants it replaces each had a failure
+   *  mode (the Market black screen; Settings killing playback). */
   suppress: boolean;
 }
 
@@ -54,9 +58,13 @@ export function BrowserPlayer({ enabled, currentUrl, bookmarks, onNavigate, onEx
   const bodyRef = useRef<HTMLDivElement | null>(null);
   const [bounds, setBounds] = useState<DOMRect | null>(null);
 
-  // Webview is only "active" when video is on, a URL is set, and no overlay is
-  // suppressing it. Launchpad is HTML-only so it doesn't need a webview.
-  const webviewActive = enabled && !!currentUrl && !suppress;
+  // The webview exists whenever video is on and a URL is set; overlays merely
+  // HIDE it (see BrowserPlayerProps.suppress). Third iteration of this logic:
+  // destroy-on-overlay lost the session and stopped playback (Settings
+  // "freezing" the app), park-offscreen could silently fail to move and
+  // black-screen the Market. A hidden webview is not composited, so it cannot
+  // cover a panel, and the page keeps playing underneath.
+  const webviewActive = enabled && !!currentUrl;
 
   // Measure the placeholder div — initial measurement, on ResizeObserver, and on
   // window resize. The hook's reposition effect runs on every bounds change, so
@@ -95,6 +103,7 @@ export function BrowserPlayer({ enabled, currentUrl, bookmarks, onNavigate, onEx
     enabled: webviewActive,
     url: currentUrl,
     bounds,
+    hidden: suppress,
   });
 
   return (

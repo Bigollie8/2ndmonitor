@@ -87,6 +87,31 @@ function RadarTileImpl({ density, accent, location, config, setConfig, redacted 
     return (z: number, x: number, y: number) => radarTileUrl(host, path, z, x, y);
   }, [manifest, currentFrame]);
 
+  // Stale-while-loading + prefetch (0.8.7): on a slow link the loop used to
+  // advance onto frames whose tiles hadn't arrived, so the overlay popped
+  // holes every step — the NZ "glitching" report. The previous frame fills a
+  // not-yet-loaded tile's spot, and the next frame is warmed while the
+  // current one is on screen (playing only — a paused radar shouldn't fetch).
+  const prevFrame = frames.length > 1
+    ? frames[(shownIndex - 1 + frames.length) % frames.length]
+    : undefined;
+  const overlayTilePrevUrl = useMemo(() => {
+    if (!manifest || !prevFrame) return null;
+    const host = manifest.host;
+    const path = prevFrame.path;
+    return (z: number, x: number, y: number) => radarTileUrl(host, path, z, x, y);
+  }, [manifest, prevFrame]);
+
+  const nextFrame = playing && frames.length > 1
+    ? frames[(shownIndex + 1) % frames.length]
+    : undefined;
+  const overlayTilePrefetchUrl = useMemo(() => {
+    if (!manifest || !nextFrame) return null;
+    const host = manifest.host;
+    const path = nextFrame.path;
+    return (z: number, x: number, y: number) => radarTileUrl(host, path, z, x, y);
+  }, [manifest, nextFrame]);
+
   // Auto-advance frames when playing AND not scrubbing.
   useEffect(() => {
     if (!playing || scrubbing || frames.length === 0) return;
@@ -153,6 +178,8 @@ function RadarTileImpl({ density, accent, location, config, setConfig, redacted 
             minZoom={MAP_MIN_ZOOM}
             maxZoom={MAP_MAX_ZOOM}
             overlayTileUrl={overlayTileUrl}
+            overlayTilePrevUrl={overlayTilePrevUrl}
+            overlayTilePrefetchUrl={overlayTilePrefetchUrl}
             overlayTileAlpha={RADAR_OPACITY}
             overlay={drawHome}
             redacted={redacted}

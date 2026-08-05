@@ -8,3 +8,5 @@ declare const __SANDBOX_ORIGIN__: string;
 // place that resolves this safely under `tsx` too (which does not evaluate
 // Vite's `define`).
 declare const __IS_MAC__: boolean;
+/** App version from package.json, injected at build time (0.8.3). */
+declare const __APP_VERSION__: string;

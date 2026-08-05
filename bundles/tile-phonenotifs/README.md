@@ -1,5 +1,39 @@
 # Phone notifs
 
+## What this actually is (read first)
+
+The name oversells it. This tile shows the most recent message published to an
+**ntfy topic**. It is a pub/sub inbox, not a phone mirror.
+
+ntfy does **not** forward your phone's notifications by itself. Nothing in this
+tile, or in the ntfy app, does that. To make the name true you need an
+automation on the phone that POSTs each notification to your topic:
+
+- **Android**: MacroDroid or Tasker — trigger on "notification posted", action
+  HTTP POST to `https://ntfy.sh/<your-topic>` with the notification text as the
+  body.
+- **iOS**: there is no equivalent hook. ntfy on iOS can only *receive*. Use
+  this tile for things you or a service publish deliberately (alerts from a
+  server, Home Assistant, a cron job) rather than for mirroring your phone.
+
+If you set up the tile and nothing ever arrives, this is almost certainly why —
+the topic is fine, nothing is publishing to it.
+
+## Checking it works
+
+Open `https://ntfy.sh/<your-topic>` in a browser and click Publish. The message
+should appear in the tile within a minute. If it does, the tile and topic are
+correct and the missing piece is the phone-side automation.
+
+## Choosing a topic
+
+The topic name IS the credential — ntfy has no accounts or auth on the public
+server. Anyone who guesses it can read everything you publish. Use something
+long and random, and do not publish anything sensitive through it.
+
+## Implementation notes
+
+
 Polls ntfy.sh's public `/json?poll=1` endpoint for the single most recent
 message on a topic. Migrated from the built-in `PhoneNotifsTile`, with two
 real losses versus the built-in: single message instead of a scrolling

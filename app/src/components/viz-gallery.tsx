@@ -11,7 +11,7 @@ const SandboxVizSurface = lazy(() =>
 
 export function VizGallery({
   accent, accent2, spectrumRef, currentMode, onPick, onClose,
-  sensitivity = 1, smoothing = 0, catalogRemoved,
+  sensitivity = 1, smoothing = 0, autoGain = false, catalogRemoved,
 }: {
   accent: string; accent2: string;
   spectrumRef?: MutableRefObject<SpectrumState>;
@@ -19,6 +19,7 @@ export function VizGallery({
   onPick: (mode: VizMode) => void;
   onClose: () => void;
   sensitivity?: number;
+  autoGain?: boolean;
   smoothing?: number;
   /** The catalog removal list — see state/removedContent.ts. */
   catalogRemoved: string[];
@@ -115,6 +116,7 @@ export function VizGallery({
               spectrumRef={spectrumRef}
               active={s.id === currentMode}
               sensitivity={sensitivity}
+              autoGain={autoGain}
               smoothing={smoothing}
               surfaceMounted={i < mountedCount || s.id === currentMode}
               onPick={() => { onPick(s.id); onClose(); }}
@@ -160,7 +162,7 @@ export function VizGallery({
                 <SandboxVizSurface
                   bundleId={bundleIdOf(focusedStyle.id)}
                   accent={accent} accent2={accent2}
-                  spectrumRef={spectrumRef} sensitivity={sensitivity} smoothing={smoothing} />
+                  spectrumRef={spectrumRef} sensitivity={sensitivity} smoothing={smoothing} autoGain={autoGain} />
               </Suspense>
             ) : (
               <HiFiVizSurface mode={focusedStyle.id} accent={accent} accent2={accent2}
@@ -176,11 +178,12 @@ export function VizGallery({
 
 function GalleryCard({
   style, index, accent, accent2, spectrumRef, active, sensitivity, smoothing,
-  surfaceMounted, onPick, onFocus, catalogRemoved,
+  autoGain, surfaceMounted, onPick, onFocus, catalogRemoved,
 }: {
   style: VizStyleEntry;
   index: number;
   accent: string; accent2: string;
+  autoGain?: boolean;
   spectrumRef?: MutableRefObject<SpectrumState>;
   active: boolean;
   sensitivity: number; smoothing: number;

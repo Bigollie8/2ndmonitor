@@ -20,6 +20,8 @@ import {
   remapRetiredTileType,
   repairPileTiles,
   reclampProfilesBelowChrome,
+  SNAP_FRAC,
+  clampRectFrac,
 } from './state/layout';
 import { seedStarterProfiles, PROFILE_DEFAULT_COLORS } from './state/starterProfiles';
 import { shouldPinTopBar } from './state/topBar';
@@ -43,6 +45,7 @@ import {
   resolveWindUnit, type WindUnit, type WindUnitSetting,
 } from './state/units';
 import { useAudioSource } from './state/useAudioSource';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { UpdateToast } from './components/UpdateToast';
 import { useSysmon, useNowPlaying, useSpectrumRef } from './state/tauri';
 import { applySurfaces, computeSurfaces, glassTintAlpha, DEFAULT_GLASS_STRENGTH } from './state/theme';
@@ -79,6 +82,10 @@ import { parseStreamDeckConfig } from './state/actions';
 // './components/tiles' (Spotify/Notes/Sysmon — entangled with boot), VizHero,
 // TileFrame, EditModeOverlay, ContentLibrary, ProfileSwitcher, Onboarding,
 // SettingsWindow (see imports above/below).
+/** Shift+arrow step in canvas fractions — roughly one pixel at the design
+ *  width, for the last nudge after the grid step has got you close (0.8.4). */
+const FINE_NUDGE_FRAC = 1 / 2560;
+
 const VizGallery = lazy(() => import('./components/viz-gallery').then((m) => ({ default: m.VizGallery })));
 const ClaudeCodeTile = lazy(() => import('./components/claude-tile').then((m) => ({ default: m.ClaudeCodeTile })));
 const DiscordTile = lazy(() => import('./components/discord-tile').then((m) => ({ default: m.DiscordTile })));
@@ -91,6 +98,7 @@ const SunTile = lazy(() => import('./components/SunTile').then((m) => ({ default
 const AuroraTile = lazy(() => import('./components/AuroraTile').then((m) => ({ default: m.AuroraTile })));
 const AirQualityTile = lazy(() => import('./components/AirQualityTile').then((m) => ({ default: m.AirQualityTile })));
 const StocksTile = lazy(() => import('./components/StocksTile').then((m) => ({ default: m.StocksTile })));
+const NewsTile = lazy(() => import('./components/NewsTile').then((m) => ({ default: m.NewsTile })));
 const TidesTile = lazy(() => import('./components/TidesTile').then((m) => ({ default: m.TidesTile })));
 const StreamChatTile = lazy(() => import('./components/StreamChatTile').then((m) => ({ default: m.StreamChatTile })));
 const HomeAssistantTile = lazy(() => import('./components/HomeAssistantTile').then((m) => ({ default: m.HomeAssistantTile })));
@@ -132,6 +140,9 @@ interface TweakState extends Record<string, unknown> {
    *  below) so switching sources doesn't clobber a tuned gain. */
   vizSensitivityBySource: Record<string, number>;
   vizSmoothing: number;
+  /** Adaptive gain (0.8.6): boost quiet sources so reactivity doesn't depend
+   *  on app volume. Boost-only, so loud playback is unchanged. */
+  vizAutoGain: boolean;
   vizColorOverride: VizColorOverride;
   lyricsOverlayEnabled: boolean;
   /** When true AND there's at least one bookmark, the viz tile renders the
@@ -195,6 +206,12 @@ interface TweakState extends Record<string, unknown> {
   /** Platform-wide wind-speed unit (0.8.1). 'system' resolves by locale
    *  (US/UK → mph, most others → km/h) — see state/units.ts. */
   windUnit: WindUnitSetting;
+  /** Edit-mode helper toggles (0.8.5). Persisted because they were local
+   *  state before and reset to on every time edit mode reopened, so anyone who
+   *  preferred the grid off had to turn it off on every single visit. */
+  editSnap: boolean;
+  editGuides: boolean;
+  editGrid: boolean;
 }
 
 /** How long the viz surface will wait for boot seeding before giving up and
@@ -218,6 +235,7 @@ const TWEAK_DEFAULTS: TweakState = {
   vizAudioSource: { mode: 'mix' },
   vizSensitivityBySource: {},
   vizSmoothing: 0.0,
+  vizAutoGain: true,
   vizColorOverride: { enabled: false, accent: '#a78bfa', accent2: '#ec4899' },
   lyricsOverlayEnabled: true,
   videoEnabled: false,
@@ -245,6 +263,10 @@ const TWEAK_DEFAULTS: TweakState = {
   clockFormat: 'system',
   tempUnit: 'system',
   windUnit: 'system',
+  // All three default true — the pre-0.8.5 behaviour.
+  editSnap: true,
+  editGuides: true,
+  editGrid: true,
 };
 
 
@@ -499,7 +521,7 @@ export default function App() {
   }, [tweaksHydrated, t.onboardingDone, t.profiles.length, t.activeProfileId]);
   const [manualTrack, setManualTrack] = useState<Track>(TRACKS[0]!);
   const [editMode, setEditMode] = useState(false);
-  const [snapEnabled, setSnapEnabled] = useState(true);
+
   const [showSwitcher, setShowSwitcher] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [showGallery, setShowGallery] = useState(false);
@@ -651,6 +673,122 @@ export default function App() {
     const timer = setTimeout(() => { void applyGlassNow(); }, 150);
     return () => clearTimeout(timer);
   }, [t.glassEnabled, t.glassStrength, applyGlassNow]);
+
+  // Re-assert acrylic when the window regains focus (0.8.3). Users reported
+  // glass dropping out after clicking away to another app and back.
+  //
+  // HONEST LIMIT: Windows composites acrylic differently for an INACTIVE
+  // window, and that part is DWM's behaviour, not a state we control — this
+  // cannot force a blurred backdrop behind a window that does not have focus.
+  // What it does fix is the case where the composition attribute was reset
+  // while we were away and never restored, which is the same class of bug F11
+  // had. Cheap, correct either way, and it makes the remaining behaviour
+  // clearly Windows' rather than ours.
+  useEffect(() => {
+    const onFocus = () => { if (glassRef.current.enabled) void applyGlassNow(); };
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
+  }, [applyGlassNow]);
+
+  /** Remembers the windowed geometry so exiting fullscreen restores it. */
+  const preFullscreenRef = useRef<{ x: number; y: number; w: number; h: number } | null>(null);
+
+  /** F11.
+   *
+   *  Deliberately NOT `setFullscreen()` (0.8.3). Windows' fullscreen state
+   *  drops the window's transparency, so the glass build went flat grey the
+   *  moment you pressed F11 — and 0.8.2's "re-apply acrylic afterwards" could
+   *  not fix that, because there was no backdrop to restore: the window itself
+   *  had stopped being transparent.
+   *
+   *  Borderless-maximised instead: strip decorations and size the window to the
+   *  monitor. As far as Windows is concerned it stays an ordinary composited
+   *  window, so transparency and acrylic behave exactly as they do windowed.
+   *
+   *  The trade is the taskbar. A normal window at monitor bounds sits UNDER the
+   *  always-on-top taskbar, so covering it means going always-on-top for the
+   *  duration — the app floats above other windows while fullscreen, and drops
+   *  back on exit. True fullscreen hid the taskbar for free; this buys glass
+   *  with that. */
+  const toggleFullscreen = useCallback(async () => {
+    try {
+      const { getCurrentWindow, currentMonitor, PhysicalSize, PhysicalPosition } = await import('@tauri-apps/api/window');
+      const win = getCurrentWindow();
+      const prev = preFullscreenRef.current;
+
+      if (prev) {
+        // Restore.
+        preFullscreenRef.current = null;
+        await win.setAlwaysOnTop(false);
+        await win.setResizable(true);
+        await win.setDecorations(true);
+        await win.setSize(new PhysicalSize(prev.w, prev.h));
+        await win.setPosition(new PhysicalPosition(prev.x, prev.y));
+      } else {
+        const monitor = await currentMonitor();
+        if (!monitor) { console.warn('F11: no monitor reported; ignoring'); return; }
+        // Capture the OUTER rect for restore (0.8.7). The previous code
+        // captured innerPosition of the still-DECORATED window and later
+        // restored it as the outer position — so every F11 round trip crept
+        // the window down-right by the title bar + border. Outer-in,
+        // outer-out is symmetric.
+        const pos = await win.outerPosition();
+        const size = await win.outerSize();
+        preFullscreenRef.current = {
+          x: pos.x, y: pos.y,
+          w: size.width, h: size.height,
+        };
+        await win.setDecorations(false);
+        // An undecorated RESIZABLE window keeps invisible resize handles on
+        // its edges — Windows hit-tests the top few pixels as non-client, so
+        // the DOM never sees the pointer there (the 0.8.6 top-bar fix). A
+        // fullscreen window has no business being resizable anyway.
+        await win.setResizable(false);
+        // CONVERGE on the monitor rect instead of fire-and-forget (0.8.7).
+        // Physical units alone (0.8.6) did not close the reported gap: moving
+        // and resizing a window across monitors triggers Windows' own DPI /
+        // frame adjustments, which can land AFTER our set* calls and shift
+        // the window — a race no single apply can win. So: apply, let the
+        // window settle, MEASURE where it actually is (inner == outer once
+        // undecorated), and reapply while it disagrees, up to 3 passes. If
+        // it still refuses, the warn logs the exact rect Windows settled on,
+        // which is the evidence for a round-4 diagnosis rather than a guess.
+        const target = {
+          x: monitor.position.x, y: monitor.position.y,
+          w: monitor.size.width, h: monitor.size.height,
+        };
+        for (let attempt = 1; attempt <= 3; attempt++) {
+          await win.setPosition(new PhysicalPosition(target.x, target.y));
+          await win.setSize(new PhysicalSize(target.w, target.h));
+          await new Promise((r) => setTimeout(r, 90));
+          const p = await win.innerPosition();
+          const s = await win.innerSize();
+          const ok = p.x === target.x && p.y === target.y
+            && s.width === target.w && s.height === target.h;
+          if (ok) break;
+          console.warn(
+            `F11: settled at ${p.x},${p.y} ${s.width}x${s.height}, wanted `
+            + `${target.x},${target.y} ${target.w}x${target.h} (pass ${attempt})`
+            + (attempt === 3 ? ' — giving up, please report these numbers' : ' — reapplying'),
+          );
+        }
+        await win.setAlwaysOnTop(true);
+      }
+
+      // Re-assert acrylic either way: a decoration change can reset the
+      // composition attribute even though the window stays composited.
+      if (glassRef.current.enabled) {
+        setTimeout(() => { void applyGlassNow(); }, 120);
+      }
+    } catch (err) {
+      // Browser dev has no Tauri — but in the real app a rejection here is a
+      // permission denial and must be visible, not swallowed (0.7.1 §1: the
+      // silent catch is how broken F11 shipped the first time). This path now
+      // needs set-decorations / set-size / set-position / set-always-on-top /
+      // current-monitor, all granted in capabilities/default.json.
+      console.warn('F11 fullscreen failed:', err);
+    }
+  }, [applyGlassNow]);
 
   // Push the chosen audio source to Rust whenever it changes. The tweak
   // store stays the single source of truth; Rust is a follower here — the
@@ -822,6 +960,42 @@ export default function App() {
       const target = e.target as HTMLElement | null;
       const tag = target?.tagName ?? '';
       const editing = tag === 'INPUT' || tag === 'TEXTAREA' || target?.isContentEditable === true;
+      // Arrow keys nudge the selected tile while editing (0.8.4). Placed
+      // before every other binding so a held arrow can't fall through to a
+      // profile/overlay shortcut, and gated on `editing` so typing in a tile's
+      // own input still moves the caret.
+      if (editMode && selectedInstanceId && !editing && !cmd
+          && (e.key === 'ArrowLeft' || e.key === 'ArrowRight' || e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
+        e.preventDefault();
+        // One snap cell by default; Shift gives a fine step for the last
+        // pixel or two. Both go through clampRectFrac, so a nudged tile obeys
+        // exactly the same bounds (and top inset) as a dragged one.
+        const { canvas: nudgeCanvas, topInsetPx: nudgeInset } = nudgeCtxRef.current;
+        const stepX = e.shiftKey ? FINE_NUDGE_FRAC : SNAP_FRAC;
+        // Rects are fractions of a non-square canvas, so an equal-looking
+        // vertical step needs the aspect correction — otherwise Up/Down moves
+        // visibly further than Left/Right.
+        const stepY = stepX * (nudgeCanvas.w / Math.max(1, nudgeCanvas.h));
+        const dx = e.key === 'ArrowLeft' ? -stepX : e.key === 'ArrowRight' ? stepX : 0;
+        const dy = e.key === 'ArrowUp' ? -stepY : e.key === 'ArrowDown' ? stepY : 0;
+        // Read the live layout through the refs rather than the closure: this
+        // listener is only re-bound on a handful of deps, so a captured
+        // `activeOrientation` would go stale and a nudge would write back a
+        // rect from an earlier edit, clobbering anything moved since.
+        const tiles = activeOrientationRef.current.tiles;
+        const inst = tiles.find((x) => x.instanceId === selectedInstanceId);
+        if (inst) {
+          const moved = clampRectFrac(
+            { ...inst.rect, x: inst.rect.x + dx, y: inst.rect.y + dy },
+            nudgeCanvas,
+            nudgeInset,
+          );
+          updateActiveOrientationRef.current({
+            tiles: updateInstance(tiles, selectedInstanceId, { rect: moved }),
+          });
+        }
+        return;
+      }
       if (cmd && e.key === 'e') { e.preventDefault(); setEditMode((m) => !m); }
       else if (cmd && e.key === ',') { e.preventDefault(); setShowSettings((s) => !s); }
       else if (cmd && (e.key === '1' || e.key === '2' || e.key === '3')) {
@@ -837,28 +1011,7 @@ export default function App() {
         // invokes — in browser dev getCurrentWindow() throws and this is a
         // clean no-op.
         e.preventDefault();
-        void (async () => {
-          try {
-            const { getCurrentWindow } = await import('@tauri-apps/api/window');
-            const win = getCurrentWindow();
-            await win.setFullscreen(!(await win.isFullscreen()));
-            // Re-apply acrylic after the toggle. Windows drops the DWM
-            // backdrop when a window changes fullscreen state, and the glass
-            // effect below only re-runs when glassEnabled/glassStrength
-            // change — so before 0.8.1 F11 silently left you on clear glass
-            // until you touched the setting. Re-applying is a no-op if the
-            // backdrop survived. Deliberately after the await so the window
-            // has already changed state; a short delay lets DWM settle.
-            if (glassRef.current.enabled) {
-              setTimeout(() => { void applyGlassNow(); }, 120);
-            }
-          } catch (err) {
-            // Browser dev has no Tauri — but in the real app a rejection here
-            // is a permission denial and must be visible, not swallowed
-            // (0.7.1 §1: the silent catch is how broken F11 shipped).
-            console.warn('F11 fullscreen failed:', err);
-          }
-        })();
+        void toggleFullscreen();
       }
       else if (e.key === 'Escape') {
         // The store is the topmost surface and owns its own Esc (it pops one
@@ -913,7 +1066,11 @@ export default function App() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [showSwitcher, editMode, showOnboarding, showGallery, showSettings, showContentLibrary, showShortcuts, t.vizMode, t.profiles, setTweak, vizStyles, vizStylesLoaded]);
+  }, [showSwitcher, editMode, showOnboarding, showGallery, showSettings, showContentLibrary, showShortcuts, t.vizMode, t.profiles, setTweak, vizStyles, vizStylesLoaded,
+    // Arrow-key nudge (0.8.4). Everything else it needs (live tiles, canvas,
+    // top inset) is read through refs, because those are declared further down
+    // the component body than this listener is bound.
+    selectedInstanceId]);
 
   const orientation = useOrientation();
   const canvas = useCanvas();
@@ -949,6 +1106,10 @@ export default function App() {
   // clamps/placement use 0 inset. When it's off, the bar is always painted so
   // the reserved band stays CHROME_TOP_PX (unchanged pre-0.7.2 behavior).
   const topInsetPx = t.autoHideTopBar ? 0 : CHROME_TOP_PX;
+  /** Live canvas + top inset for the arrow-key nudge handler, which is bound
+   *  earlier in the component body than either value is declared (0.8.4). */
+  const nudgeCtxRef = useRef({ canvas, topInsetPx });
+  nudgeCtxRef.current = { canvas, topInsetPx };
   const fallbackProfile = useMemo<Profile>(() => ({
     id: '_fallback', name: 'Default', color: '#a78bfa',
     landscape: { tiles: ALL_TILE_TYPES.map((type) => ({ instanceId: newId(), type, rect: DEFAULT_LANDSCAPE_LAYOUT[type] })) },
@@ -1117,6 +1278,7 @@ export default function App() {
             playback={livePlayback}
             showArtBg={t.vizArtBg}
             sensitivity={vizSensitivity}
+            autoGain={t.vizAutoGain}
             smoothing={t.vizSmoothing}
             lyricsOverlayEnabled={t.lyricsOverlayEnabled}
             videoEnabled={t.videoEnabled}
@@ -1213,6 +1375,17 @@ export default function App() {
       case 'stocks':
         return (
           <StocksTile
+            instanceId={instance.instanceId}
+            density={t.density}
+            accent={accent}
+            editing={editMode}
+            config={instance.config as Record<string, unknown> | undefined}
+            setConfig={configSetterFor(instance.instanceId)}
+          />
+        );
+      case 'news':
+        return (
+          <NewsTile
             instanceId={instance.instanceId}
             density={t.density}
             accent={accent}
@@ -1417,7 +1590,7 @@ export default function App() {
               id={instance.instanceId}
               rect={instance.rect}
               editing={editMode}
-              snap={snapEnabled}
+              snap={t.editSnap}
               topInsetPx={topInsetPx}
               selected={selectedInstanceId === instance.instanceId}
               onSelect={() => setSelectedInstanceId(instance.instanceId)}
@@ -1453,8 +1626,12 @@ export default function App() {
             setTiles={(next) => updateActiveOrientation({ tiles: next })}
             selectedInstanceId={selectedInstanceId}
             setSelectedInstanceId={setSelectedInstanceId}
-            snap={snapEnabled}
-            setSnap={setSnapEnabled}
+            snap={t.editSnap}
+            setSnap={(v) => setTweak('editSnap', v)}
+            showGuides={t.editGuides}
+            setShowGuides={(v) => setTweak('editGuides', v)}
+            showGrid={t.editGrid}
+            setShowGrid={(v) => setTweak('editGrid', v)}
             profileName={activeProfile.name}
             catalogRemoved={t.catalogRemoved}
             topInsetPx={topInsetPx}
@@ -1510,6 +1687,7 @@ export default function App() {
               spectrumRef={spectrumRef}
               currentMode={t.vizMode}
               sensitivity={vizSensitivity}
+            autoGain={t.vizAutoGain}
               smoothing={t.vizSmoothing}
               onPick={(m) => setTweak('vizMode', m)}
               onClose={() => setShowGallery(false)}
@@ -1533,6 +1711,10 @@ export default function App() {
           />
         )}
         {showMarket && (
+          // Guarded (0.8.5): these overlays are lazy behind `fallback={null}`,
+          // so before this a throw inside one unmounted the whole React tree
+          // and the app simply went black with no message.
+          <ErrorBoundary surface="Marketplace" onClose={() => { setShowMarket(false); setMarketPresets(false); }}>
           <Suspense fallback={null}>
             <MarketView
               accent={accent}
@@ -1549,6 +1731,7 @@ export default function App() {
               onCreatorConsumed={() => setMarketCreator(null)}
             />
           </Suspense>
+          </ErrorBoundary>
         )}
         {showNotifications && (
           <Suspense fallback={null}>
