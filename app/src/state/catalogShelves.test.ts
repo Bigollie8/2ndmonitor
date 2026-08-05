@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildShelves, SHELF_MIN, type Collection } from './catalogShelves';
+import { buildShelves, parseCollections, SHELF_MIN, type Collection } from './catalogShelves';
 import type { CatalogItem } from './catalog';
 import type { DateMap } from './catalogSort';
 
@@ -100,4 +100,37 @@ test('buildShelves: a collection naming an unknown bundle skips it rather than t
     collections: [{ slug: 'kit', title: 'Kit', blurb: null, items: ['a', 'ghost'] }],
   });
   assert.deepEqual(shelves.find((s) => s.id === 'collection:kit')!.items.map((i) => i.id), ['a']);
+});
+
+test('parseCollections accepts the envelope the live server actually sends', () => {
+  // https://market.basedsecurity.net/collections returns {"collections":[...]}
+  // where the client expected a bare array. The un-parsed envelope reaching
+  // buildShelves is what black-screened the store on open.
+  assert.deepEqual(parseCollections({ collections: [] }), []);
+  const one = { slug: 's', title: 'T', blurb: null, items: ['a', 'b'] };
+  assert.deepEqual(parseCollections({ collections: [one] }), [one]);
+  assert.deepEqual(parseCollections([one]), [one]); // bare array still fine
+});
+
+test('parseCollections refuses garbage instead of letting it reach a for-of', () => {
+  assert.deepEqual(parseCollections(null), []);
+  assert.deepEqual(parseCollections(undefined), []);
+  assert.deepEqual(parseCollections('nope'), []);
+  assert.deepEqual(parseCollections({ collections: 'nope' }), []);
+  assert.deepEqual(parseCollections({ collections: [{ slug: 1 }] }), []);
+  // Non-string ids inside an otherwise valid collection are dropped, not kept.
+  assert.deepEqual(
+    parseCollections([{ slug: 's', title: 'T', blurb: 3, items: ['a', 7, 'b'] }]),
+    [{ slug: 's', title: 'T', blurb: null, items: ['a', 'b'] }],
+  );
+});
+
+test('buildShelves survives a raw wire value handed straight in', () => {
+  assert.doesNotThrow(() => buildShelves({
+    items: [],
+    collections: { collections: [] } as unknown as Collection[],
+    dates: new Map(),
+    nowSec: 0,
+    appVersion: '1.0.0',
+  }));
 });

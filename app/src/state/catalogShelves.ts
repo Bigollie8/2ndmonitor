@@ -41,6 +41,44 @@ export interface Collection {
   items: string[];
 }
 
+/** Parse whatever `/collections` actually returned into a Collection[].
+ *
+ *  THE 0.8.x marketplace black screen (0.8.6). The Rust command returns raw
+ *  `serde_json::Value` — whatever JSON the server sends — and the live server
+ *  sends an ENVELOPE, `{"collections":[...]}`, where the client expected a
+ *  bare array. The invoke therefore resolved (so `catch { return [] }` never
+ *  fired), the envelope object landed in state, and buildShelves'
+ *  `for (const c of collections)` threw "not iterable" inside a useMemo —
+ *  about half a second after opening the store, when the fetch resolved. With
+ *  no error boundary (pre-0.8.5) that unmounted the whole app.
+ *
+ *  It never reproduced in browser dev because `invoke` only exists natively:
+ *  outside Tauri it throws, the catch returns [], and everything works. Hence
+ *  two earlier wrong fixes aimed at the webview and at search.
+ *
+ *  Accepts a bare array, the envelope, or garbage; drops malformed entries
+ *  rather than trusting the wire shape anywhere downstream. */
+export function parseCollections(raw: unknown): Collection[] {
+  const list = Array.isArray(raw)
+    ? raw
+    : (raw && typeof raw === 'object' && Array.isArray((raw as { collections?: unknown }).collections))
+      ? (raw as { collections: unknown[] }).collections
+      : [];
+  const out: Collection[] = [];
+  for (const c of list) {
+    if (!c || typeof c !== 'object') continue;
+    const v = c as { slug?: unknown; title?: unknown; blurb?: unknown; items?: unknown };
+    if (typeof v.slug !== 'string' || typeof v.title !== 'string' || !Array.isArray(v.items)) continue;
+    out.push({
+      slug: v.slug,
+      title: v.title,
+      blurb: typeof v.blurb === 'string' ? v.blurb : null,
+      items: v.items.filter((i): i is string => typeof i === 'string'),
+    });
+  }
+  return out;
+}
+
 export function buildShelves(args: {
   items: CatalogItem[];
   collections: Collection[];
@@ -126,7 +164,11 @@ export function buildShelves(args: {
   // its members to an earlier shelf would defeat the curation. They do not
   // claim items either, for the same reason.
   const byId = new Map(items.map((i) => [i.id, i]));
-  for (const c of collections) {
+  // Defense in depth: parseCollections is the real gate, but this function
+  // must never be the thing that blanks the store if a caller hands it a raw
+  // wire value again.
+  const safeCollections = Array.isArray(collections) ? collections : [];
+  for (const c of safeCollections) {
     const picked = c.items
       .map((id) => byId.get(id))
       .filter((i): i is CatalogItem => i != null && !i.removed);
