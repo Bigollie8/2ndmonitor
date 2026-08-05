@@ -608,6 +608,74 @@ export default function App() {
     return () => clearTimeout(timer);
   }, [t.glassEnabled, t.glassStrength, applyGlassNow]);
 
+  /** Remembers the windowed geometry so exiting fullscreen restores it. */
+  const preFullscreenRef = useRef<{ x: number; y: number; w: number; h: number } | null>(null);
+
+  /** F11.
+   *
+   *  Deliberately NOT `setFullscreen()` (0.8.3). Windows' fullscreen state
+   *  drops the window's transparency, so the glass build went flat grey the
+   *  moment you pressed F11 — and 0.8.2's "re-apply acrylic afterwards" could
+   *  not fix that, because there was no backdrop to restore: the window itself
+   *  had stopped being transparent.
+   *
+   *  Borderless-maximised instead: strip decorations and size the window to the
+   *  monitor. As far as Windows is concerned it stays an ordinary composited
+   *  window, so transparency and acrylic behave exactly as they do windowed.
+   *
+   *  The trade is the taskbar. A normal window at monitor bounds sits UNDER the
+   *  always-on-top taskbar, so covering it means going always-on-top for the
+   *  duration — the app floats above other windows while fullscreen, and drops
+   *  back on exit. True fullscreen hid the taskbar for free; this buys glass
+   *  with that. */
+  const toggleFullscreen = useCallback(async () => {
+    try {
+      const { getCurrentWindow, currentMonitor, LogicalSize, LogicalPosition } = await import('@tauri-apps/api/window');
+      const win = getCurrentWindow();
+      const prev = preFullscreenRef.current;
+
+      if (prev) {
+        // Restore.
+        preFullscreenRef.current = null;
+        await win.setAlwaysOnTop(false);
+        await win.setDecorations(true);
+        await win.setSize(new LogicalSize(prev.w, prev.h));
+        await win.setPosition(new LogicalPosition(prev.x, prev.y));
+      } else {
+        const monitor = await currentMonitor();
+        if (!monitor) { console.warn('F11: no monitor reported; ignoring'); return; }
+        const pos = await win.innerPosition();
+        const size = await win.innerSize();
+        const scale = monitor.scaleFactor || 1;
+        preFullscreenRef.current = {
+          x: pos.x / scale, y: pos.y / scale,
+          w: size.width / scale, h: size.height / scale,
+        };
+        const mx = monitor.position.x / scale;
+        const my = monitor.position.y / scale;
+        const mw = monitor.size.width / scale;
+        const mh = monitor.size.height / scale;
+        await win.setDecorations(false);
+        await win.setPosition(new LogicalPosition(mx, my));
+        await win.setSize(new LogicalSize(mw, mh));
+        await win.setAlwaysOnTop(true);
+      }
+
+      // Re-assert acrylic either way: a decoration change can reset the
+      // composition attribute even though the window stays composited.
+      if (glassRef.current.enabled) {
+        setTimeout(() => { void applyGlassNow(); }, 120);
+      }
+    } catch (err) {
+      // Browser dev has no Tauri — but in the real app a rejection here is a
+      // permission denial and must be visible, not swallowed (0.7.1 §1: the
+      // silent catch is how broken F11 shipped the first time). This path now
+      // needs set-decorations / set-size / set-position / set-always-on-top /
+      // current-monitor, all granted in capabilities/default.json.
+      console.warn('F11 fullscreen failed:', err);
+    }
+  }, [applyGlassNow]);
+
   // Push the chosen audio source to Rust whenever it changes. The tweak
   // store stays the single source of truth; Rust is a follower here — the
   // real outcome (fell back to mix, unsupported, etc.) comes back on the
@@ -793,28 +861,7 @@ export default function App() {
         // invokes — in browser dev getCurrentWindow() throws and this is a
         // clean no-op.
         e.preventDefault();
-        void (async () => {
-          try {
-            const { getCurrentWindow } = await import('@tauri-apps/api/window');
-            const win = getCurrentWindow();
-            await win.setFullscreen(!(await win.isFullscreen()));
-            // Re-apply acrylic after the toggle. Windows drops the DWM
-            // backdrop when a window changes fullscreen state, and the glass
-            // effect below only re-runs when glassEnabled/glassStrength
-            // change — so before 0.8.1 F11 silently left you on clear glass
-            // until you touched the setting. Re-applying is a no-op if the
-            // backdrop survived. Deliberately after the await so the window
-            // has already changed state; a short delay lets DWM settle.
-            if (glassRef.current.enabled) {
-              setTimeout(() => { void applyGlassNow(); }, 120);
-            }
-          } catch (err) {
-            // Browser dev has no Tauri — but in the real app a rejection here
-            // is a permission denial and must be visible, not swallowed
-            // (0.7.1 §1: the silent catch is how broken F11 shipped).
-            console.warn('F11 fullscreen failed:', err);
-          }
-        })();
+        void toggleFullscreen();
       }
       else if (e.key === 'Escape') {
         // The store is the topmost surface and owns its own Esc (it pops one
