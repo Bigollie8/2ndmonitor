@@ -1202,14 +1202,6 @@ export default function App() {
             onNavigate={(url) => setTweak('videoCurrentUrl', url)}
             onExit={() => setTweak('videoEnabled', false)}
             overlaysOpen={anyOverlayOpen}
-            // Full-bleed panels close the webview outright rather than parking
-            // it (0.8.4). Parking depends on a reposition IPC landing and
-            // swallows its failures; when it did not land, the Market painted
-            // for one frame and was then covered by the native webview — a
-            // black screen. Edit mode keeps the park, because that is where the
-            // logged-in session matters and the panel is partial anyway.
-            fullBleedOverlayOpen={showMarket || showContentLibrary || showSettings
-              || showGallery || showOnboarding || showSwitcher || showShortcuts}
             // Anything that covers the canvas pauses the visualizer — those
             // panels are opaque, so drawing behind them is pure waste. Before
             // 0.7.3 only the gallery counted, and opening Settings left the
