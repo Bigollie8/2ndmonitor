@@ -61,6 +61,29 @@ use crate::audio_source::{match_sessions, Source};
 
 const FFT_SIZE: usize = 2048;
 const SPECTRUM_BANDS: usize = 64;
+
+/// Quietest band level that still maps above zero, in dBFS.
+///
+/// This is the floor of the whole visualizer pipeline and it is applied HERE,
+/// before the frontend's sensitivity multiplier — so anything below it is
+/// clamped to exactly 0.0 and `raw * sensitivity` can never recover it. At the
+/// previous -60 dB the app effectively required near-full playback volume:
+/// with a source at ~50% (perceptual sliders are roughly cubic, so ≈ -18 dB)
+/// most of the 64 log-spaced bands fell under the floor and the visualizer sat
+/// dead no matter how far sensitivity was raised.
+///
+/// -80 dB buys ~20 dB of headroom, which covers a half-volume source, while
+/// staying above the dither/noise floor of a normal desktop mix. Widening it
+/// does make mid-level content read slightly hotter — that is the deliberate
+/// trade, and sensitivity can be turned DOWN, which previously it could not be
+/// turned up enough to matter.
+const SPECTRUM_FLOOR_DB: f32 = -80.0;
+
+/// Map a tilted band level in dBFS onto 0..1: SPECTRUM_FLOOR_DB → 0, 0 dB → 1.
+fn normalize_db(db_tilted: f32) -> f32 {
+    let range = -SPECTRUM_FLOOR_DB;
+    ((db_tilted - SPECTRUM_FLOOR_DB) / range).clamp(0.0, 1.0)
+}
 /// How often we re-emit a spectrum frame to the frontend. Atomic so the
 /// frontend can dial it down via the `set_audio_emit_hz` command tied to
 /// the perf-mode tweak — at 60Hz the FFT thread is a real CPU/IPC cost
@@ -1084,7 +1107,7 @@ fn process_loop<R: Runtime>(
             // Convert to dB-ish, apply perceptual tilt, then normalize -60 dB → 0, 0 dB → 1.
             let db = 20.0 * (avg + 1e-10).log10() - 20.0 * (FFT_SIZE as f32).log10();
             let db_tilted = db + band_tilt[b];
-            let n = ((db_tilted + 60.0) / 60.0).clamp(0.0, 1.0);
+            let n = normalize_db(db_tilted);
             // Peak-hold with exponential decay — the look most viz folks expect.
             let prev = smoothed[b];
             let next = if n > prev { n } else { prev * 0.86 + n * 0.14 };
@@ -1225,5 +1248,31 @@ mod tests {
     fn mix_of_nothing_is_nothing() {
         assert_eq!(mix_rings(&[]), Vec::<f32>::new());
         assert_eq!(mix_rings(&[vec![], vec![]]), Vec::<f32>::new());
+    }
+
+    #[test]
+    fn normalize_db_anchors() {
+        // Full scale saturates, the floor is exactly zero, halfway is halfway.
+        assert_eq!(super::normalize_db(0.0), 1.0);
+        assert_eq!(super::normalize_db(super::SPECTRUM_FLOOR_DB), 0.0);
+        assert!((super::normalize_db(-40.0) - 0.5).abs() < 1e-6);
+        // Below the floor still clamps rather than going negative.
+        assert_eq!(super::normalize_db(-200.0), 0.0);
+        assert_eq!(super::normalize_db(12.0), 1.0);
+    }
+
+    #[test]
+    fn quiet_content_survives_for_sensitivity_to_amplify() {
+        // The 0.8.3 bug: the floor is applied BEFORE the frontend's
+        // sensitivity multiplier, so anything clamped to 0 here is gone for
+        // good - `0.0 * 3.0` is still 0.0. A source at roughly half volume
+        // (perceptual sliders are ~cubic, so about -18 dB) pushes ordinary
+        // band levels into the -60s and -70s, which the old -60 dB floor
+        // discarded outright and no amount of sensitivity could bring back.
+        for db in [-62.0f32, -70.0, -78.0] {
+            let n = super::normalize_db(db);
+            assert!(n > 0.0, "{db} dB must survive the floor, got {n}");
+            assert!(n * 3.0 > 0.05, "{db} dB at 3x sensitivity must be visible");
+        }
     }
 }
