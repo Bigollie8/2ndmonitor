@@ -140,6 +140,8 @@ pub fn run() {
             marketplace::marketplace_staff_users,
             marketplace::marketplace_staff_reports,
             marketplace::marketplace_moderate,
+            marketplace::marketplace_staff_audit,
+            marketplace::marketplace_undo,
             marketplace::marketplace_fetch_creators,
             marketplace::marketplace_fetch_topics,
             marketplace::marketplace_create_topic,

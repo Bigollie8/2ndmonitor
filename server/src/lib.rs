@@ -65,6 +65,8 @@ pub fn router(state: AppState) -> Router {
         .route("/admin/whoami", get(staff::whoami))
         .route("/admin/reports", get(moderation::queue))
         .route("/admin/moderate", post(moderation::act))
+        .route("/admin/audit", get(moderation::audit))
+        .route("/admin/undo", post(moderation::undo))
         .route("/submissions", post(submit::submit))
         .route("/submissions/mine", get(submit::mine))
         .route("/ratings", post(ratings::rate).get(ratings::ratings))

@@ -1,14 +1,14 @@
 import { useEffect, useState } from 'react';
 import {
-  fetchStaffRole, fetchManagedUsers, fetchReports, moderate,
-  type StaffCapabilities, type ManagedUser, type Report,
+  fetchStaffRole, fetchManagedUsers, fetchReports, moderate, fetchAudit, undoAction,
+  type StaffCapabilities, type ManagedUser, type Report, type AuditEntry,
 } from '../state/staff';
 import { avatarSrc } from '../state/avatarUrl';
 import { BadgeChips } from '../market/BadgeChips';
 
 const MONO = '"JetBrains Mono", ui-monospace, monospace';
 
-type Tab = 'users' | 'reports';
+type Tab = 'users' | 'reports' | 'log';
 
 const GRANTABLE = ['founder', 'moderator', 'creator', 'verified', 'supporter', 'staff'];
 
@@ -45,6 +45,7 @@ export function AdminPanel({ accent, onClose, onOpenCreator }: {
   const [query, setQuery] = useState('');
   const [users, setUsers] = useState<ManagedUser[] | null>(null);
   const [reports, setReports] = useState<Report[] | null>(null);
+  const [log, setLog] = useState<AuditEntry[] | null>(null);
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
   const [note, setNote] = useState('');
@@ -74,6 +75,33 @@ export function AdminPanel({ accent, onClose, onOpenCreator }: {
       .catch(() => { if (!cancelled) setReports([]); });
     return () => { cancelled = true; };
   }, [caps, tab, reload]);
+
+  useEffect(() => {
+    if (caps === 'loading' || !caps || tab !== 'log') return;
+    let cancelled = false;
+    setLog(null);
+    void fetchAudit()
+      .then((l) => { if (!cancelled) setLog(l); })
+      .catch(() => { if (!cancelled) setLog([]); });
+    return () => { cancelled = true; };
+  }, [caps, tab, reload]);
+
+  const undo = async (entry: AuditEntry) => {
+    setBusy(`undo-${entry.id}`);
+    setError('');
+    setNote('');
+    try {
+      await undoAction(entry.id);
+      setNote(`Reversed ${entry.action}.`);
+      setReload((n) => n + 1);
+    } catch (e) {
+      // Includes "you do not have permission to undo that" and "already
+      // undone" — both real answers rather than generic failures.
+      setError(String(e));
+    } finally {
+      setBusy('');
+    }
+  };
 
   const act = async (label: string, action: string, args: Record<string, unknown>) => {
     setBusy(label);
@@ -128,7 +156,7 @@ export function AdminPanel({ accent, onClose, onOpenCreator }: {
         }}>{caps.role}</span>
       )}
       <div style={{ width: 6 }} />
-      {caps && caps !== 'loading' && (['users', 'reports'] as Tab[]).map((t) => (
+      {caps && caps !== 'loading' && (['users', 'reports', 'log'] as Tab[]).map((t) => (
         <button
           key={t}
           onClick={() => setTab(t)}
@@ -171,7 +199,80 @@ export function AdminPanel({ accent, onClose, onOpenCreator }: {
         {error && <div style={{ fontSize: 11, color: '#fb7185', marginBottom: 10 }}>{error}</div>}
         {note && <div style={{ fontSize: 11, color: '#7cf5d4', marginBottom: 10 }}>{note}</div>}
 
-        {tab === 'users' ? (
+        {tab === 'log' ? (
+          log == null ? (
+            <div style={{ fontSize: 11.5, color: 'rgba(255,255,255,0.35)' }}>Loading…</div>
+          ) : log.length === 0 ? (
+            <div style={{ fontSize: 11.5, color: 'rgba(255,255,255,0.45)' }}>
+              Nothing has been moderated yet.
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {log.map((e) => {
+                const target = (e.args.handle ?? e.args.id ?? '') as string | number;
+                return (
+                  <div
+                    key={e.id}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 10,
+                      padding: '8px 11px', borderRadius: 8,
+                      background: e.undoneAt ? 'rgba(255,255,255,0.015)' : 'rgba(255,255,255,0.03)',
+                      border: '1px solid rgba(255,255,255,0.06)',
+                      opacity: e.undoneAt ? 0.55 : 1,
+                    }}
+                  >
+                    <div style={{ minWidth: 0, flex: 1 }}>
+                      <div style={{ display: 'flex', alignItems: 'baseline', gap: 7, flexWrap: 'wrap' }}>
+                        <span style={{
+                          fontSize: 10.5, fontFamily: MONO, fontWeight: 700, color: accent,
+                          textDecoration: e.undoneAt ? 'line-through' : 'none',
+                        }}>{e.action}</span>
+                        {target !== '' && (
+                          <span style={{ fontSize: 10.5, fontFamily: MONO, color: 'rgba(255,255,255,0.6)' }}>
+                            {typeof target === 'string' ? `@${target}` : `#${target}`}
+                          </span>
+                        )}
+                        {e.args.badge != null && (
+                          <span style={{ fontSize: 10, fontFamily: MONO, color: 'rgba(255,255,255,0.45)' }}>
+                            {String(e.args.badge)}
+                          </span>
+                        )}
+                        {e.args.role != null && (
+                          <span style={{ fontSize: 10, fontFamily: MONO, color: 'rgba(255,255,255,0.45)' }}>
+                            → {String(e.args.role)}
+                          </span>
+                        )}
+                      </div>
+                      <div style={{ fontSize: 9.5, fontFamily: MONO, color: 'rgba(255,255,255,0.3)', marginTop: 2 }}>
+                        {/* No name means the shared token, which belongs to
+                            whoever holds it. Said plainly rather than
+                            invented. */}
+                        by {e.actor ? `@${e.actor}` : 'shared token'} · {new Date(e.createdAt * 1000).toLocaleString()}
+                        {e.undoneAt && ` · undone by ${e.undoneBy ? `@${e.undoneBy}` : 'shared token'}`}
+                      </div>
+                    </div>
+
+                    {e.undoneAt ? (
+                      <span style={{ fontSize: 9.5, fontFamily: MONO, color: 'rgba(255,255,255,0.35)' }}>undone</span>
+                    ) : e.undoable ? (
+                      <button
+                        disabled={!!busy}
+                        onClick={() => void undo(e)}
+                        style={smallBtn(true)}
+                      >{busy === `undo-${e.id}` ? '…' : 'Undo'}</button>
+                    ) : (
+                      // No button rather than one that would fail — the log
+                      // is honest about what cannot be reversed.
+                      <span style={{ fontSize: 9.5, fontFamily: MONO, color: 'rgba(255,255,255,0.25)' }}>
+                        not reversible
+                      </span>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )
+        ) : tab === 'users' ? (
           <>
             <input
               value={query}

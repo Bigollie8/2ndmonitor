@@ -50,6 +50,20 @@ export interface Report {
   reportedBy: string | null;
 }
 
+export interface AuditEntry {
+  id: number;
+  /** Null means the shared ADMIN_TOKEN, which belongs to whoever holds it.
+   *  Rendered as such rather than given an invented name. */
+  actor: string | null;
+  action: string;
+  args: Record<string, unknown>;
+  prior: Record<string, unknown> | null;
+  undoable: boolean;
+  createdAt: number;
+  undoneAt: number | null;
+  undoneBy: string | null;
+}
+
 const invoke = async () => (await import('@tauri-apps/api/core')).invoke;
 
 /** What this caller may do — or `null` when they are not staff at all.
@@ -89,4 +103,18 @@ export async function moderate(
   args: Record<string, unknown> = {},
 ): Promise<void> {
   await (await invoke())('marketplace_moderate', { url: cfgUrl(), action, args });
+}
+
+export async function fetchAudit(): Promise<AuditEntry[]> {
+  const res = await (await invoke())<{ entries: AuditEntry[] }>(
+    'marketplace_staff_audit', { url: cfgUrl() },
+  );
+  return res.entries ?? [];
+}
+
+/** Reverse one logged action. The server derives the inverse from what it
+ *  recorded — the client never guesses, because an undo built from a
+ *  half-remembered argument list restores the wrong thing. */
+export async function undoAction(id: number): Promise<void> {
+  await (await invoke())('marketplace_undo', { url: cfgUrl(), id });
 }

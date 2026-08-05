@@ -242,3 +242,189 @@ async fn an_invalid_role_is_refused_rather_than_silently_becoming_user() {
         Some(serde_json::json!({ "action": "set-role", "handle": "roletest", "role": "superuser" }))).await;
     assert_eq!(st, StatusCode::BAD_REQUEST);
 }
+
+
+// ── the audit log ───────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn every_action_is_written_down_with_who_did_it() {
+    let app = router(test_state());
+    let admin = account(&app, "au1@x.y", "logger").await;
+    account(&app, "au2@x.y", "logged").await;
+    promote(&app, "logger", "admin").await;
+
+    call(&app, "POST", "/admin/moderate", Some(&admin),
+        Some(serde_json::json!({ "action": "suspend", "handle": "logged" }))).await;
+
+    let (st, body) = call(&app, "GET", "/admin/audit", Some(&admin), None).await;
+    assert_eq!(st, StatusCode::OK);
+    let top = &body["entries"][0];
+    assert_eq!(top["action"], "suspend");
+    assert_eq!(top["actor"], "logger");
+    assert_eq!(top["undoable"], true);
+    assert!(top["undoneAt"].is_null());
+}
+
+// The shared token belongs to whoever holds it, so it has no name. The log
+// says so rather than inventing one.
+#[tokio::test]
+async fn the_shared_token_is_logged_as_nameless() {
+    let app = router(test_state());
+    account(&app, "au3@x.y", "target3").await;
+    call(&app, "POST", "/admin/moderate", Some(ADMIN),
+        Some(serde_json::json!({ "action": "suspend", "handle": "target3" }))).await;
+
+    let (_, body) = call(&app, "GET", "/admin/audit", Some(ADMIN), None).await;
+    assert!(body["entries"][0]["actor"].is_null());
+}
+
+#[tokio::test]
+async fn undoing_a_suspension_puts_the_creator_back() {
+    let app = router(test_state());
+    let admin = account(&app, "u1@x.y", "undoer").await;
+    account(&app, "u2@x.y", "undone").await;
+    promote(&app, "undoer", "admin").await;
+
+    call(&app, "POST", "/admin/moderate", Some(&admin),
+        Some(serde_json::json!({ "action": "suspend", "handle": "undone" }))).await;
+    let (st, _) = call(&app, "GET", "/creators/undone", None, None).await;
+    assert_eq!(st, StatusCode::NOT_FOUND, "suspended creators 404");
+
+    let (_, log) = call(&app, "GET", "/admin/audit", Some(&admin), None).await;
+    let entry = log["entries"].as_array().unwrap().iter()
+        .find(|e| e["action"] == "suspend").unwrap();
+    let id = entry["id"].as_i64().unwrap();
+
+    let (st, res) = call(&app, "POST", "/admin/undo", Some(&admin),
+        Some(serde_json::json!({ "id": id }))).await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(res["applied"], "unsuspend");
+
+    let (st, _) = call(&app, "GET", "/creators/undone", None, None).await;
+    assert_eq!(st, StatusCode::OK, "and they are back");
+}
+
+// set-role cannot be reversed from its arguments alone — only the audit row
+// knows what the role WAS.
+#[tokio::test]
+async fn undoing_a_role_change_restores_the_previous_role() {
+    let app = router(test_state());
+    let admin = account(&app, "u3@x.y", "roleadmin").await;
+    let subject = account(&app, "u4@x.y", "rolesubject").await;
+    promote(&app, "roleadmin", "admin").await;
+    promote(&app, "rolesubject", "moderator").await;
+
+    call(&app, "POST", "/admin/moderate", Some(&admin),
+        Some(serde_json::json!({ "action": "set-role", "handle": "rolesubject", "role": "admin" }))).await;
+    let (_, who) = call(&app, "GET", "/admin/whoami", Some(&subject), None).await;
+    assert_eq!(who["role"], "admin");
+
+    let (_, log) = call(&app, "GET", "/admin/audit", Some(&admin), None).await;
+    let id = log["entries"].as_array().unwrap().iter()
+        .find(|e| e["action"] == "set-role" && e["args"]["role"] == "admin")
+        .unwrap()["id"].as_i64().unwrap();
+
+    let (st, _) = call(&app, "POST", "/admin/undo", Some(&admin),
+        Some(serde_json::json!({ "id": id }))).await;
+    assert_eq!(st, StatusCode::OK);
+
+    let (_, who) = call(&app, "GET", "/admin/whoami", Some(&subject), None).await;
+    assert_eq!(who["role"], "moderator", "restored to what it was, not to 'user'");
+}
+
+#[tokio::test]
+async fn an_undo_cannot_be_applied_twice() {
+    let app = router(test_state());
+    let admin = account(&app, "u5@x.y", "twiceadmin").await;
+    account(&app, "u6@x.y", "twicetarget").await;
+    promote(&app, "twiceadmin", "admin").await;
+
+    call(&app, "POST", "/admin/moderate", Some(&admin),
+        Some(serde_json::json!({ "action": "suspend", "handle": "twicetarget" }))).await;
+    let (_, log) = call(&app, "GET", "/admin/audit", Some(&admin), None).await;
+    let id = log["entries"][0]["id"].as_i64().unwrap();
+
+    let (st, _) = call(&app, "POST", "/admin/undo", Some(&admin), Some(serde_json::json!({ "id": id }))).await;
+    assert_eq!(st, StatusCode::OK);
+    let (st, _) = call(&app, "POST", "/admin/undo", Some(&admin), Some(serde_json::json!({ "id": id }))).await;
+    assert_eq!(st, StatusCode::CONFLICT);
+}
+
+// A moderator can READ the whole log, but cannot undo an admin's action just
+// because it appears in a list they can see.
+#[tokio::test]
+async fn a_moderator_cannot_undo_an_admin_action() {
+    let app = router(test_state());
+    let admin = account(&app, "u7@x.y", "bossadmin").await;
+    let mod_token = account(&app, "u8@x.y", "justamod").await;
+    account(&app, "u9@x.y", "poorsoul").await;
+    promote(&app, "bossadmin", "admin").await;
+    promote(&app, "justamod", "moderator").await;
+
+    call(&app, "POST", "/admin/moderate", Some(&admin),
+        Some(serde_json::json!({ "action": "suspend", "handle": "poorsoul" }))).await;
+
+    let (st, log) = call(&app, "GET", "/admin/audit", Some(&mod_token), None).await;
+    assert_eq!(st, StatusCode::OK, "moderators can read the whole log");
+    let id = log["entries"].as_array().unwrap().iter()
+        .find(|e| e["action"] == "suspend").unwrap()["id"].as_i64().unwrap();
+
+    let (st, _) = call(&app, "POST", "/admin/undo", Some(&mod_token),
+        Some(serde_json::json!({ "id": id }))).await;
+    assert_eq!(st, StatusCode::FORBIDDEN);
+}
+
+// Removing a picture is undoable only because the bytes are moved aside
+// rather than deleted.
+#[tokio::test]
+async fn a_removed_avatar_can_be_restored() {
+    let app = router(test_state());
+    let admin = account(&app, "av9@x.y", "picadmin").await;
+    let owner = account(&app, "av8@x.y", "picowner").await;
+    promote(&app, "picadmin", "admin").await;
+
+    let png = {
+        use base64::Engine;
+        let mut v = vec![0x89u8, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
+        v.extend_from_slice(&[0u8; 32]);
+        base64::engine::general_purpose::STANDARD.encode(&v)
+    };
+    call(&app, "POST", "/account/avatar", Some(&owner),
+        Some(serde_json::json!({ "image": png }))).await;
+
+    call(&app, "POST", "/admin/moderate", Some(&admin),
+        Some(serde_json::json!({ "action": "remove-avatar", "handle": "picowner" }))).await;
+    let (st, _) = call(&app, "GET", "/creators/picowner/avatar", None, None).await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+
+    let (_, log) = call(&app, "GET", "/admin/audit", Some(&admin), None).await;
+    let id = log["entries"].as_array().unwrap().iter()
+        .find(|e| e["action"] == "remove-avatar").unwrap()["id"].as_i64().unwrap();
+
+    let (st, _) = call(&app, "POST", "/admin/undo", Some(&admin), Some(serde_json::json!({ "id": id }))).await;
+    assert_eq!(st, StatusCode::OK);
+    let (st, _) = call(&app, "GET", "/creators/picowner/avatar", None, None).await;
+    assert_eq!(st, StatusCode::OK, "the bytes were set aside, not deleted");
+}
+
+// The undo is itself an action, so the history reads forwards.
+#[tokio::test]
+async fn the_undo_is_logged_too() {
+    let app = router(test_state());
+    let admin = account(&app, "l1@x.y", "historian").await;
+    account(&app, "l2@x.y", "subject1").await;
+    promote(&app, "historian", "admin").await;
+
+    call(&app, "POST", "/admin/moderate", Some(&admin),
+        Some(serde_json::json!({ "action": "suspend", "handle": "subject1" }))).await;
+    let (_, log) = call(&app, "GET", "/admin/audit", Some(&admin), None).await;
+    let id = log["entries"][0]["id"].as_i64().unwrap();
+    call(&app, "POST", "/admin/undo", Some(&admin), Some(serde_json::json!({ "id": id }))).await;
+
+    let (_, after) = call(&app, "GET", "/admin/audit", Some(&admin), None).await;
+    assert_eq!(after["entries"][0]["action"], "unsuspend", "the undo appears as its own entry");
+    let original = after["entries"].as_array().unwrap().iter()
+        .find(|e| e["id"] == id).unwrap();
+    assert!(!original["undoneAt"].is_null(), "and the original is marked");
+    assert_eq!(original["undoneBy"], "historian");
+}

@@ -704,6 +704,30 @@ pub fn marketplace_staff_reports<R: Runtime>(
     get_social(&format!("{base}/admin/reports"), Some(token))
 }
 
+/// The moderation log.
+#[tauri::command]
+pub fn marketplace_staff_audit<R: Runtime>(
+    app: AppHandle<R>,
+    url: String,
+) -> Result<serde_json::Value, String> {
+    let token = session_token(&app)?;
+    let base = url.trim_end_matches('/');
+    get_social(&format!("{base}/admin/audit"), Some(token))
+}
+
+/// Reverse one logged action. The server works out the inverse from what it
+/// recorded -- the client never guesses, because an undo derived from a
+/// half-remembered argument list is how you restore the wrong thing.
+#[tauri::command]
+pub fn marketplace_undo<R: Runtime>(
+    app: AppHandle<R>,
+    url: String,
+    id: i64,
+) -> Result<(), String> {
+    let base = url.trim_end_matches('/');
+    post_social(&app, &format!("{base}/admin/undo"), &serde_json::json!({ "id": id }))
+}
+
 /// One moderation action. The action name and its arguments pass straight
 /// through: the server owns the list of valid actions and who may take each
 /// one, so duplicating that here would only create a second place to get it

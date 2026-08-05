@@ -93,6 +93,24 @@ pub fn init(conn: &Connection) {
             blurb TEXT,
             sort  INTEGER NOT NULL DEFAULT 0
         );
+        -- Every moderation action, with the PRIOR state needed to undo the
+        -- ones that are not a simple flag flip. `actor_handle` is a snapshot
+        -- rather than a join, so the log still names who acted after a
+        -- rename or after the account is gone.
+        CREATE TABLE IF NOT EXISTS audit (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            actor_id     INTEGER,          -- NULL = the shared ADMIN_TOKEN
+            actor_handle TEXT,
+            action       TEXT NOT NULL,
+            args         TEXT NOT NULL,    -- JSON
+            prior        TEXT,             -- JSON; what it was before
+            undoable     INTEGER NOT NULL DEFAULT 0,
+            created_at   INTEGER NOT NULL,
+            undone_at    INTEGER,
+            undone_by    TEXT
+        );
+        CREATE INDEX IF NOT EXISTS audit_recent ON audit(id DESC);
+
         CREATE TABLE IF NOT EXISTS topics (
             id          INTEGER PRIMARY KEY AUTOINCREMENT,
             author_id   INTEGER NOT NULL,
@@ -246,6 +264,9 @@ fn migrate(conn: &Connection) {
     // Moderation is a property of a PERSON now, not of one shared secret.
     // 'user' | 'moderator' | 'admin' -- see roles.rs.
     ensure_column(conn, "users", "role", "TEXT NOT NULL DEFAULT 'user'");
+    // Set aside rather than deleted, which is the only reason removing a
+    // picture is undoable at all (moderation.rs).
+    ensure_column(conn, "users", "avatar_removed", "BLOB");
     // Uniqueness is the database's job, not a handler's: two concurrent
     // claims that both pass an application-level "is it taken?" check would
     // both succeed. The WHERE clause says out loud that unclaimed accounts

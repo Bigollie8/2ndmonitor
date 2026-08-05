@@ -187,6 +187,8 @@ commands.allow = [
   "marketplace_staff_users",
   "marketplace_staff_reports",
   "marketplace_moderate",
+  "marketplace_staff_audit",
+  "marketplace_undo",
   "marketplace_fetch_creators",
   "marketplace_fetch_topics",
   "marketplace_create_topic",
