@@ -34,7 +34,7 @@ pub async fn get_account(
 ) -> Result<Json<Value>, StatusCode> {
     let user_id = bearer_user(&state, &headers)?;
     let db = state.db.lock();
-    let (email, handle, display_name, bio, links, avatar_seed, suspended): (
+    let (email, handle, display_name, bio, links, avatar_seed, suspended, accent, badges): (
         String,
         Option<String>,
         Option<String>,
@@ -42,9 +42,11 @@ pub async fn get_account(
         String,
         Option<String>,
         i64,
+        Option<String>,
+        String,
     ) = db
         .query_row(
-            "SELECT email, handle, display_name, bio, links, avatar_seed, suspended
+            "SELECT email, handle, display_name, bio, links, avatar_seed, suspended, accent, badges
              FROM users WHERE id = ?1",
             [user_id],
             |r| {
@@ -56,6 +58,8 @@ pub async fn get_account(
                     r.get(4)?,
                     r.get(5)?,
                     r.get(6)?,
+                    r.get(7)?,
+                    r.get(8)?,
                 ))
             },
         )
@@ -69,6 +73,8 @@ pub async fn get_account(
         "links": serde_json::from_str::<Value>(&links).unwrap_or(json!([])),
         "avatarSeed": avatar_seed,
         "suspended": suspended != 0,
+        "accent": accent,
+        "badges": serde_json::from_str::<Value>(&badges).unwrap_or(json!([])),
     })))
 }
 
@@ -173,6 +179,26 @@ pub async fn patch_account(
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     }
 
+    // A profile accent. Constrained to #rrggbb so it can only ever be a
+    // colour -- no gradients, no urls, nothing that can carry a payload into
+    // someone else's page.
+    if let Some(v) = body.get("accent") {
+        let raw = v.as_str().unwrap_or("").trim().to_lowercase();
+        if raw.is_empty() {
+            db.execute("UPDATE users SET accent = NULL WHERE id = ?1", rusqlite::params![user_id])
+                .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "write failed".to_string()))?;
+        } else {
+            let ok = raw.len() == 7
+                && raw.starts_with('#')
+                && raw[1..].bytes().all(|b| b.is_ascii_hexdigit());
+            if !ok {
+                return Err((StatusCode::BAD_REQUEST, "accent must be #rrggbb".into()));
+            }
+            db.execute("UPDATE users SET accent = ?1 WHERE id = ?2", rusqlite::params![raw, user_id])
+                .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "write failed".to_string()))?;
+        }
+    }
+
     Ok(Json(json!({ "ok": true })))
 }
 
@@ -192,19 +218,21 @@ pub async fn get_creator(
     let handle = crate::handle::normalise(&handle);
     let db = state.db.lock();
 
-    let (user_id, display_name, bio, links, avatar_seed, created_at): (
+    let (user_id, display_name, bio, links, avatar_seed, created_at, accent, badges): (
         i64,
         Option<String>,
         Option<String>,
         String,
         Option<String>,
         i64,
+        Option<String>,
+        String,
     ) = db
         .query_row(
-            "SELECT id, display_name, bio, links, avatar_seed, created_at
+            "SELECT id, display_name, bio, links, avatar_seed, created_at, accent, badges
              FROM users WHERE handle = ?1 AND suspended = 0",
             [&handle],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)),
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?)),
         )
         .map_err(|_| StatusCode::NOT_FOUND)?;
 
@@ -256,5 +284,7 @@ pub async fn get_creator(
         "createdAt": created_at,
         "bundles": rows,
         "totalDownloads": total_downloads,
+        "accent": accent,
+        "badges": serde_json::from_str::<Value>(&badges).unwrap_or(json!([])),
     })))
 }

@@ -103,6 +103,52 @@ pub async fn act(
             )
             .map_err(|_| (StatusCode::CONFLICT, "that handle is taken".to_string()))?;
         }
+        "hide-topic" | "unhide-topic" => {
+            let id = body.get("id").and_then(Value::as_i64)
+                .ok_or((StatusCode::BAD_REQUEST, "id required".to_string()))?;
+            let hidden = i64::from(action == "hide-topic");
+            // Hiding a topic silences its replies too -- list_replies is
+            // reached through the topic, and create_reply refuses a hidden
+            // one, so the whole thread goes quiet in one action.
+            db.execute("UPDATE topics SET hidden = ?1 WHERE id = ?2", rusqlite::params![hidden, id])
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        }
+        "hide-reply" | "unhide-reply" => {
+            let id = body.get("id").and_then(Value::as_i64)
+                .ok_or((StatusCode::BAD_REQUEST, "id required".to_string()))?;
+            let hidden = i64::from(action == "hide-reply");
+            db.execute("UPDATE topic_replies SET hidden = ?1 WHERE id = ?2", rusqlite::params![hidden, id])
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        }
+        "hide-shout" => {
+            let id = body.get("id").and_then(Value::as_i64)
+                .ok_or((StatusCode::BAD_REQUEST, "id required".to_string()))?;
+            db.execute("UPDATE shouts SET hidden = 1 WHERE id = ?1", [id])
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        }
+        "grant-badge" | "revoke-badge" => {
+            // Badges are admin-granted only -- there is no self-service path
+            // anywhere, which is the entire point of a badge. Stored as a
+            // JSON array so a new kind needs no migration.
+            let handle = crate::handle::normalise(body.get("handle").and_then(Value::as_str).unwrap_or(""));
+            let badge = body.get("badge").and_then(Value::as_str).unwrap_or("").trim().to_lowercase();
+            if badge.is_empty() || badge.len() > 24
+                || !badge.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+            {
+                return Err((StatusCode::BAD_REQUEST, "badge must be lowercase a-z0-9-".into()));
+            }
+            let current: String = db
+                .query_row("SELECT badges FROM users WHERE handle = ?1", [&handle], |r| r.get(0))
+                .map_err(|_| (StatusCode::NOT_FOUND, "no such creator".to_string()))?;
+            let mut list: Vec<String> = serde_json::from_str(&current).unwrap_or_default();
+            list.retain(|b| b != &badge);
+            if action == "grant-badge" {
+                list.push(badge);
+            }
+            let encoded = serde_json::to_string(&list).unwrap_or_else(|_| "[]".into());
+            db.execute("UPDATE users SET badges = ?1 WHERE handle = ?2", rusqlite::params![encoded, handle])
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        }
         "resolve" => {
             let id = body.get("id").and_then(Value::as_i64)
                 .ok_or((StatusCode::BAD_REQUEST, "id required".to_string()))?;

@@ -93,6 +93,46 @@ pub fn init(conn: &Connection) {
             blurb TEXT,
             sort  INTEGER NOT NULL DEFAULT 0
         );
+        CREATE TABLE IF NOT EXISTS topics (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            author_id   INTEGER NOT NULL,
+            title       TEXT NOT NULL,
+            body        TEXT NOT NULL,
+            -- Optional: a topic may hang off one bundle (its discussion
+            -- thread) or stand alone in the general board.
+            bundle_id   TEXT,
+            hidden      INTEGER NOT NULL DEFAULT 0,
+            created_at  INTEGER NOT NULL,
+            -- Denormalised so the topic list can sort by activity without a
+            -- correlated subquery over every reply.
+            last_at     INTEGER NOT NULL,
+            reply_count INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE INDEX IF NOT EXISTS topics_recent ON topics(last_at DESC);
+        CREATE INDEX IF NOT EXISTS topics_bundle ON topics(bundle_id);
+
+        CREATE TABLE IF NOT EXISTS topic_replies (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            topic_id   INTEGER NOT NULL,
+            author_id  INTEGER NOT NULL,
+            body       TEXT NOT NULL,
+            hidden     INTEGER NOT NULL DEFAULT 0,
+            created_at INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS replies_topic ON topic_replies(topic_id, created_at);
+
+        -- The shoutbox. Deliberately not a chat log: a small rolling window,
+        -- trimmed on write, so it can never become an archive nobody can
+        -- moderate.
+        CREATE TABLE IF NOT EXISTS shouts (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            author_id  INTEGER NOT NULL,
+            body       TEXT NOT NULL,
+            hidden     INTEGER NOT NULL DEFAULT 0,
+            created_at INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS shouts_recent ON shouts(id DESC);
+
         CREATE TABLE IF NOT EXISTS comments (
             id         INTEGER PRIMARY KEY,
             bundle_id  TEXT NOT NULL,
@@ -194,6 +234,11 @@ fn migrate(conn: &Connection) {
     ensure_column(conn, "users", "links", "TEXT NOT NULL DEFAULT '[]'");
     ensure_column(conn, "users", "avatar_seed", "TEXT");
     ensure_column(conn, "users", "suspended", "INTEGER NOT NULL DEFAULT 0");
+    // 0.9.0 community round two: a profile accent (a colour cannot be
+    // abusive the way an uploaded banner can) and admin-granted badges,
+    // stored as a JSON array so granting a new kind needs no migration.
+    ensure_column(conn, "users", "accent", "TEXT");
+    ensure_column(conn, "users", "badges", "TEXT NOT NULL DEFAULT '[]'");
     // Uniqueness is the database's job, not a handler's: two concurrent
     // claims that both pass an application-level "is it taken?" check would
     // both succeed. The WHERE clause says out loud that unclaimed accounts
