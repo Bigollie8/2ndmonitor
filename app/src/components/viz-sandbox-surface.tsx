@@ -416,6 +416,8 @@ export function SandboxVizSurface({
       const msg = buildFrameMessage({
         spectrum: reader.out,
         waveform: waveRef.current.mono,
+        waveformL: waveRef.current.left,
+        waveformR: waveRef.current.right,
         bands: reader.bands,
         onset: reader.onset,
         level: spectrumRef?.current.level ?? 0,

@@ -149,6 +149,15 @@ fn sample_to_byte(s: f32) -> u8 {
 /// Most we'll ever buffer (samples). Caps memory if the processor stalls.
 const RING_CAP: usize = FFT_SIZE * 8;
 
+/// De-interleaved time-domain bytes, same convention as the mono waveform
+/// (0-255 centred at 128). Sent as two arrays so the frontend does no
+/// unpacking (0.8.4).
+#[derive(Debug, Clone, Serialize)]
+pub struct StereoWaveform {
+    pub left: Vec<u8>,
+    pub right: Vec<u8>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct AudioFrame {
     /// 64 log-spaced magnitudes, normalized to [0, 1].
@@ -1207,6 +1216,23 @@ fn process_loop<R: Runtime>(
         let level = (rms * 4.0).clamp(0.0, 1.0);
 
         let _ = app.emit("audio:spectrum", AudioFrame { bands, level });
+
+        // Stereo waveform (0.8.4) — the vectorscope and the correlation/width
+        // meters need both channels. Rides the same opt-in flag as the mono
+        // waveform so nothing pays for it unless a surface asked, and emits
+        // the two channels de-interleaved so the frontend does no unpacking.
+        if WAVEFORM_ENABLED.load(std::sync::atomic::Ordering::Relaxed)
+            && stereo_tail.len() >= WAVEFORM_LEN * 2
+        {
+            let tail = &stereo_tail[stereo_tail.len() - WAVEFORM_LEN * 2..];
+            let mut left = Vec::with_capacity(WAVEFORM_LEN);
+            let mut right = Vec::with_capacity(WAVEFORM_LEN);
+            for p in tail.chunks_exact(2) {
+                left.push(sample_to_byte(p[0]));
+                right.push(sample_to_byte(p[1]));
+            }
+            let _ = app.emit("audio:waveform_stereo", StereoWaveform { left, right });
+        }
 
         if WAVEFORM_ENABLED.load(std::sync::atomic::Ordering::Relaxed) {
             let wave: Vec<u8> = samples[FFT_SIZE - WAVEFORM_LEN..]

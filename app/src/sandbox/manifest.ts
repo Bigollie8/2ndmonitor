@@ -281,6 +281,11 @@ export interface FrameMessage {
   spectrum: Float32Array;
   /** 1024 time-domain bytes, 0-255 centered 128. */
   waveform: Uint8Array;
+  /** Per-channel time domain (0.8.4). Equal for a mono source — including any
+   *  per-app capture, which is mixed before it reaches the ring — so a
+   *  vectorscope drawn from these correctly shows a vertical line there. */
+  waveformL: Uint8Array;
+  waveformR: Uint8Array;
   bands: { bass: number; mid: number; treble: number };
   onset: { kick: number; snare: number; hat: number };
   level: number;

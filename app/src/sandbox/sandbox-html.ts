@@ -293,6 +293,8 @@ window.addEventListener('message', function (ev) {
       ctx: ctx2d,
       spectrum: msg.spectrum,
       waveform: msg.waveform,
+      waveformL: msg.waveformL,
+      waveformR: msg.waveformR,
       bands: msg.bands,
       onset: msg.onset,
       level: msg.level,
