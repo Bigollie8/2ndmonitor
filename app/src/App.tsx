@@ -608,6 +608,22 @@ export default function App() {
     return () => clearTimeout(timer);
   }, [t.glassEnabled, t.glassStrength, applyGlassNow]);
 
+  // Re-assert acrylic when the window regains focus (0.8.3). Users reported
+  // glass dropping out after clicking away to another app and back.
+  //
+  // HONEST LIMIT: Windows composites acrylic differently for an INACTIVE
+  // window, and that part is DWM's behaviour, not a state we control — this
+  // cannot force a blurred backdrop behind a window that does not have focus.
+  // What it does fix is the case where the composition attribute was reset
+  // while we were away and never restored, which is the same class of bug F11
+  // had. Cheap, correct either way, and it makes the remaining behaviour
+  // clearly Windows' rather than ours.
+  useEffect(() => {
+    const onFocus = () => { if (glassRef.current.enabled) void applyGlassNow(); };
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
+  }, [applyGlassNow]);
+
   /** Remembers the windowed geometry so exiting fullscreen restores it. */
   const preFullscreenRef = useRef<{ x: number; y: number; w: number; h: number } | null>(null);
 
