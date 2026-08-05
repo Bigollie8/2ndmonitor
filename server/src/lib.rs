@@ -11,6 +11,8 @@ pub mod email;
 pub mod handle;
 pub mod index;
 pub mod profiles;
+pub mod comments;
+pub mod moderation;
 pub mod social;
 pub mod keys;
 pub mod manifest;
@@ -43,6 +45,11 @@ pub fn router(state: AppState) -> Router {
         .route("/follows", post(social::set_follow).get(social::follow_status))
         .route("/favourites", post(social::set_favourite).get(social::favourites))
         .route("/feed", get(social::feed))
+        .route("/comments", get(comments::list).post(comments::post))
+        .route("/blocks", post(comments::set_block))
+        .route("/reports", post(comments::report))
+        .route("/admin/reports", get(moderation::queue))
+        .route("/admin/moderate", post(moderation::act))
         .route("/submissions", post(submit::submit))
         .route("/submissions/mine", get(submit::mine))
         .route("/ratings", post(ratings::rate).get(ratings::ratings))

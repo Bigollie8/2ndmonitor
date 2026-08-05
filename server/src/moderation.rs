@@ -1,0 +1,116 @@
+//! The admin side of moderation: read the queue, act on it.
+//!
+//! Every action here is reversible except none of them are destructive.
+//! Hiding a comment sets a flag rather than deleting the row, and suspending
+//! a creator hides their work rather than erasing it — an admin dealing with
+//! abuse should not also be destroying the evidence of it, and the row's
+//! primary key is what stops the same person simply re-posting into a fresh
+//! one.
+
+use crate::admin::require_admin_pub;
+use crate::state::AppState;
+use axum::extract::State;
+use axum::http::{HeaderMap, StatusCode};
+use axum::Json;
+use serde_json::{json, Value};
+
+/// Open reports, newest first, with enough context to act without a second
+/// request.
+pub async fn queue(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    require_admin_pub(&state, &headers).map_err(|s| (s, "admin token required".to_string()))?;
+    let db = state.db.lock();
+    let mut stmt = db
+        .prepare(
+            "SELECT r.id, r.target_kind, r.target_id, r.reason, r.created_at, u.handle
+             FROM reports r LEFT JOIN users u ON u.id = r.reporter_id
+             WHERE r.status = 'open'
+             ORDER BY r.created_at DESC
+             LIMIT 200",
+        )
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let rows = stmt
+        .query_map([], |r| {
+            Ok(json!({
+                "id": r.get::<_, i64>(0)?,
+                "targetKind": r.get::<_, String>(1)?,
+                "targetId": r.get::<_, String>(2)?,
+                "reason": r.get::<_, String>(3)?,
+                "createdAt": r.get::<_, i64>(4)?,
+                "reportedBy": r.get::<_, Option<String>>(5)?,
+            }))
+        })
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    Ok(Json(json!({ "reports": rows })))
+}
+
+/// Act on a report, or act directly.
+///
+/// Actions: `hide-comment`, `unhide-comment`, `hide-review`, `suspend`,
+/// `unsuspend`, `rename-handle`, `resolve`.
+pub async fn act(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<Value>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    require_admin_pub(&state, &headers).map_err(|s| (s, "admin token required".to_string()))?;
+    let action = body.get("action").and_then(Value::as_str).unwrap_or("");
+    let db = state.db.lock();
+
+    match action {
+        "hide-comment" | "unhide-comment" => {
+            let id = body.get("id").and_then(Value::as_i64)
+                .ok_or((StatusCode::BAD_REQUEST, "id required".to_string()))?;
+            let hidden = i64::from(action == "hide-comment");
+            db.execute("UPDATE comments SET hidden = ?1 WHERE id = ?2", rusqlite::params![hidden, id])
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        }
+        "hide-review" => {
+            let bundle = body.get("bundleId").and_then(Value::as_str).unwrap_or("");
+            let handle = crate::handle::normalise(body.get("handle").and_then(Value::as_str).unwrap_or(""));
+            db.execute(
+                "UPDATE reviews SET hidden = 1
+                 WHERE bundle_id = ?1 AND user_id = (SELECT id FROM users WHERE handle = ?2)",
+                rusqlite::params![bundle, handle],
+            )
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        }
+        "suspend" | "unsuspend" => {
+            let handle = crate::handle::normalise(body.get("handle").and_then(Value::as_str).unwrap_or(""));
+            let suspended = i64::from(action == "suspend");
+            let n = db
+                .execute("UPDATE users SET suspended = ?1 WHERE handle = ?2", rusqlite::params![suspended, handle])
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            if n == 0 {
+                return Err((StatusCode::NOT_FOUND, "no such creator".into()));
+            }
+        }
+        "rename-handle" => {
+            // The one path that can change a handle. Self-service renaming
+            // would let someone shed a reputation and would rot every link to
+            // their work, so it lives here.
+            let from = crate::handle::normalise(body.get("handle").and_then(Value::as_str).unwrap_or(""));
+            let to_raw = body.get("newHandle").and_then(Value::as_str).unwrap_or("");
+            let to = crate::handle::validate(to_raw)
+                .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
+            db.execute(
+                "UPDATE users SET handle = ?1, avatar_seed = ?1 WHERE handle = ?2",
+                rusqlite::params![to, from],
+            )
+            .map_err(|_| (StatusCode::CONFLICT, "that handle is taken".to_string()))?;
+        }
+        "resolve" => {
+            let id = body.get("id").and_then(Value::as_i64)
+                .ok_or((StatusCode::BAD_REQUEST, "id required".to_string()))?;
+            db.execute("UPDATE reports SET status = 'closed' WHERE id = ?1", [id])
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        }
+        _ => return Err((StatusCode::BAD_REQUEST, "unknown action".into())),
+    }
+
+    Ok(Json(json!({ "ok": true })))
+}

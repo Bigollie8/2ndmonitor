@@ -93,6 +93,32 @@ pub fn init(conn: &Connection) {
             blurb TEXT,
             sort  INTEGER NOT NULL DEFAULT 0
         );
+        CREATE TABLE IF NOT EXISTS comments (
+            id         INTEGER PRIMARY KEY,
+            bundle_id  TEXT NOT NULL,
+            user_id    INTEGER NOT NULL,
+            body       TEXT NOT NULL,      -- plain text, never markup
+            created_at INTEGER NOT NULL,
+            -- Soft moderation, like reviews: hiding abuse must not also
+            -- destroy the evidence of it.
+            hidden     INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE TABLE IF NOT EXISTS blocks (
+            user_id    INTEGER NOT NULL,
+            blocked_id INTEGER NOT NULL,
+            created_at INTEGER NOT NULL,
+            PRIMARY KEY (user_id, blocked_id)
+        );
+        CREATE TABLE IF NOT EXISTS reports (
+            id          INTEGER PRIMARY KEY,
+            target_kind TEXT NOT NULL,     -- comment|review|bundle|creator
+            target_id   TEXT NOT NULL,
+            reporter_id INTEGER NOT NULL,  -- never anonymous: someone filing
+                                            -- hundreds is itself visible
+            reason      TEXT NOT NULL,
+            created_at  INTEGER NOT NULL,
+            status      TEXT NOT NULL DEFAULT 'open'
+        );
         CREATE TABLE IF NOT EXISTS follows (
             follower_id INTEGER NOT NULL,
             creator_id  INTEGER NOT NULL,
