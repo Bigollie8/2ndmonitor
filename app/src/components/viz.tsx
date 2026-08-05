@@ -1,4 +1,5 @@
 import React, { lazy, Suspense, useEffect, useRef, useState, type MutableRefObject } from 'react';
+import { createAutoGain } from '../state/autoGain';
 import type { VizMode, Track } from '../types';
 import { type SpectrumState, type Playback, mediaControls } from '../state/tauri';
 import { useLyrics, currentLineIndex } from '../state/lyrics';
@@ -45,9 +46,15 @@ export function makeSpectrumReader(
   spectrumRef: MutableRefObject<SpectrumState> | undefined,
   sensitivity: number,
   smoothing: number,
+  /** Adaptive gain (0.8.6): boost quiet LIVE sources toward a target level so
+   *  reactivity doesn't depend on app volume. Applies on top of sensitivity,
+   *  never below 1x, and only to real audio — the procedural fallback is
+   *  already authored at display level. See state/autoGain.ts. */
+  autoGain = false,
 ) {
   const out = new Float32Array(N);
   const smoothed = new Float32Array(N);
+  const agc = createAutoGain();
   let t = 0;
   // For onset detection: slow-tracked baseline per region.
   let bassBaseline = 0, midBaseline = 0, trebleBaseline = 0;
@@ -70,6 +77,19 @@ export function makeSpectrumReader(
       const live = spectrumRef?.current.live === true;
       const liveBands = spectrumRef?.current.bands;
       const srcLen = liveBands?.length ?? 64;
+      // One adaptive gain per FRAME, derived from the raw peak — a per-bin
+      // gain would flatten the spectrum's shape. Stays 1 unless autoGain is
+      // on AND real audio is flowing, so the fallback and the loud path are
+      // bit-identical to pre-0.8.6 behaviour.
+      let gain = 1;
+      if (autoGain && live && liveBands) {
+        let peak = 0;
+        for (let i = 0; i < liveBands.length; i++) {
+          const v = liveBands[i] ?? 0;
+          if (v > peak) peak = v;
+        }
+        gain = agc.step(peak, 0.04);
+      }
       let bassSum = 0, midSum = 0, trebleSum = 0;
       // Musical thirds in log-frequency space (Rust emits 30Hz–16kHz log-spaced).
       // bass = 30–250Hz (kick, bass guitar), mid = 250Hz–2kHz (vocals, snare body),
@@ -101,7 +121,7 @@ export function makeSpectrumReader(
           const hatBoost = i >= midEnd ? fhat * 0.3 : 0;
           raw = env + a + b + c + noise + kickBoost + snareBoost + hatBoost;
         }
-        const scaled = raw * sensitivity;
+        const scaled = raw * sensitivity * gain;
         const prev = smoothed[i] ?? 0;
         const v = prev * sm + scaled * (1 - sm);
         smoothed[i] = v;
@@ -147,6 +167,8 @@ export interface VizProps {
   sensitivity?: number;
   /** Exponential smoothing factor on bands (0=no smoothing, 0.95=heavy). Default 0. */
   smoothing?: number;
+  /** Adaptive gain — boost quiet live sources toward a target (0.8.6). */
+  autoGain?: boolean;
   /** When true, viz freezes — skips reader.read() and drawing each frame.
    *  rAF is still scheduled so resume is instant on unpause. */
   paused?: boolean;
@@ -204,7 +226,7 @@ export function useAnimateGate(paused?: boolean, name?: string): { shouldDraw():
   };
 }
 
-export function HiFiVizSurface({ mode, accent, accent2, spectrumRef, sensitivity, smoothing, paused, track, playback, preview, catalogRemoved, onOpenLibrary }: { mode: VizMode; catalogRemoved: string[] } & VizProps) {
+export function HiFiVizSurface({ mode, accent, accent2, spectrumRef, sensitivity, smoothing, autoGain, paused, track, playback, preview, catalogRemoved, onOpenLibrary }: { mode: VizMode; catalogRemoved: string[] } & VizProps) {
   // `catalogRemoved` is a prop, not read from the tweaks store here — useTweaks
   // is instantiated exactly once (App.tsx) and threaded down as props.
   const { styles: vizStyles, loaded: vizStylesLoaded } = useVizStyles(catalogRemoved);
@@ -222,7 +244,7 @@ export function HiFiVizSurface({ mode, accent, accent2, spectrumRef, sensitivity
   // and silently dropped here before, so MilkDrop's gallery card allocated a
   // real context; with only two built-in cards left that is now MilkDrop's
   // card and Scripted's, and the placeholder is the whole point of the flag.
-  const props = { accent, accent2, spectrumRef, sensitivity, smoothing, paused, track, playback, preview, onOpenLibrary };
+  const props = { accent, accent2, spectrumRef, sensitivity, smoothing, autoGain, paused, track, playback, preview, onOpenLibrary };
   // `target` (resolved above) is the whole decision. `resolveVizSurface`
   // (state/contentRegistry.ts) owns it and is node-tested; it never returns a
   // hardcoded id, only something present in `vizStyles` — or 'pending'/'empty'.
@@ -555,10 +577,9 @@ function AudioDebugHud({ spectrumRef, paused }: {
 
 export function VizHero({
   mode, setMode, accent, accent2, track, spectrumRef, playback,
-  showArtBg = false, sensitivity = 1, smoothing = 0, lyricsOverlayEnabled = true,
+  showArtBg = false, sensitivity = 1, smoothing = 0, autoGain = false, lyricsOverlayEnabled = true,
   videoEnabled = false, videoCurrentUrl = null, videoBookmarks = [],
   videoAvailable = false, onToggleVideo, onNavigate, onExit, overlaysOpen = false,
-  fullBleedOverlayOpen = false,
   paused = false, onConfigure, audioDebug = false, catalogRemoved, onOpenLibrary,
 }: {
   mode: VizMode;
@@ -572,6 +593,7 @@ export function VizHero({
   showArtBg?: boolean;
   sensitivity?: number;
   smoothing?: number;
+  autoGain?: boolean;
   lyricsOverlayEnabled?: boolean;
   /** When true AND `videoAvailable`, replace the viz with the streaming browser. */
   videoEnabled?: boolean;
@@ -590,9 +612,6 @@ export function VizHero({
   /** True when any modal overlay is open (gallery / edit / switcher / onboarding) —
    *  forwarded to BrowserPlayer.suppress to hide the native webview. */
   overlaysOpen?: boolean;
-  /** A panel that covers the WHOLE canvas is open — close the browser
-   *  webview outright rather than parking it (0.8.4). */
-  fullBleedOverlayOpen?: boolean;
   paused?: boolean;
   /** Called when the user clicks "⚙ Configure" or "+ More" — opens the viz gallery. */
   onConfigure?: () => void;
@@ -649,10 +668,9 @@ export function VizHero({
             onNavigate={onNavigate ?? (() => {})}
             onExit={onExit ?? (() => {})}
             suppress={overlaysOpen}
-            suppressHard={fullBleedOverlayOpen}
           />
         ) : (
-          <HiFiVizSurface mode={mode} accent={accent} accent2={accent2} spectrumRef={spectrumRef} sensitivity={sensitivity} smoothing={smoothing} paused={paused} track={track} playback={playback} catalogRemoved={catalogRemoved} onOpenLibrary={onOpenLibrary} />
+          <HiFiVizSurface mode={mode} accent={accent} accent2={accent2} spectrumRef={spectrumRef} sensitivity={sensitivity} smoothing={smoothing} autoGain={autoGain} paused={paused} track={track} playback={playback} catalogRemoved={catalogRemoved} onOpenLibrary={onOpenLibrary} />
         )}
       </div>
       {!showVideo && (

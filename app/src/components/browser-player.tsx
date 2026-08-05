@@ -1,5 +1,5 @@
 import React from 'react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useBrowserWebview } from '../state/browserWebview';
 import { Launchpad } from './launchpad';
 
@@ -46,35 +46,25 @@ interface BrowserPlayerProps {
   bookmarks: Bookmark[];
   onNavigate: (url: string | null) => void;
   onExit: () => void;
-  /** Edit-mode style suppression: park the webview offscreen but keep the page
-   *  — and its logged-in session — alive. */
+  /** Any overlay open: hide the native webview (Webview.hide) so it cannot
+   *  paint over the panel, while the page — its logged-in session AND its
+   *  audio — stays alive underneath (0.8.6). One mechanism for every overlay;
+   *  the park-offscreen and hard-close variants it replaces each had a failure
+   *  mode (the Market black screen; Settings killing playback). */
   suppress: boolean;
-  /** Full-bleed suppression: actually CLOSE the webview. Used by panels that
-   *  cover the whole canvas, where a parked-but-alive native surface whose
-   *  move failed would cover them completely (0.8.4). */
-  suppressHard: boolean;
 }
 
-export function BrowserPlayer({ enabled, currentUrl, bookmarks, onNavigate, onExit, suppress, suppressHard }: BrowserPlayerProps) {
+export function BrowserPlayer({ enabled, currentUrl, bookmarks, onNavigate, onExit, suppress }: BrowserPlayerProps) {
   const bodyRef = useRef<HTMLDivElement | null>(null);
   const [bounds, setBounds] = useState<DOMRect | null>(null);
 
-  // Two kinds of suppression (0.8.4).
-  //
-  // 0.8.3 replaced "destroy on any overlay" with "park offscreen", so opening
-  // tile edit settings stopped throwing away a logged-in Netflix/Plex session.
-  // That was right for edit mode and wrong for full-bleed panels: parking
-  // depends on a reposition IPC actually landing, every failure path is
-  // silently swallowed, and a native child webview paints above ALL html — so
-  // when the move did not take, the Market rendered for one frame and was then
-  // covered by the webview. A black screen.
-  //
-  // So: park for the edit overlay, where the session matters and the panel is
-  // partial anyway; genuinely CLOSE for anything full-bleed, where being
-  // covered is catastrophic and a reload on return is a fair price. Closing is
-  // unconditional — it cannot half-succeed the way a reposition can.
-  const webviewActive = enabled && !!currentUrl && !suppressHard;
-  const parked = suppress && !suppressHard;
+  // The webview exists whenever video is on and a URL is set; overlays merely
+  // HIDE it (see BrowserPlayerProps.suppress). Third iteration of this logic:
+  // destroy-on-overlay lost the session and stopped playback (Settings
+  // "freezing" the app), park-offscreen could silently fail to move and
+  // black-screen the Market. A hidden webview is not composited, so it cannot
+  // cover a panel, and the page keeps playing underneath.
+  const webviewActive = enabled && !!currentUrl;
 
   // Measure the placeholder div — initial measurement, on ResizeObserver, and on
   // window resize. The hook's reposition effect runs on every bounds change, so
@@ -109,21 +99,11 @@ export function BrowserPlayer({ enabled, currentUrl, bookmarks, onNavigate, onEx
     };
   }, [webviewActive]);
 
-  // While parked, hand the hook an offscreen rect instead of the real one.
-  // Bounds stay NON-null so the webview is never destroyed — only moved. A
-  // 1x1 at a large negative offset is off every monitor arrangement we can
-  // address, and keeping it 1x1 rather than 0x0 avoids platforms that reject a
-  // zero-sized webview.
-  const PARKED_RECT = useMemo(
-    () => new DOMRect(-32000, -32000, 1, 1),
-    [],
-  );
-  const effectiveBounds = parked ? PARKED_RECT : bounds;
-
   const { error } = useBrowserWebview({
     enabled: webviewActive,
     url: currentUrl,
-    bounds: effectiveBounds,
+    bounds,
+    hidden: suppress,
   });
 
   return (
@@ -136,7 +116,7 @@ export function BrowserPlayer({ enabled, currentUrl, bookmarks, onNavigate, onEx
         {currentUrl !== null && error && (
           <BrowserUnavailable error={error} onExit={onExit} />
         )}
-        {currentUrl !== null && !error && (suppress || suppressHard) && (
+        {currentUrl !== null && !error && suppress && (
           <SuppressedNotice />
         )}
         {/* When currentUrl is set and no error and not suppressed, the native

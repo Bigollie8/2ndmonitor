@@ -14,6 +14,17 @@ interface UseBrowserWebviewArgs {
    *  via a ref so changes in rect VALUE don't thrash the create effect. The Task 4
    *  reposition effect handles value changes. */
   bounds: DOMRect | null;
+  /** Overlay open: make the native surface invisible via Webview.hide()
+   *  (0.8.6). This replaces BOTH earlier suppression mechanisms and their
+   *  failure modes. Destroying the webview (pre-0.8.3, and again for
+   *  full-bleed panels in the 0.8.4 hotfix) threw away the logged-in session
+   *  and stopped audio — "opening Settings kills my music". Parking it
+   *  offscreen (0.8.3) depended on a reposition IPC that could silently fail,
+   *  and a native surface that failed to move paints above all HTML — the
+   *  Market black screen. A hidden webview is simply not composited: it
+   *  cannot cover anything, the page keeps its session, and audio keeps
+   *  playing behind the panel. */
+  hidden: boolean;
 }
 
 export interface UseBrowserWebviewResult {
@@ -44,7 +55,7 @@ function logCloseError(e: unknown) {
  *  The destroy + recreate strategy substitutes for the eval-based navigate that
  *  Tauri 2.1's JS Webview does not support. */
 export function useBrowserWebview(args: UseBrowserWebviewArgs): UseBrowserWebviewResult {
-  const { enabled, url, bounds } = args;
+  const { enabled, url, bounds, hidden } = args;
   const webviewRef = useRef<Webview | null>(null);
   const boundsRef = useRef<DOMRect | null>(bounds);
   const [ready, setReady] = useState(false);
@@ -132,6 +143,26 @@ export function useBrowserWebview(args: UseBrowserWebviewArgs): UseBrowserWebvie
       if (wv) wv.close().catch(logCloseError);
     };
   }, [enabled, url, boundsAvailable]);
+
+  // Mirror `hidden` onto the native surface. Runs on `ready` too, so a webview
+  // created while an overlay is already open starts hidden rather than
+  // flashing over the panel for a frame. Failures are LOGGED, never swallowed:
+  // hide/show each need their own capability grant
+  // (core:webview:allow-webview-hide / -show in capabilities/default.json) and
+  // a missing grant rejects — the 0.7.1 F11 bug was exactly a silent catch
+  // hiding a missing window grant, and a webview that silently fails to hide
+  // reproduces the Market black screen this exists to fix.
+  useEffect(() => {
+    if (!ready) return;
+    const wv = webviewRef.current;
+    if (!wv) return;
+    (hidden ? wv.hide() : wv.show()).catch((e: unknown) => {
+      const msg = String(e);
+      if (!msg.includes('not found')) {
+        console.error(`[browserWebview] ${hidden ? 'hide' : 'show'} failed (missing capability?):`, msg);
+      }
+    });
+  }, [hidden, ready]);
 
   // Reposition / resize whenever bounds change. rAF-debounced so dragging the
   // tile in edit mode or a rapid window resize doesn't queue dozens of IPC

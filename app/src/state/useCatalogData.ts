@@ -27,7 +27,7 @@ import { getSecret, bundleSecretKey } from './secrets';
 import { readCachedIndex, writeCachedIndex, clearCachedIndex } from './indexCache';
 import { buildVersionHistory, dateMapOf, type BundleHistory } from './catalogVersions';
 import type { DateMap } from './catalogSort';
-import type { Collection } from './catalogShelves';
+import { parseCollections, type Collection } from './catalogShelves';
 
 export interface CatalogData {
   items: CatalogItem[];
@@ -165,7 +165,12 @@ export function useCatalogData(args: { catalogRemoved: string[] }): CatalogData 
   const fetchCollections = useCallback(async (): Promise<Collection[]> => {
     try {
       const { invoke } = await import('@tauri-apps/api/core');
-      return await invoke<Collection[]>('marketplace_fetch_collections', { url: cfgUrl() });
+      // The command returns the server's raw JSON, and the live server sends
+      // an ENVELOPE ({"collections":[...]}), not the bare array this promised.
+      // Trusting the wire shape here is what black-screened the store — see
+      // parseCollections. Never hand un-parsed wire data to state.
+      const raw = await invoke<unknown>('marketplace_fetch_collections', { url: cfgUrl() });
+      return parseCollections(raw);
     } catch {
       return [];
     }

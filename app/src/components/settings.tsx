@@ -53,6 +53,8 @@ export interface SettingsValues {
   vizAudioSource: AudioSource;
   vizSensitivityBySource: Record<string, number>;
   vizSmoothing: number;
+  /** Adaptive gain for the visualizer (0.8.6). */
+  vizAutoGain: boolean;
   vizColorOverride: VizColorOverride;
   lyricsOverlayEnabled: boolean;
   accentTheme: AccentTheme;
@@ -215,6 +217,11 @@ export function SettingsWindow({
               onChange={(x) => set('vizSensitivityBySource', { ...v.vizSensitivityBySource, [sourceKey(v.vizAudioSource)]: x })}
             />
           ),
+        },
+        {
+          id: 'viz-auto-gain', label: 'Adaptive gain',
+          hint: 'Boost quiet playback so reactivity doesn’t depend on app volume — loud playback is unchanged',
+          control: <Toggle checked={v.vizAutoGain} onChange={(c) => set('vizAutoGain', c)} accent={accent} />,
         },
         {
           id: 'viz-smoothing', label: 'Smoothing',

@@ -13,7 +13,7 @@ export function newId(): string {
 export type BuiltinTileType =
   | 'discord' | 'spotify' | 'claude' | 'notes' | 'mixer' | 'sysmon' | 'clock' | 'viz'
   | 'streamDeck' | 'weatherRadar' | 'pomodoro' | 'sun' | 'aurora'
-  | 'airQuality' | 'stocks' | 'tides' | 'streamChat'
+  | 'airQuality' | 'stocks' | 'news' | 'tides' | 'streamChat'
   | 'homeAssistant'
   | 'scratchpad' | 'onThisDay'
   | 'iss' | 'pollen'
@@ -33,7 +33,7 @@ export type TileType = BuiltinTileType | `bundle:${string}`;
 export const ALL_TILE_TYPES: BuiltinTileType[] = [
   'viz', 'spotify', 'discord', 'claude', 'mixer', 'notes', 'sysmon', 'clock',
   'streamDeck', 'weatherRadar', 'pomodoro', 'sun', 'aurora',
-  'airQuality', 'stocks', 'tides', 'streamChat',
+  'airQuality', 'stocks', 'news', 'tides', 'streamChat',
   'homeAssistant',
   'scratchpad', 'onThisDay',
   'iss', 'pollen',
@@ -164,6 +164,7 @@ export const DEFAULT_LANDSCAPE_LAYOUT: Record<BuiltinTileType, Rect> = {
   aurora: { x: 0.27, y: 0.74, w: 0.13, h: 0.18 },
   airQuality: { x: 0.05, y: 0.74, w: 0.20, h: 0.18 },
   stocks: { x: 0.40, y: 0.74, w: 0.30, h: 0.18 },
+  news: { x: 0.05, y: 0.55, w: 0.28, h: 0.34 },
   tides: { x: 0.05, y: 0.36, w: 0.20, h: 0.18 },
   streamChat: { x: 0.72, y: 0.55, w: 0.20, h: 0.30 },
   homeAssistant: { x: 0.72, y: 0.05, w: 0.20, h: 0.30 },
@@ -236,6 +237,7 @@ export const DEFAULT_PORTRAIT_LAYOUT: Record<BuiltinTileType, Rect> = {
   aurora: { x: 0.05, y: 0.85, w: 0.90, h: 0.05 },
   airQuality: { x: 0.05, y: 0.52, w: 0.43, h: 0.08 },
   stocks: { x: 0.50, y: 0.52, w: 0.45, h: 0.08 },
+  news: { x: 0.05, y: 0.60, w: 0.90, h: 0.22 },
   tides: { x: 0.05, y: 0.30, w: 0.90, h: 0.10 },
   streamChat: { x: 0.05, y: 0.42, w: 0.90, h: 0.18 },
   homeAssistant: { x: 0.05, y: 0.42, w: 0.90, h: 0.18 },

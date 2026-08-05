@@ -24,6 +24,7 @@ mod foreground;
 mod glass;
 mod lyrics;
 mod market;
+mod news;
 mod mixer;
 mod nowplaying;
 mod marketplace;
@@ -89,6 +90,7 @@ pub fn run() {
             actions::app_copy_text,
             actions::app_send_hotkey,
             market::fetch_stock_quotes,
+            news::fetch_news_headlines,
             market::fetch_tide_predictions,
             market::fetch_aircraft_states,
             foreground::foreground_get,

@@ -98,6 +98,7 @@ const SunTile = lazy(() => import('./components/SunTile').then((m) => ({ default
 const AuroraTile = lazy(() => import('./components/AuroraTile').then((m) => ({ default: m.AuroraTile })));
 const AirQualityTile = lazy(() => import('./components/AirQualityTile').then((m) => ({ default: m.AirQualityTile })));
 const StocksTile = lazy(() => import('./components/StocksTile').then((m) => ({ default: m.StocksTile })));
+const NewsTile = lazy(() => import('./components/NewsTile').then((m) => ({ default: m.NewsTile })));
 const TidesTile = lazy(() => import('./components/TidesTile').then((m) => ({ default: m.TidesTile })));
 const StreamChatTile = lazy(() => import('./components/StreamChatTile').then((m) => ({ default: m.StreamChatTile })));
 const HomeAssistantTile = lazy(() => import('./components/HomeAssistantTile').then((m) => ({ default: m.HomeAssistantTile })));
@@ -135,6 +136,9 @@ interface TweakState extends Record<string, unknown> {
    *  below) so switching sources doesn't clobber a tuned gain. */
   vizSensitivityBySource: Record<string, number>;
   vizSmoothing: number;
+  /** Adaptive gain (0.8.6): boost quiet sources so reactivity doesn't depend
+   *  on app volume. Boost-only, so loud playback is unchanged. */
+  vizAutoGain: boolean;
   vizColorOverride: VizColorOverride;
   lyricsOverlayEnabled: boolean;
   /** When true AND there's at least one bookmark, the viz tile renders the
@@ -227,6 +231,7 @@ const TWEAK_DEFAULTS: TweakState = {
   vizAudioSource: { mode: 'mix' },
   vizSensitivityBySource: {},
   vizSmoothing: 0.0,
+  vizAutoGain: true,
   vizColorOverride: { enabled: false, accent: '#a78bfa', accent2: '#ec4899' },
   lyricsOverlayEnabled: true,
   videoEnabled: false,
@@ -663,7 +668,7 @@ export default function App() {
    *  with that. */
   const toggleFullscreen = useCallback(async () => {
     try {
-      const { getCurrentWindow, currentMonitor, LogicalSize, LogicalPosition } = await import('@tauri-apps/api/window');
+      const { getCurrentWindow, currentMonitor, PhysicalSize, PhysicalPosition } = await import('@tauri-apps/api/window');
       const win = getCurrentWindow();
       const prev = preFullscreenRef.current;
 
@@ -671,26 +676,37 @@ export default function App() {
         // Restore.
         preFullscreenRef.current = null;
         await win.setAlwaysOnTop(false);
+        await win.setResizable(true);
         await win.setDecorations(true);
-        await win.setSize(new LogicalSize(prev.w, prev.h));
-        await win.setPosition(new LogicalPosition(prev.x, prev.y));
+        await win.setSize(new PhysicalSize(prev.w, prev.h));
+        await win.setPosition(new PhysicalPosition(prev.x, prev.y));
       } else {
         const monitor = await currentMonitor();
         if (!monitor) { console.warn('F11: no monitor reported; ignoring'); return; }
         const pos = await win.innerPosition();
         const size = await win.innerSize();
-        const scale = monitor.scaleFactor || 1;
         preFullscreenRef.current = {
-          x: pos.x / scale, y: pos.y / scale,
-          w: size.width / scale, h: size.height / scale,
+          x: pos.x, y: pos.y,
+          w: size.width, h: size.height,
         };
-        const mx = monitor.position.x / scale;
-        const my = monitor.position.y / scale;
-        const mw = monitor.size.width / scale;
-        const mh = monitor.size.height / scale;
+        // PHYSICAL units end to end (0.8.6). The first version divided the
+        // monitor's physical origin/size by scaleFactor and passed Logical*,
+        // which Tauri converts back to physical using the WINDOW's scale — a
+        // value that changes mid-move when crossing monitors, and rounds.
+        // Every conversion was a chance to land short, and on real multi-DPI
+        // setups it reliably did: the window sat inset from the monitor edge
+        // (the reported gap on the left, seen across three monitors at three
+        // scales). The monitor's own physical rect needs no arithmetic at all.
         await win.setDecorations(false);
-        await win.setPosition(new LogicalPosition(mx, my));
-        await win.setSize(new LogicalSize(mw, mh));
+        // An undecorated RESIZABLE window keeps invisible resize handles on
+        // its edges — Windows hit-tests the top few pixels as non-client, so
+        // the DOM never sees the pointer there. That is what made the
+        // auto-hide top bar's 4px reveal strip unreachable in F11: the strip
+        // sat exactly inside the resize handle. A fullscreen window has no
+        // business being resizable anyway, so drop it for the duration.
+        await win.setResizable(false);
+        await win.setPosition(new PhysicalPosition(monitor.position.x, monitor.position.y));
+        await win.setSize(new PhysicalSize(monitor.size.width, monitor.size.height));
         await win.setAlwaysOnTop(true);
       }
 
@@ -1192,6 +1208,7 @@ export default function App() {
             playback={livePlayback}
             showArtBg={t.vizArtBg}
             sensitivity={vizSensitivity}
+            autoGain={t.vizAutoGain}
             smoothing={t.vizSmoothing}
             lyricsOverlayEnabled={t.lyricsOverlayEnabled}
             videoEnabled={t.videoEnabled}
@@ -1202,14 +1219,6 @@ export default function App() {
             onNavigate={(url) => setTweak('videoCurrentUrl', url)}
             onExit={() => setTweak('videoEnabled', false)}
             overlaysOpen={anyOverlayOpen}
-            // Full-bleed panels close the webview outright rather than parking
-            // it (0.8.4). Parking depends on a reposition IPC landing and
-            // swallows its failures; when it did not land, the Market painted
-            // for one frame and was then covered by the native webview — a
-            // black screen. Edit mode keeps the park, because that is where the
-            // logged-in session matters and the panel is partial anyway.
-            fullBleedOverlayOpen={showMarket || showContentLibrary || showSettings
-              || showGallery || showOnboarding || showSwitcher || showShortcuts}
             // Anything that covers the canvas pauses the visualizer — those
             // panels are opaque, so drawing behind them is pure waste. Before
             // 0.7.3 only the gallery counted, and opening Settings left the
@@ -1296,6 +1305,17 @@ export default function App() {
       case 'stocks':
         return (
           <StocksTile
+            instanceId={instance.instanceId}
+            density={t.density}
+            accent={accent}
+            editing={editMode}
+            config={instance.config as Record<string, unknown> | undefined}
+            setConfig={configSetterFor(instance.instanceId)}
+          />
+        );
+      case 'news':
+        return (
+          <NewsTile
             instanceId={instance.instanceId}
             density={t.density}
             accent={accent}
@@ -1592,6 +1612,7 @@ export default function App() {
               spectrumRef={spectrumRef}
               currentMode={t.vizMode}
               sensitivity={vizSensitivity}
+            autoGain={t.vizAutoGain}
               smoothing={t.vizSmoothing}
               onPick={(m) => setTweak('vizMode', m)}
               onClose={() => setShowGallery(false)}

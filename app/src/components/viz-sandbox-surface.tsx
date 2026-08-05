@@ -78,7 +78,7 @@ export type ScriptError = { message: string; line: number | null } | null;
  *  the picker, the editor or `scripted.active` — those are the authoring
  *  surface's concern. */
 export function SandboxVizSurface({
-  bundleId, accent, accent2, spectrumRef, sensitivity = 1, smoothing = 0,
+  bundleId, accent, accent2, spectrumRef, sensitivity = 1, smoothing = 0, autoGain = false,
   paused, track, playback, reloadKey, suppressErrorBanner, onError, maxFps,
   localSource, onData, dataSenderRef,
 }: VizProps & {
@@ -396,7 +396,7 @@ export function SandboxVizSurface({
 
   // Frame pump.
   useEffect(() => {
-    const reader = makeSpectrumReader(64, spectrumRef, sensitivity, smoothing);
+    const reader = makeSpectrumReader(64, spectrumRef, sensitivity, smoothing, autoGain);
     let raf = 0;
     let last = performance.now();
     const paceState: PaceState = { nextDue: 0 };
@@ -434,7 +434,7 @@ export function SandboxVizSurface({
     // bundleId is a dep so `gate` (whose perf-debug label is derived from it)
     // is re-captured by this closure on every bundle switch, not just at mount.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [spectrumRef, sensitivity, smoothing, bundleId, maxFps]);
+  }, [spectrumRef, sensitivity, smoothing, autoGain, bundleId, maxFps]);
 
   return (
     <div ref={hostRef} style={{ position: 'absolute', inset: 0, background: '#000', overflow: 'hidden' }}>
