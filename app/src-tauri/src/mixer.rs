@@ -268,7 +268,19 @@ pub fn default_endpoint_id() -> Result<String, String> {
 
 #[cfg(target_os = "macos")]
 pub fn default_endpoint_id() -> Result<String, String> {
-    macimpl::default_output_device_id().map(|id| id.to_string())
+    // The device UID, NOT the numeric AudioObjectID (0.8.7). AudioObjectIDs
+    // are transient handles — the HAL renumbers them on device sleep/wake,
+    // Bluetooth reconnects and HDMI renegotiation, all of which happen
+    // periodically on a real Mac. The supervisor compares this value every
+    // 2 s to decide whether the default output "moved", and a renumbered
+    // handle for the SAME device read as a move: full tap teardown + a fresh
+    // AudioHardwareCreateProcessTap — which is a fresh chance for macOS to
+    // re-prompt for the audio-capture permission. That is the reported
+    // "asks for permission every ~20 minutes" loop. read_device_uid's own doc
+    // comment already called the UID "the stable string id the HAL knows the
+    // device by"; this branch just never used it.
+    let id = macimpl::default_output_device_id()?;
+    Ok(macimpl::default_output_device_uid(id).unwrap_or_else(|| id.to_string()))
 }
 
 #[cfg(not(any(target_os = "windows", target_os = "macos")))]
@@ -1025,6 +1037,12 @@ mod macimpl {
     /// `kAudioObjectPropertyName` — the human-readable name shown in the picker.
     unsafe fn read_device_name(id: AudioObjectID) -> Option<String> {
         read_string_property(id, kAudioObjectPropertyName)
+    }
+
+    /// Public wrapper over `read_device_uid` for the supervisor's
+    /// device-follow comparison (0.8.7) — see `default_endpoint_id`.
+    pub fn default_output_device_uid(id: AudioObjectID) -> Option<String> {
+        unsafe { read_device_uid(id) }
     }
 
     /// `kAudioDevicePropertyDeviceUID` — the stable string id the HAL knows the
