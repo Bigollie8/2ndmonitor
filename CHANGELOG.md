@@ -5,7 +5,11 @@ All notable changes to 2ndMonitor are documented here. Format follows
 
 ## [Unreleased]
 
-## [0.8.7] - 2026-08-05
+## [0.8.8] - 2026-08-05
+
+Identical in content to 0.8.7, which never shipped: its build was stopped on
+a compile error in macOS-only code (a log line added for the permission-prompt
+investigation below), fixed here.
 
 ### Fixed
 - **Aircraft Overhead no longer throttles for some users.** The tile relied
