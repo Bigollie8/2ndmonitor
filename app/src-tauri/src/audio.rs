@@ -84,6 +84,39 @@ fn normalize_db(db_tilted: f32) -> f32 {
     let range = -SPECTRUM_FLOOR_DB;
     ((db_tilted - SPECTRUM_FLOOR_DB) / range).clamp(0.0, 1.0)
 }
+
+// ─── Stereo (0.8.4) ─────────────────────────────────────────────────────────
+// The capture ring holds INTERLEAVED L/R pairs: [l0, r0, l1, r1, ...]. It used
+// to hold pre-mixed mono, which destroyed the stereo field inside the realtime
+// callback — nothing downstream could recover it, and the vectorscope and the
+// correlation/width meters need both channels.
+//
+// ONE ring rather than two, deliberately: a second Mutex in the WASAPI capture
+// callback is contention on a realtime thread, which is audible glitching for
+// every user rather than a visual bug. Mono is derived at drain instead, which
+// costs one add and one multiply per frame off the realtime path.
+
+/// Pick left/right out of one interleaved frame.
+///
+/// A mono source duplicates its single channel into both, so it reads as
+/// perfectly correlated — the honest display for mono, not a bug. Sources with
+/// more than two channels use the first two, the standard interleave order
+/// (FL, FR, ...).
+fn frame_lr(frame: &[f32]) -> (f32, f32) {
+    match frame.len() {
+        0 => (0.0, 0.0),
+        1 => (frame[0], frame[0]),
+        _ => (frame[0], frame[1]),
+    }
+}
+
+/// Average interleaved L/R pairs down to mono, appending to `out`.
+/// A trailing odd sample (a torn frame at a buffer edge) is ignored.
+fn pairs_to_mono(pairs: &[f32], out: &mut Vec<f32>) {
+    for p in pairs.chunks_exact(2) {
+        out.push((p[0] + p[1]) * 0.5);
+    }
+}
 /// How often we re-emit a spectrum frame to the frontend. Atomic so the
 /// frontend can dial it down via the `set_audio_emit_hz` command tied to
 /// the perf-mode tweak — at 60Hz the FFT thread is a real CPU/IPC cost
@@ -1248,6 +1281,52 @@ mod tests {
     fn mix_of_nothing_is_nothing() {
         assert_eq!(mix_rings(&[]), Vec::<f32>::new());
         assert_eq!(mix_rings(&[vec![], vec![]]), Vec::<f32>::new());
+    }
+
+    #[test]
+    fn frame_lr_picks_channels() {
+        // Mono duplicates: a mono source must read as perfectly correlated,
+        // which is the honest vectorscope display for it.
+        assert_eq!(super::frame_lr(&[0.5]), (0.5, 0.5));
+        assert_eq!(super::frame_lr(&[0.25, -0.75]), (0.25, -0.75));
+        // 5.1 and friends: the first two are FL/FR by interleave convention.
+        assert_eq!(super::frame_lr(&[1.0, 2.0, 3.0, 4.0, 5.0, 6.0]), (1.0, 2.0));
+        // Degenerate input must not panic.
+        assert_eq!(super::frame_lr(&[]), (0.0, 0.0));
+    }
+
+    #[test]
+    fn pairs_to_mono_averages_and_ignores_a_torn_frame() {
+        let mut out = Vec::new();
+        super::pairs_to_mono(&[1.0, -1.0, 0.5, 0.5, 2.0, 0.0], &mut out);
+        assert_eq!(out, vec![0.0, 0.5, 1.0]);
+
+        // An odd trailing sample is a frame torn at a buffer edge — drop it
+        // rather than pairing it with whatever arrives next, which would swap
+        // L and R for the rest of the stream.
+        let mut odd = Vec::new();
+        super::pairs_to_mono(&[1.0, 1.0, 9.0], &mut odd);
+        assert_eq!(odd, vec![1.0]);
+
+        let mut empty = Vec::new();
+        super::pairs_to_mono(&[], &mut empty);
+        assert!(empty.is_empty());
+    }
+
+    #[test]
+    fn mono_source_round_trips_unchanged_through_the_stereo_ring() {
+        // Regression guard for the whole point of the change: making the ring
+        // stereo must not alter what the FFT sees for a mono source.
+        let mono_in = [0.3f32, -0.2, 0.9, -0.9];
+        let mut ring = Vec::new();
+        for s in mono_in {
+            let (l, r) = super::frame_lr(&[s]);
+            ring.push(l);
+            ring.push(r);
+        }
+        let mut back = Vec::new();
+        super::pairs_to_mono(&ring, &mut back);
+        assert_eq!(back, mono_in.to_vec());
     }
 
     #[test]
