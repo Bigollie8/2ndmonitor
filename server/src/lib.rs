@@ -8,7 +8,9 @@ pub mod auth;
 pub mod collections;
 pub mod db;
 pub mod email;
+pub mod handle;
 pub mod index;
+pub mod profiles;
 pub mod keys;
 pub mod manifest;
 pub mod media;
@@ -34,6 +36,8 @@ pub fn router(state: AppState) -> Router {
         .route("/auth/request-reset", post(auth::request_reset))
         .route("/auth/reset", post(auth::reset))
         .route("/auth/whoami", get(auth::whoami))
+        .route("/account", get(profiles::get_account).patch(profiles::patch_account))
+        .route("/account/handle", post(profiles::claim_handle))
         .route("/submissions", post(submit::submit))
         .route("/submissions/mine", get(submit::mine))
         .route("/ratings", post(ratings::rate).get(ratings::ratings))

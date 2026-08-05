@@ -41,6 +41,10 @@ async fn setup_approved_preset(app: &axum::Router) {
         Some(serde_json::json!({"email": "a@b.c", "password": "hunter22"}))).await;
     let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
     let t = v["token"].as_str().unwrap().to_string();
+    // 0.9.0: publishing requires a claimed handle, and the index now carries
+    // it as `authorHandle`.
+    call(app, "POST", "/account/handle", Some(&t),
+        Some(serde_json::json!({ "handle": "indexer" }))).await;
     let (st, _) = call(app, "POST", "/submissions", Some(&t), Some(serde_json::json!({
         "kind": "preset",
         "manifest": serde_json::json!({"id":"cool-preset","name":"P","version":"1.0.0","api":1,"permissions":[]}).to_string(),
@@ -117,7 +121,14 @@ async fn make_user(app: &axum::Router, email: &str) -> String {
     let (_, body) = call(app, "POST", "/auth/login", None,
         Some(serde_json::json!({"email": email, "password": "hunter22"}))).await;
     let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
-    v["token"].as_str().unwrap().to_string()
+    let token = v["token"].as_str().unwrap().to_string();
+    // 0.9.0: publishing requires a claimed handle. From the WHOLE address,
+    // since "a@b.c" has a one-character local part and the minimum is three.
+    let slug: String = email.chars().filter(|c| c.is_ascii_alphanumeric()).collect();
+    let handle: String = format!("u{slug}").chars().take(24).collect();
+    call(app, "POST", "/account/handle", Some(&token),
+        Some(serde_json::json!({ "handle": handle }))).await;
+    token
 }
 
 fn png_bytes() -> Vec<u8> {
@@ -225,4 +236,56 @@ async fn preview_endpoint_404s_without_preview_and_serves_sniffed_mime_with_one(
     assert_eq!(res.headers().get(header::CONTENT_TYPE).unwrap(), "image/png");
     let bytes = res.into_body().collect().await.unwrap().to_bytes().to_vec();
     assert_eq!(bytes, png);
+}
+
+/// Attribution rides the SIGNED payload: a card can link to a creator with no
+/// second fetch, and the link cannot be altered in transit.
+#[tokio::test]
+async fn the_index_carries_the_author_handle() {
+    let app = router(test_state());
+    setup_approved_preset(&app).await;
+
+    let (st, body) = call(&app, "GET", "/index.json", None, None).await;
+    assert_eq!(st, StatusCode::OK);
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let b = v["bundles"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|b| b["id"] == "cool-preset")
+        .expect("the approved preset is in the index");
+    assert_eq!(b["authorHandle"], "indexer");
+}
+
+/// Null rather than an empty string: an author who has not claimed a handle
+/// has no handle, and "" would render as a link to nowhere.
+#[tokio::test]
+async fn an_author_with_no_handle_yields_null() {
+    let state = test_state();
+    {
+        let db = state.db.lock();
+        db.execute(
+            "INSERT INTO users (id, email, pass_hash, verified, created_at) VALUES (9,'nohandle@x','h',1,0)",
+            [],
+        )
+        .unwrap();
+        db.execute(
+            "INSERT INTO bundles (id, version, kind, name, author_id, status, manifest, sha256, size, created_at)
+             VALUES ('orphan','1.0.0','visualizer','Orphan',9,'approved','{}','deadbeef',10,100)",
+            [],
+        )
+        .unwrap();
+    }
+    let app = router(state);
+
+    let (st, body) = call(&app, "GET", "/index.json", None, None).await;
+    assert_eq!(st, StatusCode::OK);
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let b = v["bundles"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|b| b["id"] == "orphan")
+        .expect("the bundle is still listed");
+    assert!(b["authorHandle"].is_null(), "no handle means null, not an empty string");
 }

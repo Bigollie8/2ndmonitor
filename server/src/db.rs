@@ -147,6 +147,22 @@ fn migrate(conn: &Connection) {
     ensure_column(conn, "bundles", "featured", "INTEGER NOT NULL DEFAULT 0");
     ensure_column(conn, "bundles", "approved_at", "INTEGER");
     ensure_column(conn, "users", "display_name", "TEXT");
+    ensure_column(conn, "users", "handle", "TEXT");
+    ensure_column(conn, "users", "bio", "TEXT");
+    ensure_column(conn, "users", "links", "TEXT NOT NULL DEFAULT '[]'");
+    ensure_column(conn, "users", "avatar_seed", "TEXT");
+    ensure_column(conn, "users", "suspended", "INTEGER NOT NULL DEFAULT 0");
+    // Uniqueness is the database's job, not a handler's: two concurrent
+    // claims that both pass an application-level "is it taken?" check would
+    // both succeed. The WHERE clause says out loud that unclaimed accounts
+    // are the normal case — SQLite already treats NULLs as distinct in a
+    // UNIQUE index, so this documents intent rather than changing behaviour.
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS users_handle_unique
+         ON users(handle) WHERE handle IS NOT NULL",
+        [],
+    )
+    .expect("create users_handle_unique");
 }
 
 pub fn now() -> i64 {
@@ -166,6 +182,51 @@ pub fn rand_token() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn users_columns(conn: &Connection) -> Vec<String> {
+        let mut stmt = conn.prepare("PRAGMA table_info(users)").unwrap();
+        stmt.query_map([], |r| r.get::<_, String>(1))
+            .unwrap()
+            .filter_map(Result::ok)
+            .collect()
+    }
+
+    #[test]
+    fn migration_adds_the_identity_columns() {
+        let conn = Connection::open_in_memory().unwrap();
+        init(&conn);
+        let cols = users_columns(&conn);
+        for c in ["handle", "bio", "links", "avatar_seed", "suspended"] {
+            assert!(cols.contains(&c.to_string()), "missing users.{c}");
+        }
+    }
+
+    // Uniqueness must be the DATABASE's job: two concurrent claims that both
+    // pass an application-level "is it taken?" check would otherwise both win.
+    #[test]
+    fn two_accounts_cannot_share_a_handle() {
+        let conn = Connection::open_in_memory().unwrap();
+        init(&conn);
+        conn.execute(
+            "INSERT INTO users (email, pass_hash, created_at, handle) VALUES ('a@x','h',0,'taken')",
+            [],
+        )
+        .unwrap();
+        let second = conn.execute(
+            "INSERT INTO users (email, pass_hash, created_at, handle) VALUES ('b@x','h',0,'taken')",
+            [],
+        );
+        assert!(second.is_err(), "the unique index must reject a duplicate handle");
+    }
+
+    // NULL handles are the pre-claim state and there will be many of them.
+    #[test]
+    fn many_accounts_may_have_no_handle_yet() {
+        let conn = Connection::open_in_memory().unwrap();
+        init(&conn);
+        conn.execute("INSERT INTO users (email, pass_hash, created_at) VALUES ('a@x','h',0)", []).unwrap();
+        conn.execute("INSERT INTO users (email, pass_hash, created_at) VALUES ('b@x','h',0)", []).unwrap();
+    }
 
     fn bundles_columns(conn: &Connection) -> Vec<String> {
         let mut stmt = conn.prepare("PRAGMA table_info(bundles)").unwrap();

@@ -105,6 +105,22 @@ pub async fn submit(
 ) -> Result<Json<Value>, (StatusCode, String)> {
     let author_id = bearer_user(&state, &headers).map_err(|s| (s, "auth required".into()))?;
 
+    // A handle is required to publish. Published work carries attribution on
+    // every card and inside the signed index, and "oli***" is not attribution
+    // — this requirement is what turns display_name from a column nothing
+    // ever wrote into a real one.
+    let handle: Option<String> = state
+        .db
+        .lock()
+        .query_row("SELECT handle FROM users WHERE id = ?1", [author_id], |r| r.get(0))
+        .unwrap_or(None);
+    if handle.is_none() {
+        return Err((
+            StatusCode::FORBIDDEN,
+            "choose a handle before publishing".into(),
+        ));
+    }
+
     let validated = validate(&body.kind, &body.manifest)
         .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
 
