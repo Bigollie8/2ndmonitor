@@ -18,6 +18,13 @@ All notable changes to 2ndMonitor are documented here. Format follows
   arrow keys, or hold Shift for pixel-level adjustment
 
 ### Fixed
+- **The Marketplace no longer goes black after a moment** (regression in
+  0.8.3). 0.8.3 started keeping the browser tile alive behind panels instead of
+  closing it, so switching sources wouldn't lose your session — but the browser
+  runs in a native window that sits above everything the app draws, and when
+  moving it aside didn't take, it ended up covering the Marketplace. Panels
+  that fill the screen now close it properly again; tile edit settings still
+  keep your session, which is what that change was for
 - **Scrolling quickly through visualizers no longer freezes the app**: each
   preview that came into view immediately started a full live render, so a
   fast scroll started and stopped dozens of them in a row. Previews now wait
