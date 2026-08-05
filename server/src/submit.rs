@@ -98,6 +98,58 @@ pub struct SubmitBody {
     preview: Option<String>,
 }
 
+/// A layout payload is small by nature: a few dozen tiles, each a type and
+/// four numbers.
+const LAYOUT_MAX: usize = 64 * 1024;
+const LAYOUT_MAX_TILES: usize = 64;
+
+/// Structural validation of a published layout.
+///
+/// The client strips tile config before publishing (see
+/// app/src/state/layoutPublish.ts), but the server cannot assume a real
+/// client sent this — anyone can POST here. So the rule is enforced again on
+/// this side: a tile object may carry EXACTLY `type` and `rect`, and anything
+/// else is rejected rather than ignored. Ignoring it would let a
+/// hand-crafted payload smuggle somebody's coordinates into the catalog.
+fn validate_layout(v: &Value) -> Result<(), String> {
+    let obj = v.as_object().ok_or("layout must be an object")?;
+    if obj.get("v").and_then(Value::as_i64) != Some(1) {
+        return Err("layout v must be 1".into());
+    }
+    for key in ["landscape", "portrait"] {
+        let arr = obj
+            .get(key)
+            .and_then(Value::as_array)
+            .ok_or_else(|| format!("layout {key} must be an array"))?;
+        if arr.len() > LAYOUT_MAX_TILES {
+            return Err(format!("layout {key} has more than {LAYOUT_MAX_TILES} tiles"));
+        }
+        for t in arr {
+            let tile = t.as_object().ok_or("each tile must be an object")?;
+            for k in tile.keys() {
+                if k != "type" && k != "rect" {
+                    return Err(format!("tile field {k:?} is not publishable"));
+                }
+            }
+            let ty = tile.get("type").and_then(Value::as_str).unwrap_or("");
+            if ty.is_empty() || ty.len() > 64 {
+                return Err("tile type must be 1-64 characters".into());
+            }
+            let rect = tile.get("rect").and_then(Value::as_object).ok_or("tile rect required")?;
+            for k in ["x", "y", "w", "h"] {
+                let n = rect.get(k).and_then(Value::as_f64).ok_or_else(|| format!("rect {k} required"))?;
+                if !n.is_finite() || !(0.0..=1.0).contains(&n) {
+                    return Err(format!("rect {k} must be between 0 and 1"));
+                }
+            }
+            if rect.len() != 4 {
+                return Err("rect carries fields beyond x/y/w/h".into());
+            }
+        }
+    }
+    Ok(())
+}
+
 pub async fn submit(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -143,6 +195,20 @@ pub async fn submit(
             validate_view_spec(c).map_err(|e| (StatusCode::BAD_REQUEST, e))?;
             ("view.json", c.to_string())
         }
+        "layout" => {
+            // A layout is DATA, not code: an arrangement of tile types and
+            // rects. It runs nothing, so there is no static check to make —
+            // the validation that matters is structural, and it is what stops
+            // a hand-crafted payload carrying config a real client stripped.
+            let c = body.code.as_deref().ok_or((StatusCode::BAD_REQUEST, "code required".into()))?;
+            if c.len() > LAYOUT_MAX {
+                return Err((StatusCode::BAD_REQUEST, "layout too large".into()));
+            }
+            let parsed: Value = serde_json::from_str(c)
+                .map_err(|e| (StatusCode::BAD_REQUEST, format!("layout invalid: {e}")))?;
+            validate_layout(&parsed).map_err(|e| (StatusCode::BAD_REQUEST, e))?;
+            ("layout.json", c.to_string())
+        }
         _ => {
             let c = body.code.as_deref().ok_or((StatusCode::BAD_REQUEST, "code required".into()))?;
             static_check_code(c).map_err(|e| (StatusCode::BAD_REQUEST, e))?;
@@ -170,7 +236,11 @@ pub async fn submit(
         &validated.permissions.iter().map(Perm::as_string).collect::<Vec<_>>(),
     ).unwrap();
 
-    let auto_approve = body.kind == "preset";
+    // Layouts auto-approve alongside presets: both are pure DATA with no code
+    // to review, and structural validation is the entire review. A layout's
+    // free text (name, summary) is moderated the same way a review's is —
+    // report and hide — rather than by a queue nobody would keep up with.
+    let auto_approve = body.kind == "preset" || body.kind == "layout";
     let (status, zip, sha, size) = if auto_approve {
         let (z, s, n) = zip_bundle(&body.manifest, payload_name, &payload);
         ("approved", Some(z), Some(s), Some(n))

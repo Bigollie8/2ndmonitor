@@ -550,6 +550,31 @@ pub fn marketplace_post_review<R: Runtime>(
     Ok(())
 }
 
+/// Publish a layout. `manifest` and `layout` are both JSON strings, matching
+/// the wire shape `POST /submissions` already uses for every other kind.
+///
+/// The caller has already stripped tile config (state/layoutPublish.ts) and
+/// the server validates that again — a tile object carrying anything beyond
+/// `type` and `rect` is refused, not quietly cleaned, since anyone can POST
+/// to that endpoint without going through this command.
+#[tauri::command]
+pub fn marketplace_publish_layout<R: Runtime>(
+    app: AppHandle<R>,
+    url: String,
+    manifest: String,
+    layout: String,
+) -> Result<(), String> {
+    let token = session_token(&app)?;
+    let base = url.trim_end_matches('/');
+    let body = serde_json::json!({ "kind": "layout", "manifest": manifest, "code": layout });
+    let (status, buf) = post_capped_json(&format!("{base}/submissions"), &body, AUTH_CAP, Some(&token))?;
+    if !(200..300).contains(&status) {
+        let text = String::from_utf8_lossy(&buf).into_owned();
+        return Err(if text.trim().is_empty() { format!("publish failed: HTTP {status}") } else { text });
+    }
+    Ok(())
+}
+
 /// A creator's public profile plus what they have published. Unsigned browse
 /// data, same silent-failure contract as ratings: callers treat any `Err` as
 /// "no profile", never as an error worth interrupting browsing over.

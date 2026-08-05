@@ -122,6 +122,7 @@ pub fn run() {
             marketplace::marketplace_fetch_index_body,
             marketplace::marketplace_fetch_collections,
             marketplace::marketplace_fetch_creator,
+            marketplace::marketplace_publish_layout,
             marketplace::marketplace_account_get,
             marketplace::marketplace_claim_handle,
             marketplace::marketplace_account_patch,

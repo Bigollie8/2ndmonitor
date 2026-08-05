@@ -71,12 +71,17 @@ const TILE_CATEGORIES: &[&str] =
     &["media", "system", "weather", "productivity", "ambient", "integrations"];
 const VIZ_CATEGORIES: &[&str] = &["spectrum", "wave", "scene", "engine"];
 const PRESET_CATEGORIES: &[&str] = &["milkdrop"];
+/// A published dashboard arrangement. Categories describe what the layout is
+/// FOR, since every layout is otherwise the same kind of thing.
+const LAYOUT_CATEGORIES: &[&str] =
+    &["work", "home", "media", "monitoring", "ambient", "minimal"];
 
 pub fn category_ok(kind: &str, cat: &str) -> bool {
     let allowed = match kind {
         "tile" => TILE_CATEGORIES,
         "visualizer" => VIZ_CATEGORIES,
         "preset" => PRESET_CATEGORIES,
+        "layout" => LAYOUT_CATEGORIES,
         _ => return false,
     };
     allowed.contains(&cat)
@@ -211,7 +216,7 @@ fn id_ok(id: &str) -> bool {
 }
 
 pub fn validate(kind: &str, manifest_json: &str) -> Result<Validated, String> {
-    if !matches!(kind, "preset" | "visualizer" | "tile") {
+    if !matches!(kind, "preset" | "visualizer" | "tile" | "layout") {
         return Err(format!("unknown kind {kind:?}"));
     }
     let v: Value = serde_json::from_str(manifest_json).map_err(|e| format!("manifest not JSON: {e}"))?;
