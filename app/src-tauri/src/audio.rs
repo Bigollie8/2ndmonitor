@@ -970,25 +970,45 @@ fn build_stream(
         alive.store(false, Ordering::Relaxed);
     };
 
-    fn push_mono<I, F>(samples: I, channels: usize, buffer: &Arc<Mutex<Vec<f32>>>, to_f32: F)
+    /// Push interleaved L/R pairs into the ring (0.8.4).
+    ///
+    /// Runs on the OS audio thread. It takes ONE lock and does no allocation,
+    /// which is the whole reason the ring carries stereo rather than a second
+    /// ring being added alongside the mono one: a second mutex here is
+    /// contention on a realtime thread, and that is audible for every user.
+    fn push_frames<I, F>(samples: I, channels: usize, buffer: &Arc<Mutex<Vec<f32>>>, to_f32: F)
     where
         I: IntoIterator,
         F: Fn(I::Item) -> f32,
     {
+        if channels == 0 {
+            return; // a device that reports no channels would never complete a frame
+        }
         let mut buf = buffer.lock();
-        let mut pending: f32 = 0.0;
+        let mut frame: [f32; 2] = [0.0, 0.0];
         let mut count: usize = 0;
         for s in samples {
-            pending += to_f32(s);
+            let v = to_f32(s);
+            if count < 2 {
+                frame[count] = v;
+            }
             count += 1;
             if count == channels {
-                buf.push(pending / channels as f32);
-                pending = 0.0;
+                let used = if channels == 1 { &frame[..1] } else { &frame[..2] };
+                let (l, r) = frame_lr(used);
+                buf.push(l);
+                buf.push(r);
                 count = 0;
             }
         }
-        if buf.len() > RING_CAP {
-            let drop = buf.len() - RING_CAP;
+        // RING_CAP counts FRAMES; the ring stores two samples per frame.
+        let cap = RING_CAP * 2;
+        if buf.len() > cap {
+            // Drain an EVEN count so L/R stay aligned. An odd drain would swap
+            // the two channels for the entire remainder of the stream — silent,
+            // permanent, and invisible until someone looked at a vectorscope.
+            let excess = buf.len() - cap;
+            let drop = ((excess + 1) & !1).min(buf.len());
             buf.drain(..drop);
         }
     }
@@ -998,7 +1018,7 @@ fn build_stream(
             .build_input_stream(
                 config,
                 move |data: &[f32], _| {
-                    push_mono(data.iter().copied(), channels, &buffer, |s| s);
+                    push_frames(data.iter().copied(), channels, &buffer, |s| s);
                 },
                 err_fn,
                 None,
@@ -1008,7 +1028,7 @@ fn build_stream(
             .build_input_stream(
                 config,
                 move |data: &[i16], _| {
-                    push_mono(data.iter().copied(), channels, &buffer, |s| {
+                    push_frames(data.iter().copied(), channels, &buffer, |s| {
                         s as f32 / i16::MAX as f32
                     });
                 },
@@ -1020,7 +1040,7 @@ fn build_stream(
             .build_input_stream(
                 config,
                 move |data: &[u16], _| {
-                    push_mono(data.iter().copied(), channels, &buffer, |s| {
+                    push_frames(data.iter().copied(), channels, &buffer, |s| {
                         (s as f32 - u16::MAX as f32 / 2.0) / (u16::MAX as f32 / 2.0)
                     });
                 },
@@ -1051,6 +1071,11 @@ fn process_loop<R: Runtime>(
     let mut workspace = vec![Complex32::default(); FFT_SIZE];
     let mut samples = vec![0f32; FFT_SIZE];
     let mut smoothed = vec![0f32; SPECTRUM_BANDS];
+    // Reused per hop so the FFT path stays allocation-free (0.8.4): the mono
+    // mixdown the FFT consumes, and the raw interleaved tail the stereo
+    // waveform emit needs.
+    let mut mono_scratch: Vec<f32> = Vec::with_capacity(FFT_SIZE);
+    let mut stereo_tail: Vec<f32> = Vec::with_capacity(FFT_SIZE * 2);
 
     // Initial interval; recomputed each iteration so a runtime change in
     // EMIT_HZ takes effect on the next tick.
@@ -1091,26 +1116,51 @@ fn process_loop<R: Runtime>(
                 .collect();
             let mixed = mix_rings(&drained);
             let mut buf = buffer.lock();
+            // Per-app capture is ALREADY mono by the time it reaches here —
+            // Windows sums the app rings in mix_rings, macOS's single tap mixes
+            // the selected processes for us. So each sample is written to both
+            // channels to keep the ring's interleaved shape (0.8.4).
+            //
+            // The consequence is real and worth stating: with a per-app source
+            // selected the vectorscope shows a vertical line and correlation
+            // reads exactly 1.00. That is the honest display of a mono source,
+            // not a bug — only the default-device loopback path can carry a
+            // true stereo image.
             if mixed.is_empty() {
                 let hop = ((rate / hz.max(1) as f32) as usize).max(1);
-                buf.extend(std::iter::repeat(0.0f32).take(hop));
+                buf.extend(std::iter::repeat(0.0f32).take(hop * 2));
             } else {
-                buf.extend_from_slice(&mixed);
+                for s in &mixed {
+                    buf.push(*s);
+                    buf.push(*s);
+                }
             }
-            if buf.len() > RING_CAP {
-                let drop_n = buf.len() - RING_CAP;
+            let cap = RING_CAP * 2;
+            if buf.len() > cap {
+                // Even drain only — see push_frames.
+                let excess = buf.len() - cap;
+                let drop_n = ((excess + 1) & !1).min(buf.len());
                 buf.drain(..drop_n);
             }
         }
 
         // Snapshot the most-recent FFT_SIZE samples without holding the lock
         // across the FFT itself — keeps capture-callback contention minimal.
+        // The ring is interleaved L/R, so an FFT_SIZE window of MONO needs
+        // twice that many ring samples. Both the mono mixdown and the stereo
+        // copy are taken under the same single lock (0.8.4).
+        let need = FFT_SIZE * 2;
         let have_window = {
             let buf = buffer.lock();
-            if buf.len() < FFT_SIZE {
+            if buf.len() < need {
                 false
             } else {
-                samples.copy_from_slice(&buf[buf.len() - FFT_SIZE..]);
+                let tail = &buf[buf.len() - need..];
+                mono_scratch.clear();
+                pairs_to_mono(tail, &mut mono_scratch);
+                samples.copy_from_slice(&mono_scratch);
+                stereo_tail.clear();
+                stereo_tail.extend_from_slice(tail);
                 true
             }
         };
