@@ -5,6 +5,28 @@ All notable changes to 2ndMonitor are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.8.5] - 2026-08-05
+
+### Fixed
+- **A problem in the Marketplace no longer blanks the whole app.** The app had
+  no crash guard anywhere, so any fault while a panel was open took the entire
+  interface down to a black screen with no message. Panels now show what went
+  wrong, with Try again and Close, and everything else keeps running
+- **Searching the Marketplace no longer crashes it.** Some listings have no
+  description, and searching one of those threw an error — which, before the
+  change above, is exactly what blanked the screen
+- **Snap, Grid and Guides remember your choice.** All three reset to on every
+  time you reopened edit mode; they now persist
+
+### Changed
+- **Phone notifications setup rewritten.** The name oversold what the tile
+  does: it shows the latest message published to an ntfy topic, and ntfy does
+  not forward your phone's notifications by itself. Getting that to work needs
+  an automation app on the phone (MacroDroid or Tasker on Android; iOS has no
+  equivalent and can only receive). The setup text now says so, names the
+  field people usually mis-copy, and gives a one-line test so you can tell a
+  misconfigured tile from one nothing is publishing to
+
 ## [0.8.4] - 2026-08-05
 
 ### Added
