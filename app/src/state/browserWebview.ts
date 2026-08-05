@@ -74,13 +74,24 @@ export function useBrowserWebview(args: UseBrowserWebviewArgs): UseBrowserWebvie
     if (existing) {
       webviewRef.current = null;
       setReady(false);
-      existing.close().catch(logCloseError);
     }
 
-    if (!enabled || !url || !boundsAvailable) return;
+    if (!existing && (!enabled || !url || !boundsAvailable)) return;
 
     (async () => {
       try {
+        // AWAIT the close before creating anything (0.8.2). Every webview uses
+        // the same constant label, so firing close() and immediately
+        // constructing a new Webview with that label races the teardown: the
+        // old native webview can be orphaned rather than destroyed, and it
+        // keeps its page — a whole Netflix tab — resident. Switching sources
+        // repeatedly then stacked those orphans in memory. Serialising the two
+        // costs a few ms on a source switch and nothing at all otherwise.
+        if (existing) {
+          try { await existing.close(); } catch (e) { logCloseError(e); }
+        }
+        if (cancelled || !enabled || !url || !boundsAvailable) return;
+
         const initial = boundsRef.current;
         if (!initial) return;  // race: bounds went null between dep eval and async tick
 

@@ -1,8 +1,10 @@
 [package]
 name = "second-monitor-hub"
-version = "0.8.1"
+version = "0.8.2"
 description = "Second-Monitor Hub"
-authors = ["you"]
+authors = ["Bigollie8 <bigollie8@gmail.com>"]
+license = "BUSL-1.1"
+publish = false
 edition = "2021"
 rust-version = "1.77"
 

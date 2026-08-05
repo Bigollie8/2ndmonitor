@@ -3,7 +3,7 @@ name = "hub-marketplace"
 version = "0.1.0"
 edition = "2021"
 description = "Marketplace server for Second-Monitor Hub: accounts, submissions, review queue, signed index"
-license = "MIT"
+license = "BUSL-1.1"
 
 [dependencies]
 axum = "0.7"
