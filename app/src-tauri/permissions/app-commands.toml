@@ -160,6 +160,13 @@ commands.allow = [
   "marketplace_fetch_index_body",
   "marketplace_verify_index_body",
   "marketplace_fetch_collections",
+  # 0.9.0 creator profiles. cargo check passes without these; only
+  # `cargo test --lib`'s ACL test catches a missing entry, and the runtime
+  # failure is "not allowed by ACL" everywhere.
+  "marketplace_fetch_creator",
+  "marketplace_account_get",
+  "marketplace_claim_handle",
+  "marketplace_account_patch",
   "marketplace_fetch_reviews",
   "marketplace_post_review",
   "marketplace_fetch_preview",

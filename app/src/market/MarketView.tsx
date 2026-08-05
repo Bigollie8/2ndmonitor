@@ -24,6 +24,7 @@ import { MarketShelf } from './MarketShelf';
 import { MarketDetail } from './MarketDetail';
 import { CollectionDetail } from './CollectionDetail';
 import { AuthorPage } from './AuthorPage';
+import { CreatorProfile } from './CreatorProfile';
 import { MultiInstallDialog } from './MultiInstallDialog';
 import { authorIndexOf } from '../state/authorIndex';
 import { planMultiInstall, type InstallPlan } from '../state/installPlan';
@@ -463,12 +464,26 @@ export function MarketView({
         )
         : browse.view === 'author'
           ? (
-            <AuthorPage
-              summary={browse.author ? authorIndex.get(browse.author) : undefined}
-              cardMin={layout.cardMin}
-              onOpen={(item) => dispatch({ type: 'open-detail', key: item.key })}
-              {...cardProps}
-            />
+            // A handle means a real, server-backed creator page. Falling
+            // back to AuthorPage keeps every bundle published before 0.9.0
+            // (and any author who has not claimed a handle) reachable
+            // instead of dead-ending on a 404.
+            browse.author?.startsWith('@') ? (
+              <CreatorProfile
+                handle={browse.author.slice(1)}
+                items={data.items}
+                cardMin={layout.cardMin}
+                onOpen={(item) => dispatch({ type: 'open-detail', key: item.key })}
+                {...cardProps}
+              />
+            ) : (
+              <AuthorPage
+                summary={browse.author ? authorIndex.get(browse.author) : undefined}
+                cardMin={layout.cardMin}
+                onOpen={(item) => dispatch({ type: 'open-detail', key: item.key })}
+                {...cardProps}
+              />
+            )
           )
           : <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>{gridBody}</div>;
 

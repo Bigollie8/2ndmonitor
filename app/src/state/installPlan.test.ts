@@ -9,7 +9,7 @@ const item = (o: Partial<CatalogItem> = {}): CatalogItem => ({
   updateAvailable: false, permissions: [], needsSetup: false, downloads: 0, brokenReason: null,
   removed: false, hasPreview: false, rating: null,
   summary: null, tags: [], icon: null, changelog: null, minAppVersion: null,
-  featured: false, approvedAt: null, mediaCount: 0, authorDisplay: null, ...o,
+  featured: false, approvedAt: null, mediaCount: 0, authorDisplay: null, authorHandle: null, ...o,
 });
 
 const APP = '0.8.0';

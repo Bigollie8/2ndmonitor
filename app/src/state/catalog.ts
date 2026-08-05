@@ -69,6 +69,9 @@ export interface IndexBundle {
   approvedAt?: number | null;
   mediaCount?: number;
   authorDisplay?: string;
+  /** The author's claimed handle, or absent/null if they have none. Carried
+   *  in the SIGNED payload, so a link to a creator cannot be tampered with. */
+  authorHandle?: string | null;
 }
 
 export interface CatalogItem {
@@ -129,6 +132,9 @@ export interface CatalogItem {
   approvedAt: number | null;
   mediaCount: number;
   authorDisplay: string | null;
+  /** `null` for a built-in, and for any bundle whose author never claimed a
+   *  handle — which is every bundle published before 0.9.0. */
+  authorHandle: string | null;
 }
 
 /** One installed MilkDrop preset folder, exactly as the Rust command
@@ -193,7 +199,7 @@ export function mergeCatalog(args: MergeCatalogArgs): CatalogItem[] {
       permissions: [], needsSetup: needsSetup.has(key), downloads: null, brokenReason: null,
       removed: false, hasPreview: false, rating: null,
       summary: null, tags: [], icon: null, changelog: null, minAppVersion: null,
-      featured: false, approvedAt: null, mediaCount: 0, authorDisplay: null,
+      featured: false, approvedAt: null, mediaCount: 0, authorDisplay: null, authorHandle: null,
     });
   }
   for (const s of args.vizStyles) {
@@ -206,7 +212,7 @@ export function mergeCatalog(args: MergeCatalogArgs): CatalogItem[] {
       permissions: [], needsSetup: needsSetup.has(key), downloads: null, brokenReason: null,
       removed: false, hasPreview: false, rating: null,
       summary: null, tags: [], icon: null, changelog: null, minAppVersion: null,
-      featured: false, approvedAt: null, mediaCount: 0, authorDisplay: null,
+      featured: false, approvedAt: null, mediaCount: 0, authorDisplay: null, authorHandle: null,
     });
   }
 
@@ -241,6 +247,7 @@ export function mergeCatalog(args: MergeCatalogArgs): CatalogItem[] {
       changelog: prev?.changelog ?? null, minAppVersion: prev?.minAppVersion ?? null,
       featured: prev?.featured ?? false, approvedAt: prev?.approvedAt ?? null,
       mediaCount: prev?.mediaCount ?? 0, authorDisplay: prev?.authorDisplay ?? null,
+      authorHandle: prev?.authorHandle ?? null,
     });
   };
   for (const f of args.installedTiles) installedFolder('tile', f, 'integrations');
@@ -269,6 +276,7 @@ export function mergeCatalog(args: MergeCatalogArgs): CatalogItem[] {
       changelog: prev?.changelog ?? null, minAppVersion: prev?.minAppVersion ?? null,
       featured: prev?.featured ?? false, approvedAt: prev?.approvedAt ?? null,
       mediaCount: prev?.mediaCount ?? 0, authorDisplay: prev?.authorDisplay ?? null,
+      authorHandle: prev?.authorHandle ?? null,
     });
   }
 
@@ -307,6 +315,7 @@ export function mergeCatalog(args: MergeCatalogArgs): CatalogItem[] {
       approvedAt: b.approvedAt ?? prev?.approvedAt ?? null,
       mediaCount: b.mediaCount ?? prev?.mediaCount ?? 0,
       authorDisplay: b.authorDisplay ?? prev?.authorDisplay ?? b.author ?? null,
+      authorHandle: b.authorHandle ?? prev?.authorHandle ?? null,
       source: 'bundle',
       installed,
       installedVersion: prev?.installedVersion ?? null,

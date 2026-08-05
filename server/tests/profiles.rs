@@ -225,3 +225,101 @@ async fn profile_fields_are_capped_and_https_only() {
         Some(serde_json::json!({ "displayName": "   " }))).await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "blank display name");
 }
+
+// ── the public creator page ────────────────────────────────────────────────
+
+#[tokio::test]
+async fn a_creator_page_lists_their_approved_work() {
+    let state = test_state();
+    {
+        let db = state.db.lock();
+        db.execute(
+            "INSERT INTO users (id,email,pass_hash,verified,created_at,handle,display_name,bio)
+             VALUES (5,'c@x','h',1,100,'maker','The Maker','Builds things.')",
+            [],
+        ).unwrap();
+        db.execute(
+            "INSERT INTO bundles (id,version,kind,name,author_id,status,manifest,sha256,size,created_at,downloads)
+             VALUES ('shipped','1.0.0','visualizer','Shipped',5,'approved','{}','a',1,100,7)",
+            [],
+        ).unwrap();
+        // Pending work must not appear: a creator page may never surface
+        // something the catalog itself would not.
+        db.execute(
+            "INSERT INTO bundles (id,version,kind,name,author_id,status,manifest,sha256,size,created_at)
+             VALUES ('draft','1.0.0','visualizer','Draft',5,'pending','{}','b',1,100)",
+            [],
+        ).unwrap();
+    }
+    let app = router(state);
+
+    let (status, body) = call(&app, "GET", "/creators/maker", None, None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["displayName"], "The Maker");
+    assert_eq!(body["bio"], "Builds things.");
+    assert_eq!(body["totalDownloads"], 7);
+    let ids: Vec<&str> = body["bundles"].as_array().unwrap()
+        .iter().map(|b| b["id"].as_str().unwrap()).collect();
+    assert_eq!(ids, vec!["shipped"], "pending work must not be listed");
+}
+
+#[tokio::test]
+async fn an_unknown_handle_is_404() {
+    let app = router(test_state());
+    let (status, _) = call(&app, "GET", "/creators/nobody", None, None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+// Hiding the content is the entire point of a suspension; a page saying
+// "this person exists but has nothing" still hands them a surface.
+#[tokio::test]
+async fn a_suspended_creator_is_404_not_an_empty_page() {
+    let state = test_state();
+    {
+        let db = state.db.lock();
+        db.execute(
+            "INSERT INTO users (id,email,pass_hash,verified,created_at,handle,suspended)
+             VALUES (6,'s@x','h',1,100,'banned',1)",
+            [],
+        ).unwrap();
+    }
+    let app = router(state);
+    let (status, _) = call(&app, "GET", "/creators/banned", None, None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn a_handle_lookup_is_case_insensitive() {
+    let state = test_state();
+    {
+        let db = state.db.lock();
+        db.execute(
+            "INSERT INTO users (id,email,pass_hash,verified,created_at,handle)
+             VALUES (7,'m@x','h',1,100,'mixedcase')",
+            [],
+        ).unwrap();
+    }
+    let app = router(state);
+    let (status, body) = call(&app, "GET", "/creators/MixedCase", None, None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["handle"], "mixedcase");
+}
+
+#[tokio::test]
+async fn the_creator_page_never_exposes_an_email() {
+    let state = test_state();
+    {
+        let db = state.db.lock();
+        db.execute(
+            "INSERT INTO users (id,email,pass_hash,verified,created_at,handle)
+             VALUES (8,'secret@example.com','h',1,100,'quiet')",
+            [],
+        ).unwrap();
+    }
+    let app = router(state);
+    let (_, body) = call(&app, "GET", "/creators/quiet", None, None).await;
+    assert!(
+        !body.to_string().contains("secret@example.com"),
+        "a public page must not carry the address, masked or otherwise"
+    );
+}

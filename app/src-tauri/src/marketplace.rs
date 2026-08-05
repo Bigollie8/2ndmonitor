@@ -232,6 +232,90 @@ fn post_capped_json(
     }
 }
 
+/// The stored session token, or a fail-fast error. Mirrors the read
+/// `marketplace_rate` does: the token is resolved Rust-side from the DPAPI/
+/// Keychain-backed secret store and is never accepted as a command parameter,
+/// so the frontend cannot supply (or leak) one.
+fn session_token<R: Runtime>(app: &AppHandle<R>) -> Result<String, String> {
+    let raw = crate::secrets::secret_get_inner(app, SESSION_SECRET_KEY)
+        .ok_or_else(|| "not signed in".to_string())?;
+    serde_json::from_str::<serde_json::Value>(&raw)
+        .ok()
+        .and_then(|v| v.get("token").and_then(|t| t.as_str()).map(str::to_string))
+        .ok_or_else(|| "not signed in".to_string())
+}
+
+/// Authenticated GET. Same https-only and redirects(0) reasoning as
+/// `post_capped_json` — a followed redirect would carry the Authorization
+/// header to wherever `Location` pointed.
+fn get_capped_auth(url: &str, cap: usize, bearer: &str) -> Result<(u16, Vec<u8>), String> {
+    if !url.starts_with("https://") {
+        return Err("only https URLs are allowed".into());
+    }
+    fn read_capped(resp: ureq::Response, cap: usize) -> Result<Vec<u8>, String> {
+        let mut buf = Vec::new();
+        resp.into_reader()
+            .take((cap + 1) as u64)
+            .read_to_end(&mut buf)
+            .map_err(|e| format!("read failed: {e}"))?;
+        if buf.len() > cap {
+            return Err("response too large".into());
+        }
+        Ok(buf)
+    }
+    let agent = ureq::AgentBuilder::new().redirects(0).build();
+    match agent
+        .get(url)
+        .timeout(std::time::Duration::from_secs(10))
+        .set("Authorization", &format!("Bearer {bearer}"))
+        .call()
+    {
+        Ok(resp) => {
+            let status = resp.status();
+            Ok((status, read_capped(resp, cap)?))
+        }
+        Err(ureq::Error::Status(code, resp)) => Ok((code, read_capped(resp, cap)?)),
+        Err(ureq::Error::Transport(t)) => Err(format!("request failed: {t}")),
+    }
+}
+
+/// Authenticated PATCH, same contract as `post_capped_json`.
+fn patch_capped_json(
+    url: &str,
+    body: &serde_json::Value,
+    cap: usize,
+    bearer: &str,
+) -> Result<(u16, Vec<u8>), String> {
+    if !url.starts_with("https://") {
+        return Err("only https URLs are allowed".into());
+    }
+    fn read_capped(resp: ureq::Response, cap: usize) -> Result<Vec<u8>, String> {
+        let mut buf = Vec::new();
+        resp.into_reader()
+            .take((cap + 1) as u64)
+            .read_to_end(&mut buf)
+            .map_err(|e| format!("read failed: {e}"))?;
+        if buf.len() > cap {
+            return Err("response too large".into());
+        }
+        Ok(buf)
+    }
+    let agent = ureq::AgentBuilder::new().redirects(0).build();
+    match agent
+        .request("PATCH", url)
+        .timeout(std::time::Duration::from_secs(10))
+        .set("Authorization", &format!("Bearer {bearer}"))
+        .send_json(body.clone())
+    {
+        Ok(resp) => {
+            let status = resp.status();
+            Ok((status, read_capped(resp, cap)?))
+        }
+        Err(ureq::Error::Status(code, resp)) => Ok((code, read_capped(resp, cap)?)),
+        Err(ureq::Error::Transport(t)) => Err(format!("request failed: {t}")),
+    }
+}
+
 /// Signs in against the marketplace server and stores the session token.
 ///
 /// Returns nothing on success — see the module-level comment above for why.
@@ -462,6 +546,78 @@ pub fn marketplace_post_review<R: Runtime>(
         } else {
             text
         });
+    }
+    Ok(())
+}
+
+/// A creator's public profile plus what they have published. Unsigned browse
+/// data, same silent-failure contract as ratings: callers treat any `Err` as
+/// "no profile", never as an error worth interrupting browsing over.
+#[tauri::command]
+pub async fn marketplace_fetch_creator(url: String, handle: String) -> Result<serde_json::Value, String> {
+    // Same shape as is_safe_id, but handles allow underscores too.
+    if handle.is_empty()
+        || handle.len() > 24
+        || !handle.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'_')
+    {
+        return Err("invalid handle".into());
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        let base = url.trim_end_matches('/');
+        let bytes = get_capped(&format!("{base}/creators/{handle}"), FETCH_CAP)?;
+        let body = String::from_utf8(bytes).map_err(|_| "creator not UTF-8".to_string())?;
+        serde_json::from_str(&body).map_err(|e| format!("creator not JSON: {e}"))
+    })
+    .await
+    .map_err(|e| format!("fetch task failed: {e}"))?
+}
+
+/// The signed-in account's own profile. Requires a session; the token is read
+/// Rust-side and never crosses the IPC boundary as a parameter.
+#[tauri::command]
+pub fn marketplace_account_get<R: Runtime>(app: AppHandle<R>, url: String) -> Result<serde_json::Value, String> {
+    let token = session_token(&app)?;
+    let base = url.trim_end_matches('/');
+    let (status, buf) = get_capped_auth(&format!("{base}/account"), FETCH_CAP, &token)?;
+    let text = String::from_utf8_lossy(&buf).into_owned();
+    if !(200..300).contains(&status) {
+        return Err(if text.trim().is_empty() { format!("HTTP {status}") } else { text });
+    }
+    serde_json::from_str(&text).map_err(|e| format!("account not JSON: {e}"))
+}
+
+/// Claim a handle. One-time — the server refuses a second claim.
+#[tauri::command]
+pub fn marketplace_claim_handle<R: Runtime>(
+    app: AppHandle<R>,
+    url: String,
+    handle: String,
+) -> Result<(), String> {
+    let token = session_token(&app)?;
+    let base = url.trim_end_matches('/');
+    let body = serde_json::json!({ "handle": handle });
+    let (status, buf) = post_capped_json(&format!("{base}/account/handle"), &body, AUTH_CAP, Some(&token))?;
+    if !(200..300).contains(&status) {
+        let text = String::from_utf8_lossy(&buf).into_owned();
+        return Err(if text.trim().is_empty() { format!("HTTP {status}") } else { text });
+    }
+    Ok(())
+}
+
+/// Edit display name, bio and links. Every field optional; the server
+/// validates each one and returns a readable reason.
+#[tauri::command]
+pub fn marketplace_account_patch<R: Runtime>(
+    app: AppHandle<R>,
+    url: String,
+    patch: serde_json::Value,
+) -> Result<(), String> {
+    let token = session_token(&app)?;
+    let base = url.trim_end_matches('/');
+    let (status, buf) = patch_capped_json(&format!("{base}/account"), &patch, AUTH_CAP, &token)?;
+    if !(200..300).contains(&status) {
+        let text = String::from_utf8_lossy(&buf).into_owned();
+        return Err(if text.trim().is_empty() { format!("HTTP {status}") } else { text });
     }
     Ok(())
 }

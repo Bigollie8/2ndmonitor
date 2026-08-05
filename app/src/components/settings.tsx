@@ -20,6 +20,7 @@ import {
   LS_URL, LS_PUBKEY, DEFAULT_URL, DEFAULT_PUBKEY, cfgUrl, cfgPubkey, isDefaultServer,
 } from '../state/marketplaceConfig';
 import { useMarketplaceAuth } from '../state/marketplaceAuth';
+import { AccountPanel } from '../market/AccountPanel';
 
 const MONO = '"JetBrains Mono", ui-monospace, monospace';
 const HAIRLINE = '1px solid rgba(255,255,255,0.05)';
@@ -162,6 +163,11 @@ export function SettingsWindow({
   const [query, setQuery] = useState('');
   const { styles: vizStyles } = useVizStyles(v.catalogRemoved);
   const { options: sourceOptions, status: audioSourceStatus } = useAudioSource();
+  // A second, independent mount of the auth hook — the same pattern
+  // MarketplaceAccountEditor below uses. The hook holds no shared state to
+  // desync; each mount re-asks marketplace_session_status on its own.
+  const { state: marketplaceAuth } = useMarketplaceAuth();
+  const marketplaceSignedIn = marketplaceAuth.status === 'signed-in';
   const panes: PaneDef[] = [
     {
       id: 'visualizer', icon: '◢', title: 'Visualizer',
@@ -357,6 +363,11 @@ export function SettingsWindow({
           id: 'marketplace-account', label: 'Account', stacked: true,
           hint: 'Sign in to rate bundles. Your session token is stored locally, encrypted, and never leaves this device except to the marketplace server itself.',
           control: <MarketplaceAccountEditor accent={accent} />,
+        },
+        {
+          id: 'marketplace-profile', label: 'Creator profile', stacked: true,
+          hint: 'How you appear on the marketplace. A handle is required before you can publish anything, and it cannot be changed once claimed. Your avatar is generated from the handle — there is nothing to upload.',
+          control: <AccountPanel accent={accent} signedIn={marketplaceSignedIn} />,
         },
         {
           id: 'marketplace-server', label: 'Server & signing key', stacked: true,

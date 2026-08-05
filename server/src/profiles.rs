@@ -12,7 +12,7 @@
 use crate::auth::bearer_user;
 use crate::handle::validate as validate_handle;
 use crate::state::AppState;
-use axum::extract::State;
+use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::Json;
 use serde_json::{json, Value};
@@ -174,4 +174,87 @@ pub async fn patch_account(
     }
 
     Ok(Json(json!({ "ok": true })))
+}
+
+/// A creator's PUBLIC page: their profile plus everything they have published.
+///
+/// Unauthenticated and unsigned, like `/ratings` and `/reviews` — only the
+/// index is signed. Callers treat a failure as "no profile", never as an
+/// error worth interrupting browsing over.
+///
+/// A suspended creator 404s rather than rendering an empty page: hiding the
+/// content is the whole point of a suspension, and a page saying "this person
+/// exists but has nothing" still gives them a surface.
+pub async fn get_creator(
+    State(state): State<AppState>,
+    Path(handle): Path<String>,
+) -> Result<Json<Value>, StatusCode> {
+    let handle = crate::handle::normalise(&handle);
+    let db = state.db.lock();
+
+    let (user_id, display_name, bio, links, avatar_seed, created_at): (
+        i64,
+        Option<String>,
+        Option<String>,
+        String,
+        Option<String>,
+        i64,
+    ) = db
+        .query_row(
+            "SELECT id, display_name, bio, links, avatar_seed, created_at
+             FROM users WHERE handle = ?1 AND suspended = 0",
+            [&handle],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)),
+        )
+        .map_err(|_| StatusCode::NOT_FOUND)?;
+
+    // Newest version per id, approved only — the same visibility rule the
+    // index applies, so a creator page can never surface something the
+    // catalog would not.
+    let mut stmt = db
+        .prepare(
+            "SELECT id, version, kind, name, summary, category, downloads, approved_at
+             FROM bundles
+             WHERE author_id = ?1 AND status = 'approved'
+             ORDER BY id, created_at",
+        )
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    // Collected into a Result, NOT filter_map(Result::ok). On 2026-08-04 that
+    // pattern turned a transient read error into a validly-signed EMPTY
+    // catalog and 419 bundles vanished from every client with no error
+    // anywhere. A creator page that silently shows nothing is the same bug in
+    // miniature, so a row error fails the request instead.
+    let rows: Vec<Value> = stmt
+        .query_map([user_id], |r| {
+            Ok(json!({
+                "id": r.get::<_, String>(0)?,
+                "version": r.get::<_, String>(1)?,
+                "kind": r.get::<_, String>(2)?,
+                "name": r.get::<_, String>(3)?,
+                "summary": r.get::<_, Option<String>>(4)?,
+                "category": r.get::<_, Option<String>>(5)?,
+                "downloads": r.get::<_, i64>(6)?,
+                "approvedAt": r.get::<_, Option<i64>>(7)?,
+            }))
+        })
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let total_downloads: i64 = rows
+        .iter()
+        .filter_map(|b| b["downloads"].as_i64())
+        .sum();
+
+    Ok(Json(json!({
+        "handle": handle,
+        "displayName": display_name,
+        "bio": bio,
+        "links": serde_json::from_str::<Value>(&links).unwrap_or(json!([])),
+        "avatarSeed": avatar_seed.unwrap_or_else(|| handle.clone()),
+        "createdAt": created_at,
+        "bundles": rows,
+        "totalDownloads": total_downloads,
+    })))
 }

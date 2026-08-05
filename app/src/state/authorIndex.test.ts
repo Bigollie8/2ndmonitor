@@ -9,7 +9,7 @@ const item = (o: Partial<CatalogItem> = {}): CatalogItem => ({
   updateAvailable: false, permissions: [], needsSetup: false, downloads: 0, brokenReason: null,
   removed: false, hasPreview: false, rating: null,
   summary: null, tags: [], icon: null, changelog: null, minAppVersion: null,
-  featured: false, approvedAt: null, mediaCount: 0, authorDisplay: null, ...o,
+  featured: false, approvedAt: null, mediaCount: 0, authorDisplay: null, authorHandle: null, ...o,
 });
 
 test('bundles group under their author', () => {
@@ -36,7 +36,7 @@ test('a first-party built-in has no author page', () => {
 });
 
 test('an item with no author is excluded rather than grouped under an empty key', () => {
-  const idx = authorIndexOf([item({ key: 'a', id: 'a', authorDisplay: null })]);
+  const idx = authorIndexOf([item({ key: 'a', id: 'a', authorDisplay: null, authorHandle: null })]);
   assert.equal(idx.size, 0);
 });
 

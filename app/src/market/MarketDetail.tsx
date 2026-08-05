@@ -107,12 +107,16 @@ export function MarketDetail({
           leading to an empty page. */}
       {authorLabel ? (
         <button
-          onClick={() => onAuthor(authorLabel)}
+          // A claimed handle routes to the real, server-backed creator page;
+          // the '@' prefix is what MarketView switches on. Without one we
+          // fall back to the derived author page, which is every bundle
+          // published before 0.9.0.
+          onClick={() => onAuthor(item.authorHandle ? `@${item.authorHandle}` : authorLabel)}
           style={{
             background: 'transparent', border: 'none', padding: 0, marginTop: 3, cursor: 'pointer',
             fontSize: 11, fontFamily: MONO, color: accent, textAlign: 'left',
           }}
-        >by {authorLabel} ›</button>
+        >by {item.authorHandle ? `@${item.authorHandle}` : authorLabel} ›</button>
       ) : item.authorDisplay ? (
         <div style={{ fontSize: 11, fontFamily: MONO, color: 'rgba(255,255,255,0.4)', marginTop: 3 }}>
           by {item.authorDisplay}

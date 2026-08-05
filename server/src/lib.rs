@@ -38,6 +38,7 @@ pub fn router(state: AppState) -> Router {
         .route("/auth/whoami", get(auth::whoami))
         .route("/account", get(profiles::get_account).patch(profiles::patch_account))
         .route("/account/handle", post(profiles::claim_handle))
+        .route("/creators/:handle", get(profiles::get_creator))
         .route("/submissions", post(submit::submit))
         .route("/submissions/mine", get(submit::mine))
         .route("/ratings", post(ratings::rate).get(ratings::ratings))
