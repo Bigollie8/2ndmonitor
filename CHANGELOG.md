@@ -75,7 +75,12 @@ This adds the person behind the work, and everything that follows from that.
   see, so a mention cannot route around it
 - Rate limits on every write surface, and one open report per person per
   target so nobody can bury the moderation queue
-## [0.8.7] - 2026-08-05
+
+## [0.8.8] - 2026-08-05
+
+Identical in content to 0.8.7, which never shipped: its build was stopped on
+a compile error in macOS-only code (a log line added for the permission-prompt
+investigation below), fixed here.
 
 ### Fixed
 - **Aircraft Overhead no longer throttles for some users.** The tile relied
