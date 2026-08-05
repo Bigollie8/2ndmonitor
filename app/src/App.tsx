@@ -108,6 +108,7 @@ const DateTimeTile = lazy(() => import('./components/DateTimeTile').then((m) => 
 const DeclarativeTile = lazy(() => import('./components/DeclarativeTile').then((m) => ({ default: m.DeclarativeTile })));
 const MissingTileCard = lazy(() => import('./components/MissingTileCard').then((m) => ({ default: m.MissingTileCard })));
 const MarketView = lazy(() => import('./market/MarketView').then((m) => ({ default: m.MarketView })));
+const ProfileView = lazy(() => import('./profile/ProfileView').then((m) => ({ default: m.ProfileView })));
 
 interface VizColorOverride {
   enabled: boolean;
@@ -504,6 +505,9 @@ export default function App() {
   // Market v2's full-bleed store. Deliberately one boolean beside the Content
   // Library's — the store is a sibling surface, not a mode of that modal.
   const [showMarket, setShowMarket] = useState(false);
+  // The profile popout — sign-in, registration, handle, creator profile.
+  // Lived in Settings until 0.9.0; becoming a creator is not a preference.
+  const [showProfile, setShowProfile] = useState(false);
   // Set when the Store was opened by a "browse presets" action rather than
   // plainly — the MilkDrop picker's button. That is a BROWSE action, so it
   // opens the Store filtered to presets; it only ever lived in the old
@@ -821,6 +825,7 @@ export default function App() {
         // browse level at a time and closes only at the root — see
         // MarketView's capture-phase handler), so App must not also act.
         if (showMarket) { /* MarketView owns Esc */ }
+        else if (showProfile) setShowProfile(false);
         else if (showShortcuts) setShowShortcuts(false);
         else if (showContentLibrary) setShowContentLibrary(false);
         else if (showSettings) setShowSettings(false);
@@ -891,7 +896,7 @@ export default function App() {
   // Hiding does NOT reflow tiles: the bar overlays the same reserved space
   // when revealed (like the Windows taskbar) — CHROME_TOP_PX stays as-is.
   const topBarPinned = shouldPinTopBar({
-    editMode, showSettings, showContentLibrary: showContentLibrary || showMarket,
+    editMode, showSettings, showContentLibrary: showContentLibrary || showMarket || showProfile,
     showSwitcher, showOnboarding,
     showShortcuts, menuOpen: topBarMenuOpen,
   });
@@ -1489,7 +1494,13 @@ export default function App() {
               initialFacets={marketPresets ? { tags: [], kind: 'preset' } : undefined}
               onClose={() => { setShowMarket(false); setMarketPresets(false); }}
               onOpenLibrary={() => { setShowMarket(false); setMarketPresets(false); setShowContentLibrary(true); }}
+              onOpenProfile={() => { setShowMarket(false); setMarketPresets(false); setShowProfile(true); }}
             />
+          </Suspense>
+        )}
+        {showProfile && (
+          <Suspense fallback={null}>
+            <ProfileView accent={accent} onClose={() => setShowProfile(false)} />
           </Suspense>
         )}
       </div>
@@ -1526,6 +1537,7 @@ export default function App() {
           trackTitle={track.title}
           onOpenContentLibrary={() => { setShowSettings(false); setShowContentLibrary(true); }}
           onOpenMarket={() => { setShowSettings(false); setShowMarket(true); }}
+          onOpenProfile={() => { setShowSettings(false); setShowProfile(true); }}
           onReplayOnboarding={() => { setShowSettings(false); setShowOnboarding(true); }}
           // Close Settings and drop into edit mode so the empty canvas lands
           // with the "+ Add tile" picker one click away.

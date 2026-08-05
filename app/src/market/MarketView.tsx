@@ -47,7 +47,7 @@ const isEditableTarget = (t: EventTarget | null): boolean => {
  *  is here is composition and effects. */
 export function MarketView({
   accent, accent2, spectrumRef, catalogRemoved, setCatalogRemoved, onClose, onOpenLibrary,
-  initialFacets,
+  onOpenProfile, initialFacets,
 }: {
   accent: string;
   accent2: string;
@@ -56,6 +56,10 @@ export function MarketView({
   setCatalogRemoved: (next: string[]) => void;
   onClose: () => void;
   onOpenLibrary: () => void;
+  /** Opens the profile popout. The store closes itself first (App owns
+   *  both), so the popout never has to fight this view's capture-phase Esc
+   *  handler. */
+  onOpenProfile?: () => void;
   /** Open straight into a filtered grid instead of Discover — e.g. the
    *  MilkDrop picker's "browse presets". Read once at mount, like
    *  `ContentLibrary`'s old `initialRail`: this is the starting point for a
@@ -507,6 +511,7 @@ export function MarketView({
         onClose={onClose}
         onQuery={(q) => dispatch({ type: 'set-query', query: q })}
         onSort={(s: SortMode) => dispatch({ type: 'set-sort', sort: s })}
+        onProfile={onOpenProfile}
       />
 
       {(data.indexUnreachable || data.usingCache) && (
