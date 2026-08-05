@@ -5,6 +5,8 @@ All notable changes to 2ndMonitor are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.8.7] - 2026-08-05
+
 ### Fixed
 - **Aircraft Overhead no longer throttles for some users.** The tile relied
   on OpenSky's anonymous access, which grants a small daily budget per IP
@@ -35,9 +37,27 @@ All notable changes to 2ndMonitor are documented here. Format follows
   every tap creation is logged so testers can confirm from Console.app
 
 ### Performance
-- **Full pre-0.9.0 performance audit.** Measured result: an edit-mode tile
-  drag now costs 1 map repaint and zero long tasks (was 246 repaints before
-  the 0.7.3 pass — that fix has held through eight releases)
+- **Full pre-0.9.0 performance audit.** Every native command, background
+  thread, polling loop, and animation path was reviewed. Measured result:
+  an edit-mode tile drag costs 1 map repaint and zero long tasks (was 246
+  repaints before the 0.7.3 pass — that fix has held through eight releases)
+- **Marketplace tiles can no longer freeze the app.** Five native operations
+  still did their network work on the interface thread — worst of all the
+  fetch that every web-backed marketplace tile repeats on its own schedule,
+  which could hold the entire app frozen for up to ten seconds per poll on
+  a slow connection. Installing a bundle, signing in, rating, and posting a
+  review had the same flaw. All five now run off-thread; this is the last
+  of the bug class behind the 0.6.3 Content Library freeze
+- **Visualizers now keep time by the clock, not the frame rate.** The
+  spectrum engine assumed 25 frames per second while actually running at
+  your display cap, so adaptive gain, beat detection decay, and the
+  no-audio demo tempo all ran about 2.4x too fast at the default 60fps
+  setting — and faster still on high-refresh monitors. Everything is now
+  computed from real elapsed time, identical on every monitor and
+  Performance Mode
+- **Slightly faster startup.** A system-monitor warm-up pause ran on the
+  main thread during launch and delayed first paint by 200ms; it now runs
+  in the background
 - **Stereo audio data is now sent only to visualizers that use it.** The
   two-channel waveform stream — roughly double the audio traffic — was
   broadcast whenever any visualizer ran, though only the Vectorscope and
