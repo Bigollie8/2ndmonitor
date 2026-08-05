@@ -663,7 +663,7 @@ export default function App() {
    *  with that. */
   const toggleFullscreen = useCallback(async () => {
     try {
-      const { getCurrentWindow, currentMonitor, LogicalSize, LogicalPosition } = await import('@tauri-apps/api/window');
+      const { getCurrentWindow, currentMonitor, PhysicalSize, PhysicalPosition } = await import('@tauri-apps/api/window');
       const win = getCurrentWindow();
       const prev = preFullscreenRef.current;
 
@@ -671,26 +671,37 @@ export default function App() {
         // Restore.
         preFullscreenRef.current = null;
         await win.setAlwaysOnTop(false);
+        await win.setResizable(true);
         await win.setDecorations(true);
-        await win.setSize(new LogicalSize(prev.w, prev.h));
-        await win.setPosition(new LogicalPosition(prev.x, prev.y));
+        await win.setSize(new PhysicalSize(prev.w, prev.h));
+        await win.setPosition(new PhysicalPosition(prev.x, prev.y));
       } else {
         const monitor = await currentMonitor();
         if (!monitor) { console.warn('F11: no monitor reported; ignoring'); return; }
         const pos = await win.innerPosition();
         const size = await win.innerSize();
-        const scale = monitor.scaleFactor || 1;
         preFullscreenRef.current = {
-          x: pos.x / scale, y: pos.y / scale,
-          w: size.width / scale, h: size.height / scale,
+          x: pos.x, y: pos.y,
+          w: size.width, h: size.height,
         };
-        const mx = monitor.position.x / scale;
-        const my = monitor.position.y / scale;
-        const mw = monitor.size.width / scale;
-        const mh = monitor.size.height / scale;
+        // PHYSICAL units end to end (0.8.6). The first version divided the
+        // monitor's physical origin/size by scaleFactor and passed Logical*,
+        // which Tauri converts back to physical using the WINDOW's scale — a
+        // value that changes mid-move when crossing monitors, and rounds.
+        // Every conversion was a chance to land short, and on real multi-DPI
+        // setups it reliably did: the window sat inset from the monitor edge
+        // (the reported gap on the left, seen across three monitors at three
+        // scales). The monitor's own physical rect needs no arithmetic at all.
         await win.setDecorations(false);
-        await win.setPosition(new LogicalPosition(mx, my));
-        await win.setSize(new LogicalSize(mw, mh));
+        // An undecorated RESIZABLE window keeps invisible resize handles on
+        // its edges — Windows hit-tests the top few pixels as non-client, so
+        // the DOM never sees the pointer there. That is what made the
+        // auto-hide top bar's 4px reveal strip unreachable in F11: the strip
+        // sat exactly inside the resize handle. A fullscreen window has no
+        // business being resizable anyway, so drop it for the duration.
+        await win.setResizable(false);
+        await win.setPosition(new PhysicalPosition(monitor.position.x, monitor.position.y));
+        await win.setSize(new PhysicalSize(monitor.size.width, monitor.size.height));
         await win.setAlwaysOnTop(true);
       }
 
