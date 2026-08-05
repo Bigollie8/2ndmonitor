@@ -7,6 +7,7 @@ pub mod ai_review;
 pub mod auth;
 pub mod collections;
 pub mod db;
+pub mod email;
 pub mod index;
 pub mod keys;
 pub mod manifest;

@@ -165,3 +165,101 @@ async fn rate_limit_kicks_in_at_11th_hit() {
         serde_json::json!({"email": "u11@x.y", "password": "hunter22"}), "9.9.9.9").await;
     assert_eq!(st, StatusCode::TOO_MANY_REQUESTS);
 }
+
+// ── Phase 1: mail delivery is required before an account can exist ──────────
+
+use hub_marketplace::build_state;
+use hub_marketplace::state::Config;
+
+/// Production-shaped config: no relay, and dev email NOT opted into.
+fn refusing_state() -> hub_marketplace::state::AppState {
+    let mut cfg = Config::test();
+    cfg.dev_email = false;
+    let conn = rusqlite::Connection::open_in_memory().expect("memory db");
+    build_state(cfg, conn, [7u8; 32])
+}
+
+#[tokio::test]
+async fn registration_refuses_when_no_mail_can_be_sent() {
+    let app = router(refusing_state());
+    let (status, body) = post_json(
+        &app,
+        "/auth/register",
+        serde_json::json!({ "email": "a@example.com", "password": "correct horse battery" }),
+    )
+    .await;
+
+    assert_eq!(
+        status,
+        StatusCode::SERVICE_UNAVAILABLE,
+        "with no relay and no dev opt-in, registering must fail rather than hand back a token"
+    );
+    assert!(
+        body.get("verify_token").is_none(),
+        "a refused registration must never leak a token"
+    );
+}
+
+// The address must stay registerable afterwards. `users.email` is UNIQUE, so
+// a half-created row would lock the address out permanently with a 409.
+#[tokio::test]
+async fn a_refused_registration_leaves_no_row_behind() {
+    let state = refusing_state();
+    let app = router(state.clone());
+    let (status, _) = post_json(
+        &app,
+        "/auth/register",
+        serde_json::json!({ "email": "rollback@example.com", "password": "correct horse battery" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+
+    let count: i64 = state
+        .db
+        .lock()
+        .query_row(
+            "SELECT COUNT(*) FROM users WHERE email = ?1",
+            ["rollback@example.com"],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(count, 0, "the user row must be rolled back, or the address is locked out for good");
+}
+
+#[tokio::test]
+async fn dev_mode_still_returns_the_token_when_asked_for() {
+    let app = router(test_state());
+    let (status, body) = post_json(
+        &app,
+        "/auth/register",
+        serde_json::json!({ "email": "b@example.com", "password": "correct horse battery" }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        body.get("verify_token").is_some(),
+        "Config::test() opts into dev email explicitly"
+    );
+}
+
+// Checked before the account lookup so it cannot become an enumeration
+// oracle: the same 503 for an address that exists and one that does not.
+#[tokio::test]
+async fn password_reset_refuses_identically_for_known_and_unknown_addresses() {
+    let app = router(refusing_state());
+    let (known, _) = post_json(
+        &app,
+        "/auth/request-reset",
+        serde_json::json!({ "email": "b@example.com" }),
+    )
+    .await;
+    let (unknown, _) = post_json(
+        &app,
+        "/auth/request-reset",
+        serde_json::json!({ "email": "nobody@example.com" }),
+    )
+    .await;
+    assert_eq!(known, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(unknown, known, "differing status would leak whether an account exists");
+}

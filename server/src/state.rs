@@ -20,6 +20,15 @@ pub struct Config {
     pub admin_token: Option<String>,
     pub anthropic_api_key: Option<String>,
     pub smtp_url: Option<String>,
+    /// Opt-in ONLY. When true and no relay is configured, verification and
+    /// reset tokens come back in the API response. See email.rs for why this
+    /// is no longer the default.
+    pub dev_email: bool,
+    /// Absolute base the links in outbound mail are built from, e.g.
+    /// "https://market.basedsecurity.net". No trailing slash.
+    pub public_base_url: String,
+    /// Envelope From for outbound mail.
+    pub smtp_from: String,
 }
 
 impl Config {
@@ -30,10 +39,22 @@ impl Config {
             admin_token: std::env::var("ADMIN_TOKEN").ok().filter(|s| !s.is_empty()),
             anthropic_api_key: std::env::var("ANTHROPIC_API_KEY").ok().filter(|s| !s.is_empty()),
             smtp_url: std::env::var("SMTP_URL").ok().filter(|s| !s.is_empty()),
+            dev_email: std::env::var("DEV_EMAIL")
+                .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+                .unwrap_or(false),
+            public_base_url: std::env::var("PUBLIC_BASE_URL")
+                .unwrap_or_else(|_| "https://market.basedsecurity.net".into())
+                .trim_end_matches('/')
+                .to_string(),
+            smtp_from: std::env::var("SMTP_FROM")
+                .unwrap_or_else(|_| "no-reply@basedsecurity.net".into()),
         }
     }
 
-    /// In-memory config for tests: dev-mode email, admin token "test-admin".
+    /// In-memory config for tests: admin token "test-admin", and dev email
+    /// opted into EXPLICITLY via `dev_email: true`. That flag is what keeps
+    /// the existing auth tests getting their token back now that the
+    /// deployment default is to refuse — see email.rs.
     pub fn test() -> Self {
         Config {
             port: 0,
@@ -41,6 +62,9 @@ impl Config {
             admin_token: Some("test-admin".into()),
             anthropic_api_key: None,
             smtp_url: None,
+            dev_email: true,
+            public_base_url: "https://market.test".into(),
+            smtp_from: "no-reply@market.test".into(),
         }
     }
 }
