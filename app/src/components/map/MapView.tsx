@@ -9,7 +9,19 @@ export function baseTileUrl(z: number, x: number, y: number): string {
 
 export type ProjectFn = (lat: number, lon: number) => { x: number; y: number };
 
+// Two caches, deliberately (0.8.2). Base map tiles and radar-overlay frames
+// used to share one 256-entry LRU, and the radar always won: a 2-hour loop is
+// 13 frames x the tiles covering the viewport, which is ~195 URLs for an
+// 800x500 tile and 260+ once the tile is 1000x650 — over the whole cap on its
+// own. Playing the loop therefore evicted the BASE tiles of every mounted map
+// on each cycle, so the basemap re-fetched constantly (the visible "glitching")
+// and any tile that failed then sat blank for ERROR_RETRY_MS.
+//
+// Separating them means radar churn can never evict the basemap. The base cap
+// is unchanged; the overlay cap is sized to hold a full loop at a large tile
+// size so a cycling animation stops re-fetching what it just showed.
 const TILE_CACHE_MAX = 256;
+const OVERLAY_CACHE_MAX = 512;
 /** After a failed load (post-retry) wait this long before trying again when
  *  the tile is next requested — "give up until it scrolls back into view". */
 const ERROR_RETRY_MS = 15_000;
@@ -29,15 +41,23 @@ interface CacheEntry {
 /** Module-level so every map tile shares one LRU. Map preserves insertion
  *  order; re-inserting on hit makes eviction least-recently-used. */
 const tileCache = new Map<string, CacheEntry>();
+/** Radar/overlay frames. Separate LRU so a playing loop cannot evict basemap
+ *  tiles — see the cap comments above. */
+const overlayCache = new Map<string, CacheEntry>();
 
-function getTile(url: string, onSettled: () => void): HTMLImageElement | null {
-  const hit = tileCache.get(url);
+function getTile(
+  url: string,
+  onSettled: () => void,
+  cache: Map<string, CacheEntry> = tileCache,
+  cap: number = TILE_CACHE_MAX,
+): HTMLImageElement | null {
+  const hit = cache.get(url);
   if (hit) {
-    tileCache.delete(url);
-    tileCache.set(url, hit); // refresh LRU position
+    cache.delete(url);
+    cache.set(url, hit); // refresh LRU position
     if (hit.status === 'ok') return hit.img;
     if (hit.status === 'error' && Date.now() - hit.errorAt > ERROR_RETRY_MS) {
-      tileCache.delete(url); // cooldown over — fall through and reload
+      cache.delete(url); // cooldown over — fall through and reload
     } else {
       if (hit.status === 'loading') hit.waiters.add(onSettled);
       return null; // loading, or failed and still cooling down (dark background)
@@ -63,11 +83,11 @@ function getTile(url: string, onSettled: () => void): HTMLImageElement | null {
     settle();
   };
   img.src = url;
-  tileCache.set(url, entry);
-  while (tileCache.size > TILE_CACHE_MAX) {
-    const oldest = tileCache.keys().next().value as string | undefined;
+  cache.set(url, entry);
+  while (cache.size > cap) {
+    const oldest = cache.keys().next().value as string | undefined;
     if (oldest === undefined) break;
-    tileCache.delete(oldest);
+    cache.delete(oldest);
   }
   return null;
 }
@@ -143,7 +163,9 @@ function MapViewImpl({
     if (urlFn) {
       ctx.globalAlpha = overlayTileAlphaRef.current;
       for (const t of tiles) {
-        const img = getTile(urlFn(t.z, t.x, t.y), schedule);
+        // Overlay cache, NOT the base cache — a playing radar loop must never
+        // be able to evict the basemap out from under itself.
+        const img = getTile(urlFn(t.z, t.x, t.y), schedule, overlayCache, OVERLAY_CACHE_MAX);
         if (img) ctx.drawImage(img, t.sx, t.sy, t.size, t.size);
       }
       ctx.globalAlpha = 1;
