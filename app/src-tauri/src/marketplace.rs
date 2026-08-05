@@ -642,6 +642,178 @@ pub fn marketplace_post_review<R: Runtime>(
     Ok(())
 }
 
+/// Shared shape for the social GETs: attach the session when one exists,
+/// go anonymous otherwise. Counts are public; "is it mine / am I following"
+/// needs the token; a signed-out browse must still get the numbers.
+fn get_social(url: &str, token: Option<String>) -> Result<serde_json::Value, String> {
+    let (status, buf) = match token {
+        Some(t) => get_capped_auth(url, FETCH_CAP, &t)?,
+        None => get_capped_status(url, FETCH_CAP)?,
+    };
+    let text = String::from_utf8_lossy(&buf).into_owned();
+    if !(200..300).contains(&status) {
+        return Err(if text.trim().is_empty() { format!("HTTP {status}") } else { text });
+    }
+    serde_json::from_str(&text).map_err(|e| format!("not JSON: {e}"))
+}
+
+/// POST with the session token, surfacing the server's own error words —
+/// social writes are user actions and must never fail silently.
+fn post_social<R: Runtime>(
+    app: &AppHandle<R>,
+    url: &str,
+    body: &serde_json::Value,
+) -> Result<(), String> {
+    let token = session_token(app)?;
+    let (status, buf) = post_capped_json(url, body, AUTH_CAP, Some(&token))?;
+    if !(200..300).contains(&status) {
+        let text = String::from_utf8_lossy(&buf).into_owned();
+        return Err(if text.trim().is_empty() { format!("HTTP {status}") } else { text });
+    }
+    Ok(())
+}
+
+fn is_safe_handle(h: &str) -> bool {
+    !h.is_empty()
+        && h.len() <= 24
+        && h.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'_')
+}
+
+/// Follower count + whether the caller follows this creator.
+#[tauri::command]
+pub fn marketplace_follow_status<R: Runtime>(
+    app: AppHandle<R>,
+    url: String,
+    handle: String,
+) -> Result<serde_json::Value, String> {
+    if !is_safe_handle(&handle) {
+        return Err("invalid handle".into());
+    }
+    let base = url.trim_end_matches('/');
+    get_social(&format!("{base}/follows?handle={handle}"), session_token(&app).ok())
+}
+
+#[tauri::command]
+pub fn marketplace_set_follow<R: Runtime>(
+    app: AppHandle<R>,
+    url: String,
+    handle: String,
+    following: bool,
+) -> Result<(), String> {
+    if !is_safe_handle(&handle) {
+        return Err("invalid handle".into());
+    }
+    let base = url.trim_end_matches('/');
+    post_social(&app, &format!("{base}/follows"), &serde_json::json!({ "handle": handle, "following": following }))
+}
+
+/// The creators the caller follows — the profile popout's Following tab.
+#[tauri::command]
+pub fn marketplace_follows_mine<R: Runtime>(app: AppHandle<R>, url: String) -> Result<serde_json::Value, String> {
+    let token = session_token(&app)?;
+    let base = url.trim_end_matches('/');
+    get_social(&format!("{base}/follows/mine"), Some(token))
+}
+
+/// Public per-bundle favourite counts plus the caller's own list.
+#[tauri::command]
+pub fn marketplace_fetch_favourites<R: Runtime>(app: AppHandle<R>, url: String) -> Result<serde_json::Value, String> {
+    let base = url.trim_end_matches('/');
+    get_social(&format!("{base}/favourites"), session_token(&app).ok())
+}
+
+#[tauri::command]
+pub fn marketplace_set_favourite<R: Runtime>(
+    app: AppHandle<R>,
+    url: String,
+    id: String,
+    favourite: bool,
+) -> Result<(), String> {
+    if !is_safe_id(&id) {
+        return Err("invalid bundle id".into());
+    }
+    let base = url.trim_end_matches('/');
+    post_social(&app, &format!("{base}/favourites"), &serde_json::json!({ "id": id, "favourite": favourite }))
+}
+
+/// Bundle ids from creators the caller follows, newest first. Ids only — the
+/// client already holds the catalog and resolves them itself.
+#[tauri::command]
+pub fn marketplace_fetch_feed<R: Runtime>(app: AppHandle<R>, url: String) -> Result<serde_json::Value, String> {
+    let token = session_token(&app)?;
+    let base = url.trim_end_matches('/');
+    get_social(&format!("{base}/feed"), Some(token))
+}
+
+/// Comments on one bundle. The session rides along when present so the
+/// server can apply the caller's blocks — enforced there, not here, so a
+/// modified client cannot un-block anyone.
+#[tauri::command]
+pub fn marketplace_fetch_comments<R: Runtime>(
+    app: AppHandle<R>,
+    url: String,
+    id: String,
+) -> Result<serde_json::Value, String> {
+    if !is_safe_id(&id) {
+        return Err("invalid bundle id".into());
+    }
+    let base = url.trim_end_matches('/');
+    get_social(&format!("{base}/comments?id={id}"), session_token(&app).ok())
+}
+
+#[tauri::command]
+pub fn marketplace_post_comment<R: Runtime>(
+    app: AppHandle<R>,
+    url: String,
+    id: String,
+    body: String,
+) -> Result<(), String> {
+    if !is_safe_id(&id) {
+        return Err("invalid bundle id".into());
+    }
+    if body.trim().is_empty() {
+        return Err("comment must not be blank".into());
+    }
+    if body.chars().count() > 1000 {
+        return Err("comment must be at most 1000 characters".into());
+    }
+    let base = url.trim_end_matches('/');
+    post_social(&app, &format!("{base}/comments"), &serde_json::json!({ "id": id, "body": body }))
+}
+
+#[tauri::command]
+pub fn marketplace_set_block<R: Runtime>(
+    app: AppHandle<R>,
+    url: String,
+    handle: String,
+    blocking: bool,
+) -> Result<(), String> {
+    if !is_safe_handle(&handle) {
+        return Err("invalid handle".into());
+    }
+    let base = url.trim_end_matches('/');
+    post_social(&app, &format!("{base}/blocks"), &serde_json::json!({ "handle": handle, "blocking": blocking }))
+}
+
+#[tauri::command]
+pub fn marketplace_report<R: Runtime>(
+    app: AppHandle<R>,
+    url: String,
+    target_kind: String,
+    target_id: String,
+    reason: String,
+) -> Result<(), String> {
+    if !matches!(target_kind.as_str(), "comment" | "review" | "bundle" | "creator") {
+        return Err("targetKind must be comment, review, bundle or creator".into());
+    }
+    let base = url.trim_end_matches('/');
+    post_social(
+        &app,
+        &format!("{base}/reports"),
+        &serde_json::json!({ "targetKind": target_kind, "targetId": target_id, "reason": reason }),
+    )
+}
+
 /// Publish a layout. `manifest` and `layout` are both JSON strings, matching
 /// the wire shape `POST /submissions` already uses for every other kind.
 ///

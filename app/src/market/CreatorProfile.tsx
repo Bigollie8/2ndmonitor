@@ -4,6 +4,7 @@ import type { SpectrumState } from '../state/tauri';
 import { identiconDataUri } from '../state/identicon';
 import { cfgUrl } from '../state/marketplaceConfig';
 import { MarketCard } from './MarketCard';
+import { FollowButton } from './FollowButton';
 
 const MONO = '"JetBrains Mono", ui-monospace, monospace';
 
@@ -41,9 +42,11 @@ export interface Creator {
  *  bundle list is only used to decide which items belong to this creator, and
  *  as the fallback when the catalog has not seen one. */
 export function CreatorProfile({
-  handle, items, accent, accent2, spectrumRef, appVersion, glyphOf, cardMin, onOpen,
+  handle, items, accent, accent2, spectrumRef, appVersion, glyphOf, cardMin, signedIn, onOpen,
 }: {
   handle: string;
+  /** Gates the follow toggle; the count shows regardless. */
+  signedIn: boolean;
   /** The merged catalog, for resolving each published id to a real card. */
   items: CatalogItem[];
   accent: string;
@@ -132,6 +135,9 @@ export function CreatorProfile({
           )}
           <div style={{ fontSize: 10.5, fontFamily: MONO, color: 'rgba(255,255,255,0.35)', marginTop: 8 }}>
             {creator.bundles.length} published · {creator.totalDownloads} installs
+          </div>
+          <div style={{ marginTop: 10 }}>
+            <FollowButton handle={creator.handle} accent={accent} signedIn={signedIn} />
           </div>
         </div>
       </div>

@@ -10,6 +10,8 @@ import { InstallButton } from './InstallButton';
 import { MediaGallery } from './MediaGallery';
 import { ReviewList } from './ReviewList';
 import { ReviewForm } from './ReviewForm';
+import { FavouriteButton } from './FavouriteButton';
+import { CommentsSection } from './CommentsSection';
 import { authorLabelOf } from '../state/authorIndex';
 import { glyphFor } from './MarketCard';
 
@@ -146,6 +148,11 @@ export function MarketDetail({
           busy={ratingBusy}
           onRate={onRate}
         />
+        {/* Marketplace bundles only: a first-party built-in has no server
+            row for a favourite to attach to. */}
+        {item.source !== 'first-party' && (
+          <FavouriteButton bundleId={item.id} accent={accent} signedIn={signedIn} />
+        )}
       </div>
 
       {item.tags.length > 0 && (
@@ -216,6 +223,12 @@ export function MarketDetail({
           <ReviewList bundleId={item.id} accent={accent} reloadKey={reviewKey} />
         </div>
       </Section>
+
+      {item.source !== 'first-party' && (
+        <Section title="Comments">
+          <CommentsSection bundleId={item.id} accent={accent} signedIn={signedIn} />
+        </Section>
+      )}
 
       <Section title="Details">
         <div style={{

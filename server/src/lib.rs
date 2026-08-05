@@ -43,6 +43,7 @@ pub fn router(state: AppState) -> Router {
         .route("/account/handle", post(profiles::claim_handle))
         .route("/creators/:handle", get(profiles::get_creator))
         .route("/follows", post(social::set_follow).get(social::follow_status))
+        .route("/follows/mine", get(social::follows_mine))
         .route("/favourites", post(social::set_favourite).get(social::favourites))
         .route("/feed", get(social::feed))
         .route("/comments", get(comments::list).post(comments::post))

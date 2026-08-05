@@ -28,6 +28,8 @@ import { CreatorProfile } from './CreatorProfile';
 import { MultiInstallDialog } from './MultiInstallDialog';
 import { authorIndexOf } from '../state/authorIndex';
 import { planMultiInstall, type InstallPlan } from '../state/installPlan';
+import { fetchFeedIds } from '../state/social';
+import { feedShelf } from '../state/socialFeed';
 
 const MONO = '"JetBrains Mono", ui-monospace, monospace';
 
@@ -155,13 +157,32 @@ export function MarketView({
     [data.items, data.appVersion],
   );
 
-  const shelves = useMemo(() => buildShelves({
-    items: data.items,
-    collections: data.collections,
-    dates: data.dates,
-    nowSec: Math.floor(Date.now() / 1000),
-    appVersion: data.appVersion,
-  }), [data.items, data.collections, data.dates, data.appVersion]);
+  // The personal shelf's ids. Signed out there is no feed; a failed fetch is
+  // an empty one — a read, so silent, like every other social read.
+  const [feedIds, setFeedIds] = useState<string[]>([]);
+  useEffect(() => {
+    if (!data.signedIn) { setFeedIds([]); return; }
+    let cancelled = false;
+    void fetchFeedIds()
+      .then((ids) => { if (!cancelled) setFeedIds(ids); })
+      .catch(() => { if (!cancelled) setFeedIds([]); });
+    return () => { cancelled = true; };
+  }, [data.signedIn]);
+
+  const shelves = useMemo(() => {
+    const built = buildShelves({
+      items: data.items,
+      collections: data.collections,
+      dates: data.dates,
+      nowSec: Math.floor(Date.now() / 1000),
+      appVersion: data.appVersion,
+    });
+    // Prepended rather than folded into buildShelves' dedupe: this shelf is
+    // PERSONAL — something you follow appearing here must not vanish just
+    // because it is also Featured.
+    const feed = feedShelf(feedIds, data.items);
+    return feed ? [feed, ...built] : built;
+  }, [data.items, data.collections, data.dates, data.appVersion, feedIds]);
 
   const selected = browse.selectedKey
     ? data.items.find((i) => i.key === browse.selectedKey)
@@ -477,6 +498,7 @@ export function MarketView({
                 handle={browse.author.slice(1)}
                 items={data.items}
                 cardMin={layout.cardMin}
+                signedIn={data.signedIn}
                 onOpen={(item) => dispatch({ type: 'open-detail', key: item.key })}
                 {...cardProps}
               />

@@ -180,6 +180,40 @@ pub async fn favourites(
     Ok(Json(json!({ "counts": Value::Object(counts), "mine": mine })))
 }
 
+/// The creators the caller follows, newest first.
+///
+/// This is the one follow LIST that exists: your own. Another creator's
+/// follower list stays private -- that is a harassment surface -- but what
+/// you yourself chose to follow is yours to see and manage.
+pub async fn follows_mine(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<Value>, StatusCode> {
+    let user = bearer_user(&state, &headers)?;
+    let db = state.db.lock();
+    let mut stmt = db
+        .prepare(
+            "SELECT u.handle, u.display_name, u.avatar_seed
+             FROM follows f JOIN users u ON u.id = f.creator_id
+             WHERE f.follower_id = ?1 AND u.suspended = 0
+             ORDER BY f.created_at DESC",
+        )
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    // Result-collected, never filter_map(Result::ok) -- the 2026-08-04 rule.
+    let rows: Vec<Value> = stmt
+        .query_map([user], |r| {
+            Ok(json!({
+                "handle": r.get::<_, Option<String>>(0)?,
+                "displayName": r.get::<_, Option<String>>(1)?,
+                "avatarSeed": r.get::<_, Option<String>>(2)?,
+            }))
+        })
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(json!({ "following": rows })))
+}
+
 /// Bundle ids published by creators the caller follows, newest first.
 ///
 /// Ids only: the client already has the full catalog and can resolve them to

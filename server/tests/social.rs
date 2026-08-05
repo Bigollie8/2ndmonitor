@@ -186,3 +186,25 @@ async fn following_an_unknown_creator_is_404() {
         Some(serde_json::json!({ "handle": "ghost" }))).await;
     assert_eq!(st, StatusCode::NOT_FOUND);
 }
+
+// The one follow LIST that exists: your own. Powers the profile popout's
+// Following tab.
+#[tokio::test]
+async fn your_own_following_list_is_readable_and_ordered_newest_first() {
+    let app = router(test_state());
+    let me = account(&app, "lister@x.y", "lister").await;
+    account(&app, "one@x.y", "creator-one").await;
+    account(&app, "two@x.y", "creator-two").await;
+
+    call(&app, "POST", "/follows", Some(&me), Some(serde_json::json!({ "handle": "creator-one" }))).await;
+    call(&app, "POST", "/follows", Some(&me), Some(serde_json::json!({ "handle": "creator-two" }))).await;
+
+    let (st, body) = call(&app, "GET", "/follows/mine", Some(&me), None).await;
+    assert_eq!(st, StatusCode::OK);
+    let handles: Vec<&str> = body["following"].as_array().unwrap()
+        .iter().map(|v| v["handle"].as_str().unwrap()).collect();
+    assert!(handles.contains(&"creator-one") && handles.contains(&"creator-two"));
+
+    let (st, _) = call(&app, "GET", "/follows/mine", None, None).await;
+    assert_eq!(st, StatusCode::UNAUTHORIZED, "your list needs your session");
+}

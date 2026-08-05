@@ -1500,7 +1500,11 @@ export default function App() {
         )}
         {showProfile && (
           <Suspense fallback={null}>
-            <ProfileView accent={accent} onClose={() => setShowProfile(false)} />
+            <ProfileView
+              accent={accent}
+              catalogRemoved={t.catalogRemoved}
+              onClose={() => setShowProfile(false)}
+            />
           </Suspense>
         )}
       </div>
