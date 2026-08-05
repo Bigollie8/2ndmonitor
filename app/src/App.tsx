@@ -45,6 +45,7 @@ import {
   resolveWindUnit, type WindUnit, type WindUnitSetting,
 } from './state/units';
 import { useAudioSource } from './state/useAudioSource';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { UpdateToast } from './components/UpdateToast';
 import { useSysmon, useNowPlaying, useSpectrumRef } from './state/tauri';
 import { applySurfaces, computeSurfaces, glassTintAlpha, DEFAULT_GLASS_STRENGTH } from './state/theme';
@@ -197,6 +198,12 @@ interface TweakState extends Record<string, unknown> {
   /** Platform-wide wind-speed unit (0.8.1). 'system' resolves by locale
    *  (US/UK → mph, most others → km/h) — see state/units.ts. */
   windUnit: WindUnitSetting;
+  /** Edit-mode helper toggles (0.8.5). Persisted because they were local
+   *  state before and reset to on every time edit mode reopened, so anyone who
+   *  preferred the grid off had to turn it off on every single visit. */
+  editSnap: boolean;
+  editGuides: boolean;
+  editGrid: boolean;
 }
 
 /** How long the viz surface will wait for boot seeding before giving up and
@@ -247,6 +254,10 @@ const TWEAK_DEFAULTS: TweakState = {
   clockFormat: 'system',
   tempUnit: 'system',
   windUnit: 'system',
+  // All three default true — the pre-0.8.5 behaviour.
+  editSnap: true,
+  editGuides: true,
+  editGrid: true,
 };
 
 
@@ -501,7 +512,7 @@ export default function App() {
   }, [tweaksHydrated, t.onboardingDone, t.profiles.length, t.activeProfileId]);
   const [manualTrack, setManualTrack] = useState<Track>(TRACKS[0]!);
   const [editMode, setEditMode] = useState(false);
-  const [snapEnabled, setSnapEnabled] = useState(true);
+
   const [showSwitcher, setShowSwitcher] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [showGallery, setShowGallery] = useState(false);
@@ -1484,7 +1495,7 @@ export default function App() {
               id={instance.instanceId}
               rect={instance.rect}
               editing={editMode}
-              snap={snapEnabled}
+              snap={t.editSnap}
               topInsetPx={topInsetPx}
               selected={selectedInstanceId === instance.instanceId}
               onSelect={() => setSelectedInstanceId(instance.instanceId)}
@@ -1520,8 +1531,12 @@ export default function App() {
             setTiles={(next) => updateActiveOrientation({ tiles: next })}
             selectedInstanceId={selectedInstanceId}
             setSelectedInstanceId={setSelectedInstanceId}
-            snap={snapEnabled}
-            setSnap={setSnapEnabled}
+            snap={t.editSnap}
+            setSnap={(v) => setTweak('editSnap', v)}
+            showGuides={t.editGuides}
+            setShowGuides={(v) => setTweak('editGuides', v)}
+            showGrid={t.editGrid}
+            setShowGrid={(v) => setTweak('editGrid', v)}
             profileName={activeProfile.name}
             catalogRemoved={t.catalogRemoved}
             topInsetPx={topInsetPx}
@@ -1600,6 +1615,10 @@ export default function App() {
           />
         )}
         {showMarket && (
+          // Guarded (0.8.5): these overlays are lazy behind `fallback={null}`,
+          // so before this a throw inside one unmounted the whole React tree
+          // and the app simply went black with no message.
+          <ErrorBoundary surface="Marketplace" onClose={() => { setShowMarket(false); setMarketPresets(false); }}>
           <Suspense fallback={null}>
             <MarketView
               accent={accent}
@@ -1612,6 +1631,7 @@ export default function App() {
               onOpenLibrary={() => { setShowMarket(false); setMarketPresets(false); setShowContentLibrary(true); }}
             />
           </Suspense>
+          </ErrorBoundary>
         )}
       </div>
 

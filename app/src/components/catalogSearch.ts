@@ -44,7 +44,12 @@ export function scoreItem(item: CatalogItem, query: string): number {
 
   if (item.summary?.toLowerCase().includes(q)) score += W_SUMMARY;
   if (item.authorDisplay?.toLowerCase().includes(q)) score += W_AUTHOR;
-  if (item.description.toLowerCase().includes(q)) score += W_DESCRIPTION;
+  // Optional-chained like its two neighbours above. It was not, and the live
+  // index genuinely carries `"description": null` on submitted items — so
+  // typing in the market search threw a TypeError mid-render. With no error
+  // boundary in the app at the time, that unmounted the entire React tree: a
+  // black screen with no message (0.8.5).
+  if (item.description?.toLowerCase().includes(q)) score += W_DESCRIPTION;
 
   return score;
 }
