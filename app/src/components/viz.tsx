@@ -558,6 +558,7 @@ export function VizHero({
   showArtBg = false, sensitivity = 1, smoothing = 0, lyricsOverlayEnabled = true,
   videoEnabled = false, videoCurrentUrl = null, videoBookmarks = [],
   videoAvailable = false, onToggleVideo, onNavigate, onExit, overlaysOpen = false,
+  fullBleedOverlayOpen = false,
   paused = false, onConfigure, audioDebug = false, catalogRemoved, onOpenLibrary,
 }: {
   mode: VizMode;
@@ -589,6 +590,9 @@ export function VizHero({
   /** True when any modal overlay is open (gallery / edit / switcher / onboarding) —
    *  forwarded to BrowserPlayer.suppress to hide the native webview. */
   overlaysOpen?: boolean;
+  /** A panel that covers the WHOLE canvas is open — close the browser
+   *  webview outright rather than parking it (0.8.4). */
+  fullBleedOverlayOpen?: boolean;
   paused?: boolean;
   /** Called when the user clicks "⚙ Configure" or "+ More" — opens the viz gallery. */
   onConfigure?: () => void;
@@ -645,6 +649,7 @@ export function VizHero({
             onNavigate={onNavigate ?? (() => {})}
             onExit={onExit ?? (() => {})}
             suppress={overlaysOpen}
+            suppressHard={fullBleedOverlayOpen}
           />
         ) : (
           <HiFiVizSurface mode={mode} accent={accent} accent2={accent2} spectrumRef={spectrumRef} sensitivity={sensitivity} smoothing={smoothing} paused={paused} track={track} playback={playback} catalogRemoved={catalogRemoved} onOpenLibrary={onOpenLibrary} />

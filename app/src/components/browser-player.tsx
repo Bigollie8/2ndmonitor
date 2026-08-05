@@ -46,25 +46,35 @@ interface BrowserPlayerProps {
   bookmarks: Bookmark[];
   onNavigate: (url: string | null) => void;
   onExit: () => void;
-  /** When true, suppress the child webview entirely (gallery / edit / profile-switcher open). */
+  /** Edit-mode style suppression: park the webview offscreen but keep the page
+   *  — and its logged-in session — alive. */
   suppress: boolean;
+  /** Full-bleed suppression: actually CLOSE the webview. Used by panels that
+   *  cover the whole canvas, where a parked-but-alive native surface whose
+   *  move failed would cover them completely (0.8.4). */
+  suppressHard: boolean;
 }
 
-export function BrowserPlayer({ enabled, currentUrl, bookmarks, onNavigate, onExit, suppress }: BrowserPlayerProps) {
+export function BrowserPlayer({ enabled, currentUrl, bookmarks, onNavigate, onExit, suppress, suppressHard }: BrowserPlayerProps) {
   const bodyRef = useRef<HTMLDivElement | null>(null);
   const [bounds, setBounds] = useState<DOMRect | null>(null);
 
-  // The webview EXISTS whenever video is on and a URL is set. `suppress` no
-  // longer destroys it — it parks it offscreen (0.8.3).
+  // Two kinds of suppression (0.8.4).
   //
-  // Destroying it meant every overlay tore down the native webview and the
-  // next open reloaded the page from scratch: opening tile edit settings threw
-  // away a logged-in Netflix/Plex session and restarted playback. Overlays
-  // still must not be painted over — a native child webview sits above all
-  // HTML regardless of z-index (0.8.1) — but moving it out of the way achieves
-  // that without losing the session.
-  const webviewActive = enabled && !!currentUrl;
-  const parked = suppress;
+  // 0.8.3 replaced "destroy on any overlay" with "park offscreen", so opening
+  // tile edit settings stopped throwing away a logged-in Netflix/Plex session.
+  // That was right for edit mode and wrong for full-bleed panels: parking
+  // depends on a reposition IPC actually landing, every failure path is
+  // silently swallowed, and a native child webview paints above ALL html — so
+  // when the move did not take, the Market rendered for one frame and was then
+  // covered by the webview. A black screen.
+  //
+  // So: park for the edit overlay, where the session matters and the panel is
+  // partial anyway; genuinely CLOSE for anything full-bleed, where being
+  // covered is catastrophic and a reload on return is a fair price. Closing is
+  // unconditional — it cannot half-succeed the way a reposition can.
+  const webviewActive = enabled && !!currentUrl && !suppressHard;
+  const parked = suppress && !suppressHard;
 
   // Measure the placeholder div — initial measurement, on ResizeObserver, and on
   // window resize. The hook's reposition effect runs on every bounds change, so
@@ -126,7 +136,7 @@ export function BrowserPlayer({ enabled, currentUrl, bookmarks, onNavigate, onEx
         {currentUrl !== null && error && (
           <BrowserUnavailable error={error} onExit={onExit} />
         )}
-        {currentUrl !== null && !error && suppress && (
+        {currentUrl !== null && !error && (suppress || suppressHard) && (
           <SuppressedNotice />
         )}
         {/* When currentUrl is set and no error and not suppressed, the native
