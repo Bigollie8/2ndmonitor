@@ -18,7 +18,8 @@ export type BuiltinTileType =
   | 'scratchpad' | 'onThisDay'
   | 'iss' | 'pollen'
   | 'solarFlare' | 'lightning' | 'aircraft' | 'activeWindow' | 'docker' | 'energy'
-  | 'dateTime';
+  | 'dateTime'
+  | 'musicPlayer' | 'musicQueue' | 'musicLyrics';
 
 /** A tile that can be placed on a dashboard: a built-in, or an installed
  *  marketplace bundle. Bundle ids are namespaced so they can never collide
@@ -31,7 +32,8 @@ export type TileType = BuiltinTileType | `bundle:${string}`;
  *  and the legacy → tiles-array migration. Built-ins only — installed bundles
  *  have no compile-time position in this order; `tileRegistry.ts` appends them. */
 export const ALL_TILE_TYPES: BuiltinTileType[] = [
-  'viz', 'spotify', 'discord', 'claude', 'mixer', 'notes', 'sysmon', 'clock',
+  'viz', 'spotify', 'musicPlayer', 'musicQueue', 'musicLyrics',
+  'discord', 'claude', 'mixer', 'notes', 'sysmon', 'clock',
   'streamDeck', 'weatherRadar', 'pomodoro', 'sun', 'aurora',
   'airQuality', 'stocks', 'news', 'tides', 'streamChat',
   'homeAssistant',
@@ -179,6 +181,9 @@ export const DEFAULT_LANDSCAPE_LAYOUT: Record<BuiltinTileType, Rect> = {
   docker: { x: 0.40, y: 0.55, w: 0.30, h: 0.18 },
   energy: { x: 0.72, y: 0.36, w: 0.20, h: 0.18 },
   dateTime: { x: 0.40, y: 0.36, w: 0.30, h: 0.18 },
+  musicPlayer: { x: 0.40, y: 0.55, w: 0.30, h: 0.30 },
+  musicQueue: { x: 0.72, y: 0.55, w: 0.20, h: 0.30 },
+  musicLyrics: { x: 0.05, y: 0.55, w: 0.20, h: 0.30 },
 };
 
 // Portrait template. Single column from top to bottom: viz dominates, then
@@ -252,6 +257,9 @@ export const DEFAULT_PORTRAIT_LAYOUT: Record<BuiltinTileType, Rect> = {
   docker: { x: 0.05, y: 0.30, w: 0.90, h: 0.18 },
   energy: { x: 0.05, y: 0.30, w: 0.90, h: 0.14 },
   dateTime: { x: 0.05, y: 0.30, w: 0.90, h: 0.14 },
+  musicPlayer: { x: 0.05, y: 0.30, w: 0.90, h: 0.20 },
+  musicQueue: { x: 0.05, y: 0.52, w: 0.90, h: 0.18 },
+  musicLyrics: { x: 0.05, y: 0.30, w: 0.90, h: 0.24 },
 };
 
 /** An installed bundle tile has no compile-time entry in the default-layout

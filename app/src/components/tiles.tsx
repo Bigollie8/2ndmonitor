@@ -137,6 +137,83 @@ export function SpotifyTile({ density, accent, accent2, track, onPick: _onPick, 
   );
 }
 
+/** Standalone detachments of the music tile's three tabs (0.9.1) — the
+ *  "drag the player / queue / lyrics out into their own widgets" request.
+ *  Each wraps the EXACT view component the tab renders, so behaviour cannot
+ *  drift between the tabbed and detached forms. Data comes from the same
+ *  sources the combined tile uses: playback/track/spectrumRef arrive as
+ *  props from App, lyrics is a shared module store, and the Spotify queue is
+ *  a single Rust-side poll pushing `spotify:state` — so detaching adds no
+ *  second capture, fetch loop, or lyrics subscription. */
+export function MusicPlayerTile({ density, accent, accent2, track, playback, sourceAppId, spectrumRef }: {
+  density: Density;
+  accent: string;
+  accent2: string;
+  track: Track;
+  playback?: Playback | null;
+  sourceAppId?: string;
+  spectrumRef?: MutableRefObject<SpectrumState>;
+}) {
+  const source = mediaSourceFor(sourceAppId);
+  return (
+    <HFTile
+      title="Player"
+      density={density}
+      badge={<SourceBadge source={source} playback={playback} />}
+      style={{ height: '100%' }}
+    >
+      <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+        <SpotifyNowView
+          accent={accent} accent2={accent2} track={track}
+          playback={playback} sourceKind={source.kind} spectrumRef={spectrumRef}
+        />
+      </div>
+    </HFTile>
+  );
+}
+
+export function MusicLyricsTile({ density, accent, playback, sourceAppId }: {
+  density: Density;
+  accent: string;
+  playback?: Playback | null;
+  sourceAppId?: string;
+}) {
+  const source = mediaSourceFor(sourceAppId);
+  return (
+    <HFTile
+      title="Lyrics"
+      density={density}
+      badge={<SourceBadge source={source} playback={playback} />}
+      style={{ height: '100%' }}
+    >
+      <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+        <SpotifyLyricsView accent={accent} playback={playback} />
+      </div>
+    </HFTile>
+  );
+}
+
+export function MusicQueueTile({ density, accent, playback, sourceAppId }: {
+  density: Density;
+  accent: string;
+  playback?: Playback | null;
+  sourceAppId?: string;
+}) {
+  const source = mediaSourceFor(sourceAppId);
+  return (
+    <HFTile
+      title="Up next"
+      density={density}
+      badge={<SourceBadge source={source} playback={playback} />}
+      style={{ height: '100%' }}
+    >
+      <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+        <UpNextRouter accent={accent} source={source} />
+      </div>
+    </HFTile>
+  );
+}
+
 function SourceBadge({ source, playback }: { source: MediaSourceInfo; playback?: Playback | null }) {
   const playing = !!playback?.playing;
   const tone = playing ? source.color : 'rgba(255,255,255,0.55)';

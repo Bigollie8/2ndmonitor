@@ -66,7 +66,7 @@ import { markSeedSettled } from './state/seedStatus';
 import { catalogKey } from './state/catalog';
 import { defaultBookmarks, type Bookmark } from './components/browser-player';
 import {
-  SpotifyTile, NotesTile,
+  SpotifyTile, MusicPlayerTile, MusicQueueTile, MusicLyricsTile, NotesTile,
   SysMonTile,
 } from './components/tiles';
 import { EditModeOverlay } from './components/edit';
@@ -1314,6 +1314,12 @@ export default function App() {
         return <DiscordTile density={t.density} accent={accent} />;
       case 'spotify':
         return <SpotifyTile density={t.density} accent={accent} accent2={accent2} track={track} onPick={setTrack} playback={livePlayback} sourceAppId={liveSourceAppId} spectrumRef={spectrumRef} />;
+      case 'musicPlayer':
+        return <MusicPlayerTile density={t.density} accent={accent} accent2={accent2} track={track} playback={livePlayback} sourceAppId={liveSourceAppId} spectrumRef={spectrumRef} />;
+      case 'musicQueue':
+        return <MusicQueueTile density={t.density} accent={accent} playback={livePlayback} sourceAppId={liveSourceAppId} />;
+      case 'musicLyrics':
+        return <MusicLyricsTile density={t.density} accent={accent} playback={livePlayback} sourceAppId={liveSourceAppId} />;
       case 'claude':
         return <ClaudeCodeTile density={t.density} accent={accent} />;
       case 'mixer':
