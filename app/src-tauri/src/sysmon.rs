@@ -60,6 +60,10 @@ pub struct SysmonSample {
     /// Per-part temperatures (CPU/GPU/Board/drives), refreshed every 5 s by
     /// temps.rs. None when no sensor source is available at all.
     pub temps: Option<Vec<crate::temps::TempReading>>,
+    /// Total draw in watts — CPU package + GPU board power from LHM/OHM, or
+    /// the NVML GPU figure alone when that's all there is (0.9.2). None when
+    /// no power source exists; the tile then renders nothing, never "0 W".
+    pub power_watts: Option<f32>,
 }
 
 struct State {
@@ -211,14 +215,21 @@ fn collect(state: &Arc<Mutex<State>>) -> SysmonSample {
     // `TemperatureSensor` enum isn't even imported, so the whole read is
     // compiled out — `temps::sample` then falls through to its no-source arm.
     #[cfg(windows)]
-    let gpu_temp_c = s
+    let (gpu_temp_c, gpu_power_w) = s
         .nvml
         .as_ref()
         .and_then(|n| n.device_by_index(0).ok())
-        .and_then(|d| d.temperature(TemperatureSensor::Gpu).ok());
+        .map(|d| {
+            (
+                d.temperature(TemperatureSensor::Gpu).ok(),
+                // NVML reports milliwatts.
+                d.power_usage().ok().map(|mw| mw as f32 / 1000.0),
+            )
+        })
+        .unwrap_or((None, None));
     #[cfg(not(windows))]
-    let gpu_temp_c: Option<u32> = None;
-    let temps = crate::temps::sample(gpu_temp_c);
+    let (gpu_temp_c, gpu_power_w): (Option<u32>, Option<f32>) = (None, None);
+    let (temps, power_watts) = crate::temps::sample(gpu_temp_c, gpu_power_w);
 
     // ── Net (sysinfo Networks, summed across interfaces) ────────────────────
     s.networks.refresh();
@@ -251,6 +262,7 @@ fn collect(state: &Arc<Mutex<State>>) -> SysmonSample {
         top,
         app: app_metrics,
         temps,
+        power_watts,
     }
 }
 

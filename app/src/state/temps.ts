@@ -42,3 +42,39 @@ export function tempsTooltip(chips: TempChip[]): string | undefined {
   }
   return undefined;
 }
+
+// ── 0.9.2: CPU/GPU temps promoted into their cells ───────────────────────────
+
+export interface TempDisplay { text: string; color: string }
+
+/** The big in-cell temp readout for one part ("58°C", warn/hot colored).
+ *  null when that part has no reading — the cell then renders no temp line
+ *  (never "0°"/"NaN"). OK-range temps brighten past the chip strip's dim
+ *  grey: this text exists to be read at a glance. */
+export function tempDisplayFor(
+  temps: TempReading[] | null | undefined,
+  label: string,
+  unit: TempUnit = 'c',
+): TempDisplay | null {
+  const t = temps?.find((x) => x.label === label);
+  if (!t || !Number.isFinite(t.celsius)) return null;
+  const c = tempColor(t.celsius);
+  return {
+    text: formatTemp(t.celsius, 'c', unit),
+    color: c === TEMP_OK_COLOR ? 'rgba(255,255,255,0.88)' : c,
+  };
+}
+
+/** What stays in the bottom strip once CPU/GPU moved into their cells:
+ *  Board/NVMe/SSD/everything else — no reading is lost, it just isn't
+ *  duplicated. */
+export function stripReadings(temps: TempReading[] | null | undefined): TempReading[] {
+  return (temps ?? []).filter((t) => t.label !== 'CPU' && t.label !== 'GPU');
+}
+
+/** "184 W", or null when there is no power source — the caller renders
+ *  nothing, matching the temp strip's absent-not-zero behaviour. */
+export function formatWatts(watts: number | null | undefined): string | null {
+  if (watts == null || !Number.isFinite(watts) || watts <= 0) return null;
+  return `${Math.round(watts)} W`;
+}

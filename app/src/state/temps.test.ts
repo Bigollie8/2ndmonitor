@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   tempColor, tempsToChips, tempsTooltip,
+  tempDisplayFor, stripReadings, formatWatts,
   TEMP_OK_COLOR, TEMP_WARN_COLOR, TEMP_HOT_COLOR,
 } from './temps';
 
@@ -61,4 +62,42 @@ test('tooltip appears only when GPU is the sole part', () => {
     undefined,
   );
   assert.equal(tempsTooltip([]), undefined);
+});
+
+// ── 0.9.2: promoted in-cell temps + watts ────────────────────────────────────
+
+test('tempDisplayFor finds the part, formats per unit, and brightens OK temps', () => {
+  const temps = [{ label: 'CPU', celsius: 58 }, { label: 'GPU', celsius: 90 }];
+  const cpu = tempDisplayFor(temps, 'CPU');
+  assert.equal(cpu?.text, '58°C');
+  assert.notEqual(cpu?.color, TEMP_OK_COLOR); // brighter than the dim strip grey
+  const cpuF = tempDisplayFor(temps, 'CPU', 'f');
+  assert.match(cpuF?.text ?? '', /°F$/);
+  const gpu = tempDisplayFor(temps, 'GPU');
+  assert.equal(gpu?.color, TEMP_WARN_COLOR); // >85 keeps the warn color
+});
+
+test('tempDisplayFor is null for missing part, null payload, and non-finite values', () => {
+  assert.equal(tempDisplayFor([{ label: 'GPU', celsius: 64 }], 'CPU'), null);
+  assert.equal(tempDisplayFor(null, 'CPU'), null);
+  assert.equal(tempDisplayFor([{ label: 'CPU', celsius: NaN }], 'CPU'), null);
+});
+
+test('stripReadings drops CPU/GPU but keeps everything else in order', () => {
+  const temps = [
+    { label: 'CPU', celsius: 58 },
+    { label: 'GPU', celsius: 64 },
+    { label: 'Board', celsius: 41 },
+    { label: 'NVMe', celsius: 47 },
+  ];
+  assert.deepEqual(stripReadings(temps).map((t) => t.label), ['Board', 'NVMe']);
+  assert.deepEqual(stripReadings(null), []);
+});
+
+test('formatWatts rounds, and refuses zero/absent/broken values', () => {
+  assert.equal(formatWatts(183.6), '184 W');
+  assert.equal(formatWatts(null), null);
+  assert.equal(formatWatts(undefined), null);
+  assert.equal(formatWatts(0), null);
+  assert.equal(formatWatts(NaN), null);
 });
