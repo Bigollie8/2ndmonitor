@@ -119,7 +119,12 @@ pub fn spawn<R: Runtime>(app: AppHandle<R>) {
         let creds = load_creds(&app);
         *CREDS.lock() = creds.clone();
         let mut s = STATE.lock();
-        s.connected = creds.access_token.is_some();
+        // A stored refresh grant counts as connected even when the (1-hour)
+        // access token has long expired — the poll worker's first tick
+        // refreshes it. Before 0.9.2 an expired-but-refreshable session
+        // started "connected" and then dropped to the Connect form the
+        // moment one refresh attempt failed transiently.
+        s.connected = creds.access_token.is_some() || creds.refresh_token.is_some();
     }
     emit_state(&app);
 
@@ -131,11 +136,24 @@ fn poll_worker<R: Runtime>(app: AppHandle<R>) {
     let mut tick: u64 = 0;
     loop {
         let connected = STATE.lock().connected;
+        let has_grant = CREDS.lock().refresh_token.is_some();
         if connected {
             apply_player(&app);
             // Hit /me/player/queue every other tick → 10 s effective cadence.
             if tick % 2 == 0 {
                 apply_queue(&app);
+            }
+        } else if has_grant && tick % 6 == 0 {
+            // Self-heal (0.9.2): disconnected but a grant survives on disk —
+            // e.g. a 401 raced a refresh, or a pre-0.9.2 build dropped the
+            // session. Try roughly every 30 s; only finish_exchange used to
+            // be able to set `connected` back, which required the browser.
+            if try_refresh(&app) == RefreshOutcome::Refreshed {
+                let mut s = STATE.lock();
+                s.connected = true;
+                s.error = None;
+                drop(s);
+                emit_state(&app);
             }
         }
         tick = tick.wrapping_add(1);
@@ -178,6 +196,15 @@ fn apply_player<R: Runtime>(app: &AppHandle<R>) {
             drop(s);
             emit_state(app);
         }
+        Err(ApiErr::Transient) => {
+            // Network down / Spotify 5xx: the grant is still good. Keep the
+            // session; the next 5 s tick retries. (0.9.2 — this used to drop
+            // to the Connect form, forcing a browser re-authorize.)
+            let mut s = STATE.lock();
+            s.error = Some("Spotify unreachable — retrying".into());
+            drop(s);
+            emit_state(app);
+        }
         Err(ApiErr::Other(e)) => {
             eprintln!("spotify player: {e}");
         }
@@ -210,6 +237,14 @@ fn apply_queue<R: Runtime>(app: &AppHandle<R>) {
             drop(s);
             emit_state(app);
         }
+        Err(ApiErr::Transient) => {
+            // Same as apply_player: soft banner, keep the session, retry on
+            // the next tick.
+            let mut s = STATE.lock();
+            s.error = Some("Spotify unreachable — retrying".into());
+            drop(s);
+            emit_state(app);
+        }
         Err(ApiErr::Other(e)) => {
             eprintln!("spotify queue: {e}");
         }
@@ -217,7 +252,16 @@ fn apply_queue<R: Runtime>(app: &AppHandle<R>) {
 }
 
 #[derive(Debug)]
-enum ApiErr { PremiumRequired, Unauthorized, Other(String) }
+enum ApiErr {
+    PremiumRequired,
+    /// The GRANT is gone (revoked or never existed) — only this drops the
+    /// session to the Connect form.
+    Unauthorized,
+    /// Network/server trouble; the session stays connected and the next poll
+    /// tick retries. Surfaced as a soft banner, never the Connect form.
+    Transient,
+    Other(String),
+}
 
 #[derive(Deserialize)]
 struct QueueResp {
@@ -257,7 +301,7 @@ struct PlayerDevice {
 }
 
 fn fetch_queue<R: Runtime>(app: &AppHandle<R>) -> Result<Vec<SpotifyTrack>, ApiErr> {
-    let token = ensure_fresh_token(app).ok_or(ApiErr::Unauthorized)?;
+    let token = ensure_fresh_token(app)?;
     let resp = ureq::get("https://api.spotify.com/v1/me/player/queue")
         .set("Authorization", &format!("Bearer {token}"))
         .timeout(Duration::from_secs(8))
@@ -269,17 +313,21 @@ fn fetch_queue<R: Runtime>(app: &AppHandle<R>) -> Result<Vec<SpotifyTrack>, ApiE
             Ok(items.into_iter().take(20).map(map_item).collect())
         }
         Err(ureq::Error::Status(401, _)) => {
-            // One more refresh attempt then bail.
-            if try_refresh(app) {
-                let token = CREDS.lock().access_token.clone().ok_or(ApiErr::Unauthorized)?;
-                let r2 = ureq::get("https://api.spotify.com/v1/me/player/queue")
-                    .set("Authorization", &format!("Bearer {token}"))
-                    .timeout(Duration::from_secs(8))
-                    .call().map_err(|e| ApiErr::Other(e.to_string()))?;
-                let q: QueueResp = r2.into_json().map_err(|e| ApiErr::Other(e.to_string()))?;
-                Ok(q.queue.unwrap_or_default().into_iter().take(20).map(map_item).collect())
-            } else {
-                Err(ApiErr::Unauthorized)
+            // One more refresh attempt then bail — and only a REVOKED grant
+            // bails to Unauthorized; a transient refresh failure keeps the
+            // session for the next tick.
+            match try_refresh(app) {
+                RefreshOutcome::Refreshed => {
+                    let token = CREDS.lock().access_token.clone().ok_or(ApiErr::Unauthorized)?;
+                    let r2 = ureq::get("https://api.spotify.com/v1/me/player/queue")
+                        .set("Authorization", &format!("Bearer {token}"))
+                        .timeout(Duration::from_secs(8))
+                        .call().map_err(|e| ApiErr::Other(e.to_string()))?;
+                    let q: QueueResp = r2.into_json().map_err(|e| ApiErr::Other(e.to_string()))?;
+                    Ok(q.queue.unwrap_or_default().into_iter().take(20).map(map_item).collect())
+                }
+                RefreshOutcome::Transient => Err(ApiErr::Transient),
+                RefreshOutcome::Revoked => Err(ApiErr::Unauthorized),
             }
         }
         Err(ureq::Error::Status(403, _)) => Err(ApiErr::PremiumRequired),
@@ -289,7 +337,7 @@ fn fetch_queue<R: Runtime>(app: &AppHandle<R>) -> Result<Vec<SpotifyTrack>, ApiE
 }
 
 fn fetch_player<R: Runtime>(app: &AppHandle<R>) -> Result<Option<PlayerDevice>, ApiErr> {
-    let token = ensure_fresh_token(app).ok_or(ApiErr::Unauthorized)?;
+    let token = ensure_fresh_token(app)?;
     let resp = ureq::get("https://api.spotify.com/v1/me/player")
         .set("Authorization", &format!("Bearer {token}"))
         .timeout(Duration::from_secs(8))
@@ -306,17 +354,19 @@ fn fetch_player<R: Runtime>(app: &AppHandle<R>) -> Result<Option<PlayerDevice>, 
             Ok(p.device)
         }
         Err(ureq::Error::Status(401, _)) => {
-            if try_refresh(app) {
-                let token = CREDS.lock().access_token.clone().ok_or(ApiErr::Unauthorized)?;
-                let r2 = ureq::get("https://api.spotify.com/v1/me/player")
-                    .set("Authorization", &format!("Bearer {token}"))
-                    .timeout(Duration::from_secs(8))
-                    .call().map_err(|e| ApiErr::Other(e.to_string()))?;
-                if r2.status() == 204 { return Ok(None); }
-                let p: PlayerResp = r2.into_json().map_err(|e| ApiErr::Other(e.to_string()))?;
-                Ok(p.device)
-            } else {
-                Err(ApiErr::Unauthorized)
+            match try_refresh(app) {
+                RefreshOutcome::Refreshed => {
+                    let token = CREDS.lock().access_token.clone().ok_or(ApiErr::Unauthorized)?;
+                    let r2 = ureq::get("https://api.spotify.com/v1/me/player")
+                        .set("Authorization", &format!("Bearer {token}"))
+                        .timeout(Duration::from_secs(8))
+                        .call().map_err(|e| ApiErr::Other(e.to_string()))?;
+                    if r2.status() == 204 { return Ok(None); }
+                    let p: PlayerResp = r2.into_json().map_err(|e| ApiErr::Other(e.to_string()))?;
+                    Ok(p.device)
+                }
+                RefreshOutcome::Transient => Err(ApiErr::Transient),
+                RefreshOutcome::Revoked => Err(ApiErr::Unauthorized),
             }
         }
         Err(ureq::Error::Status(403, _)) => Err(ApiErr::PremiumRequired),
@@ -343,17 +393,25 @@ fn map_item(it: SpotifyItem) -> SpotifyTrack {
     }
 }
 
-fn ensure_fresh_token<R: Runtime>(app: &AppHandle<R>) -> Option<String> {
+fn ensure_fresh_token<R: Runtime>(app: &AppHandle<R>) -> Result<String, ApiErr> {
     let creds = CREDS.lock().clone();
-    let access = creds.access_token.clone()?;
-    let expires_at = creds.expires_at.unwrap_or(0);
-    if expires_at > now_secs() + 60 {
-        return Some(access);
+    if let Some(access) = creds.access_token.clone() {
+        if creds.expires_at.unwrap_or(0) > now_secs() + 60 {
+            return Ok(access);
+        }
+    } else if creds.refresh_token.is_none() {
+        // Nothing stored at all — genuinely not connected.
+        return Err(ApiErr::Unauthorized);
     }
-    if try_refresh(app) {
-        CREDS.lock().access_token.clone()
-    } else {
-        None
+    // Expired (the normal case at every launch — access tokens live 1 hour)
+    // or access token missing but a refresh grant survives: refresh, and let
+    // the outcome say whether the session is over or merely unreachable.
+    match try_refresh(app) {
+        RefreshOutcome::Refreshed => {
+            CREDS.lock().access_token.clone().ok_or(ApiErr::Unauthorized)
+        }
+        RefreshOutcome::Transient => Err(ApiErr::Transient),
+        RefreshOutcome::Revoked => Err(ApiErr::Unauthorized),
     }
 }
 
@@ -367,10 +425,40 @@ struct TokenResp {
     scope: Option<String>,
 }
 
-fn try_refresh<R: Runtime>(app: &AppHandle<R>) -> bool {
+/// How a refresh attempt ended. The distinction is the whole 0.9.2 fix: the
+/// old bool collapsed "network was down for 8 seconds" and "Spotify revoked
+/// the grant" into the same `false`, and the caller responded to both by
+/// dropping to the Connect form — which is why testers had to re-authorize
+/// in the browser on practically every launch (access tokens live an hour,
+/// so almost every startup begins with a refresh).
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum RefreshOutcome {
+    Refreshed,
+    /// Try again later; the stored grant is still presumed good.
+    Transient,
+    /// Spotify said `invalid_grant`: the refresh token is dead. This is the
+    /// ONLY outcome that erases stored credentials and surfaces the
+    /// interactive Connect flow again.
+    Revoked,
+}
+
+/// Serializes refreshes across the poll thread and command handlers
+/// (`spotify_set_volume`'s 401 path). Spotify rotates PKCE refresh tokens:
+/// two concurrent refreshes spend the same token, and the loser's rotated
+/// token is permanently invalid — a self-inflicted `Revoked`.
+static REFRESH_LOCK: once_cell::sync::Lazy<Mutex<()>> =
+    once_cell::sync::Lazy::new(|| Mutex::new(()));
+
+fn try_refresh<R: Runtime>(app: &AppHandle<R>) -> RefreshOutcome {
+    let _serialized = REFRESH_LOCK.lock();
     let creds = CREDS.lock().clone();
-    let Some(client_id) = creds.client_id else { return false };
-    let Some(refresh_token) = creds.refresh_token else { return false };
+    let Some(client_id) = creds.client_id else { return RefreshOutcome::Revoked };
+    let Some(refresh_token) = creds.refresh_token else { return RefreshOutcome::Revoked };
+    // Another caller may have refreshed while we waited on the lock — if the
+    // token is fresh again, don't spend the rotated refresh token twice.
+    if creds.expires_at.unwrap_or(0) > now_secs() + 60 {
+        return RefreshOutcome::Refreshed;
+    }
     let body = format!(
         "grant_type=refresh_token&refresh_token={}&client_id={}",
         urlencode(&refresh_token), urlencode(&client_id),
@@ -379,14 +467,38 @@ fn try_refresh<R: Runtime>(app: &AppHandle<R>) -> bool {
         .set("Content-Type", "application/x-www-form-urlencoded")
         .timeout(Duration::from_secs(8))
         .send_string(&body);
-    let Ok(r) = resp else { return false };
-    let Ok(tok): Result<TokenResp, _> = r.into_json() else { return false };
+    let r = match resp {
+        Ok(r) => r,
+        Err(ureq::Error::Status(status, r)) => {
+            let text = r.into_string().unwrap_or_default();
+            // Spotify's token endpoint answers a dead/revoked refresh token
+            // with 400 `invalid_grant`. Anything else (5xx, rate limit,
+            // invalid_client on a misconfigured id) is not proof the GRANT
+            // is gone — keep the session and let a later attempt decide.
+            if status == 400 && text.contains("invalid_grant") {
+                let mut c = CREDS.lock();
+                c.access_token = None;
+                c.refresh_token = None;
+                c.expires_at = None;
+                save_creds(app, &c);
+                return RefreshOutcome::Revoked;
+            }
+            eprintln!("spotify refresh: HTTP {status} (treated as transient)");
+            return RefreshOutcome::Transient;
+        }
+        Err(e) => {
+            eprintln!("spotify refresh: transport error (treated as transient): {e}");
+            return RefreshOutcome::Transient;
+        }
+    };
+    // A 2xx whose body we can't parse is a server hiccup, not a revocation.
+    let Ok(tok): Result<TokenResp, _> = r.into_json() else { return RefreshOutcome::Transient };
     let mut c = CREDS.lock();
     c.access_token = Some(tok.access_token);
     if let Some(rt) = tok.refresh_token { c.refresh_token = Some(rt); }
     c.expires_at = Some(now_secs() + tok.expires_in.unwrap_or(3600));
     save_creds(app, &c);
-    true
+    RefreshOutcome::Refreshed
 }
 
 #[tauri::command]
@@ -529,7 +641,10 @@ pub async fn spotify_set_volume<R: Runtime>(app: AppHandle<R>, percent: u8) -> R
     // worker, which a few slider drags on a bad network could multiply into
     // starving the runtime's small worker pool.
     tauri::async_runtime::spawn_blocking(move || {
-    let token = ensure_fresh_token(&app).ok_or_else(|| "Not connected".to_string())?;
+    let token = ensure_fresh_token(&app).map_err(|e| match e {
+        ApiErr::Transient => "Spotify unreachable — try again".to_string(),
+        _ => "Not connected".to_string(),
+    })?;
     let mut url = format!(
         "https://api.spotify.com/v1/me/player/volume?volume_percent={percent}"
     );
@@ -582,8 +697,10 @@ pub async fn spotify_set_volume<R: Runtime>(app: AppHandle<R>, percent: u8) -> R
     // First attempt: if it's 401, refresh once and retry. Anything else is
     // classified directly.
     if let Err(ureq::Error::Status(401, _)) = &resp {
-        if !try_refresh(&app) {
-            return Err("Spotify auth expired".into());
+        match try_refresh(&app) {
+            RefreshOutcome::Refreshed => {}
+            RefreshOutcome::Transient => return Err("Spotify unreachable — try again".into()),
+            RefreshOutcome::Revoked => return Err("Spotify auth expired".into()),
         }
         let token = CREDS.lock().access_token.clone().ok_or("Auth refresh failed")?;
         let r2 = ureq::put(&url)

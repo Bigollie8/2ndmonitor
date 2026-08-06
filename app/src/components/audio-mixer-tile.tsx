@@ -1,9 +1,10 @@
-import { useEffect, useRef, type MutableRefObject } from 'react';
+import { useEffect, useRef, useState, type MutableRefObject } from 'react';
 import { HFTile } from './tiles';
 import type { Density } from '../types';
 import {
   type MixerOutputDevice,
   type SpectrumState,
+  appActions,
   isTauri,
   mixerControls,
   useMixerState,
@@ -14,6 +15,7 @@ import { Slider } from './Slider';
 
 export function AudioMixerTile({
   density, accent, accent2, spectrumRef, audioSource, onSetAudioSource,
+  eqEnabled, eqBands, onSetEq,
 }: {
   density: Density;
   accent: string;
@@ -23,6 +25,11 @@ export function AudioMixerTile({
    *  highlight so the shortcut button reflects reality, not just intent. */
   audioSource: AudioSource;
   onSetAudioSource: (source: AudioSource) => void;
+  /** System-wide EQ (0.9.2, via Equalizer APO). Persisted in tweaks; App
+   *  owns pushing changes to Rust so they apply live and on boot. */
+  eqEnabled: boolean;
+  eqBands: number[];
+  onSetEq: (enabled: boolean, bands: number[]) => void;
 }) {
   const state = useMixerState();
   const master = state?.master ?? null;
@@ -58,8 +65,173 @@ export function AudioMixerTile({
           audioSource={audioSource}
           onSetAudioSource={onSetAudioSource}
         />
+        <EqSection accent={accent} accent2={accent2} enabled={eqEnabled} bands={eqBands} onSet={onSetEq} />
       </div>
     </HFTile>
+  );
+}
+
+// ── System-wide EQ (0.9.2) ───────────────────────────────────────────────────
+// Drives Equalizer APO: Rust writes our band gains into its config chain and
+// E-APO applies them to the actual output device within ~100ms. Windows-only;
+// hidden when unsupported, explained when E-APO isn't installed.
+
+const EQ_HZ_LABELS = ['31', '63', '125', '250', '500', '1k', '2k', '4k', '8k', '16k'];
+const EQ_GAIN_RANGE = 12; // ±dB, mirrors Rust's clamp_gain
+
+function EqSection({ accent, accent2, enabled, bands, onSet }: {
+  accent: string;
+  accent2: string;
+  enabled: boolean;
+  bands: number[];
+  onSet: (enabled: boolean, bands: number[]) => void;
+}) {
+  const [status, setStatus] = useState<{ supported: boolean; installed: boolean } | null>(null);
+  const [open, setOpen] = useState(enabled);
+  useEffect(() => {
+    if (!isTauri) { setStatus({ supported: true, installed: true }); return; } // browser dev: show the UI
+    let cancelled = false;
+    void import('@tauri-apps/api/core')
+      .then(({ invoke }) => invoke<{ supported: boolean; installed: boolean }>('eq_status'))
+      .then((s) => { if (!cancelled) setStatus(s); })
+      .catch(() => { if (!cancelled) setStatus({ supported: false, installed: false }); });
+    return () => { cancelled = true; };
+  }, []);
+
+  if (!status || !status.supported) return null; // macOS / unknown: no section
+
+  const flat = bands.every((b) => b === 0);
+  return (
+    <div style={{ borderTop: '1px solid rgba(255,255,255,0.06)', flexShrink: 0 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 12px' }}>
+        <button
+          onClick={() => setOpen((v) => !v)}
+          style={{
+            background: 'transparent', border: 'none', cursor: 'pointer', padding: 0,
+            color: 'rgba(255,255,255,0.55)', fontSize: 10, fontWeight: 600,
+            letterSpacing: '.08em', textTransform: 'uppercase',
+            display: 'flex', alignItems: 'center', gap: 6,
+          }}
+        >
+          <span style={{ fontSize: 9 }}>{open ? '▾' : '▸'}</span>
+          Equalizer · system-wide
+        </button>
+        <div style={{ flex: 1 }} />
+        {status.installed && open && !flat && (
+          <button
+            onClick={() => onSet(enabled, new Array(10).fill(0))}
+            title="Reset all bands to 0 dB"
+            style={{
+              background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)',
+              color: 'rgba(255,255,255,0.7)', fontSize: 10, padding: '2px 8px',
+              borderRadius: 3, cursor: 'pointer',
+            }}
+          >Flat</button>
+        )}
+        {status.installed && (
+          <button
+            onClick={() => onSet(!enabled, bands)}
+            title={enabled ? 'Bypass the EQ (keeps your bands)' : 'Enable the EQ'}
+            style={{
+              background: enabled ? accent : 'rgba(255,255,255,0.06)',
+              border: '1px solid ' + (enabled ? accent : 'rgba(255,255,255,0.1)'),
+              color: enabled ? '#000' : 'rgba(255,255,255,0.7)',
+              fontSize: 10, fontWeight: 700, padding: '2px 10px',
+              borderRadius: 3, cursor: 'pointer',
+            }}
+          >{enabled ? 'ON' : 'OFF'}</button>
+        )}
+      </div>
+      {open && !status.installed && (
+        <div style={{ padding: '2px 12px 10px', fontSize: 11, lineHeight: 1.5, color: 'rgba(255,255,255,0.55)' }}>
+          Shapes what your speakers actually play — needs the free{' '}
+          <button
+            onClick={() => void appActions.openUrl('https://sourceforge.net/projects/equalizerapo/')}
+            style={{ background: 'transparent', border: 'none', padding: 0, cursor: 'pointer', color: accent, fontSize: 11, textDecoration: 'underline' }}
+          >Equalizer APO</button>
+          {' '}installed (run its Configurator once for your output device, then restart this app).
+        </div>
+      )}
+      {open && status.installed && (
+        <div style={{ display: 'flex', gap: 4, padding: '2px 12px 8px', opacity: enabled ? 1 : 0.45 }}>
+          {EQ_HZ_LABELS.map((label, i) => (
+            <EqBandColumn
+              key={label}
+              label={label}
+              value={bands[i] ?? 0}
+              accent={accent}
+              accent2={accent2}
+              onChange={(g) => {
+                const next = bands.slice(0, 10);
+                while (next.length < 10) next.push(0);
+                next[i] = g;
+                onSet(enabled, next);
+              }}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** One vertical band: drag up/down for ±12 dB, double-click to zero. Same
+ *  pointer-capture pattern as Slider.tsx, turned 90°. */
+function EqBandColumn({ label, value, accent, accent2, onChange }: {
+  label: string;
+  value: number;
+  accent: string;
+  accent2: string;
+  onChange: (gainDb: number) => void;
+}) {
+  const ref = useRef<HTMLDivElement | null>(null);
+  const dragging = useRef(false);
+  const sample = (clientY: number): number => {
+    const el = ref.current;
+    if (!el) return value;
+    const rect = el.getBoundingClientRect();
+    if (rect.height <= 0) return value;
+    const frac = 1 - Math.max(0, Math.min(1, (clientY - rect.top) / rect.height));
+    return Math.round((frac * 2 - 1) * EQ_GAIN_RANGE * 2) / 2; // 0.5 dB steps
+  };
+  const pctFromCenter = (value / EQ_GAIN_RANGE) * 50; // -50..50
+  return (
+    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'stretch', gap: 2, minWidth: 0 }}>
+      <div
+        ref={ref}
+        title={`${label} Hz · ${value > 0 ? '+' : ''}${value.toFixed(1)} dB`}
+        onPointerDown={(e) => {
+          e.preventDefault();
+          e.currentTarget.setPointerCapture(e.pointerId);
+          dragging.current = true;
+          onChange(sample(e.clientY));
+        }}
+        onPointerMove={(e) => { if (dragging.current) onChange(sample(e.clientY)); }}
+        onPointerUp={(e) => {
+          if (!dragging.current) return;
+          e.currentTarget.releasePointerCapture(e.pointerId);
+          dragging.current = false;
+        }}
+        onDoubleClick={() => onChange(0)}
+        style={{
+          position: 'relative', height: 56, cursor: 'ns-resize',
+          background: 'rgba(255,255,255,0.04)', borderRadius: 3,
+          touchAction: 'none', overflow: 'hidden',
+        }}
+      >
+        {/* 0 dB center line */}
+        <div style={{ position: 'absolute', left: 0, right: 0, top: '50%', height: 1, background: 'rgba(255,255,255,0.15)' }} />
+        {/* fill from center toward the gain */}
+        <div style={{
+          position: 'absolute', left: 2, right: 2,
+          top: value >= 0 ? `${50 - pctFromCenter}%` : '50%',
+          bottom: value >= 0 ? '50%' : `${50 + pctFromCenter}%`,
+          background: `linear-gradient(180deg, ${accent}, ${accent2})`,
+          borderRadius: 2, minHeight: value === 0 ? 0 : 2,
+        }} />
+      </div>
+      <div style={{ fontSize: 8.5, textAlign: 'center', color: 'rgba(255,255,255,0.4)', fontFamily: '"JetBrains Mono", ui-monospace, monospace' }}>{label}</div>
+    </div>
   );
 }
 

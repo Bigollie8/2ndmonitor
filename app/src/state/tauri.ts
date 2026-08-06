@@ -19,6 +19,7 @@ function emptyHistory(): SysmonHistory {
       top: [],
       app: null,
       temps: null,
+      power_watts: null,
     },
   };
 }
@@ -54,6 +55,7 @@ function startMockSysmon(onSample: (s: SysmonSample) => void): () => void {
         { label: 'Board', celsius: 41 },
         { label: 'NVMe', celsius: 47 },
       ],
+      power_watts: 180 + Math.random() * 60,
     });
   }, 1000);
   return () => clearInterval(id);

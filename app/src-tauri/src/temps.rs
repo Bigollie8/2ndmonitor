@@ -122,6 +122,44 @@ pub fn reduce_sensors(all: &[SensorRow]) -> Vec<TempReading> {
     out
 }
 
+/// Reduces LHM/OHM POWER sensor rows (SensorType='Power', watts) to a total
+/// draw: CPU package + GPU board power, summed when present (0.9.2).
+///
+/// Per part we take ONE sensor, never a sum — LHM reports cores and package
+/// separately and summing would double-count. Preference order mirrors
+/// `reduce_sensors`: the explicit package/board sensor, else the largest
+/// power row under that part (the package is always >= any core).
+pub fn reduce_power_sensors(all: &[SensorRow]) -> Option<f32> {
+    let rows: Vec<&SensorRow> = all
+        .iter()
+        .filter(|r| r.value > 0.5 && r.value < 2000.0)
+        .collect();
+
+    let cpu_rows: Vec<&&SensorRow> = rows
+        .iter()
+        .filter(|r| r.parent.contains("/amdcpu/") || r.parent.contains("/intelcpu/"))
+        .collect();
+    // "CPU Package" (Intel), "Package" (AMD LHM), "CPU PPT" (newer AMD).
+    let cpu = cpu_rows
+        .iter()
+        .find(|r| r.name.contains("Package") || r.name.contains("PPT"))
+        .copied()
+        .or_else(|| cpu_rows.iter().copied().max_by(|a, b| a.value.total_cmp(&b.value)));
+
+    let gpu_rows: Vec<&&SensorRow> = rows.iter().filter(|r| r.parent.contains("/gpu")).collect();
+    // "GPU Package" (newer LHM), "GPU Power" (older), "GPU PPT" (AMD).
+    let gpu = gpu_rows
+        .iter()
+        .find(|r| r.name.contains("GPU Package") || r.name.contains("GPU Power") || r.name.contains("PPT"))
+        .copied()
+        .or_else(|| gpu_rows.iter().copied().max_by(|a, b| a.value.total_cmp(&b.value)));
+
+    match (cpu, gpu) {
+        (None, None) => None,
+        (c, g) => Some(c.map_or(0.0, |r| r.value) + g.map_or(0.0, |r| r.value)),
+    }
+}
+
 /// `MSAcpi_ThermalZoneTemperature.CurrentTemperature` reports decikelvin.
 pub fn acpi_to_celsius(deci_kelvin: u32) -> f32 {
     deci_kelvin as f32 / 10.0 - 273.15
@@ -129,40 +167,53 @@ pub fn acpi_to_celsius(deci_kelvin: u32) -> f32 {
 
 const CACHE_TTL: Duration = Duration::from_secs(5);
 
-/// Last reading + when it was taken. An empty Vec means "we looked and found
-/// nothing" — cached too, so a sensor-less machine doesn't re-query WMI on
-/// every tick.
-static CACHE: Lazy<Mutex<Option<(Instant, Vec<TempReading>)>>> =
+/// Last (temps, total watts) + when they were taken. An empty Vec / None mean
+/// "we looked and found nothing" — cached too, so a sensor-less machine
+/// doesn't re-query WMI on every tick.
+static CACHE: Lazy<Mutex<Option<(Instant, Vec<TempReading>, Option<f32>)>>> =
     Lazy::new(|| Mutex::new(None));
 
-/// Returns current per-part temps, refreshing at most every [`CACHE_TTL`].
+/// Returns current per-part temps + total power draw in watts (0.9.2),
+/// refreshing at most every [`CACHE_TTL`].
 ///
-/// `nvml_gpu_celsius` is the GPU temp sysmon.rs already reads via NVML —
-/// passed in so this module doesn't own an NVML handle. Returns `None` when
-/// no sensor source is available at all (frontend renders no strip).
+/// `nvml_gpu_celsius` / `nvml_gpu_watts` are the GPU readings sysmon.rs
+/// already takes via NVML — passed in so this module doesn't own an NVML
+/// handle. Both returns are `None` when that source is unavailable (frontend
+/// renders nothing rather than a fake 0).
 ///
 /// Blocking: the WMI refresh takes tens of milliseconds. Callers MUST be on a
 /// background thread — in this app that is sysmon's sampler thread only.
-pub fn sample(nvml_gpu_celsius: Option<u32>) -> Option<Vec<TempReading>> {
+pub fn sample(
+    nvml_gpu_celsius: Option<u32>,
+    nvml_gpu_watts: Option<f32>,
+) -> (Option<Vec<TempReading>>, Option<f32>) {
     let mut cache = CACHE.lock();
-    if let Some((at, cached)) = cache.as_ref() {
+    if let Some((at, cached_temps, cached_watts)) = cache.as_ref() {
         if at.elapsed() < CACHE_TTL {
-            return if cached.is_empty() { None } else { Some(cached.clone()) };
+            let temps =
+                if cached_temps.is_empty() { None } else { Some(cached_temps.clone()) };
+            return (temps, *cached_watts);
         }
     }
-    let fresh = read_now(nvml_gpu_celsius);
-    *cache = Some((Instant::now(), fresh.clone().unwrap_or_default()));
-    fresh
+    let (temps, watts) = read_now(nvml_gpu_celsius, nvml_gpu_watts);
+    *cache = Some((Instant::now(), temps.clone().unwrap_or_default(), watts));
+    (temps, watts)
 }
 
-fn read_now(nvml_gpu_celsius: Option<u32>) -> Option<Vec<TempReading>> {
+fn read_now(
+    nvml_gpu_celsius: Option<u32>,
+    nvml_gpu_watts: Option<f32>,
+) -> (Option<Vec<TempReading>>, Option<f32>) {
     #[cfg(windows)]
     {
-        if let Some(r) = windows_impl::read_lhm() {
-            return Some(r);
+        if let Some((temps, lhm_watts)) = windows_impl::read_lhm() {
+            // LHM's power total (CPU+GPU) when it has power sensors; a
+            // GPU-only NVML figure otherwise — better than dropping to
+            // nothing on rigs where LHM exposes temps but no Power rows.
+            return (Some(temps), lhm_watts.or(nvml_gpu_watts));
         }
     }
-    read_fallback(nvml_gpu_celsius)
+    (read_fallback(nvml_gpu_celsius), nvml_gpu_watts)
 }
 
 /// Reader 2: ACPI thermal zone (CPU-adjacent) + the NVML GPU temp.
@@ -197,14 +248,14 @@ mod windows_impl {
     }
 
     /// LHM/OHM `Sensor` row. `rename_all = "PascalCase"` maps the fields onto
-    /// the WMI property names (Name, Value, Parent). SensorType is selected
-    /// (spec query) but not deserialized — serde ignores unknown keys.
+    /// the WMI property names (Name, Value, Parent, SensorType).
     #[derive(Deserialize)]
     #[serde(rename_all = "PascalCase")]
     struct WmiSensor {
         name: String,
         value: f32,
         parent: String,
+        sensor_type: String,
     }
 
     #[derive(Deserialize)]
@@ -213,14 +264,19 @@ mod windows_impl {
         current_temperature: u32,
     }
 
-    const SENSOR_QUERY: &str =
-        "SELECT Name, Value, SensorType, Parent FROM Sensor WHERE SensorType='Temperature'";
+    /// One query fetches BOTH sensor kinds (0.9.2): temperature rows feed
+    /// `reduce_sensors`, power rows feed `reduce_power_sensors` — same
+    /// round-trip cost as the old temperature-only query.
+    const SENSOR_QUERY: &str = "SELECT Name, Value, SensorType, Parent FROM Sensor \
+         WHERE SensorType='Temperature' OR SensorType='Power'";
 
     /// Reader 1: LibreHardwareMonitor, then the older OpenHardwareMonitor
     /// fork. Reconnects on every (5 s) refresh on purpose: the namespace only
     /// exists while the monitor app runs, so a fresh connect is exactly what
     /// makes the chips appear when the user starts LHM after our app.
-    pub(super) fn read_lhm() -> Option<Vec<TempReading>> {
+    /// Returns `(temps, total watts)`; watts is None when the namespace has
+    /// no usable Power rows (OpenHardwareMonitor variants often don't).
+    pub(super) fn read_lhm() -> Option<(Vec<TempReading>, Option<f32>)> {
         let com = COM_LIB.with(|c| c.clone())?;
         for ns in ["ROOT\\LibreHardwareMonitor", "ROOT\\OpenHardwareMonitor"] {
             let Ok(conn) = WMIConnection::with_namespace_path(ns, com) else {
@@ -229,13 +285,19 @@ mod windows_impl {
             let Ok(rows) = conn.raw_query::<WmiSensor>(SENSOR_QUERY) else {
                 continue;
             };
-            let rows: Vec<SensorRow> = rows
-                .into_iter()
-                .map(|r| SensorRow { name: r.name, value: r.value, parent: r.parent })
-                .collect();
-            let reduced = reduce_sensors(&rows);
+            let mut temp_rows: Vec<SensorRow> = Vec::new();
+            let mut power_rows: Vec<SensorRow> = Vec::new();
+            for r in rows {
+                let row = SensorRow { name: r.name, value: r.value, parent: r.parent };
+                match r.sensor_type.as_str() {
+                    "Temperature" => temp_rows.push(row),
+                    "Power" => power_rows.push(row),
+                    _ => {}
+                }
+            }
+            let reduced = reduce_sensors(&temp_rows);
             if !reduced.is_empty() {
-                return Some(reduced);
+                return Some((reduced, super::reduce_power_sensors(&power_rows)));
             }
         }
         None
@@ -342,5 +404,57 @@ mod tests {
     fn acpi_decikelvin_converts_to_celsius() {
         let c = acpi_to_celsius(3032); // 303.2 K
         assert!((c - 30.05).abs() < 0.01, "got {c}");
+    }
+
+    #[test]
+    fn power_sums_cpu_package_and_gpu_board_only() {
+        let rows = vec![
+            row("Core #1", 12.0, "/intelcpu/0"),     // core row — not summed
+            row("CPU Package", 45.0, "/intelcpu/0"), // the package figure
+            row("GPU Core", 80.0, "/gpu-nvidia/0"),  // core-only power row
+            row("GPU Package", 120.0, "/gpu-nvidia/0"),
+        ];
+        assert_eq!(reduce_power_sensors(&rows), Some(165.0));
+    }
+
+    #[test]
+    fn power_amd_prefers_ppt_names() {
+        let rows = vec![
+            row("Package", 62.0, "/amdcpu/0"),
+            row("GPU PPT", 190.0, "/gpu-amd/0"),
+        ];
+        assert_eq!(reduce_power_sensors(&rows), Some(252.0));
+    }
+
+    #[test]
+    fn power_cpu_only_is_still_reported() {
+        let rows = vec![row("CPU Package", 38.5, "/intelcpu/0")];
+        assert_eq!(reduce_power_sensors(&rows), Some(38.5));
+    }
+
+    #[test]
+    fn power_without_package_sensor_takes_largest_not_sum() {
+        // No package row: summing cores would double-count against nothing;
+        // the largest single row is the best available estimate.
+        let rows = vec![
+            row("Core #1", 9.0, "/intelcpu/0"),
+            row("Core #2", 11.0, "/intelcpu/0"),
+        ];
+        assert_eq!(reduce_power_sensors(&rows), Some(11.0));
+    }
+
+    #[test]
+    fn power_drops_implausible_and_unrelated_rows() {
+        let rows = vec![
+            row("CPU Package", 0.0, "/intelcpu/0"),    // dead sensor
+            row("GPU Package", 5000.0, "/gpu-nvidia/0"), // glitched
+            row("Fan Power", 4.0, "/lpc/nct6797d/0"),  // maps to no part
+        ];
+        assert_eq!(reduce_power_sensors(&rows), None);
+    }
+
+    #[test]
+    fn power_empty_input_is_none_not_zero() {
+        assert_eq!(reduce_power_sensors(&[]), None);
     }
 }

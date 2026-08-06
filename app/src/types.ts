@@ -61,6 +61,10 @@ export interface SysmonSample {
   app: AppMetrics | null;
   /** Per-part temperatures (CPU/GPU/Board/drives). null when no sensor source. */
   temps: { label: string; celsius: number }[] | null;
+  /** Total draw in watts (CPU package + GPU board power; GPU-only when NVML
+   *  is the only source). null when no power sensor exists — render nothing,
+   *  never a fake 0 W. */
+  power_watts: number | null;
 }
 
 export interface SysmonHistory {

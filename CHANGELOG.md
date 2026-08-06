@@ -5,6 +5,48 @@ All notable changes to 2ndMonitor are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.9.2] - 2026-08-06
+
+### Added
+- **System-wide audio equalizer.** A new section in the Audio mixer tile
+  with ten adjustable frequency bands (31 Hz–16 kHz, ±12 dB), an on/off
+  bypass, and a Flat reset — and it shapes what your speakers actually
+  play, not just the visualizer. It works by driving **Equalizer APO**, the
+  free, standard Windows system EQ: install it once (and run its
+  Configurator for your output device), and 2ndMonitor writes your curve
+  straight into it, applying within a blink of a slider move. A built-in
+  preamp automatically offsets boosts so cranking a band can't distort.
+  Your curve persists across restarts. Without Equalizer APO installed the
+  section explains and links to it; on macOS the section doesn't appear.
+  (True system EQ without such a component would require shipping an audio
+  driver — this is the honest version.)
+- **Total power draw on the System tile.** A watts figure (CPU package +
+  graphics card power) now sits in the tile's bottom strip, from
+  LibreHardwareMonitor sensors or the NVIDIA driver. Machines with no
+  power sensor simply show nothing — never a fake 0 W
+- **CPU and GPU temperatures, big and glanceable.** Both reporters were
+  right: the temps were buried in the tiny strip at the tile's bottom
+  edge. They now appear as large bold readouts directly under the CPU and
+  GPU usage numbers, in your chosen unit, amber past 85°C and red past
+  95°C. Board and drive temps remain in the strip
+- **Music controls on every tab.** Previous / play-pause / next now stay
+  visible on the Lyrics and Up-next tabs (and on the detached Lyrics and
+  Up-next tiles) as a compact footer — no more switching back to Now just
+  to skip a track. Works for every media source, not only Spotify
+
+### Fixed
+- **Authorize once, stay authorized.** The "should only need to allow it
+  one time" report. Both Spotify and Discord stored their sign-in
+  correctly but treated a momentary network failure during token refresh
+  as if access had been revoked: Spotify dropped to the Connect form
+  (and, because its tokens refresh hourly, practically every launch with
+  slow Wi-Fi did this); Discord went further and erased the stored sign-in
+  outright. Now only a genuine revocation by the service ends a session —
+  network blips show a soft "unreachable — retrying" note and recover by
+  themselves, sessions self-heal in the background, and a race between two
+  simultaneous refreshes (which could genuinely kill a Spotify session)
+  is prevented outright
+
 ## [0.9.1] - 2026-08-05
 
 ### Added

@@ -5,7 +5,7 @@ import type { Todo } from '../types';
 import { type Playback, type SpectrumState, mediaControls, useSpotify, useSysmon, type SpotifyTrack } from '../state/tauri';
 import { useLyrics, currentLineIndex } from '../state/lyrics';
 import { mediaSourceFor, type MediaSourceInfo, type MediaSourceKind } from '../state/mediaSource';
-import { tempsToChips, tempsTooltip } from '../state/temps';
+import { tempsToChips, tempsTooltip, tempDisplayFor, stripReadings, formatWatts, type TempDisplay } from '../state/temps';
 import type { TempUnit } from '../state/units';
 import { Slider } from './Slider';
 
@@ -132,6 +132,10 @@ export function SpotifyTile({ density, accent, accent2, track, onPick: _onPick, 
           {tab === 'lyrics' && <SpotifyLyricsView accent={accent} playback={playback} />}
           {tab === 'upnext' && <UpNextRouter accent={accent} source={source} />}
         </div>
+        {/* The Now tab already contains the full-size controls between the
+            progress bar and the volume row — footer only on the other two,
+            so no tab ever shows a duplicate cluster. */}
+        {tab !== 'now' && <MediaTransportRow playback={playback} compact />}
       </div>
     </HFTile>
   );
@@ -188,6 +192,7 @@ export function MusicLyricsTile({ density, accent, playback, sourceAppId }: {
     >
       <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
         <SpotifyLyricsView accent={accent} playback={playback} />
+        <MediaTransportRow playback={playback} compact />
       </div>
     </HFTile>
   );
@@ -209,6 +214,7 @@ export function MusicQueueTile({ density, accent, playback, sourceAppId }: {
     >
       <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
         <UpNextRouter accent={accent} source={source} />
+        <MediaTransportRow playback={playback} compact />
       </div>
     </HFTile>
   );
@@ -295,6 +301,32 @@ function SpotifyTabBar({ tab, setTab, accent }: { tab: SpotifyTab; setTab: (t: S
   );
 }
 
+/** The previous / play-pause / next cluster, shared by every surface that
+ *  can steer playback (0.9.2): the Now tab renders it full size; the Lyrics
+ *  and Up-next tabs (and the detached lyrics/queue tiles) get the compact
+ *  footer variant — "music controller should always be visible on tabs".
+ *  GSMTC-backed, so it works for every media source the tile supports, not
+ *  just Spotify. */
+function MediaTransportRow({ playback, compact }: { playback?: Playback | null; compact?: boolean }) {
+  const side = compact ? 26 : 32;
+  const main = compact ? 32 : 44;
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', gap: 12, justifyContent: 'center',
+      padding: compact ? '6px 0' : '4px 0 8px', flexShrink: 0,
+      ...(compact ? { borderTop: '1px solid rgba(255,255,255,0.06)' } : {}),
+    }}>
+      <button title="Previous" onClick={() => mediaControls.previous()} style={{ ...iconBtn(), width: side, height: side }}>⏮</button>
+      <button
+        title={playback?.playing ? 'Pause' : 'Play'}
+        onClick={() => mediaControls.togglePlayPause()}
+        style={{ ...iconBtn(), width: main, height: main, background: '#fff', color: '#000', borderRadius: 999, fontSize: compact ? 13 : 16 }}
+      >{playback?.playing ? '⏸' : '⏵'}</button>
+      <button title="Next" onClick={() => mediaControls.next()} style={{ ...iconBtn(), width: side, height: side }}>⏭</button>
+    </div>
+  );
+}
+
 function SpotifyNowView({ accent, accent2, track, playback, sourceKind, spectrumRef }: {
   accent: string; accent2: string; track: Track;
   playback?: Playback | null;
@@ -357,15 +389,7 @@ function SpotifyNowView({ accent, accent2, track, playback, sourceKind, spectrum
         </div>
       </div>
       {/* Controls */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, justifyContent: 'center', padding: '4px 0 8px', flexShrink: 0 }}>
-        <button title="Previous" onClick={() => mediaControls.previous()} style={{ ...iconBtn(), width: 32, height: 32 }}>⏮</button>
-        <button
-          title={playback?.playing ? 'Pause' : 'Play'}
-          onClick={() => mediaControls.togglePlayPause()}
-          style={{ ...iconBtn(), width: 44, height: 44, background: '#fff', color: '#000', borderRadius: 999, fontSize: 16 }}
-        >{playback?.playing ? '⏸' : '⏵'}</button>
-        <button title="Next" onClick={() => mediaControls.next()} style={{ ...iconBtn(), width: 32, height: 32 }}>⏭</button>
-      </div>
+      <MediaTransportRow playback={playback} />
       {/* Spotify Web API volume — only meaningful when Spotify is the source.
        *  For Apple Music / browser playback / etc. the user adjusts volume
        *  through the system mixer (or the audio mixer tile). */}
@@ -902,12 +926,20 @@ function SysMonTileImpl({ density, accent, accent2, tempUnit }: { density: Densi
   // Subscribes itself so the 1Hz sample stream re-renders only this tile,
   // not the App root that used to own the subscription.
   const history = useSysmon();
-  const Cell = ({ k, v, sub, data, color }: { k: string; v: string; sub: string; data: number[]; color: string }) => (
+  // `temp` (0.9.2): the part's temperature as big bold glanceable text right
+  // under the usage figure — the tester feedback was that the bottom chip
+  // strip was easy to miss entirely. Absent reading → no line, never "0°".
+  const Cell = ({ k, v, sub, data, color, temp }: { k: string; v: string; sub: string; data: number[]; color: string; temp?: TempDisplay | null }) => (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 6, padding: '0 14px', borderRight: '1px solid rgba(255,255,255,0.05)' }}>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
         <span style={{ fontSize: 9, color: 'rgba(255,255,255,0.4)', textTransform: 'uppercase', letterSpacing: '.08em', fontFamily: '"JetBrains Mono", ui-monospace, monospace' }}>{k}</span>
         <span style={{ fontSize: 18, fontWeight: 700, color: '#fff', fontFamily: '"JetBrains Mono", ui-monospace, monospace', lineHeight: 1 }}>{v}</span>
       </div>
+      {temp && (
+        <div style={{ fontSize: 15, fontWeight: 700, color: temp.color, fontFamily: '"JetBrains Mono", ui-monospace, monospace', lineHeight: 1 }}>
+          {temp.text}
+        </div>
+      )}
       <div style={{ flex: 1, minHeight: 0 }}>
         <Sparkline data={data} color={color} height="100%" />
       </div>
@@ -915,16 +947,20 @@ function SysMonTileImpl({ density, accent, accent2, tempUnit }: { density: Densi
     </div>
   );
   const top = history.latest.top.slice(0, 4);
-  const tempChips = tempsToChips(history.latest.temps, tempUnit);
+  const cpuTemp = tempDisplayFor(history.latest.temps, 'CPU', tempUnit);
+  const gpuTemp = tempDisplayFor(history.latest.temps, 'GPU', tempUnit);
+  // The strip keeps the non-CPU/GPU parts (Board/drives) so nothing is lost.
+  const tempChips = tempsToChips(stripReadings(history.latest.temps), tempUnit);
+  const watts = formatWatts(history.latest.power_watts);
   return (
     <HFTile title="System · live" density={density}
             headRight={<span style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)' }}>1Hz</span>}
             style={{ height: '100%' }}>
       <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
         <div style={{ display: 'flex', flex: 1, padding: '8px 0', minHeight: 0 }}>
-          <Cell k="CPU" v={history.latest.cpu_pct_text} sub={history.latest.cpu_sub} data={history.cpu} color={accent} />
+          <Cell k="CPU" v={history.latest.cpu_pct_text} sub={history.latest.cpu_sub} data={history.cpu} color={accent} temp={cpuTemp} />
           <Cell k="RAM" v={history.latest.ram_text} sub={history.latest.ram_sub} data={history.ram} color={accent2} />
-          <Cell k="GPU" v={history.latest.gpu_pct_text} sub={history.latest.gpu_sub} data={history.gpu} color="#facc15" />
+          <Cell k="GPU" v={history.latest.gpu_pct_text} sub={history.latest.gpu_sub} data={history.gpu} color="#facc15" temp={gpuTemp} />
           <Cell k="NET" v={history.latest.net_text} sub={history.latest.net_sub} data={history.net} color="#22c55e" />
           <div style={{ flex: 0.9, display: 'flex', flexDirection: 'column', gap: 4, padding: '0 14px', justifyContent: 'center' }}>
             <div style={{ fontSize: 9, color: 'rgba(255,255,255,0.4)', textTransform: 'uppercase', letterSpacing: '.08em' }}>Top processes</div>
@@ -938,7 +974,7 @@ function SysMonTileImpl({ density, accent, accent2, tempUnit }: { density: Densi
             ))}
           </div>
         </div>
-        {tempChips.length > 0 && (
+        {(tempChips.length > 0 || watts) && (
           <div
             title={tempsTooltip(tempChips)}
             style={{
@@ -954,6 +990,16 @@ function SysMonTileImpl({ density, accent, accent2, tempUnit }: { density: Densi
                 {c.text}
               </span>
             ))}
+            {/* Total draw (0.9.2) — right-aligned, bold, and simply absent
+                when no power sensor exists (no fake 0 W). */}
+            {watts && (
+              <span
+                title="Total draw: CPU package + GPU board power (LibreHardwareMonitor; GPU-only when NVML is the sole source)"
+                style={{ marginLeft: 'auto', fontWeight: 700, fontSize: 11, color: 'rgba(255,255,255,0.88)' }}
+              >
+                ⚡ {watts}
+              </span>
+            )}
           </div>
         )}
       </div>

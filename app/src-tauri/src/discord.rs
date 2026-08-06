@@ -214,17 +214,31 @@ fn exchange_code(client_id: &str, code: &str, verifier: &str) -> Result<TokenRes
         .map_err(|e| format!("token parse: {e}"))
 }
 
-fn refresh_tokens(client_id: &str, refresh_token: &str) -> Result<TokenResponse, String> {
-    ureq::post("https://discord.com/api/oauth2/token")
+/// `Err(revoked)` — the bool says whether the GRANT itself is dead
+/// (`invalid_grant` from the token endpoint) as opposed to a transient
+/// network/server failure. Callers must only erase stored credentials when
+/// it is true (0.9.2): a single offline launch used to wipe the tokens and
+/// force a full browser re-authorize.
+fn refresh_tokens(client_id: &str, refresh_token: &str) -> Result<TokenResponse, (String, bool)> {
+    let resp = ureq::post("https://discord.com/api/oauth2/token")
         .set("Content-Type", "application/x-www-form-urlencoded")
         .send_form(&[
             ("grant_type", "refresh_token"),
             ("refresh_token", refresh_token),
             ("client_id", client_id),
-        ])
-        .map_err(|e| format!("refresh: {e}"))?
-        .into_json()
-        .map_err(|e| format!("refresh parse: {e}"))
+        ]);
+    match resp {
+        Ok(r) => r
+            .into_json()
+            // A 2xx we can't parse is a server hiccup, not a revocation.
+            .map_err(|e| (format!("refresh parse: {e}"), false)),
+        Err(ureq::Error::Status(status, r)) => {
+            let text = r.into_string().unwrap_or_default();
+            let revoked = status == 400 && text.contains("invalid_grant");
+            Err((format!("refresh: HTTP {status}"), revoked))
+        }
+        Err(e) => Err((format!("refresh: {e}"), false)),
+    }
 }
 
 fn fetch_user(token: &str) -> Result<DiscordUser, String> {
@@ -247,7 +261,7 @@ fn fetch_guilds(token: &str) -> Result<Vec<DiscordGuild>, String> {
 
 /// Returns the access token, refreshing if expired. Saves to disk on refresh.
 fn ensure_token<R: Runtime>(app: &AppHandle<R>) -> Option<String> {
-    let mut creds = CREDS.lock();
+    let creds = CREDS.lock();
     let access = creds.access_token.clone()?;
     let client_id = creds.client_id.clone()?;
     let refresh = creds.refresh_token.clone();
@@ -269,14 +283,25 @@ fn ensure_token<R: Runtime>(app: &AppHandle<R>) -> Option<String> {
             save_creds(app, &c);
             Some(t.access_token)
         }
-        Err(e) => {
-            eprintln!("discord: refresh failed: {e} — clearing tokens");
-            let mut c = CREDS.lock();
-            c.access_token = None;
-            c.refresh_token = None;
-            c.expires_at = None;
-            save_creds(app, &c);
-            None
+        Err((e, revoked)) => {
+            if revoked {
+                // Discord said invalid_grant: the grant is provably dead —
+                // erasing is correct and the Connect flow is the only way on.
+                eprintln!("discord: refresh rejected (invalid_grant) — clearing tokens");
+                let mut c = CREDS.lock();
+                c.access_token = None;
+                c.refresh_token = None;
+                c.expires_at = None;
+                save_creds(app, &c);
+                None
+            } else {
+                // Transient (offline at login, Discord 5xx): keep the stored
+                // grant untouched and let the next poll retry. Before 0.9.2
+                // this arm ERASED the tokens from disk, so one bad moment
+                // meant re-authorizing in the browser forever after.
+                eprintln!("discord: refresh failed transiently: {e} — keeping stored grant");
+                None
+            }
         }
     }
 }
