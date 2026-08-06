@@ -132,6 +132,10 @@ export function SpotifyTile({ density, accent, accent2, track, onPick: _onPick, 
           {tab === 'lyrics' && <SpotifyLyricsView accent={accent} playback={playback} />}
           {tab === 'upnext' && <UpNextRouter accent={accent} source={source} />}
         </div>
+        {/* The Now tab already contains the full-size controls between the
+            progress bar and the volume row — footer only on the other two,
+            so no tab ever shows a duplicate cluster. */}
+        {tab !== 'now' && <MediaTransportRow playback={playback} compact />}
       </div>
     </HFTile>
   );
@@ -188,6 +192,7 @@ export function MusicLyricsTile({ density, accent, playback, sourceAppId }: {
     >
       <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
         <SpotifyLyricsView accent={accent} playback={playback} />
+        <MediaTransportRow playback={playback} compact />
       </div>
     </HFTile>
   );
@@ -209,6 +214,7 @@ export function MusicQueueTile({ density, accent, playback, sourceAppId }: {
     >
       <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
         <UpNextRouter accent={accent} source={source} />
+        <MediaTransportRow playback={playback} compact />
       </div>
     </HFTile>
   );
@@ -295,6 +301,32 @@ function SpotifyTabBar({ tab, setTab, accent }: { tab: SpotifyTab; setTab: (t: S
   );
 }
 
+/** The previous / play-pause / next cluster, shared by every surface that
+ *  can steer playback (0.9.2): the Now tab renders it full size; the Lyrics
+ *  and Up-next tabs (and the detached lyrics/queue tiles) get the compact
+ *  footer variant — "music controller should always be visible on tabs".
+ *  GSMTC-backed, so it works for every media source the tile supports, not
+ *  just Spotify. */
+function MediaTransportRow({ playback, compact }: { playback?: Playback | null; compact?: boolean }) {
+  const side = compact ? 26 : 32;
+  const main = compact ? 32 : 44;
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', gap: 12, justifyContent: 'center',
+      padding: compact ? '6px 0' : '4px 0 8px', flexShrink: 0,
+      ...(compact ? { borderTop: '1px solid rgba(255,255,255,0.06)' } : {}),
+    }}>
+      <button title="Previous" onClick={() => mediaControls.previous()} style={{ ...iconBtn(), width: side, height: side }}>⏮</button>
+      <button
+        title={playback?.playing ? 'Pause' : 'Play'}
+        onClick={() => mediaControls.togglePlayPause()}
+        style={{ ...iconBtn(), width: main, height: main, background: '#fff', color: '#000', borderRadius: 999, fontSize: compact ? 13 : 16 }}
+      >{playback?.playing ? '⏸' : '⏵'}</button>
+      <button title="Next" onClick={() => mediaControls.next()} style={{ ...iconBtn(), width: side, height: side }}>⏭</button>
+    </div>
+  );
+}
+
 function SpotifyNowView({ accent, accent2, track, playback, sourceKind, spectrumRef }: {
   accent: string; accent2: string; track: Track;
   playback?: Playback | null;
@@ -357,15 +389,7 @@ function SpotifyNowView({ accent, accent2, track, playback, sourceKind, spectrum
         </div>
       </div>
       {/* Controls */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, justifyContent: 'center', padding: '4px 0 8px', flexShrink: 0 }}>
-        <button title="Previous" onClick={() => mediaControls.previous()} style={{ ...iconBtn(), width: 32, height: 32 }}>⏮</button>
-        <button
-          title={playback?.playing ? 'Pause' : 'Play'}
-          onClick={() => mediaControls.togglePlayPause()}
-          style={{ ...iconBtn(), width: 44, height: 44, background: '#fff', color: '#000', borderRadius: 999, fontSize: 16 }}
-        >{playback?.playing ? '⏸' : '⏵'}</button>
-        <button title="Next" onClick={() => mediaControls.next()} style={{ ...iconBtn(), width: 32, height: 32 }}>⏭</button>
-      </div>
+      <MediaTransportRow playback={playback} />
       {/* Spotify Web API volume — only meaningful when Spotify is the source.
        *  For Apple Music / browser playback / etc. the user adjusts volume
        *  through the system mixer (or the audio mixer tile). */}
