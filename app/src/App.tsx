@@ -168,6 +168,10 @@ interface TweakState extends Record<string, unknown> {
   /** When true, mounts the perf-debug HUD and starts long-task / GPU spike
    *  instrumentation. Off by default; flip from Settings when investigating
    *  GPU spikes. */
+  /** System-wide EQ via Equalizer APO (0.9.2). Bands are dB gains for the
+   *  10 ISO octave bands 31.5 Hz–16 kHz; applied by Rust's eq_apply. */
+  eqEnabled: boolean;
+  eqBands: number[];
   perfDebug: boolean;
   /** When true, the small live/fps/levels readout overlays the viz. Off by
    *  default — only useful for diagnosing why a viz isn't reacting. */
@@ -257,6 +261,8 @@ const TWEAK_DEFAULTS: TweakState = {
   perfCustomFps: 60,
   perfCustomDpr: 1.0,
   perfCustomAudioHz: 30,
+  eqEnabled: false,
+  eqBands: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
   perfDebug: false,
   audioDebug: false,
   closeToTray: true,
@@ -846,6 +852,22 @@ export default function App() {
     }
   }, [applyGlassNow]);
 
+  // Push the EQ state to Equalizer APO whenever it changes (and once at
+  // boot, so a persisted curve survives restarts). Debounced: a slider drag
+  // emits many tweak updates, and E-APO re-parses its config on every file
+  // write. Failures are swallowed — eq_status drives the tile's messaging.
+  useEffect(() => {
+    const id = window.setTimeout(() => {
+      void (async () => {
+        try {
+          const { invoke } = await import('@tauri-apps/api/core');
+          await invoke('eq_apply', { gains: t.eqBands, enabled: t.eqEnabled });
+        } catch { /* browser dev, or E-APO not installed */ }
+      })();
+    }, 150);
+    return () => window.clearTimeout(id);
+  }, [t.eqEnabled, t.eqBands]);
+
   // Push the chosen audio source to Rust whenever it changes. The tweak
   // store stays the single source of truth; Rust is a follower here — the
   // real outcome (fell back to mix, unsupported, etc.) comes back on the
@@ -1306,6 +1328,10 @@ export default function App() {
 
   // setTweak is already useCallback-stable inside useTweaks, so these are too.
   const setAudioSource = useCallback((s: AudioSource) => setTweak('vizAudioSource', s), [setTweak]);
+  const setEq = useCallback((enabled: boolean, bands: number[]) => {
+    setTweak('eqEnabled', enabled);
+    setTweak('eqBands', bands);
+  }, [setTweak]);
   const setVizModeStable = useCallback((m: VizMode) => setTweak('vizMode', m), [setTweak]);
 
   const renderTile = (instance: TileInstance) => {
@@ -1328,6 +1354,9 @@ export default function App() {
             density={t.density} accent={accent} accent2={accent2} spectrumRef={spectrumRef}
             audioSource={t.vizAudioSource}
             onSetAudioSource={setAudioSource}
+            eqEnabled={t.eqEnabled}
+            eqBands={t.eqBands}
+            onSetEq={setEq}
           />
         );
       case 'notes':

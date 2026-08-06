@@ -123,6 +123,8 @@ commands.allow = [
   # Replays the last forecast to a webview that attached after the emit.
   "weather_current",
   "set_audio_emit_hz",
+  "eq_status",
+  "eq_apply",
   "set_waveform_enabled",
   "set_stereo_waveform_enabled",
 

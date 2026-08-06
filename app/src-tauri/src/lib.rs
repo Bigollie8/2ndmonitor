@@ -36,6 +36,7 @@ mod tiles;
 mod visualizers;
 mod spotify;
 mod sysmon;
+mod eq;
 mod temps;
 mod tray;
 mod tweaks;
@@ -108,6 +109,8 @@ pub fn run() {
             weather::weather_current,
             audio::set_audio_emit_hz,
             audio::set_waveform_enabled,
+            eq::eq_status,
+            eq::eq_apply,
             audio::set_stereo_waveform_enabled,
             audio::audio_set_source,
             audio::audio_get_source,
