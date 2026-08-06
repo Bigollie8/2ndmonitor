@@ -53,6 +53,7 @@ import { setWindowHidden } from './state/framePace';
 import { VizHero, setVizDprCap, setVizMaxFps, getVizMaxFps } from './components/viz';
 import * as perfDebug from './perf/debug';
 import { PerfDebugHUD } from './perf/PerfDebugHUD';
+import { F11DiagnosticCard } from './components/F11DiagnosticCard';
 import { useVizStyles } from './components/useVizStyles';
 import {
   remapRetiredVizMode,
@@ -693,6 +694,12 @@ export default function App() {
   /** Remembers the windowed geometry so exiting fullscreen restores it. */
   const preFullscreenRef = useRef<{ x: number; y: number; w: number; h: number } | null>(null);
 
+  /** Set when the F11 converge loop gives up: a human-readable diagnostic the
+   *  on-screen card shows with a Copy button. Round 4 (0.9.1) exists because
+   *  no tester ever retrieved the console warn — the evidence now surfaces in
+   *  the UI itself, only when the failure actually happens. */
+  const [f11Report, setF11Report] = useState<string | null>(null);
+
   /** F11.
    *
    *  Deliberately NOT `setFullscreen()` (0.8.3). Windows' fullscreen state
@@ -712,21 +719,20 @@ export default function App() {
    *  with that. */
   const toggleFullscreen = useCallback(async () => {
     try {
-      const { getCurrentWindow, currentMonitor, PhysicalSize, PhysicalPosition } = await import('@tauri-apps/api/window');
+      const { getCurrentWindow, currentMonitor, availableMonitors, PhysicalSize, PhysicalPosition } = await import('@tauri-apps/api/window');
       const win = getCurrentWindow();
       const prev = preFullscreenRef.current;
 
       if (prev) {
         // Restore.
         preFullscreenRef.current = null;
+        setF11Report(null);
         await win.setAlwaysOnTop(false);
         await win.setResizable(true);
         await win.setDecorations(true);
         await win.setSize(new PhysicalSize(prev.w, prev.h));
         await win.setPosition(new PhysicalPosition(prev.x, prev.y));
       } else {
-        const monitor = await currentMonitor();
-        if (!monitor) { console.warn('F11: no monitor reported; ignoring'); return; }
         // Capture the OUTER rect for restore (0.8.7). The previous code
         // captured innerPosition of the still-DECORATED window and later
         // restored it as the outer position — so every F11 round trip crept
@@ -738,6 +744,22 @@ export default function App() {
           x: pos.x, y: pos.y,
           w: size.width, h: size.height,
         };
+        // Pick the monitor under the WINDOW'S CENTER, not `currentMonitor()`
+        // (round 4). When the window straddles two displays — common on the
+        // multi-monitor setups this app targets — currentMonitor() may answer
+        // for the display holding the window's origin corner while the user
+        // sees most of the window (and expects fullscreen) on the other one.
+        // A gap "on the left and top" is exactly what filling monitor A while
+        // sitting mostly on monitor B looks like.
+        const cx = pos.x + Math.floor(size.width / 2);
+        const cy = pos.y + Math.floor(size.height / 2);
+        let monitors: Awaited<ReturnType<typeof availableMonitors>> = [];
+        try { monitors = await availableMonitors(); } catch { /* fall through */ }
+        const monitor = monitors.find((m) =>
+          cx >= m.position.x && cx < m.position.x + m.size.width
+          && cy >= m.position.y && cy < m.position.y + m.size.height,
+        ) ?? await currentMonitor();
+        if (!monitor) { console.warn('F11: no monitor reported; ignoring'); return; }
         await win.setDecorations(false);
         // An undecorated RESIZABLE window keeps invisible resize handles on
         // its edges — Windows hit-tests the top few pixels as non-client, so
@@ -757,20 +779,40 @@ export default function App() {
           x: monitor.position.x, y: monitor.position.y,
           w: monitor.size.width, h: monitor.size.height,
         };
-        for (let attempt = 1; attempt <= 3; attempt++) {
+        // 5 passes at 120ms (round 4; was 3 at 90ms) — DPI/frame adjustments
+        // on slower machines can land after the third measurement, so the old
+        // loop sometimes exhausted while Windows was still moving the window.
+        let converged = false;
+        let settled = { x: 0, y: 0, w: 0, h: 0 };
+        for (let attempt = 1; attempt <= 5; attempt++) {
           await win.setPosition(new PhysicalPosition(target.x, target.y));
           await win.setSize(new PhysicalSize(target.w, target.h));
-          await new Promise((r) => setTimeout(r, 90));
+          await new Promise((r) => setTimeout(r, 120));
           const p = await win.innerPosition();
           const s = await win.innerSize();
-          const ok = p.x === target.x && p.y === target.y
+          settled = { x: p.x, y: p.y, w: s.width, h: s.height };
+          converged = p.x === target.x && p.y === target.y
             && s.width === target.w && s.height === target.h;
-          if (ok) break;
+          if (converged) break;
           console.warn(
             `F11: settled at ${p.x},${p.y} ${s.width}x${s.height}, wanted `
-            + `${target.x},${target.y} ${target.w}x${target.h} (pass ${attempt})`
-            + (attempt === 3 ? ' — giving up, please report these numbers' : ' — reapplying'),
+            + `${target.x},${target.y} ${target.w}x${target.h} (pass ${attempt})`,
           );
+        }
+        if (!converged) {
+          // Surface the evidence in the UI — the console warn shipped in
+          // 0.8.7/0.8.8 and no report ever came back with the numbers.
+          const monLine = (m: { name: string | null; position: { x: number; y: number }; size: { width: number; height: number }; scaleFactor: number }) =>
+            `${m.name ?? '?'} at ${m.position.x},${m.position.y} ${m.size.width}x${m.size.height} scale ${m.scaleFactor}`;
+          setF11Report([
+            `target  : ${target.x},${target.y} ${target.w}x${target.h}`,
+            `settled : ${settled.x},${settled.y} ${settled.w}x${settled.h}`,
+            `window  : ${pos.x},${pos.y} ${size.width}x${size.height} (center ${cx},${cy})`,
+            `monitor : ${monLine(monitor)}`,
+            ...monitors.map((m, i) => `display${i}: ${monLine(m)}`),
+          ].join('\n'));
+        } else {
+          setF11Report(null);
         }
         await win.setAlwaysOnTop(true);
       }
@@ -1849,6 +1891,7 @@ export default function App() {
       )}
 
       {t.perfDebug && <PerfDebugHUD />}
+      {f11Report && <F11DiagnosticCard report={f11Report} onDismiss={() => setF11Report(null)} />}
 
       <UpdateToast accent={accent} />
     </div>
