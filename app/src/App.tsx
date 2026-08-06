@@ -156,7 +156,15 @@ interface TweakState extends Record<string, unknown> {
   /** URL currently loaded in the Tauri child webview, or null when the
    *  launchpad grid is showing. */
   videoCurrentUrl: string | null;
-  perfMode: 'uncapped' | 'high' | 'balanced' | 'battery';
+  perfMode: 'uncapped' | 'high' | 'balanced' | 'battery' | 'custom';
+  /** The three knobs behind the perfMode presets, exposed individually when
+   *  perfMode === 'custom' (0.9.1). Ignored under any named preset — choosing
+   *  a preset overrides them without erasing the saved values, so flipping
+   *  back to Custom restores the user's tuning. fps 0 = uncapped; dpr is a
+   *  cap, clamped to the real devicePixelRatio at apply time. */
+  perfCustomFps: number;
+  perfCustomDpr: number;
+  perfCustomAudioHz: number;
   /** When true, mounts the perf-debug HUD and starts long-task / GPU spike
    *  instrumentation. Off by default; flip from Settings when investigating
    *  GPU spikes. */
@@ -243,6 +251,12 @@ const TWEAK_DEFAULTS: TweakState = {
   videoBookmarks: defaultBookmarks(),
   videoCurrentUrl: null,
   perfMode: 'balanced',
+  // Custom-mode knobs seed from the Balanced preset; missing on old saves
+  // (they merge in from these defaults — the migrateTweaks pattern's "new
+  // field" case needs no explicit migration step).
+  perfCustomFps: 60,
+  perfCustomDpr: 1.0,
+  perfCustomAudioHz: 30,
   perfDebug: false,
   audioDebug: false,
   closeToTray: true,
@@ -976,6 +990,14 @@ export default function App() {
         setVizMaxFps(30);
         audioHz = 15;
         break;
+      case 'custom':
+        // The same three knobs the presets set, taken from the user's sliders
+        // (0.9.1). DPR is a CAP — clamp to the real ratio so a saved 2.0 on a
+        // 1.0-DPR monitor doesn't render at double resolution for nothing.
+        setVizDprCap(Math.max(0.5, Math.min(t.perfCustomDpr, window.devicePixelRatio || 1)));
+        setVizMaxFps(Math.max(0, Math.round(t.perfCustomFps)));
+        audioHz = Math.max(5, Math.min(60, Math.round(t.perfCustomAudioHz)));
+        break;
     }
     // Push the audio FFT rate to Rust. Halving it on Balanced/Battery is the
     // biggest single CPU win when audio is actively playing.
@@ -986,7 +1008,7 @@ export default function App() {
     // ResizeObserver fires on subtree size changes; window resize is the cheap
     // trigger that all our viz already listen to.
     window.dispatchEvent(new Event('resize'));
-  }, [t.perfMode]);
+  }, [t.perfMode, t.perfCustomFps, t.perfCustomDpr, t.perfCustomAudioHz]);
 
   useEffect(() => {
     // Whenever the saved location changes (including initial load from disk),
