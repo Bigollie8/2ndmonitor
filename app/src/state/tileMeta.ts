@@ -38,6 +38,11 @@ export interface TileMeta {
 export const TILE_META: Record<BuiltinTileType, TileMeta> = {
   viz:     { icon: '◢', label: 'Audio visualizer',  description: 'Visualizer styles reactive to system audio',  multiInstance: false, category: 'media' },
   spotify: { icon: '♪', label: 'Now playing',       description: 'Track, lyrics, queue, volume',         multiInstance: false, category: 'media' },
+  // The three tabs of Now playing, detachable as their own tiles (0.9.1) —
+  // place lyrics on one edge and the queue on another. Same views, same data.
+  musicPlayer: { icon: '▶', label: 'Music · player', description: 'The Now-playing player tab as its own tile — art, transport, volume', multiInstance: false, category: 'media' },
+  musicQueue:  { icon: '≡', label: 'Music · up next', description: 'The queue tab as its own tile (Spotify queue integration)', multiInstance: false, category: 'media' },
+  musicLyrics: { icon: '❝', label: 'Music · lyrics', description: 'The synced-lyrics tab as its own tile', multiInstance: false, category: 'media' },
   discord: { icon: '◇', label: 'Discord voice',     description: 'Voice channel members + speaking',     multiInstance: false, category: 'integrations', account: true },
   claude:  { icon: '⌘', label: 'Claude Code',       description: 'Active session log',                   multiInstance: false, category: 'productivity' },
   mixer:   { icon: '♬', label: 'Audio mixer',       description: 'Master volume + per-app sessions',     multiInstance: false, category: 'media' },

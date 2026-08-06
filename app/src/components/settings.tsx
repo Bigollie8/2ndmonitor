@@ -34,7 +34,7 @@ const fieldLabelStyle: React.CSSProperties = {
   fontSize: 10.5, color: 'rgba(255,255,255,0.45)',
 };
 
-export type PerfMode = 'uncapped' | 'high' | 'balanced' | 'battery';
+export type PerfMode = 'uncapped' | 'high' | 'balanced' | 'battery' | 'custom';
 
 export interface VizColorOverride {
   enabled: boolean;
@@ -60,6 +60,9 @@ export interface SettingsValues {
   density: Density;
   weatherLocation: WeatherLocation;
   perfMode: PerfMode;
+  perfCustomFps: number;
+  perfCustomDpr: number;
+  perfCustomAudioHz: number;
   perfDebug: boolean;
   audioDebug: boolean;
   videoEnabled: boolean;
@@ -432,12 +435,50 @@ export function SettingsWindow({
           control: (
             <Segmented<PerfMode>
               value={v.perfMode}
-              options={['battery', 'balanced', 'high', 'uncapped']}
+              options={['battery', 'balanced', 'high', 'uncapped', 'custom']}
               onChange={(x) => set('perfMode', x)}
               accent={accent}
             />
           ),
         },
+        // The three knobs behind every preset, individually tunable (0.9.1).
+        // Rendered only in Custom mode; the saved values survive preset
+        // switches, so Custom always comes back to the user's last tuning.
+        ...(v.perfMode === 'custom' ? [
+          {
+            id: 'performance-custom-fps', label: 'Frame-rate cap',
+            hint: 'Top speed for visualizer drawing — 0 removes the cap entirely',
+            control: (
+              <SliderControl
+                value={v.perfCustomFps} min={0} max={165} step={5}
+                format={(x) => (x === 0 ? 'uncapped' : `${x} fps`)} accent={accent}
+                onChange={(x) => set('perfCustomFps', x)}
+              />
+            ),
+          },
+          {
+            id: 'performance-custom-dpr', label: 'Render resolution',
+            hint: 'Pixel-density cap for visualizer canvases — lower is cheaper on the GPU, never above your display’s native ratio',
+            control: (
+              <SliderControl
+                value={v.perfCustomDpr} min={0.5} max={2} step={0.25}
+                format={(x) => `${x.toFixed(2)}×`} accent={accent}
+                onChange={(x) => set('perfCustomDpr', x)}
+              />
+            ),
+          },
+          {
+            id: 'performance-custom-audiohz', label: 'Audio update rate',
+            hint: 'How often the spectrum refreshes per second — the biggest CPU knob while music plays',
+            control: (
+              <SliderControl
+                value={v.perfCustomAudioHz} min={5} max={60} step={5}
+                format={(x) => `${x} Hz`} accent={accent}
+                onChange={(x) => set('perfCustomAudioHz', x)}
+              />
+            ),
+          },
+        ] : []),
       ],
     },
     {
@@ -650,6 +691,7 @@ const PERF_MODE_HINTS: Record<PerfMode, string> = {
   high:     'DPR cap 1.5× · 120 fps · 60 Hz audio · pauses when nothing plays',
   balanced: 'DPR cap 1× · 60 fps · 30 Hz audio · pauses when nothing plays',
   battery:  'DPR cap 1× · 30 fps · 15 Hz audio · pauses when nothing plays',
+  custom:   'Tune each knob yourself — the presets above set these same three',
 };
 
 function PaneHeading({ icon, title }: { icon: string; title: string }) {
