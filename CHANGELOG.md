@@ -5,6 +5,38 @@ All notable changes to 2ndMonitor are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-08-05
+
+### Added
+- **Detachable music tiles.** The Now-playing tile's three tabs — Player,
+  Up next, and Lyrics — can now each be added as their own standalone tile
+  from the Tile Library. Put synced lyrics on one edge of the monitor and
+  your queue on another; every detached tile behaves exactly like its tab
+  (same transport controls, same data), and the combined tile is unchanged
+- **Custom performance mode.** Performance settings gained a fifth mode
+  that exposes the three knobs the presets bundle: visualizer frame-rate
+  cap (up to 165 fps or uncapped), render resolution, and audio update
+  rate. Changes apply live, persist across restarts, and survive switching
+  to a preset and back
+- **Equalizer visualizer.** The classic segmented LED spectrum — 20 bands
+  of stacked blocks with instant attack, slow release, and peak-hold caps
+  that hang then fall, coloured from your theme. In the visualizer gallery
+  like any other style. Note: this is a *visual* equalizer; if you wanted
+  controls that change how the audio itself sounds (bass/boost etc.), tell
+  us — that's a different, bigger feature, since the app currently only
+  listens to audio and never modifies it
+
+### Fixed
+- **F11 fullscreen, round 4.** Two changes for the machines where a gap
+  still shows: fullscreen now targets the monitor under the window's
+  *center* (a window straddling two displays used to fullscreen onto the
+  one holding its top-left corner — which looks exactly like the reported
+  left/top gap), and the settle loop tries five passes instead of three.
+  If the window still refuses the monitor's exact rectangle, a card now
+  appears on screen with the precise numbers and a Copy button — please
+  paste that into the Discord thread; it will pinpoint the cause on your
+  setup
+
 ## [0.9.0] - 2026-08-05
 
 The community release. 2ndMonitor's marketplace had 419 bundles and no people
