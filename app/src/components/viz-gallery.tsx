@@ -84,7 +84,7 @@ export function VizGallery({
             <h1 style={{ fontSize: 22, margin: 0, fontWeight: 700, letterSpacing: '-0.02em' }}>Visualizer Gallery</h1>
           </div>
           <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.4)', fontFamily: '"JetBrains Mono", ui-monospace, monospace' }}>
-            {vizStyles.length} styles · live preview
+            {vizStyles.length} styles · live preview · click a card to apply
           </span>
           <div style={{ flex: 1 }} />
           {(['compact', 'regular', 'large'] as const).map((s) => (
@@ -219,7 +219,8 @@ function GalleryCard({
       if (!active) e.currentTarget.style.borderColor = 'rgba(255,255,255,0.06)';
       e.currentTarget.style.transform = 'none';
     }}
-    onClick={onPick}>
+    onClick={onPick}
+    title={active ? undefined : `Apply ${style.label}`}>
       <div style={{ position: 'relative', width: '100%', aspectRatio: '16/9', background: '#06070a' }}>
         {isBundle ? (
           // Bundle entries preview live too, but only while active or hovered.
@@ -268,6 +269,18 @@ function GalleryCard({
             background: accent, color: '#000', borderRadius: 4,
             fontFamily: '"JetBrains Mono", ui-monospace, monospace',
           }}>● ACTIVE</div>
+        )}
+        {/* The 0.9.4 report: nobody realised a card click applies — the only
+            visible "Apply" lived inside the fullscreen preview. Same action
+            as the card click, surfaced as a labelled button on hover. */}
+        {hovered && !active && (
+          <button onClick={(e) => { e.stopPropagation(); onPick(); }}
+            style={{
+              position: 'absolute', bottom: 12, right: 12,
+              padding: '5px 12px', fontSize: 11, fontWeight: 700,
+              background: accent, color: '#000',
+              border: 'none', borderRadius: 5, cursor: 'pointer',
+            }}>Apply</button>
         )}
       </div>
       <div style={{ padding: '14px 16px', display: 'flex', alignItems: 'baseline', gap: 12 }}>
