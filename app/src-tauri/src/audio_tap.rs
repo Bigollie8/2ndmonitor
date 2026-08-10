@@ -4,10 +4,11 @@
 //! A tap is described by an Objective-C `CATapDescription` (macOS 14.2+),
 //! turned into an `AudioObjectID` by `AudioHardwareCreateProcessTap`, and then
 //! made readable by wrapping it in a *private* aggregate device that we install
-//! an IOProc on. The IOProc downmixes to mono f32 and pushes into the same ring
-//! buffer the cpal mix backend writes, so everything downstream — FFT, the 64
-//! log bands, the `audio:spectrum` event, every visualizer — is identical
-//! regardless of which backend is live.
+//! an IOProc on. The IOProc pushes interleaved L/R f32 into the same ring
+//! buffer the cpal mix backend writes (two samples per frame, mono derived at
+//! drain — 0.9.4), so everything downstream — FFT, the 64 log bands, the
+//! `audio:spectrum` event, every visualizer — is identical regardless of
+//! which backend is live.
 //!
 //! Structural differences from the Windows sibling, and why:
 //!
@@ -489,33 +490,27 @@ fn push_stereo(planes: &[(&[f32], usize)], buffer: &Arc<Mutex<Vec<f32>>>, ring_c
 
     let mut buf = buffer.lock();
     for f in 0..frames {
-        // The first two channels of this frame, in plane order.
-        let mut lr = [0.0f32; 2];
+        // The first two channels of this frame, in plane order; the L/R pick
+        // itself is audio.rs `frame_lr`, the one shared implementation.
+        let mut first_two = [0.0f32; 2];
         let mut c = 0usize;
         'frame: for (samples, ch) in planes {
             let base = f * ch;
             for k in 0..*ch {
-                lr[c] = samples[base + k];
+                first_two[c] = samples[base + k];
                 c += 1;
                 if c == 2 {
                     break 'frame;
                 }
             }
         }
-        if c == 1 {
-            lr[1] = lr[0];
-        }
-        buf.push(lr[0]);
-        buf.push(lr[1]);
+        let (l, r) = crate::audio::frame_lr(&first_two[..c]);
+        buf.push(l);
+        buf.push(r);
     }
-    // `ring_cap` counts frames; drain an EVEN sample count or L and R would
-    // swap for the rest of the stream.
-    let cap = ring_cap * 2;
-    if buf.len() > cap {
-        let excess = buf.len() - cap;
-        let drop = ((excess + 1) & !1).min(buf.len());
-        buf.drain(..drop);
-    }
+    // `ring_cap` counts frames; the shared trim drains an even sample count
+    // so L and R can never swap.
+    crate::audio::trim_frames(&mut buf, ring_cap);
 }
 
 /// Zero every buffer in an output `AudioBufferList`. Unlike the input path this

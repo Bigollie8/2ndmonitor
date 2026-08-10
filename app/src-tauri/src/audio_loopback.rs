@@ -124,13 +124,13 @@ fn push_stereo(data: &[f32], channels: usize, buffer: &Arc<Mutex<Vec<f32>>>, rin
     }
     let mut buf = buffer.lock();
     for frame in data.chunks_exact(channels) {
-        // Mono duplicates into both; anything wider contributes FL/FR, the
-        // standard interleave order — the same picks audio.rs `frame_lr`
-        // makes at drain time.
-        buf.push(frame[0]);
-        buf.push(if channels == 1 { frame[0] } else { frame[1] });
+        // Mono duplicates into both; anything wider contributes FL/FR — the
+        // one shared implementation of that pick.
+        let (l, r) = crate::audio::frame_lr(&frame[..channels.min(2)]);
+        buf.push(l);
+        buf.push(r);
     }
-    trim_frames(&mut buf, ring_cap);
+    crate::audio::trim_frames(&mut buf, ring_cap);
 }
 
 /// AUDCLNT_BUFFERFLAGS_SILENT means the packet's memory is undefined, not
@@ -139,21 +139,7 @@ fn push_stereo(data: &[f32], channels: usize, buffer: &Arc<Mutex<Vec<f32>>>, rin
 fn push_silence(frames: usize, buffer: &Arc<Mutex<Vec<f32>>>, ring_cap: usize) {
     let mut buf = buffer.lock();
     buf.extend(std::iter::repeat(0.0f32).take(frames * 2));
-    trim_frames(&mut buf, ring_cap);
-}
-
-/// Drop the oldest samples once the ring exceeds `ring_cap` FRAMES. Always an
-/// even count — an odd drain would swap L and R for the remainder of the
-/// stream: silent, permanent, and invisible until someone opened a
-/// vectorscope.
-#[cfg(any(target_os = "windows", test))]
-fn trim_frames(buf: &mut Vec<f32>, ring_cap: usize) {
-    let cap = ring_cap * 2;
-    if buf.len() > cap {
-        let excess = buf.len() - cap;
-        let drop = ((excess + 1) & !1).min(buf.len());
-        buf.drain(..drop);
-    }
+    crate::audio::trim_frames(&mut buf, ring_cap);
 }
 
 #[cfg(target_os = "windows")]

@@ -101,8 +101,8 @@ fn normalize_db(db_tilted: f32) -> f32 {
 /// A mono source duplicates its single channel into both, so it reads as
 /// perfectly correlated — the honest display for mono, not a bug. Sources with
 /// more than two channels use the first two, the standard interleave order
-/// (FL, FR, ...).
-fn frame_lr(frame: &[f32]) -> (f32, f32) {
+/// (FL, FR, ...). `pub(crate)`: the per-app backends make the same picks.
+pub(crate) fn frame_lr(frame: &[f32]) -> (f32, f32) {
     match frame.len() {
         0 => (0.0, 0.0),
         1 => (frame[0], frame[0]),
@@ -158,8 +158,25 @@ pub fn set_stereo_waveform_enabled(enabled: bool) {
 fn sample_to_byte(s: f32) -> u8 {
     ((s.clamp(-1.0, 1.0) * 127.0) + 128.0) as u8
 }
-/// Most we'll ever buffer (samples). Caps memory if the processor stalls.
+/// Most we'll ever buffer, in FRAMES — the ring holds two samples per frame
+/// (interleaved L/R, 0.8.4), so every cap and capacity site uses ×2. Caps
+/// memory if the processor stalls.
 const RING_CAP: usize = FFT_SIZE * 8;
+
+/// Drop the oldest samples once a ring exceeds `cap_frames` frames. Always an
+/// even count: an odd drain would swap L and R for the entire remainder of
+/// the stream — silent, permanent, and invisible until someone opened a
+/// vectorscope. Every ring writer (cpal `push_frames`, the apps-mode
+/// `append_hop`, `audio_loopback`, `audio_tap`) trims through here so the
+/// invariant has exactly one implementation.
+pub(crate) fn trim_frames(buf: &mut Vec<f32>, cap_frames: usize) {
+    let cap = cap_frames * 2;
+    if buf.len() > cap {
+        let excess = buf.len() - cap;
+        let drop = ((excess + 1) & !1).min(buf.len());
+        buf.drain(..drop);
+    }
+}
 
 /// De-interleaved time-domain bytes, same convention as the mono waveform
 /// (0-255 centred at 128). Sent as two arrays so the frontend does no
@@ -187,7 +204,10 @@ pub fn spawn<R: Runtime>(app: AppHandle<R>) {
 }
 
 fn run<R: Runtime>(app: AppHandle<R>) -> Result<(), String> {
-    let buffer = Arc::new(Mutex::new(Vec::<f32>::with_capacity(RING_CAP)));
+    // ×2: the ring holds interleaved L/R, RING_CAP counts frames. Anything
+    // less and the first seconds of capture reallocate the ring inside the
+    // realtime callback — the exact cost the one-lock design exists to avoid.
+    let buffer = Arc::new(Mutex::new(Vec::<f32>::with_capacity(RING_CAP * 2)));
 
     // The capture backend gets its own thread: cpal's Stream is !Send on
     // Windows, so it must be created *and dropped* on one thread, and a
@@ -1024,16 +1044,7 @@ fn build_stream(
                 count = 0;
             }
         }
-        // RING_CAP counts FRAMES; the ring stores two samples per frame.
-        let cap = RING_CAP * 2;
-        if buf.len() > cap {
-            // Drain an EVEN count so L/R stay aligned. An odd drain would swap
-            // the two channels for the entire remainder of the stream — silent,
-            // permanent, and invisible until someone looked at a vectorscope.
-            let excess = buf.len() - cap;
-            let drop = ((excess + 1) & !1).min(buf.len());
-            buf.drain(..drop);
-        }
+        crate::audio::trim_frames(&mut buf, RING_CAP);
     }
 
     match sample_format {
@@ -1293,6 +1304,20 @@ fn log_band_edges(bands: usize, max_bin: usize, sample_rate: f32, fmin: f32, fma
 /// Cross-app alignment is deliberately loose: packet timing can skew apps by
 /// up to one hop (~30 ms) relative to each other, which is invisible in a
 /// spectrum display and avoids per-capture timestamp bookkeeping.
+pub fn mix_rings(drained: &[Vec<f32>]) -> Vec<f32> {
+    let len = drained.iter().map(|d| d.len()).max().unwrap_or(0);
+    let mut out = vec![0.0f32; len];
+    for d in drained {
+        for (i, s) in d.iter().enumerate() {
+            out[i] += *s;
+        }
+    }
+    for s in out.iter_mut() {
+        *s = s.clamp(-1.0, 1.0);
+    }
+    out
+}
+
 /// Append one hop of the apps-mode mix to the FFT ring. `mixed` is already
 /// interleaved L/R (the per-app rings carry stereo since 0.9.4); an empty hop
 /// appends `silence_frames` frames of silence instead, so the window keeps
@@ -1307,27 +1332,7 @@ fn append_hop(buf: &mut Vec<f32>, mixed: &[f32], silence_frames: usize) {
         // swap L and R for the rest of the stream, so drop it defensively.
         buf.extend_from_slice(&mixed[..mixed.len() & !1]);
     }
-    let cap = RING_CAP * 2;
-    if buf.len() > cap {
-        // Even drain only — see push_frames.
-        let excess = buf.len() - cap;
-        let drop_n = ((excess + 1) & !1).min(buf.len());
-        buf.drain(..drop_n);
-    }
-}
-
-pub fn mix_rings(drained: &[Vec<f32>]) -> Vec<f32> {
-    let len = drained.iter().map(|d| d.len()).max().unwrap_or(0);
-    let mut out = vec![0.0f32; len];
-    for d in drained {
-        for (i, s) in d.iter().enumerate() {
-            out[i] += *s;
-        }
-    }
-    for s in out.iter_mut() {
-        *s = s.clamp(-1.0, 1.0);
-    }
-    out
+    trim_frames(buf, RING_CAP);
 }
 
 #[cfg(test)]

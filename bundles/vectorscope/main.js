@@ -4,10 +4,10 @@
 // Reads f.waveformL / f.waveformR, which the host added in 0.8.4. Bytes are
 // 0-255 centred at 128, the Web Audio getByteTimeDomainData convention.
 //
-// A mono source - which includes ANY per-app audio source, because per-app
-// capture is mixed before it reaches the host's ring - has left === right, so
-// the cloud collapses to a vertical line and correlation reads 1.00. That is
-// the correct display of a mono signal, not a failure.
+// A genuinely mono source has left === right, so the cloud collapses to a
+// vertical line and correlation reads 1.00. That is the correct display of a
+// mono signal, not a failure. (Per-app capture carried only mono before app
+// version 0.9.4; every source is true stereo now.)
 var CENTER = 128;
 var SCALE = 1 / 127;
 

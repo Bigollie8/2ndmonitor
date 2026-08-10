@@ -757,25 +757,13 @@ export default function App() {
         // window came from rather than wherever fullscreen left it.
         if (prev.max) await win.maximize();
       } else {
-        // Capture the OUTER rect for restore (0.8.7). The previous code
-        // captured innerPosition of the still-DECORATED window and later
-        // restored it as the outer position — so every F11 round trip crept
-        // the window down-right by the title bar + border. Outer-in,
-        // outer-out is symmetric.
+        // Read where the window IS before touching anything: the monitor
+        // pick works on the rect the user is looking at, and an aborted
+        // attempt (no monitor below) must leave no state behind — setting
+        // preFullscreenRef or unmaximizing before that bail would corrupt
+        // the next toggle into a bogus "restore".
         const pos = await win.outerPosition();
         const size = await win.outerSize();
-        const wasMax = await win.isMaximized();
-        preFullscreenRef.current = {
-          x: pos.x, y: pos.y,
-          w: size.width, h: size.height,
-          max: wasMax,
-        };
-        // Windows refuses to move or resize a MAXIMIZED window, so the
-        // converge loop below would spin against a wall (round 5: the 0.9.4
-        // report's pre-F11 outer rect was exactly a maximized frame). Drop
-        // out of maximized first; restore re-maximizes. The monitor pick
-        // still uses the maximized rect — that is where the user was looking.
-        if (wasMax) await win.unmaximize();
         // Pick the monitor under the WINDOW'S CENTER, not `currentMonitor()`
         // (round 4). When the window straddles two displays — common on the
         // multi-monitor setups this app targets — currentMonitor() may answer
@@ -792,6 +780,24 @@ export default function App() {
           && cy >= m.position.y && cy < m.position.y + m.size.height,
         ) ?? await currentMonitor();
         if (!monitor) { console.warn('F11: no monitor reported; ignoring'); return; }
+        // Windows refuses to move or resize a MAXIMIZED window, so the
+        // converge loop below would spin against a wall (round 5: the 0.9.4
+        // report's pre-F11 outer rect was exactly a maximized frame). Drop
+        // out of maximized first; restore re-maximizes.
+        const wasMax = await win.isMaximized();
+        if (wasMax) await win.unmaximize();
+        // Capture the restore rect AFTER unmaximizing: the un-maximized rect
+        // is the window's true restore-down geometry. Saving the maximized
+        // frame and re-applying it on exit would teach Windows a
+        // monitor-sized restore-down rect — permanently, every F11 from a
+        // maximized window. (Outer-in, outer-out stays symmetric — 0.8.7.)
+        const winPos = wasMax ? await win.outerPosition() : pos;
+        const winSize = wasMax ? await win.outerSize() : size;
+        preFullscreenRef.current = {
+          x: winPos.x, y: winPos.y,
+          w: winSize.width, h: winSize.height,
+          max: wasMax,
+        };
         await win.setDecorations(false);
         // An undecorated RESIZABLE window keeps invisible resize handles on
         // its edges — Windows hit-tests the top few pixels as non-client, so
@@ -831,14 +837,22 @@ export default function App() {
           settled = { x: p.x, y: p.y, w: s.width, h: s.height };
           converged = atTarget(settled, target);
           if (converged) break;
-          req = correctedRequest(req, settled, target);
           console.warn(
             `F11: settled at ${p.x},${p.y} ${s.width}x${s.height}, wanted `
-            + `${target.x},${target.y} ${target.w}x${target.h}; retrying as `
-            + `${req.x},${req.y} ${req.w}x${req.h} (pass ${attempt})`,
+            + `${target.x},${target.y} ${target.w}x${target.h} (pass ${attempt})`,
           );
+          // Correct only while another pass remains to send it — the
+          // diagnostic card's `request` line must show what was actually
+          // asked of Windows, not a correction that never went out.
+          if (attempt < 5) req = correctedRequest(req, settled, target);
         }
         if (!converged) {
+          // Park on the plain target, best-effort: the last correction was
+          // computed from measurements this loop just proved it can't trust,
+          // and an undecorated, always-on-top window stranded off-screen has
+          // no title bar to drag it back by. The card keeps the evidence.
+          await win.setPosition(new PhysicalPosition(target.x, target.y));
+          await win.setSize(new PhysicalSize(target.w, target.h));
           // Surface the evidence in the UI — the console warn shipped in
           // 0.8.7/0.8.8 and no report ever came back with the numbers.
           const monLine = (m: { name: string | null; position: { x: number; y: number }; size: { width: number; height: number }; scaleFactor: number }) =>

@@ -21,14 +21,25 @@ export function atTarget(settled: Rect, target: Rect): boolean {
     && settled.w === target.w && settled.h === target.h;
 }
 
+/** How far a request may ever stray from the target, per axis. Invisible
+ *  window frames are a few pixels, a couple dozen at the outside — while a
+ *  measurement that raced a restore animation can miss by an entire monitor.
+ *  Feeding THAT back unbounded would park an undecorated, always-on-top
+ *  window somewhere no title bar can rescue it from, so corrections saturate
+ *  here and a wild read costs one pass instead of the window. */
+export const MAX_CORRECTION = 64;
+
 /** The next request, given what we asked for last time and where the window
  *  actually settled: subtract the miss from the last request (not from the
- *  target — corrections must accumulate when the OS honours them partially). */
+ *  target — corrections must accumulate when the OS honours them partially),
+ *  saturating at MAX_CORRECTION from the target on every axis. */
 export function correctedRequest(lastRequest: Rect, settled: Rect, target: Rect): Rect {
+  const near = (v: number, t: number) =>
+    Math.min(t + MAX_CORRECTION, Math.max(t - MAX_CORRECTION, v));
   return {
-    x: lastRequest.x - (settled.x - target.x),
-    y: lastRequest.y - (settled.y - target.y),
-    w: lastRequest.w - (settled.w - target.w),
-    h: lastRequest.h - (settled.h - target.h),
+    x: near(lastRequest.x - (settled.x - target.x), target.x),
+    y: near(lastRequest.y - (settled.y - target.y), target.y),
+    w: near(lastRequest.w - (settled.w - target.w), target.w),
+    h: near(lastRequest.h - (settled.h - target.h), target.h),
   };
 }

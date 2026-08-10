@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { atTarget, correctedRequest, type Rect } from './f11';
+import { atTarget, correctedRequest, MAX_CORRECTION, type Rect } from './f11';
 
 // The reporter's setup (0.9.4): single 2560x1440 monitor at 0,0, scale 1.
 // Requesting 0,0 landed the client area at 8,1 — the invisible frame of an
@@ -54,6 +54,28 @@ test('a size miss is corrected too, not only position', () => {
   const settled: Rect = { x: 0, y: 0, w: 2576, h: 1479 };
   const next = correctedRequest(TARGET, settled, TARGET);
   assert.deepEqual(next, { x: 0, y: 0, w: 2544, h: 1401 });
+});
+
+test('a wild transient measurement cannot fling the request off-screen', () => {
+  // The read raced a restore animation: settled reports the old windowed
+  // rect, nowhere near the monitor. An unbounded correction would request
+  // -1200,-700 — parking an undecorated, always-on-top window somewhere
+  // unreachable. Corrections stay within a frame-sized bound of the target.
+  const settled: Rect = { x: 1200, y: 700, w: 900, h: 600 };
+  const next = correctedRequest(TARGET, settled, TARGET);
+  assert.deepEqual(next, {
+    x: -MAX_CORRECTION, y: -MAX_CORRECTION,
+    w: 2560 + MAX_CORRECTION, h: 1440 + MAX_CORRECTION,
+  });
+});
+
+test('the bound holds across passes — accumulation cannot creep past it', () => {
+  const settle = (req: Rect): Rect => ({ x: req.x + 100, y: req.y, w: req.w, h: req.h });
+  let req = TARGET;
+  for (let i = 0; i < 5; i++) {
+    req = correctedRequest(req, settle(req), TARGET);
+    assert.ok(Math.abs(req.x - TARGET.x) <= MAX_CORRECTION, `pass ${i}: ${req.x}`);
+  }
 });
 
 test('corrections accumulate across passes rather than resetting to the target', () => {
