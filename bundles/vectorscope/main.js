@@ -7,7 +7,7 @@
 // A genuinely mono source has left === right, so the cloud collapses to a
 // vertical line and correlation reads 1.00. That is the correct display of a
 // mono signal, not a failure. (Per-app capture carried only mono before app
-// version 0.9.4; every source is true stereo now.)
+// version 0.9.3; every source is true stereo now.)
 var CENTER = 128;
 var SCALE = 1 / 127;
 

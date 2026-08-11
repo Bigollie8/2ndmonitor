@@ -10,7 +10,7 @@ Needs both channels, so it requires 0.8.4 or newer.
 A mono source has left === right, so the cloud collapses to a vertical line
 and correlation reads 1.00. That is the correct display of a mono signal, not
 a failure. The meter says "mono source" when it detects this, so the vertical
-line is never mistaken for a bug. (Before app version 0.9.4, per-app capture
+line is never mistaken for a bug. (Before app version 0.9.3, per-app capture
 was mixed to mono before it reached the host and always drew this line; every
 source carries a true stereo image now.)
 

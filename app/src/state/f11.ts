@@ -4,7 +4,7 @@
  *  settled, and — when they disagreed — asked for the SAME rect again. On
  *  Windows an undecorated window can keep an invisible DWM/resize frame, so a
  *  request for 0,0 lands the client area at 8,1 every single pass and the
- *  loop can never converge (the 0.9.4 report: settled 8,1 2560x1440 for
+ *  loop can never converge (the 0.9.3 report: settled 8,1 2560x1440 for
  *  target 0,0 2560x1440, five identical passes, then the diagnostic card).
  *
  *  The fix is a feedback loop: each pass corrects the NEXT request by the

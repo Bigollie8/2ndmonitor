@@ -292,7 +292,7 @@ export interface FrameMessage {
   waveform: Uint8Array;
   /** Per-channel time domain (0.8.4). Equal for a genuinely mono source, so
    *  a vectorscope drawn from these correctly shows a vertical line there.
-   *  Since 0.9.4 per-app capture carries true stereo too (the backends used
+   *  Since 0.9.3 per-app capture carries true stereo too (the backends used
    *  to pre-mix to mono before the ring; now every path keeps interleaved
    *  L/R). Absent (0.8.7) unless the manifest declared "stereo": true and
    *  live stereo frames have arrived; fall back to `f.waveformL || f.waveform`. */

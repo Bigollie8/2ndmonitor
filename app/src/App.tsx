@@ -781,7 +781,7 @@ export default function App() {
         ) ?? await currentMonitor();
         if (!monitor) { console.warn('F11: no monitor reported; ignoring'); return; }
         // Windows refuses to move or resize a MAXIMIZED window, so the
-        // converge loop below would spin against a wall (round 5: the 0.9.4
+        // converge loop below would spin against a wall (round 5: the 0.9.3
         // report's pre-F11 outer rect was exactly a maximized frame). Drop
         // out of maximized first; restore re-maximizes.
         const wasMax = await win.isMaximized();
@@ -823,7 +823,7 @@ export default function App() {
         let converged = false;
         let settled = { x: 0, y: 0, w: 0, h: 0 };
         // Ask, measure, CORRECT (round 5). An undecorated window can keep an
-        // invisible frame that shifts the client area (+8,+1 in the 0.9.4
+        // invisible frame that shifts the client area (+8,+1 in the 0.9.3
         // report), so re-requesting the same rect could never converge. Each
         // miss is fed back into the next request — state/f11.ts holds the
         // math and its tests.

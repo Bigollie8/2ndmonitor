@@ -6,7 +6,7 @@
 //! made readable by wrapping it in a *private* aggregate device that we install
 //! an IOProc on. The IOProc pushes interleaved L/R f32 into the same ring
 //! buffer the cpal mix backend writes (two samples per frame, mono derived at
-//! drain — 0.9.4), so everything downstream — FFT, the 64 log bands, the
+//! drain — 0.9.3), so everything downstream — FFT, the 64 log bands, the
 //! `audio:spectrum` event, every visualizer — is identical regardless of
 //! which backend is live.
 //!
@@ -464,7 +464,7 @@ const MAX_PLANES: usize = 8;
 /// `audio.rs`: the ring holds L/R pairs, `ring_cap` counts FRAMES, and mono
 /// is derived at drain. This used to average every frame down to one sample
 /// — destroying the stereo field inside the capture path, which is why
-/// per-app sources drew a vertical line on the vectorscope (the 0.9.4
+/// per-app sources drew a vertical line on the vectorscope (the 0.9.3
 /// report's Windows sibling had the identical bug). A trailing partial frame
 /// is dropped rather than misaligned.
 ///
@@ -1224,7 +1224,7 @@ mod tests {
     /// on CI.
     #[test]
     fn stereo_reaches_the_ring_interleaved() {
-        // One interleaved stereo plane passes through unchanged — the 0.9.4
+        // One interleaved stereo plane passes through unchanged — the 0.9.3
         // fix: this used to collapse each frame to its mean, so vectorscope
         // and console saw L == R for every per-app source.
         let samples = [1.0f32, 0.0, 0.5, -0.5, -1.0, 1.0];

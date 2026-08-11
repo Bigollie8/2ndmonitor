@@ -20,7 +20,7 @@ export interface WaveformState {
   /** Newest 1024 mono time-domain bytes, 0–255 centered at 128. */
   mono: Uint8Array;
   /** The same window per channel. A genuinely mono source has left === right;
-   *  since 0.9.4 per-app capture carries true stereo like the default mix. */
+   *  since 0.9.3 per-app capture carries true stereo like the default mix. */
   left: Uint8Array;
   right: Uint8Array;
   /** True once at least one live STEREO frame has arrived. Consumers use this

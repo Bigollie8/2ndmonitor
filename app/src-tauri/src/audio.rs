@@ -1149,7 +1149,7 @@ fn process_loop<R: Runtime>(
                 .map(|r| std::mem::take(&mut *r.lock()))
                 .collect();
             let mixed = mix_rings(&drained);
-            // Per-app rings carry INTERLEAVED L/R since 0.9.4 — the backends
+            // Per-app rings carry INTERLEAVED L/R since 0.9.3 — the backends
             // used to pre-mix to mono inside the capture path, which is why a
             // per-app source drew a vertical line on the vectorscope (L == R
             // however stereo the audio was). The index-wise sum in mix_rings
@@ -1285,7 +1285,7 @@ fn log_band_edges(bands: usize, max_bin: usize, sample_rate: f32, fmin: f32, fma
 
 /// Sample-wise sum of the per-app captures for one FFT hop. Each input Vec is
 /// everything one capture pushed since the last hop — interleaved L/R pairs
-/// since 0.9.4, whole frames only, so the index-wise sum below is a
+/// since 0.9.3, whole frames only, so the index-wise sum below is a
 /// channel-wise sum (L at even indices in every ring, R at odd) — all at
 /// one common rate — `audio_loopback::CAPTURE_SAMPLE_RATE` (48 kHz) on
 /// Windows, where every process-loopback client is pinned to it; on macOS
@@ -1319,7 +1319,7 @@ pub fn mix_rings(drained: &[Vec<f32>]) -> Vec<f32> {
 }
 
 /// Append one hop of the apps-mode mix to the FFT ring. `mixed` is already
-/// interleaved L/R (the per-app rings carry stereo since 0.9.4); an empty hop
+/// interleaved L/R (the per-app rings carry stereo since 0.9.3); an empty hop
 /// appends `silence_frames` frames of silence instead, so the window keeps
 /// sliding and the spectrum decays to zero rather than replaying the last
 /// real window forever.
@@ -1385,7 +1385,7 @@ mod tests {
         assert_eq!(mix_rings(&[vec![], vec![]]), Vec::<f32>::new());
     }
 
-    // -- interleaved stereo through the apps-mode hop (0.9.4) --------------
+    // -- interleaved stereo through the apps-mode hop (0.9.3) --------------
     // The per-app rings carry interleaved L/R now, so the index-wise sum in
     // mix_rings IS a channel-wise sum: L samples sit at even indices in every
     // ring, R at odd, and front-aligned zero padding cannot shift that.
@@ -1410,7 +1410,7 @@ mod tests {
 
     #[test]
     fn append_hop_preserves_a_distinct_left_and_right() {
-        // The 0.9.4 bug in one line: this used to duplicate a mono mix into
+        // The 0.9.3 bug in one line: this used to duplicate a mono mix into
         // both channels, so a stereo per-app source could never reach the
         // vectorscope as stereo.
         let mut buf = Vec::new();

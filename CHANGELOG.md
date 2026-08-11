@@ -5,6 +5,8 @@ All notable changes to 2ndMonitor are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.9.3] - 2026-08-10
+
 ### Fixed
 - **F11 fullscreen no longer leaves a thin uncovered strip.** On some
   setups the window settled a few pixels off its monitor (8px left / 1px

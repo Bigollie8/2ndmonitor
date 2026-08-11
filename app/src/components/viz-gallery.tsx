@@ -271,7 +271,7 @@ function GalleryCard({
             fontFamily: '"JetBrains Mono", ui-monospace, monospace',
           }}>● ACTIVE</div>
         )}
-        {/* The 0.9.4 report: nobody realised a card click applies — the only
+        {/* The 0.9.3 report: nobody realised a card click applies — the only
             visible "Apply" lived inside the fullscreen preview. Same action
             as the card click, surfaced as a labelled button. Always rendered
             (the card div itself is not focusable, so this is also the

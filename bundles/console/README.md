@@ -16,5 +16,5 @@ Crest factor (peak minus RMS) is the dynamics readout - a heavily compressed
 master sits near 6 dB, an untouched mix nearer 15.
 
 A genuinely mono source tracks both meters together and reads 1.00
-correlation. (Per-app capture carried only mono before app version 0.9.4;
+correlation. (Per-app capture carried only mono before app version 0.9.3;
 every source is true stereo now.)

@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { atTarget, correctedRequest, MAX_CORRECTION, type Rect } from './f11';
 
-// The reporter's setup (0.9.4): single 2560x1440 monitor at 0,0, scale 1.
+// The reporter's setup (0.9.3): single 2560x1440 monitor at 0,0, scale 1.
 // Requesting 0,0 landed the client area at 8,1 — the invisible frame of an
 // undecorated Windows window — and the old loop re-requested 0,0 forever.
 const TARGET: Rect = { x: 0, y: 0, w: 2560, h: 1440 };

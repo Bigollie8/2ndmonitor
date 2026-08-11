@@ -115,7 +115,7 @@ pub fn start(
 // derived at drain. This backend used to average every frame down to one
 // sample here — inside the capture path, before anything downstream could
 // see it — which is why the vectorscope drew a vertical line (L == R) for
-// every per-app source, however stereo (the 0.9.4 report).
+// every per-app source, however stereo (the 0.9.3 report).
 
 #[cfg(any(target_os = "windows", test))]
 fn push_stereo(data: &[f32], channels: usize, buffer: &Arc<Mutex<Vec<f32>>>, ring_cap: usize) {
@@ -456,7 +456,7 @@ mod tests {
         Arc::new(Mutex::new(Vec::new()))
     }
 
-    // The 0.9.4 stereo bug: this backend averaged every frame to mono before
+    // The 0.9.3 stereo bug: this backend averaged every frame to mono before
     // the ring, so the vectorscope saw L == R for every per-app source. The
     // ring now carries the same interleaved contract as audio.rs push_frames.
 
