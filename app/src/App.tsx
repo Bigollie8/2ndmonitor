@@ -25,6 +25,7 @@ import {
 } from './state/layout';
 import { seedStarterProfiles, PROFILE_DEFAULT_COLORS } from './state/starterProfiles';
 import { shouldPinTopBar } from './state/topBar';
+import { atTarget, correctedRequest } from './state/f11';
 import { redactLocation } from './state/streamer';
 import { isBundleTile, bundleIdOf } from './tiles/tileRegistry';
 import { useTileCatalog } from './tiles/useTileCatalog';
@@ -712,7 +713,7 @@ export default function App() {
   }, [applyGlassNow]);
 
   /** Remembers the windowed geometry so exiting fullscreen restores it. */
-  const preFullscreenRef = useRef<{ x: number; y: number; w: number; h: number } | null>(null);
+  const preFullscreenRef = useRef<{ x: number; y: number; w: number; h: number; max: boolean } | null>(null);
 
   /** Set when the F11 converge loop gives up: a human-readable diagnostic the
    *  on-screen card shows with a Copy button. Round 4 (0.9.1) exists because
@@ -752,18 +753,17 @@ export default function App() {
         await win.setDecorations(true);
         await win.setSize(new PhysicalSize(prev.w, prev.h));
         await win.setPosition(new PhysicalPosition(prev.x, prev.y));
+        // Position first, so a re-maximize happens on the monitor the
+        // window came from rather than wherever fullscreen left it.
+        if (prev.max) await win.maximize();
       } else {
-        // Capture the OUTER rect for restore (0.8.7). The previous code
-        // captured innerPosition of the still-DECORATED window and later
-        // restored it as the outer position — so every F11 round trip crept
-        // the window down-right by the title bar + border. Outer-in,
-        // outer-out is symmetric.
+        // Read where the window IS before touching anything: the monitor
+        // pick works on the rect the user is looking at, and an aborted
+        // attempt (no monitor below) must leave no state behind — setting
+        // preFullscreenRef or unmaximizing before that bail would corrupt
+        // the next toggle into a bogus "restore".
         const pos = await win.outerPosition();
         const size = await win.outerSize();
-        preFullscreenRef.current = {
-          x: pos.x, y: pos.y,
-          w: size.width, h: size.height,
-        };
         // Pick the monitor under the WINDOW'S CENTER, not `currentMonitor()`
         // (round 4). When the window straddles two displays — common on the
         // multi-monitor setups this app targets — currentMonitor() may answer
@@ -780,6 +780,24 @@ export default function App() {
           && cy >= m.position.y && cy < m.position.y + m.size.height,
         ) ?? await currentMonitor();
         if (!monitor) { console.warn('F11: no monitor reported; ignoring'); return; }
+        // Windows refuses to move or resize a MAXIMIZED window, so the
+        // converge loop below would spin against a wall (round 5: the 0.9.3
+        // report's pre-F11 outer rect was exactly a maximized frame). Drop
+        // out of maximized first; restore re-maximizes.
+        const wasMax = await win.isMaximized();
+        if (wasMax) await win.unmaximize();
+        // Capture the restore rect AFTER unmaximizing: the un-maximized rect
+        // is the window's true restore-down geometry. Saving the maximized
+        // frame and re-applying it on exit would teach Windows a
+        // monitor-sized restore-down rect — permanently, every F11 from a
+        // maximized window. (Outer-in, outer-out stays symmetric — 0.8.7.)
+        const winPos = wasMax ? await win.outerPosition() : pos;
+        const winSize = wasMax ? await win.outerSize() : size;
+        preFullscreenRef.current = {
+          x: winPos.x, y: winPos.y,
+          w: winSize.width, h: winSize.height,
+          max: wasMax,
+        };
         await win.setDecorations(false);
         // An undecorated RESIZABLE window keeps invisible resize handles on
         // its edges — Windows hit-tests the top few pixels as non-client, so
@@ -804,22 +822,37 @@ export default function App() {
         // loop sometimes exhausted while Windows was still moving the window.
         let converged = false;
         let settled = { x: 0, y: 0, w: 0, h: 0 };
+        // Ask, measure, CORRECT (round 5). An undecorated window can keep an
+        // invisible frame that shifts the client area (+8,+1 in the 0.9.3
+        // report), so re-requesting the same rect could never converge. Each
+        // miss is fed back into the next request — state/f11.ts holds the
+        // math and its tests.
+        let req = { ...target };
         for (let attempt = 1; attempt <= 5; attempt++) {
-          await win.setPosition(new PhysicalPosition(target.x, target.y));
-          await win.setSize(new PhysicalSize(target.w, target.h));
+          await win.setPosition(new PhysicalPosition(req.x, req.y));
+          await win.setSize(new PhysicalSize(req.w, req.h));
           await new Promise((r) => setTimeout(r, 120));
           const p = await win.innerPosition();
           const s = await win.innerSize();
           settled = { x: p.x, y: p.y, w: s.width, h: s.height };
-          converged = p.x === target.x && p.y === target.y
-            && s.width === target.w && s.height === target.h;
+          converged = atTarget(settled, target);
           if (converged) break;
           console.warn(
             `F11: settled at ${p.x},${p.y} ${s.width}x${s.height}, wanted `
             + `${target.x},${target.y} ${target.w}x${target.h} (pass ${attempt})`,
           );
+          // Correct only while another pass remains to send it — the
+          // diagnostic card's `request` line must show what was actually
+          // asked of Windows, not a correction that never went out.
+          if (attempt < 5) req = correctedRequest(req, settled, target);
         }
         if (!converged) {
+          // Park on the plain target, best-effort: the last correction was
+          // computed from measurements this loop just proved it can't trust,
+          // and an undecorated, always-on-top window stranded off-screen has
+          // no title bar to drag it back by. The card keeps the evidence.
+          await win.setPosition(new PhysicalPosition(target.x, target.y));
+          await win.setSize(new PhysicalSize(target.w, target.h));
           // Surface the evidence in the UI — the console warn shipped in
           // 0.8.7/0.8.8 and no report ever came back with the numbers.
           const monLine = (m: { name: string | null; position: { x: number; y: number }; size: { width: number; height: number }; scaleFactor: number }) =>
@@ -827,6 +860,7 @@ export default function App() {
           setF11Report([
             `target  : ${target.x},${target.y} ${target.w}x${target.h}`,
             `settled : ${settled.x},${settled.y} ${settled.w}x${settled.h}`,
+            `request : ${req.x},${req.y} ${req.w}x${req.h}`,
             `window  : ${pos.x},${pos.y} ${size.width}x${size.height} (center ${cx},${cy})`,
             `monitor : ${monLine(monitor)}`,
             ...monitors.map((m, i) => `display${i}: ${monLine(m)}`),

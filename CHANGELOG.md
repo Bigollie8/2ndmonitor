@@ -5,6 +5,28 @@ All notable changes to 2ndMonitor are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.9.3] - 2026-08-10
+
+### Fixed
+- **F11 fullscreen no longer leaves a thin uncovered strip.** On some
+  setups the window settled a few pixels off its monitor (8px left / 1px
+  top in the report that cracked it) because Windows keeps an invisible
+  frame on undecorated windows. The fullscreen loop now measures where the
+  window actually landed and corrects the next attempt, so the picture
+  truly covers the monitor edge to edge — including monitors left of the
+  primary. Starting fullscreen from a maximized window also works now, and
+  leaving it restores the maximized state.
+- **Stereo visualizers get real stereo from per-app audio.** Capturing a
+  specific app (or several) used to flatten the sound to mono before the
+  visualizers saw it, so the vectorscope and console styles drew a single
+  vertical line. Per-app capture now carries true left/right all the way
+  through, on Windows and macOS — a genuinely mono source still reads as
+  the centered line it should be.
+- **Applying a visualizer no longer seems to require the fullscreen
+  preview.** Clicking a gallery card has always applied that style, but
+  nothing said so. Cards now show an Apply button on hover, and the gallery
+  header says it outright.
+
 ## [0.9.2] - 2026-08-06
 
 ### Added

@@ -1,8 +1,8 @@
 //! Per-app capture via WASAPI process loopback. Activated against the virtual
 //! device VIRTUAL_AUDIO_DEVICE_PROCESS_LOOPBACK with an explicit format —
 //! this activation path does NOT support GetMixFormat, so we pick the format
-//! and Windows converts. Pushes mono into the same ring buffer the cpal mix
-//! backend writes, so everything downstream is identical.
+//! and Windows converts. Pushes interleaved L/R into a ring with the same
+//! contract as the cpal mix backend's, so everything downstream is identical.
 //!
 //! Requires Windows 10 build 20348+ (Windows 11 in practice). On older builds
 //! activation fails and the caller falls back to the mix — we never sniff the
@@ -109,9 +109,42 @@ pub fn start(
     Err("process loopback is Windows-only".into())
 }
 
+// ─── Ring-buffer writes ─────────────────────────────────────────────────────
+// The same interleaved contract as `push_frames` in audio.rs: the ring holds
+// L/R pairs ([l0, r0, l1, r1, ...]), `ring_cap` counts FRAMES, and mono is
+// derived at drain. This backend used to average every frame down to one
+// sample here — inside the capture path, before anything downstream could
+// see it — which is why the vectorscope drew a vertical line (L == R) for
+// every per-app source, however stereo (the 0.9.3 report).
+
+#[cfg(any(target_os = "windows", test))]
+fn push_stereo(data: &[f32], channels: usize, buffer: &Arc<Mutex<Vec<f32>>>, ring_cap: usize) {
+    if channels == 0 {
+        return; // a stream reporting no channels never completes a frame
+    }
+    let mut buf = buffer.lock();
+    for frame in data.chunks_exact(channels) {
+        // Mono duplicates into both; anything wider contributes FL/FR — the
+        // one shared implementation of that pick.
+        let (l, r) = crate::audio::frame_lr(&frame[..channels.min(2)]);
+        buf.push(l);
+        buf.push(r);
+    }
+    crate::audio::trim_frames(&mut buf, ring_cap);
+}
+
+/// AUDCLNT_BUFFERFLAGS_SILENT means the packet's memory is undefined, not
+/// zeroed — we must synthesize the silence ourselves or the FFT sees junk.
+#[cfg(any(target_os = "windows", test))]
+fn push_silence(frames: usize, buffer: &Arc<Mutex<Vec<f32>>>, ring_cap: usize) {
+    let mut buf = buffer.lock();
+    buf.extend(std::iter::repeat(0.0f32).take(frames * 2));
+    crate::audio::trim_frames(&mut buf, ring_cap);
+}
+
 #[cfg(target_os = "windows")]
 mod winimpl {
-    use super::{CAPTURE_CHANNELS, CAPTURE_SAMPLE_RATE};
+    use super::{push_silence, push_stereo, CAPTURE_CHANNELS, CAPTURE_SAMPLE_RATE};
     use parking_lot::{Condvar, Mutex};
     use std::sync::{
         atomic::{AtomicBool, Ordering},
@@ -211,41 +244,6 @@ mod winimpl {
             *lock.lock() = true;
             cv.notify_all();
             Ok(())
-        }
-    }
-
-    // ---------------------------------------------------------------------
-    // Ring-buffer writes — byte-for-byte the same contract as `push_mono`
-    // in audio.rs, so downstream can't tell which backend filled the buffer.
-    // ---------------------------------------------------------------------
-
-    fn push_mono(data: &[f32], channels: usize, buffer: &Arc<Mutex<Vec<f32>>>, ring_cap: usize) {
-        let mut buf = buffer.lock();
-        let mut pending: f32 = 0.0;
-        let mut count: usize = 0;
-        for s in data {
-            pending += *s;
-            count += 1;
-            if count == channels {
-                buf.push(pending / channels as f32);
-                pending = 0.0;
-                count = 0;
-            }
-        }
-        if buf.len() > ring_cap {
-            let drop = buf.len() - ring_cap;
-            buf.drain(..drop);
-        }
-    }
-
-    /// AUDCLNT_BUFFERFLAGS_SILENT means the packet's memory is undefined, not
-    /// zeroed — we must synthesize the silence ourselves or the FFT sees junk.
-    fn push_silence(frames: usize, buffer: &Arc<Mutex<Vec<f32>>>, ring_cap: usize) {
-        let mut buf = buffer.lock();
-        buf.extend(std::iter::repeat(0.0f32).take(frames));
-        if buf.len() > ring_cap {
-            let drop = buf.len() - ring_cap;
-            buf.drain(..drop);
         }
     }
 
@@ -360,7 +358,7 @@ mod winimpl {
                                 data as *const f32,
                                 frames as usize * channels,
                             );
-                            push_mono(samples, channels, &buffer, ring_cap);
+                            push_stereo(samples, channels, &buffer, ring_cap);
                         }
                     }
                     capture
@@ -449,3 +447,67 @@ mod winimpl {
 }
 
 
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ring() -> Arc<Mutex<Vec<f32>>> {
+        Arc::new(Mutex::new(Vec::new()))
+    }
+
+    // The 0.9.3 stereo bug: this backend averaged every frame to mono before
+    // the ring, so the vectorscope saw L == R for every per-app source. The
+    // ring now carries the same interleaved contract as audio.rs push_frames.
+
+    #[test]
+    fn stereo_input_keeps_distinct_left_and_right() {
+        let buf = ring();
+        push_stereo(&[0.5, -0.5, 0.25, -0.25], 2, &buf, 16);
+        assert_eq!(*buf.lock(), vec![0.5, -0.5, 0.25, -0.25]);
+    }
+
+    #[test]
+    fn mono_input_duplicates_into_both_channels() {
+        let buf = ring();
+        push_stereo(&[0.3, -0.7], 1, &buf, 16);
+        assert_eq!(*buf.lock(), vec![0.3, 0.3, -0.7, -0.7]);
+    }
+
+    #[test]
+    fn surround_uses_the_first_two_channels() {
+        let buf = ring();
+        push_stereo(&[1.0, 2.0, 3.0, 4.0, 5.0, 6.0], 6, &buf, 16);
+        assert_eq!(*buf.lock(), vec![1.0, 2.0]);
+    }
+
+    #[test]
+    fn a_torn_trailing_frame_is_dropped_not_misaligned() {
+        let buf = ring();
+        push_stereo(&[0.1, 0.2, 0.9], 2, &buf, 16);
+        assert_eq!(*buf.lock(), vec![0.1, 0.2]);
+    }
+
+    #[test]
+    fn cap_counts_frames_and_trims_whole_frames_from_the_front() {
+        let buf = ring();
+        // Cap of 2 frames = 4 samples; 3 frames pushed → oldest frame gone,
+        // and the drain is even so L/R stay aligned.
+        push_stereo(&[0.1, -0.1, 0.2, -0.2, 0.3, -0.3], 2, &buf, 2);
+        assert_eq!(*buf.lock(), vec![0.2, -0.2, 0.3, -0.3]);
+    }
+
+    #[test]
+    fn silence_pushes_whole_stereo_frames() {
+        let buf = ring();
+        push_silence(3, &buf, 16);
+        assert_eq!(*buf.lock(), vec![0.0; 6]);
+    }
+
+    #[test]
+    fn zero_channels_pushes_nothing() {
+        let buf = ring();
+        push_stereo(&[0.5], 0, &buf, 16);
+        assert!(buf.lock().is_empty());
+    }
+}

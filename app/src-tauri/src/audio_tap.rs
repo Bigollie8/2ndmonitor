@@ -4,10 +4,11 @@
 //! A tap is described by an Objective-C `CATapDescription` (macOS 14.2+),
 //! turned into an `AudioObjectID` by `AudioHardwareCreateProcessTap`, and then
 //! made readable by wrapping it in a *private* aggregate device that we install
-//! an IOProc on. The IOProc downmixes to mono f32 and pushes into the same ring
-//! buffer the cpal mix backend writes, so everything downstream — FFT, the 64
-//! log bands, the `audio:spectrum` event, every visualizer — is identical
-//! regardless of which backend is live.
+//! an IOProc on. The IOProc pushes interleaved L/R f32 into the same ring
+//! buffer the cpal mix backend writes (two samples per frame, mono derived at
+//! drain — 0.9.3), so everything downstream — FFT, the 64 log bands, the
+//! `audio:spectrum` event, every visualizer — is identical regardless of
+//! which backend is live.
 //!
 //! Structural differences from the Windows sibling, and why:
 //!
@@ -459,16 +460,21 @@ pub fn start(
 /// allocates. Anything beyond it is ignored rather than mishandled.
 const MAX_PLANES: usize = 8;
 
-/// Mono downmix + ring push, byte-for-byte the same contract as `push_mono` in
-/// `audio.rs`: average the channels of each frame, append, and drain from the
-/// front once the buffer is longer than the cap. A trailing partial frame is
-/// dropped, exactly as `push_mono`'s `count == channels` gate drops it.
+/// Stereo ring push, the same interleaved contract as `push_frames` in
+/// `audio.rs`: the ring holds L/R pairs, `ring_cap` counts FRAMES, and mono
+/// is derived at drain. This used to average every frame down to one sample
+/// — destroying the stereo field inside the capture path, which is why
+/// per-app sources drew a vertical line on the vectorscope (the 0.9.3
+/// report's Windows sibling had the identical bug). A trailing partial frame
+/// is dropped rather than misaligned.
 ///
 /// `planes` is `(samples, channels_in_that_plane)`. One plane with N channels
-/// is the interleaved case and reduces to `push_mono` term for term; N planes
-/// of one channel each is the non-interleaved case; the general loop covers
-/// both without the callback having to branch on layout.
-fn push_mono(planes: &[(&[f32], usize)], buffer: &Arc<Mutex<Vec<f32>>>, ring_cap: usize) {
+/// is the interleaved case (FL, FR first, by interleave convention); N planes
+/// of one channel each is the non-interleaved case, where plane order gives
+/// L then R; the general loop covers both without the callback having to
+/// branch on layout. A single total channel duplicates into both, the honest
+/// display for mono.
+fn push_stereo(planes: &[(&[f32], usize)], buffer: &Arc<Mutex<Vec<f32>>>, ring_cap: usize) {
     let total_channels: usize = planes.iter().map(|(_, ch)| *ch).sum();
     if total_channels == 0 {
         return;
@@ -484,19 +490,27 @@ fn push_mono(planes: &[(&[f32], usize)], buffer: &Arc<Mutex<Vec<f32>>>, ring_cap
 
     let mut buf = buffer.lock();
     for f in 0..frames {
-        let mut pending = 0.0f32;
-        for (samples, ch) in planes {
+        // The first two channels of this frame, in plane order; the L/R pick
+        // itself is audio.rs `frame_lr`, the one shared implementation.
+        let mut first_two = [0.0f32; 2];
+        let mut c = 0usize;
+        'frame: for (samples, ch) in planes {
             let base = f * ch;
             for k in 0..*ch {
-                pending += samples[base + k];
+                first_two[c] = samples[base + k];
+                c += 1;
+                if c == 2 {
+                    break 'frame;
+                }
             }
         }
-        buf.push(pending / total_channels as f32);
+        let (l, r) = crate::audio::frame_lr(&first_two[..c]);
+        buf.push(l);
+        buf.push(r);
     }
-    if buf.len() > ring_cap {
-        let drop = buf.len() - ring_cap;
-        buf.drain(..drop);
-    }
+    // `ring_cap` counts frames; the shared trim drains an even sample count
+    // so L and R can never swap.
+    crate::audio::trim_frames(&mut buf, ring_cap);
 }
 
 /// Zero every buffer in an output `AudioBufferList`. Unlike the input path this
@@ -579,7 +593,7 @@ unsafe extern "C" fn io_proc(
         count += 1;
     }
     if count > 0 {
-        push_mono(&planes[..count], &shared.buffer, shared.ring_cap);
+        push_stereo(&planes[..count], &shared.buffer, shared.ring_cap);
     }
     kAudioHardwareNoError as i32
 }
@@ -1203,39 +1217,54 @@ fn status_text(status: i32) -> String {
 mod tests {
     use super::*;
 
-    /// Guards the one thing every backend must agree on. `audio.rs`'s cpal
-    /// `push_mono` averages a frame's channels, appends, and drains from the
-    /// front over the cap; this reimplements it for `AudioBufferList` layouts,
-    /// so it has to agree term for term. Unlike the tone test below, this runs
+    /// Guards the one thing every backend must agree on: the ring carries
+    /// interleaved L/R frames (`audio.rs` `push_frames` contract, `ring_cap`
+    /// in frames). This reimplements that for `AudioBufferList` layouts, so
+    /// it has to agree term for term. Unlike the tone test below, this runs
     /// on CI.
     #[test]
-    fn downmix_matches_the_cpal_backend() {
-        // One interleaved stereo plane: each frame is the mean of its pair.
-        let samples = [1.0f32, 0.0, 0.5, 0.5, -1.0, 1.0];
+    fn stereo_reaches_the_ring_interleaved() {
+        // One interleaved stereo plane passes through unchanged — the 0.9.3
+        // fix: this used to collapse each frame to its mean, so vectorscope
+        // and console saw L == R for every per-app source.
+        let samples = [1.0f32, 0.0, 0.5, -0.5, -1.0, 1.0];
         let buffer = Arc::new(Mutex::new(Vec::new()));
-        push_mono(&[(&samples[..], 2)], &buffer, 64);
-        assert_eq!(*buffer.lock(), vec![0.5, 0.5, 0.0]);
+        push_stereo(&[(&samples[..], 2)], &buffer, 64);
+        assert_eq!(*buffer.lock(), vec![1.0, 0.0, 0.5, -0.5, -1.0, 1.0]);
 
-        // Two mono planes (non-interleaved) must give the same answer as the
-        // interleaved form of the same audio.
+        // Two mono planes (non-interleaved) are the same audio in another
+        // layout: plane 0 is L, plane 1 is R.
         let left = [1.0f32, 0.5, -1.0];
-        let right = [0.0f32, 0.5, 1.0];
+        let right = [0.0f32, -0.5, 1.0];
         let buffer = Arc::new(Mutex::new(Vec::new()));
-        push_mono(&[(&left[..], 1), (&right[..], 1)], &buffer, 64);
-        assert_eq!(*buffer.lock(), vec![0.5, 0.5, 0.0]);
+        push_stereo(&[(&left[..], 1), (&right[..], 1)], &buffer, 64);
+        assert_eq!(*buffer.lock(), vec![1.0, 0.0, 0.5, -0.5, -1.0, 1.0]);
 
-        // A trailing partial frame is dropped, as `push_mono`'s
-        // `count == channels` gate drops it.
-        let odd = [1.0f32, 1.0, 1.0];
+        // A single mono plane duplicates into both channels — perfectly
+        // correlated is the honest display for mono, not a bug.
+        let mono = [0.25f32, -0.75];
         let buffer = Arc::new(Mutex::new(Vec::new()));
-        push_mono(&[(&odd[..], 2)], &buffer, 64);
-        assert_eq!(*buffer.lock(), vec![1.0]);
+        push_stereo(&[(&mono[..], 1)], &buffer, 64);
+        assert_eq!(*buffer.lock(), vec![0.25, 0.25, -0.75, -0.75]);
 
-        // Over the cap, the *oldest* samples go.
+        // 5.1 and friends: the first two channels are FL/FR.
+        let surround = [1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0];
+        let buffer = Arc::new(Mutex::new(Vec::new()));
+        push_stereo(&[(&surround[..], 6)], &buffer, 64);
+        assert_eq!(*buffer.lock(), vec![1.0, 2.0]);
+
+        // A trailing partial frame is dropped, never misaligned.
+        let odd = [1.0f32, 1.0, 9.0];
+        let buffer = Arc::new(Mutex::new(Vec::new()));
+        push_stereo(&[(&odd[..], 2)], &buffer, 64);
+        assert_eq!(*buffer.lock(), vec![1.0, 1.0]);
+
+        // Over the cap the OLDEST samples go, an even count at a time: cap of
+        // 4 frames = 8 samples; 2 stale frames + 3 pushed frames = 10 → drop 2.
         let buffer = Arc::new(Mutex::new(vec![9.0f32; 4]));
         let mono = [1.0f32, 2.0, 3.0];
-        push_mono(&[(&mono[..], 1)], &buffer, 4);
-        assert_eq!(*buffer.lock(), vec![9.0, 1.0, 2.0, 3.0]);
+        push_stereo(&[(&mono[..], 1)], &buffer, 4);
+        assert_eq!(*buffer.lock(), vec![9.0, 9.0, 1.0, 1.0, 2.0, 2.0, 3.0, 3.0]);
     }
 
     /// The empty-`Only` guard rejects before any FFI happens, so this is safe

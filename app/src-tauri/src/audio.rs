@@ -101,8 +101,8 @@ fn normalize_db(db_tilted: f32) -> f32 {
 /// A mono source duplicates its single channel into both, so it reads as
 /// perfectly correlated — the honest display for mono, not a bug. Sources with
 /// more than two channels use the first two, the standard interleave order
-/// (FL, FR, ...).
-fn frame_lr(frame: &[f32]) -> (f32, f32) {
+/// (FL, FR, ...). `pub(crate)`: the per-app backends make the same picks.
+pub(crate) fn frame_lr(frame: &[f32]) -> (f32, f32) {
     match frame.len() {
         0 => (0.0, 0.0),
         1 => (frame[0], frame[0]),
@@ -158,8 +158,25 @@ pub fn set_stereo_waveform_enabled(enabled: bool) {
 fn sample_to_byte(s: f32) -> u8 {
     ((s.clamp(-1.0, 1.0) * 127.0) + 128.0) as u8
 }
-/// Most we'll ever buffer (samples). Caps memory if the processor stalls.
+/// Most we'll ever buffer, in FRAMES — the ring holds two samples per frame
+/// (interleaved L/R, 0.8.4), so every cap and capacity site uses ×2. Caps
+/// memory if the processor stalls.
 const RING_CAP: usize = FFT_SIZE * 8;
+
+/// Drop the oldest samples once a ring exceeds `cap_frames` frames. Always an
+/// even count: an odd drain would swap L and R for the entire remainder of
+/// the stream — silent, permanent, and invisible until someone opened a
+/// vectorscope. Every ring writer (cpal `push_frames`, the apps-mode
+/// `append_hop`, `audio_loopback`, `audio_tap`) trims through here so the
+/// invariant has exactly one implementation.
+pub(crate) fn trim_frames(buf: &mut Vec<f32>, cap_frames: usize) {
+    let cap = cap_frames * 2;
+    if buf.len() > cap {
+        let excess = buf.len() - cap;
+        let drop = ((excess + 1) & !1).min(buf.len());
+        buf.drain(..drop);
+    }
+}
 
 /// De-interleaved time-domain bytes, same convention as the mono waveform
 /// (0-255 centred at 128). Sent as two arrays so the frontend does no
@@ -187,7 +204,10 @@ pub fn spawn<R: Runtime>(app: AppHandle<R>) {
 }
 
 fn run<R: Runtime>(app: AppHandle<R>) -> Result<(), String> {
-    let buffer = Arc::new(Mutex::new(Vec::<f32>::with_capacity(RING_CAP)));
+    // ×2: the ring holds interleaved L/R, RING_CAP counts frames. Anything
+    // less and the first seconds of capture reallocate the ring inside the
+    // realtime callback — the exact cost the one-lock design exists to avoid.
+    let buffer = Arc::new(Mutex::new(Vec::<f32>::with_capacity(RING_CAP * 2)));
 
     // The capture backend gets its own thread: cpal's Stream is !Send on
     // Windows, so it must be created *and dropped* on one thread, and a
@@ -514,7 +534,8 @@ impl<R: Runtime> Supervisor<R> {
     ) -> (Live, Vec<Arc<Mutex<Vec<f32>>>>, u32) {
         let mut caps: Vec<AppCapture> = Vec::with_capacity(exes.len());
         for (exe, pid) in exes.into_iter().zip(pids) {
-            let ring = Arc::new(Mutex::new(Vec::with_capacity(RING_CAP)));
+            // ×2: the ring holds interleaved L/R, RING_CAP counts frames.
+            let ring = Arc::new(Mutex::new(Vec::with_capacity(RING_CAP * 2)));
             let cap = match pid {
                 Some(pid) if can_try => {
                     match crate::audio_loopback::start(pid, false, ring.clone(), RING_CAP) {
@@ -572,7 +593,8 @@ impl<R: Runtime> Supervisor<R> {
     ) -> (Live, Vec<Arc<Mutex<Vec<f32>>>>, u32) {
         use crate::audio_tap::TapTarget;
 
-        let ring = Arc::new(Mutex::new(Vec::with_capacity(RING_CAP)));
+        // ×2: the ring holds interleaved L/R, RING_CAP counts frames.
+        let ring = Arc::new(Mutex::new(Vec::with_capacity(RING_CAP * 2)));
         let mut slots: Vec<AppSlot> = exes
             .into_iter()
             .zip(pids.iter().copied())
@@ -1022,16 +1044,7 @@ fn build_stream(
                 count = 0;
             }
         }
-        // RING_CAP counts FRAMES; the ring stores two samples per frame.
-        let cap = RING_CAP * 2;
-        if buf.len() > cap {
-            // Drain an EVEN count so L/R stay aligned. An odd drain would swap
-            // the two channels for the entire remainder of the stream — silent,
-            // permanent, and invisible until someone looked at a vectorscope.
-            let excess = buf.len() - cap;
-            let drop = ((excess + 1) & !1).min(buf.len());
-            buf.drain(..drop);
-        }
+        crate::audio::trim_frames(&mut buf, RING_CAP);
     }
 
     match sample_format {
@@ -1136,33 +1149,14 @@ fn process_loop<R: Runtime>(
                 .map(|r| std::mem::take(&mut *r.lock()))
                 .collect();
             let mixed = mix_rings(&drained);
-            let mut buf = buffer.lock();
-            // Per-app capture is ALREADY mono by the time it reaches here —
-            // Windows sums the app rings in mix_rings, macOS's single tap mixes
-            // the selected processes for us. So each sample is written to both
-            // channels to keep the ring's interleaved shape (0.8.4).
-            //
-            // The consequence is real and worth stating: with a per-app source
-            // selected the vectorscope shows a vertical line and correlation
-            // reads exactly 1.00. That is the honest display of a mono source,
-            // not a bug — only the default-device loopback path can carry a
-            // true stereo image.
-            if mixed.is_empty() {
-                let hop = ((rate / hz.max(1) as f32) as usize).max(1);
-                buf.extend(std::iter::repeat(0.0f32).take(hop * 2));
-            } else {
-                for s in &mixed {
-                    buf.push(*s);
-                    buf.push(*s);
-                }
-            }
-            let cap = RING_CAP * 2;
-            if buf.len() > cap {
-                // Even drain only — see push_frames.
-                let excess = buf.len() - cap;
-                let drop_n = ((excess + 1) & !1).min(buf.len());
-                buf.drain(..drop_n);
-            }
+            // Per-app rings carry INTERLEAVED L/R since 0.9.3 — the backends
+            // used to pre-mix to mono inside the capture path, which is why a
+            // per-app source drew a vertical line on the vectorscope (L == R
+            // however stereo the audio was). The index-wise sum in mix_rings
+            // is a channel-wise sum for frame-aligned interleaved rings, so
+            // the mixed hop appends to the FFT ring as-is.
+            let hop = ((rate / hz.max(1) as f32) as usize).max(1);
+            append_hop(&mut buffer.lock(), &mixed, hop);
         }
 
         // Snapshot the most-recent FFT_SIZE samples without holding the lock
@@ -1290,7 +1284,9 @@ fn log_band_edges(bands: usize, max_bin: usize, sample_rate: f32, fmin: f32, fma
 }
 
 /// Sample-wise sum of the per-app captures for one FFT hop. Each input Vec is
-/// everything one capture pushed since the last hop, already mono and all at
+/// everything one capture pushed since the last hop — interleaved L/R pairs
+/// since 0.9.3, whole frames only, so the index-wise sum below is a
+/// channel-wise sum (L at even indices in every ring, R at odd) — all at
 /// one common rate — `audio_loopback::CAPTURE_SAMPLE_RATE` (48 kHz) on
 /// Windows, where every process-loopback client is pinned to it; on macOS
 /// there is only ever ONE input, running at whatever rate the tap negotiated
@@ -1320,6 +1316,23 @@ pub fn mix_rings(drained: &[Vec<f32>]) -> Vec<f32> {
         *s = s.clamp(-1.0, 1.0);
     }
     out
+}
+
+/// Append one hop of the apps-mode mix to the FFT ring. `mixed` is already
+/// interleaved L/R (the per-app rings carry stereo since 0.9.3); an empty hop
+/// appends `silence_frames` frames of silence instead, so the window keeps
+/// sliding and the spectrum decays to zero rather than replaying the last
+/// real window forever.
+fn append_hop(buf: &mut Vec<f32>, mixed: &[f32], silence_frames: usize) {
+    if mixed.is_empty() {
+        buf.extend(std::iter::repeat(0.0f32).take(silence_frames * 2));
+    } else {
+        // The pushes upstream are frame-atomic, so an odd tail should not
+        // exist — but pairing one with the next hop's first sample would
+        // swap L and R for the rest of the stream, so drop it defensively.
+        buf.extend_from_slice(&mixed[..mixed.len() & !1]);
+    }
+    trim_frames(buf, RING_CAP);
 }
 
 #[cfg(test)]
@@ -1370,6 +1383,53 @@ mod tests {
     fn mix_of_nothing_is_nothing() {
         assert_eq!(mix_rings(&[]), Vec::<f32>::new());
         assert_eq!(mix_rings(&[vec![], vec![]]), Vec::<f32>::new());
+    }
+
+    // -- interleaved stereo through the apps-mode hop (0.9.3) --------------
+    // The per-app rings carry interleaved L/R now, so the index-wise sum in
+    // mix_rings IS a channel-wise sum: L samples sit at even indices in every
+    // ring, R at odd, and front-aligned zero padding cannot shift that.
+
+    #[test]
+    fn mix_rings_sums_interleaved_stereo_channel_wise() {
+        assert_eq!(
+            mix_rings(&[vec![0.25, -0.25, 0.5, -0.5], vec![0.25, 0.25, 0.0, 0.25]]),
+            vec![0.5, 0.0, 0.5, -0.25],
+        );
+    }
+
+    #[test]
+    fn mix_rings_zero_padding_keeps_channels_aligned() {
+        // The shorter ring is a whole number of frames (pushes are always
+        // frame-atomic), so padding starts at an even index and L stays L.
+        assert_eq!(
+            mix_rings(&[vec![0.5, -0.5, 0.5, -0.5], vec![0.25, 0.25]]),
+            vec![0.75, -0.25, 0.5, -0.5],
+        );
+    }
+
+    #[test]
+    fn append_hop_preserves_a_distinct_left_and_right() {
+        // The 0.9.3 bug in one line: this used to duplicate a mono mix into
+        // both channels, so a stereo per-app source could never reach the
+        // vectorscope as stereo.
+        let mut buf = Vec::new();
+        super::append_hop(&mut buf, &[0.5, -0.5, 0.25, -0.25], 4);
+        assert_eq!(buf, vec![0.5, -0.5, 0.25, -0.25]);
+    }
+
+    #[test]
+    fn append_hop_synthesizes_stereo_silence_for_an_empty_hop() {
+        let mut buf = Vec::new();
+        super::append_hop(&mut buf, &[], 3);
+        assert_eq!(buf, vec![0.0; 6]);
+    }
+
+    #[test]
+    fn append_hop_drops_a_torn_odd_tail() {
+        let mut buf = Vec::new();
+        super::append_hop(&mut buf, &[0.1, 0.2, 0.9], 4);
+        assert_eq!(buf, vec![0.1, 0.2]);
     }
 
     #[test]
