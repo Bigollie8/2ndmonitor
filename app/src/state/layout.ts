@@ -300,6 +300,39 @@ export function snapFrac(v: number): number {
   return Math.round(v / SNAP_FRAC) * SNAP_FRAC;
 }
 
+/** Display-time clamp against the fixed-pixel chrome bars (0.9.4).
+ *
+ *  Saved rects are fractions of the whole window, but the top/bottom bars
+ *  are fixed CSS pixels — so a layout whose fractions were derived at
+ *  2560x1440 (where 0.039 clears the 56px bar) slides UNDER both bars on a
+ *  1080p or display-scaled monitor: the "tiles overlap/clip on 1080p"
+ *  report, measured at 8px under the top bar at 1920x1080 and 18px at
+ *  1536x864 for the DEFAULT starter layout.
+ *
+ *  The clamp SHRINKS rather than shifts: pushing a whole tile down would
+ *  cascade it into the row below, trading chrome-clipping for tile-overlap.
+ *  Heights floor at a minimum that is itself capped at the 1440p-design
+ *  fraction, so small canvases keep the designed proportions instead of
+ *  exploding tiles past their slots. At the design resolution (and larger)
+ *  every legal rect passes through unchanged — this is a no-op at 1440p. */
+export function renderRectFrac(
+  r: Rect,
+  canvasPx: { w: number; h: number },
+  topInsetPx: number = CHROME_TOP_PX,
+): Rect {
+  const topF = topInsetPx / canvasPx.h;
+  const botLimit = 1 - CHROME_BOTTOM_PX / canvasPx.h;
+  const minH = Math.min(MIN_SIZE_PX.h / canvasPx.h, MIN_SIZE_PX.h / 1440);
+  const minW = Math.min(MIN_SIZE_PX.w / canvasPx.w, MIN_SIZE_PX.w / 2560);
+  const y1 = Math.max(topF, r.y);
+  let h = Math.max(minH, r.h - (y1 - r.y)); // keep the bottom edge where it was
+  h = Math.max(minH, Math.min(h, botLimit - y1));
+  const y = Math.max(topF, Math.min(y1, botLimit - h));
+  const w = Math.max(minW, Math.min(r.w, 1));
+  const x = Math.max(0, Math.min(r.x, 1 - w));
+  return { x, y, w, h };
+}
+
 /** One-shot conversion: legacy 2560x1440 px rect -> fractional rect. */
 export function legacyRectToFraction(r: Rect): Rect {
   return {

@@ -22,6 +22,7 @@ import {
   reclampProfilesBelowChrome,
   SNAP_FRAC,
   clampRectFrac,
+  renderRectFrac,
 } from './state/layout';
 import { seedStarterProfiles, PROFILE_DEFAULT_COLORS } from './state/starterProfiles';
 import { shouldPinTopBar } from './state/topBar';
@@ -1721,7 +1722,7 @@ export default function App() {
             <TileFrame
               key={instance.instanceId}
               id={instance.instanceId}
-              rect={instance.rect}
+              rect={renderRectFrac(instance.rect, canvas, topInsetPx)}
               editing={editMode}
               snap={t.editSnap}
               topInsetPx={topInsetPx}
