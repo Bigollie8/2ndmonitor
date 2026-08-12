@@ -716,6 +716,191 @@ pub async fn spotify_set_volume<R: Runtime>(app: AppHandle<R>, percent: u8) -> R
     .map_err(|e| format!("volume task failed: {e}"))?
 }
 
+// ── Pick a song (0.9.4): play / queue / search ───────────────────────────────
+// GSMTC can only skip; starting a CHOSEN track is Spotify-Web-API-only. The
+// scope these need (user-modify-playback-state) has been requested since the
+// volume feature, so most connected users need no re-authorize; a token from
+// before that gets the existing insufficient_scope → Reconnect banner path.
+
+/// True for exactly the URI shape the pick-a-song feature may play or queue:
+/// `spotify:track:<alphanumeric id>`. An allowlist, not a parser — playlist/
+/// album/artist contexts (and anything else a crafted queue row or search
+/// result could carry) are refused before any request is made.
+pub fn is_track_uri(uri: &str) -> bool {
+    match uri.strip_prefix("spotify:track:") {
+        Some(id) => {
+            !id.is_empty() && id.len() <= 64 && id.bytes().all(|b| b.is_ascii_alphanumeric())
+        }
+        None => false,
+    }
+}
+
+/// The playback-control error taxonomy, shared by play/queue (same rules the
+/// volume command established): 403 distinguishes insufficient_scope (flips
+/// needs_reauth so the Reconnect banner shows) from PREMIUM_REQUIRED (free
+/// account — playback control is a Premium API), 404 means no active device.
+fn classify_control<R: Runtime>(
+    resp: Result<ureq::Response, ureq::Error>,
+    app: &AppHandle<R>,
+) -> Result<(), String> {
+    match resp {
+        Ok(_) => Ok(()),
+        Err(ureq::Error::Status(401, _)) => Err("Spotify auth expired".into()),
+        Err(ureq::Error::Status(403, r)) => {
+            let body = r.into_string().unwrap_or_default();
+            if body.contains("insufficient_scope") {
+                let mut s = STATE.lock();
+                s.needs_reauth = true;
+                drop(s);
+                emit_state(app);
+                Err("Reconnect Spotify to enable playback control".into())
+            } else if body.contains("PREMIUM_REQUIRED") {
+                let mut s = STATE.lock();
+                s.premium_required = true;
+                drop(s);
+                emit_state(app);
+                Err("Spotify Premium is required to control playback".into())
+            } else {
+                Err(format!("Spotify 403: {body}"))
+            }
+        }
+        Err(ureq::Error::Status(404, _)) => {
+            Err("No active Spotify device — start playback anywhere first".into())
+        }
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+/// One control call: fresh token, attempt, single 401-refresh retry, then
+/// classify. Blocking — call from spawn_blocking only.
+fn control_request<R: Runtime>(
+    app: &AppHandle<R>,
+    make: impl Fn(&str) -> Result<ureq::Response, ureq::Error>,
+) -> Result<(), String> {
+    let token = ensure_fresh_token(app).map_err(|e| match e {
+        ApiErr::Transient => "Spotify unreachable — try again".to_string(),
+        _ => "Not connected".to_string(),
+    })?;
+    let resp = make(&token);
+    if let Err(ureq::Error::Status(401, _)) = &resp {
+        match try_refresh(app) {
+            RefreshOutcome::Refreshed => {}
+            RefreshOutcome::Transient => return Err("Spotify unreachable — try again".into()),
+            RefreshOutcome::Revoked => return Err("Spotify auth expired".into()),
+        }
+        let token = CREDS.lock().access_token.clone().ok_or("Auth refresh failed")?;
+        return classify_control(make(&token), app);
+    }
+    classify_control(resp, app)
+}
+
+/// Start playing one specific track on the user's active device.
+#[tauri::command]
+pub async fn spotify_play<R: Runtime>(app: AppHandle<R>, uri: String) -> Result<(), String> {
+    if !is_track_uri(&uri) {
+        return Err("only spotify:track: URIs can be played".into());
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        let body = serde_json::json!({ "uris": [uri] }).to_string();
+        control_request(&app, |token| {
+            ureq::put("https://api.spotify.com/v1/me/player/play")
+                .set("Authorization", &format!("Bearer {token}"))
+                .set("Content-Type", "application/json")
+                .timeout(Duration::from_secs(8))
+                .send_string(&body)
+        })
+    })
+    .await
+    .map_err(|e| format!("play task failed: {e}"))?
+}
+
+/// Append one specific track to the user's queue.
+#[tauri::command]
+pub async fn spotify_queue_add<R: Runtime>(app: AppHandle<R>, uri: String) -> Result<(), String> {
+    if !is_track_uri(&uri) {
+        return Err("only spotify:track: URIs can be queued".into());
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        let url = format!(
+            "https://api.spotify.com/v1/me/player/queue?uri={}",
+            urlencode(&uri)
+        );
+        control_request(&app, |token| {
+            ureq::post(&url)
+                .set("Authorization", &format!("Bearer {token}"))
+                .set("Content-Length", "0")
+                .timeout(Duration::from_secs(8))
+                .call()
+        })
+    })
+    .await
+    .map_err(|e| format!("queue task failed: {e}"))?
+}
+
+#[derive(Deserialize)]
+struct SearchResp {
+    tracks: Option<SearchTracks>,
+}
+#[derive(Deserialize)]
+struct SearchTracks {
+    items: Option<Vec<SpotifyItem>>,
+}
+
+/// Track search for pick-a-song. Read-only (no playback scope needed), so it
+/// works on Free accounts too — only PLAYING the result is Premium-gated.
+#[tauri::command]
+pub async fn spotify_search<R: Runtime>(
+    app: AppHandle<R>,
+    query: String,
+) -> Result<Vec<SpotifyTrack>, String> {
+    let q = query.trim().to_string();
+    if q.is_empty() {
+        return Ok(Vec::new());
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        let token = ensure_fresh_token(&app).map_err(|e| match e {
+            ApiErr::Transient => "Spotify unreachable — try again".to_string(),
+            _ => "Not connected".to_string(),
+        })?;
+        let url = format!(
+            "https://api.spotify.com/v1/search?type=track&limit=10&q={}",
+            urlencode(&q)
+        );
+        let call = |token: &str| {
+            ureq::get(&url)
+                .set("Authorization", &format!("Bearer {token}"))
+                .timeout(Duration::from_secs(8))
+                .call()
+        };
+        let mut resp = call(&token);
+        if let Err(ureq::Error::Status(401, _)) = &resp {
+            match try_refresh(&app) {
+                RefreshOutcome::Refreshed => {
+                    let token = CREDS.lock().access_token.clone().ok_or("Auth refresh failed")?;
+                    resp = call(&token);
+                }
+                RefreshOutcome::Transient => return Err("Spotify unreachable — try again".into()),
+                RefreshOutcome::Revoked => return Err("Spotify auth expired".into()),
+            }
+        }
+        let r = resp.map_err(|e| match e {
+            ureq::Error::Status(code, _) => format!("Spotify search failed: HTTP {code}"),
+            e => format!("Spotify search failed: {e}"),
+        })?;
+        let sr: SearchResp = r.into_json().map_err(|e| format!("search parse: {e}"))?;
+        Ok(sr
+            .tracks
+            .and_then(|t| t.items)
+            .unwrap_or_default()
+            .into_iter()
+            .take(10)
+            .map(map_item)
+            .collect())
+    })
+    .await
+    .map_err(|e| format!("search task failed: {e}"))?
+}
+
 fn finish_exchange<R: Runtime>(app: &AppHandle<R>, client_id: &str, code: &str, verifier: &str) {
     let body = format!(
         "grant_type=authorization_code&code={}&redirect_uri={}&client_id={}&code_verifier={}",
@@ -803,5 +988,32 @@ fn open_browser(url: &str) -> Result<(), String> {
     {
         let _ = url;
         Err("non-windows browser open not implemented".into())
+    }
+}
+
+#[cfg(test)]
+mod pick_a_song_tests {
+    use super::is_track_uri;
+
+    #[test]
+    fn accepts_exactly_track_uris() {
+        assert!(is_track_uri("spotify:track:4uLU6hMCjMI75M1A2tKUQC"));
+        assert!(is_track_uri("spotify:track:abc123"));
+    }
+
+    #[test]
+    fn rejects_everything_else() {
+        // Other context kinds — playing a playlist/album is not this feature.
+        assert!(!is_track_uri("spotify:playlist:37i9dQZF1DXcBWIGoYBM5M"));
+        assert!(!is_track_uri("spotify:album:1ATL5GLyefJaxhQzSPVrLX"));
+        assert!(!is_track_uri("spotify:artist:0OdUWJ0sBjDrqHygGUXeCF"));
+        // Shape violations and injection-ish inputs.
+        assert!(!is_track_uri("spotify:track:"));
+        assert!(!is_track_uri("spotify:track:has space"));
+        assert!(!is_track_uri("spotify:track:semi;colon"));
+        assert!(!is_track_uri("https://open.spotify.com/track/4uLU6hMCjMI75M1A2tKUQC"));
+        assert!(!is_track_uri(""));
+        let long = format!("spotify:track:{}", "a".repeat(65));
+        assert!(!is_track_uri(&long));
     }
 }

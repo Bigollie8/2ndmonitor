@@ -700,6 +700,13 @@ export function useSpotify(): {
   disconnect: () => Promise<void>;
   getStoredClientId: () => Promise<string | null>;
   setVolume: (percent: number) => Promise<void>;
+  /** Pick-a-song (0.9.4). play/queueAdd take a `spotify:track:` URI and
+   *  REJECT with the server-classified reason (Premium required, no active
+   *  device, reconnect for scope) — callers surface it, never swallow it.
+   *  search is read-only and works on Free accounts. */
+  play: (uri: string) => Promise<void>;
+  queueAdd: (uri: string) => Promise<void>;
+  search: (query: string) => Promise<SpotifyTrack[]>;
 } {
   const [state, setState] = useState<SpotifyState>(EMPTY_SPOTIFY);
 
@@ -746,8 +753,23 @@ export function useSpotify(): {
     const clamped = Math.max(0, Math.min(100, Math.round(percent)));
     await invoke('spotify_set_volume', { percent: clamped });
   };
+  const play = async (uri: string) => {
+    if (!isTauri) throw new Error('Requires the installed app');
+    const { invoke } = await import('@tauri-apps/api/core');
+    await invoke('spotify_play', { uri });
+  };
+  const queueAdd = async (uri: string) => {
+    if (!isTauri) throw new Error('Requires the installed app');
+    const { invoke } = await import('@tauri-apps/api/core');
+    await invoke('spotify_queue_add', { uri });
+  };
+  const search = async (query: string): Promise<SpotifyTrack[]> => {
+    if (!isTauri) return [];
+    const { invoke } = await import('@tauri-apps/api/core');
+    return invoke<SpotifyTrack[]>('spotify_search', { query });
+  };
 
-  return { state, connect, disconnect, getStoredClientId, setVolume };
+  return { state, connect, disconnect, getStoredClientId, setVolume, play, queueAdd, search };
 }
 
 export function useClaudeSessions(): ClaudeSession[] {

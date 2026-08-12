@@ -110,6 +110,9 @@ commands.allow = [
   "spotify_disconnect",
   "spotify_get_client_id",
   "spotify_set_volume",
+  "spotify_play",
+  "spotify_queue_add",
+  "spotify_search",
 
   # tweaks — the settings store, incl. export/import (src/state/useTweaks.ts, src/App.tsx).
   "tweaks_load",
