@@ -43,7 +43,11 @@ export function AccountPanel({ accent, signedIn }: { accent: string; signedIn: b
   // an uploaded banner can, so it needs no moderation at all.
   const [profileAccent, setProfileAccent] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [notice, setNotice] = useState('');
+  /** kind drives the styling: an error must not look like the dim grey
+   *  "Saved." — the tester's save failures hid in plain sight (0.9.4). */
+  const [notice, setNoticeState] = useState<{ text: string; kind: 'ok' | 'err' } | null>(null);
+  const setNotice = (text: string, kind: 'ok' | 'err' = 'ok') =>
+    setNoticeState(text ? { text, kind } : null);
 
   const load = useCallback(async () => {
     try {
@@ -78,7 +82,7 @@ export function AccountPanel({ accent, signedIn }: { accent: string; signedIn: b
       await load();
       setNotice('Handle claimed.');
     } catch (e) {
-      setNotice(String(e));
+      setNotice(String(e), 'err');
     } finally {
       setBusy(false);
     }
@@ -104,7 +108,7 @@ export function AccountPanel({ accent, signedIn }: { accent: string; signedIn: b
       await load();
       setNotice('Saved.');
     } catch (e) {
-      setNotice(String(e));
+      setNotice(String(e), 'err');
     } finally {
       setBusy(false);
     }
@@ -165,7 +169,7 @@ export function AccountPanel({ accent, signedIn }: { accent: string; signedIn: b
       <div>
         <label style={label}>Display name</label>
         <input value={name} onChange={(e) => setName(e.target.value)}
-          placeholder="Shown instead of your handle" maxLength={40} style={field} />
+          placeholder="Optional — your handle shows when blank" maxLength={40} style={field} />
       </div>
       <div>
         <label style={label}>Bio</label>
@@ -218,9 +222,21 @@ export function AccountPanel({ accent, signedIn }: { accent: string; signedIn: b
         </div>
       </div>
 
+      {/* Errors get a full-width red banner ABOVE the button — the old dim
+          grey one-liner in the corner is exactly where the tester's real
+          save failures went to die (0.9.4). */}
+      {notice && notice.kind === 'err' && (
+        <div style={{
+          fontSize: 11, lineHeight: 1.5, color: '#fca5a5', padding: '8px 10px',
+          borderRadius: 6, background: 'rgba(239,68,68,0.08)',
+          border: '1px solid rgba(239,68,68,0.3)',
+        }}>
+          Couldn't save: {notice.text}
+        </div>
+      )}
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-        {notice && (
-          <span style={{ fontSize: 10.5, color: 'rgba(255,255,255,0.6)', flex: 1 }}>{notice}</span>
+        {notice && notice.kind === 'ok' && (
+          <span style={{ fontSize: 10.5, color: '#86efac', flex: 1 }}>{notice.text}</span>
         )}
         <div style={{ flex: 1 }} />
         <button onClick={() => void save()} disabled={busy} style={button(!busy)}>

@@ -5,6 +5,44 @@ All notable changes to 2ndMonitor are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.9.4] - 2026-08-12
+
+### Added
+- **Pick a song.** The Up next tab (and the detached Up-next tile) can now
+  actually choose music, not just skip: tap any queued track to jump
+  straight to it, or use the new search box to find any song — tap to play
+  it now, or + to add it to the queue. Spotify only (it's the only service
+  with a public playback API); playing/queueing needs Spotify Premium, and
+  the app says so plainly instead of failing silently. If Spotify asks for
+  a new permission, the existing Reconnect banner handles it — most people
+  connected recently won't need to
+- **Search works on Free accounts** — only starting playback is
+  Premium-limited, and the message explains exactly that
+
+### Fixed
+- **Vectorscope finally shows stereo — the real reason it never did.** The
+  fixes shipped over the last three releases were fine; they just never
+  reached anyone. The app's built-in content installer skipped any
+  visualizer that was already installed, no matter how old — so a
+  vectorscope installed before the stereo support existed kept its ancient
+  version forever, showing the mono vertical line on every audio source.
+  Seeded content now upgrades itself when the app ships a newer version
+  (it never downgrades, and content you removed stays removed). One update
+  and the stereo cloud, width and correlation meters come alive
+- **1080p monitors: tiles no longer hide under the top and bottom bars.**
+  Layouts are stored as fractions of the screen, but the bars are fixed
+  pixels — so on 1080p (and especially laptops at 125% display scaling)
+  the top row slid up to 18px under the top bar and bottom tiles poked
+  below the bottom bar. Tiles now shrink just enough to clear the bars,
+  keeping their arrangement — and at 1440p nothing changes at all
+- **Creator profile edits save now.** Two compounding bugs: a profile
+  without a display name couldn't save ANY field (the editor always sent
+  the empty name and the server rejected the whole update), and the error
+  message hid in a corner styled exactly like "Saved.". Display names are
+  now optional — your handle shows where one isn't set — failures appear
+  as a proper red banner with the actual reason, and a save either applies
+  completely or not at all
+
 ## [0.9.3] - 2026-08-10
 
 ### Fixed

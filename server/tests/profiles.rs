@@ -222,8 +222,61 @@ async fn profile_fields_are_capped_and_https_only() {
     assert_eq!(status, StatusCode::BAD_REQUEST, "http must be rejected");
 
     let (status, _) = call(&app, "PATCH", "/account", Some(&token),
-        Some(serde_json::json!({ "displayName": "   " }))).await;
-    assert_eq!(status, StatusCode::BAD_REQUEST, "blank display name");
+        Some(serde_json::json!({ "displayName": "x".repeat(41) }))).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "display name over 40 chars");
+}
+
+// ── 0.9.4: the "nothing saves" report ──────────────────────────────────────
+
+#[tokio::test]
+async fn all_four_fields_round_trip_together_without_a_display_name() {
+    // The editor always sends every field. Before 0.9.4 a BLANK display name
+    // 400'd the whole patch, so an account that never set one could not save
+    // colour, bio, or links either — the tester's exact report.
+    let app = router(test_state());
+    let token = account(&app, "noname@example.com").await;
+    let (status, body) = call(&app, "PATCH", "/account", Some(&token), Some(serde_json::json!({
+        "displayName": "",
+        "bio": "No name, still saves.",
+        "links": ["https://example.com/a"],
+        "accent": "#22d3ee"
+    }))).await;
+    assert_eq!(status, StatusCode::OK, "blank display name must not block the save: {body}");
+
+    let (_, got) = call(&app, "GET", "/account", Some(&token), None).await;
+    assert_eq!(got["displayName"], serde_json::Value::Null, "blank name stored as unset");
+    assert_eq!(got["bio"], "No name, still saves.");
+    assert_eq!(got["links"][0], "https://example.com/a");
+    assert_eq!(got["accent"], "#22d3ee");
+}
+
+#[tokio::test]
+async fn an_invalid_field_applies_nothing() {
+    // Validate-all-then-apply: a bad accent must not half-commit the bio
+    // that preceded it in the patch body.
+    let app = router(test_state());
+    let token = account(&app, "atomic@example.com").await;
+    let (status, _) = call(&app, "PATCH", "/account", Some(&token), Some(serde_json::json!({
+        "bio": "should not survive",
+        "accent": "not-a-colour"
+    }))).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    let (_, got) = call(&app, "GET", "/account", Some(&token), None).await;
+    assert_ne!(got["bio"], "should not survive", "failed patch must apply no fields");
+}
+
+#[tokio::test]
+async fn a_nameless_creator_page_falls_back_to_the_handle() {
+    let app = router(test_state());
+    let token = account(&app, "fallback@example.com").await;
+    let (status, _) = call(&app, "POST", "/account/handle", Some(&token),
+        Some(serde_json::json!({ "handle": "quietmaker" }))).await;
+    assert_eq!(status, StatusCode::OK);
+
+    let (status, page) = call(&app, "GET", "/creators/quietmaker", None, None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(page["displayName"], "quietmaker", "public page shows the handle, never a blank name");
 }
 
 // ── the public creator page ────────────────────────────────────────────────

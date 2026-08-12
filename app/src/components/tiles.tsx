@@ -401,7 +401,7 @@ function SpotifyNowView({ accent, accent2, track, playback, sourceKind, spectrum
 }
 
 function SpotifyUpNextView({ accent }: { accent: string }) {
-  const { state, connect, disconnect, getStoredClientId } = useSpotify();
+  const { state, connect, disconnect, getStoredClientId, play, queueAdd, search } = useSpotify();
   const [draftId, setDraftId] = useState('');
   const [showHelp, setShowHelp] = useState(false);
 
@@ -510,8 +510,10 @@ function SpotifyUpNextView({ accent }: { accent: string }) {
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
         <SpotifyConnectionHeader onDisconnect={() => disconnect()} />
         {reauthBanner}
+        {/* An empty queue is exactly when you want to pick a song (0.9.4). */}
+        <SpotifyPickASong accent={accent} play={play} queueAdd={queueAdd} search={search} />
         <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'rgba(255,255,255,0.45)', fontSize: 11 }}>
-          Nothing queued.
+          Nothing queued — search above to start something.
         </div>
       </div>
     );
@@ -521,9 +523,102 @@ function SpotifyUpNextView({ accent }: { accent: string }) {
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
       <SpotifyConnectionHeader onDisconnect={() => disconnect()} />
       {reauthBanner}
+      <SpotifyPickASong accent={accent} play={play} queueAdd={queueAdd} search={search} />
       <div style={{ flex: 1, overflowY: 'auto', padding: '4px 8px 10px' }}>
-        {state.queue.map((q, i) => <UpNextRow key={(q.id || q.title) + ':' + i} track={q} accent={accent} />)}
+        {state.queue.map((q, i) => (
+          <UpNextRow key={(q.id || q.title) + ':' + i} track={q} accent={accent}
+            onPlay={q.id ? () => play(`spotify:track:${q.id}`) : undefined} />
+        ))}
       </div>
+    </div>
+  );
+}
+
+/** Pick a song (0.9.4): search-and-play, plus the shared inline error strip
+ *  for every playback action (tapping queue rows routes errors here too via
+ *  the play/queueAdd wrappers). Spotify-only by construction — this view
+ *  only renders for the Spotify source. Playing/queueing needs Premium; the
+ *  server-classified reason (Premium, no active device, reconnect) surfaces
+ *  right here instead of being swallowed. */
+function SpotifyPickASong({ accent, play, queueAdd, search }: {
+  accent: string;
+  play: (uri: string) => Promise<void>;
+  queueAdd: (uri: string) => Promise<void>;
+  search: (q: string) => Promise<SpotifyTrack[]>;
+}) {
+  const [query, setQuery] = useState('');
+  const [results, setResults] = useState<SpotifyTrack[] | null>(null);
+  const [searching, setSearching] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const seqRef = useRef(0);
+
+  // Debounced live search; stale responses are dropped by sequence number.
+  useEffect(() => {
+    const q = query.trim();
+    if (!q) { setResults(null); setSearching(false); return; }
+    setSearching(true);
+    const seq = ++seqRef.current;
+    const id = window.setTimeout(() => {
+      search(q).then((tracks) => {
+        if (seqRef.current !== seq) return;
+        setResults(tracks);
+        setSearching(false);
+      }).catch((e) => {
+        if (seqRef.current !== seq) return;
+        setActionError(String(e));
+        setSearching(false);
+      });
+    }, 350);
+    return () => window.clearTimeout(id);
+  }, [query, search]);
+
+  const doPlay = (track: SpotifyTrack) => {
+    setActionError(null);
+    play(`spotify:track:${track.id}`).catch((e) => setActionError(String(e)));
+  };
+  const doQueue = (track: SpotifyTrack) => {
+    setActionError(null);
+    queueAdd(`spotify:track:${track.id}`)
+      .then(() => setActionError(null))
+      .catch((e) => setActionError(String(e)));
+  };
+
+  return (
+    <div style={{ flexShrink: 0, padding: '6px 8px 0' }}>
+      <input
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+        onKeyDown={(e) => { if (e.key === 'Escape') setQuery(''); }}
+        placeholder="Search a song to play…"
+        spellCheck={false}
+        style={{
+          width: '100%', padding: '6px 10px', fontSize: 11, borderRadius: 6,
+          background: 'rgba(0,0,0,0.3)', color: '#fff', outline: 'none',
+          border: '1px solid rgba(255,255,255,0.08)', fontFamily: 'inherit',
+        }}
+      />
+      {actionError && (
+        <div style={{
+          marginTop: 6, fontSize: 10.5, lineHeight: 1.45, color: '#fca5a5',
+          padding: '6px 8px', borderRadius: 5, background: 'rgba(239,68,68,0.08)',
+          border: '1px solid rgba(239,68,68,0.25)',
+        }}>{actionError}</div>
+      )}
+      {query.trim() && (
+        <div style={{ maxHeight: 180, overflowY: 'auto', marginTop: 4, borderBottom: '1px solid rgba(255,255,255,0.06)', paddingBottom: 4 }}>
+          {searching && (
+            <div style={{ fontSize: 10.5, color: 'rgba(255,255,255,0.4)', padding: '6px 6px' }}>Searching…</div>
+          )}
+          {!searching && results && results.length === 0 && (
+            <div style={{ fontSize: 10.5, color: 'rgba(255,255,255,0.4)', padding: '6px 6px' }}>No matches.</div>
+          )}
+          {!searching && results?.map((t, i) => (
+            <UpNextRow key={(t.id || t.title) + ':' + i} track={t} accent={accent}
+              onPlay={t.id ? () => doPlay(t) : undefined}
+              onQueue={t.id ? () => doQueue(t) : undefined} />
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -540,11 +635,29 @@ function SpotifyConnectionHeader({ onDisconnect }: { onDisconnect: () => void })
   );
 }
 
-function UpNextRow({ track, accent }: { track: SpotifyTrack; accent: string }) {
+/** One track row. With `onPlay` (0.9.4) the row is tappable — tap starts
+ *  that exact track; hover shows the play glyph where the duration was.
+ *  `onQueue` adds a small + button (search results only — queue rows are
+ *  already in the queue). Rows without callbacks render as before. */
+function UpNextRow({ track, accent, onPlay, onQueue }: {
+  track: SpotifyTrack; accent: string;
+  onPlay?: () => void; onQueue?: () => void;
+}) {
+  const [hover, setHover] = useState(false);
   const mins = Math.floor(track.duration_ms / 60000);
   const secs = Math.floor((track.duration_ms % 60000) / 1000);
   return (
-    <div style={{ display: 'flex', gap: 10, alignItems: 'center', padding: '5px 6px', borderRadius: 5 }}>
+    <div
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      onClick={onPlay}
+      title={onPlay ? `Play "${track.title}" now` : undefined}
+      style={{
+        display: 'flex', gap: 10, alignItems: 'center', padding: '5px 6px', borderRadius: 5,
+        cursor: onPlay ? 'pointer' : 'default',
+        background: hover && onPlay ? 'rgba(255,255,255,0.05)' : 'transparent',
+      }}
+    >
       {track.art_url ? (
         <img src={track.art_url} alt="" style={{ width: 32, height: 32, borderRadius: 4, flexShrink: 0, background: 'rgba(255,255,255,0.05)' }} />
       ) : (
@@ -554,7 +667,20 @@ function UpNextRow({ track, accent }: { track: SpotifyTrack; accent: string }) {
         <div style={{ fontSize: 11.5, fontWeight: 600, color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{track.title}</div>
         <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.5)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{track.artist}</div>
       </div>
-      <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)', fontFamily: '"JetBrains Mono", ui-monospace, monospace', flexShrink: 0 }}>{mins}:{String(secs).padStart(2, '0')}</span>
+      {onQueue && hover && (
+        <button
+          onClick={(e) => { e.stopPropagation(); onQueue(); }}
+          title="Add to queue"
+          style={{
+            flexShrink: 0, width: 20, height: 20, borderRadius: 4, cursor: 'pointer',
+            background: `${accent}22`, color: accent, border: `1px solid ${accent}44`,
+            fontSize: 12, lineHeight: 1, padding: 0,
+          }}
+        >+</button>
+      )}
+      <span style={{ fontSize: 10, color: hover && onPlay ? accent : 'rgba(255,255,255,0.4)', fontFamily: '"JetBrains Mono", ui-monospace, monospace', flexShrink: 0 }}>
+        {hover && onPlay ? '⏵' : `${mins}:${String(secs).padStart(2, '0')}`}
+      </span>
     </div>
   );
 }

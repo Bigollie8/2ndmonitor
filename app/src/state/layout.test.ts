@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import {
   clampRectFrac,
+  renderRectFrac,
   snapFrac,
   legacyRectToFraction,
   findEmptyRect,
@@ -515,4 +516,39 @@ test('reclampProfilesBelowChrome: uses the LIVE canvas per orientation, not a fi
   // The old bug's y (56/1440, i.e. 42px on a 1080-tall canvas) is NOT
   // reached — the fix lands strictly higher (further from the bar).
   assert.ok(out[0]!.landscape.tiles[0]!.rect.y > 56 / 1440);
+});
+
+// ── 0.9.4: renderRectFrac — chrome clamp on smaller-than-design canvases ─────
+
+test('renderRectFrac is an exact no-op for the design canvas', () => {
+  const canvas = { w: 2560, h: 1440 };
+  for (const r of Object.values(DEFAULT_LANDSCAPE_LAYOUT)) {
+    assert.deepEqual(renderRectFrac(r, canvas), r);
+  }
+});
+
+test('renderRectFrac pushes below the top bar by SHRINKING, keeping the bottom edge', () => {
+  // 56px at 1440p = y 0.0389; the same fraction at 864p is 34px — under the bar.
+  const canvas = { w: 1536, h: 864 };
+  const r = { x: 0.1, y: 56 / 1440, w: 0.4, h: 0.3 };
+  const out = renderRectFrac(r, canvas);
+  assert.ok(out.y * canvas.h >= 56 - 1e-6, `top clears the bar, got ${out.y * canvas.h}px`);
+  const origBottom = r.y + r.h;
+  assert.ok(Math.abs((out.y + out.h) - origBottom) < 1e-9, 'bottom edge unchanged — no cascade into the next row');
+});
+
+test('renderRectFrac keeps bottoms above the bottom bar at 1080p', () => {
+  const canvas = { w: 1920, h: 1080 };
+  const r = { x: 0.1, y: 0.6, w: 0.4, h: (1 - 32 / 1440) - 0.6 }; // legal at 1440p
+  const out = renderRectFrac(r, canvas);
+  assert.ok((out.y + out.h) <= 1 - 32 / 1080 + 1e-9, 'bottom clears the bar');
+  assert.equal(out.y, r.y, 'top edge untouched when only the bottom collides');
+});
+
+test('renderRectFrac minimums are capped at the design fraction on small canvases', () => {
+  // A short tile that is legal at 1440p must not be inflated past its slot at 864p.
+  const canvas = { w: 1536, h: 864 };
+  const r = { x: 0.1, y: 0.5, w: 0.4, h: 140 / 1440 };
+  const out = renderRectFrac(r, canvas);
+  assert.ok(out.h <= r.h + 1e-9, `height not inflated: ${out.h} vs ${r.h}`);
 });

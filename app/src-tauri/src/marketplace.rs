@@ -1485,16 +1485,35 @@ fn write_installed_marker(
 /// (see seed.rs), so this arm exists for completeness/future callers rather
 /// than because seed_sync depends on it today.
 pub fn is_installed<R: Runtime>(app: &AppHandle<R>, kind: &str, id: &str) -> bool {
+    installed_version(app, kind, id).is_some()
+}
+
+/// The installed version of `kind`/`id` per its `installed.json` marker, or
+/// None when not installed (or the marker is unreadable — treated as "not
+/// installed" so a corrupted marker heals by reinstall rather than wedging).
+///
+/// Added 0.9.4 for upgrade-aware seed sync: `is_installed`'s yes/no answer
+/// let a stale install block every newer seed forever — the vectorscope
+/// stereo saga, where users who installed at 1.0.0 never received 1.0.1's
+/// manifest flag or 1.0.2's capture fix through three releases of "fixed it".
+pub fn installed_version<R: Runtime>(
+    app: &AppHandle<R>,
+    kind: &str,
+    id: &str,
+) -> Option<String> {
     let sub_path = match kind {
         "visualizer" => std::path::PathBuf::from("visualizers"),
         "tile" => std::path::PathBuf::from("tiles"),
         "preset" => std::path::PathBuf::from("presets").join("marketplace"),
-        _ => return false,
+        _ => return None,
     };
-    match content_dir(app, &sub_path) {
-        Ok(dir) => dir.join(id).join("installed.json").is_file(),
-        Err(_) => false,
-    }
+    let marker = content_dir(app, &sub_path).ok()?.join(id).join("installed.json");
+    let raw = std::fs::read_to_string(marker).ok()?;
+    serde_json::from_str::<serde_json::Value>(&raw)
+        .ok()?
+        .get("version")?
+        .as_str()
+        .map(str::to_string)
 }
 
 /// Reads a zip archive and returns its entries as `name -> raw bytes`.

@@ -103,24 +103,61 @@ pub fn should_skip(removed: &[String], kind: &str, id: &str) -> bool {
     removed.iter().any(|r| r == &key)
 }
 
+/// True when version `a` is strictly older than `b`. Dotted segments compare
+/// numerically when both sides parse (so "1.0.10" > "1.0.9"), lexically
+/// otherwise; a missing segment counts as 0 ("1.0" == "1.0.0"). Both inputs
+/// have already passed `is_safe_version`, so the charset is lowercase
+/// alphanumerics and dots.
+pub fn version_lt(a: &str, b: &str) -> bool {
+    let (mut ia, mut ib) = (a.split('.'), b.split('.'));
+    loop {
+        match (ia.next(), ib.next()) {
+            (None, None) => return false, // equal
+            (sa, sb) => {
+                let (sa, sb) = (sa.unwrap_or("0"), sb.unwrap_or("0"));
+                match (sa.parse::<u64>(), sb.parse::<u64>()) {
+                    (Ok(na), Ok(nb)) if na != nb => return na < nb,
+                    (Ok(_), Ok(_)) => {} // equal segment — keep walking
+                    _ => {
+                        if sa != sb {
+                            return sa < sb;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// Decides which parsed seeds should actually be installed, given the raw
 /// candidate paths found on disk. Pure — no filesystem or `AppHandle` access
 /// — so it is unit-testable against a synthetic path list and a stub
-/// `is_installed` closure, independent of `seed_sync`'s real directory walk.
-/// This is also where the "never touch presets" guarantee is exercised in
-/// tests: a `preset/...` path is dropped here by `parse_seed_path`'s kind
+/// `installed_version` closure, independent of `seed_sync`'s real directory
+/// walk. This is also where the "never touch presets" guarantee is exercised
+/// in tests: a `preset/...` path is dropped here by `parse_seed_path`'s kind
 /// check, the same function `seed_sync` relies on structurally by only ever
 /// walking `resources/seed/tile` and `resources/seed/visualizer`.
+///
+/// UPGRADE-AWARE since 0.9.4: a seed installs when the id is absent OR the
+/// installed copy is strictly older than the shipped seed. The old id-only
+/// check meant one early install blocked every future seed of that id — a
+/// user who installed vectorscope@1.0.0 kept its pre-stereo manifest through
+/// three releases of shipped fixes, which is precisely the "still only a
+/// vertical line" report. Never downgrades: a marketplace install NEWER than
+/// the shipped seed is left alone, and user-removed ids stay removed.
 pub fn plan_seeds(
     paths: &[PathBuf],
     removed: &[String],
-    is_installed: &dyn Fn(&str, &str) -> bool,
+    installed_version: &dyn Fn(&str, &str) -> Option<String>,
 ) -> Vec<SeedRef> {
     paths
         .iter()
         .filter_map(|p| parse_seed_path(p))
         .filter(|s| !should_skip(removed, &s.kind, &s.id))
-        .filter(|s| !is_installed(&s.kind, &s.id))
+        .filter(|s| match installed_version(&s.kind, &s.id) {
+            None => true,
+            Some(inst) => version_lt(&inst, &s.version),
+        })
         .collect()
 }
 
@@ -200,8 +237,9 @@ pub fn seed_sync<R: Runtime>(app: AppHandle<R>, removed: Vec<String>) -> Result<
         }
     }
 
-    let is_installed = |kind: &str, id: &str| crate::marketplace::is_installed(&app, kind, id);
-    let to_install = plan_seeds(&paths, &removed, &is_installed);
+    let installed_version =
+        |kind: &str, id: &str| crate::marketplace::installed_version(&app, kind, id);
+    let to_install = plan_seeds(&paths, &removed, &installed_version);
 
     let mut installed = Vec::new();
     for s in to_install {
@@ -318,13 +356,55 @@ mod tests {
             PathBuf::from("tile/no-extension"),            // malformed (no .zip)
         ];
         let removed = vec!["visualizer:aurora".to_string()];
-        let is_installed = |kind: &str, id: &str| kind == "visualizer" && id == "liquid";
+        let installed = |kind: &str, id: &str| {
+            (kind == "visualizer" && id == "liquid").then(|| "1.0.0".to_string())
+        };
 
-        let planned = plan_seeds(&paths, &removed, &is_installed);
+        let planned = plan_seeds(&paths, &removed, &installed);
 
         assert_eq!(planned.len(), 1, "{planned:?}");
         assert_eq!(planned[0].kind, "tile");
         assert_eq!(planned[0].id, "quote");
         assert_eq!(planned[0].version, "1.0.0");
+    }
+
+    // ── 0.9.4: upgrade-aware seeding (the vectorscope-stereo root cause) ────
+
+    #[test]
+    fn plan_seeds_upgrades_an_older_install() {
+        let paths = vec![PathBuf::from("visualizer/vectorscope-1.0.2.zip")];
+        let installed = |_: &str, _: &str| Some("1.0.0".to_string());
+        let planned = plan_seeds(&paths, &[], &installed);
+        assert_eq!(planned.len(), 1, "an older install must not block the newer seed");
+        assert_eq!(planned[0].version, "1.0.2");
+    }
+
+    #[test]
+    fn plan_seeds_skips_equal_and_never_downgrades() {
+        let paths = vec![PathBuf::from("visualizer/vectorscope-1.0.2.zip")];
+        let equal = |_: &str, _: &str| Some("1.0.2".to_string());
+        assert!(plan_seeds(&paths, &[], &equal).is_empty(), "equal version reinstalls nothing");
+        let newer = |_: &str, _: &str| Some("1.0.3".to_string());
+        assert!(plan_seeds(&paths, &[], &newer).is_empty(), "a newer install is never downgraded");
+    }
+
+    #[test]
+    fn plan_seeds_upgrade_still_respects_removed() {
+        let paths = vec![PathBuf::from("visualizer/vectorscope-1.0.2.zip")];
+        let installed = |_: &str, _: &str| Some("1.0.0".to_string());
+        let removed = vec!["visualizer:vectorscope".to_string()];
+        assert!(plan_seeds(&paths, &removed, &installed).is_empty(),
+            "user-removed content must not come back as an upgrade");
+    }
+
+    #[test]
+    fn version_lt_compares_numerically_with_missing_as_zero() {
+        assert!(version_lt("1.0.0", "1.0.2"));
+        assert!(version_lt("1.0.9", "1.0.10"), "numeric, not lexical");
+        assert!(!version_lt("1.0.2", "1.0.2"));
+        assert!(!version_lt("1.0.10", "1.0.9"));
+        assert!(!version_lt("1.0", "1.0.0"), "missing segment counts as zero");
+        assert!(version_lt("1.0", "1.0.1"));
+        assert!(version_lt("0.9.9", "1.0.0"));
     }
 }
