@@ -127,21 +127,27 @@ pub async fn patch_account(
     Json(body): Json<Value>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
     let user_id = bearer_user(&state, &headers).map_err(|s| (s, "auth required".to_string()))?;
-    let db = state.db.lock();
+
+    // VALIDATE EVERYTHING FIRST, apply second (0.9.4). The old per-field
+    // validate-then-write loop committed earlier fields before a later one
+    // failed, so "save" could half-apply and then report an error — and a
+    // blank display name 400'd the entire patch, which is why "colour, bio,
+    // links AND name all don't save" arrived as one report: the editor
+    // always sends displayName, and an account that never set one could
+    // never save anything else.
+    let mut updates: Vec<(&'static str, Option<String>)> = Vec::new();
 
     if let Some(v) = body.get("displayName") {
         let name = v.as_str().unwrap_or("").trim().to_string();
-        if name.is_empty() {
-            return Err((StatusCode::BAD_REQUEST, "display name must not be blank".into()));
-        }
         if name.chars().count() > MAX_DISPLAY_NAME {
             return Err((
                 StatusCode::BAD_REQUEST,
                 format!("display name must be at most {MAX_DISPLAY_NAME} characters"),
             ));
         }
-        db.execute("UPDATE users SET display_name = ?1 WHERE id = ?2", rusqlite::params![name, user_id])
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        // Blank is fine (0.9.4): a display name is OPTIONAL — readers fall
+        // back to the handle. NULL rather than "" so "unset" is one state.
+        updates.push(("display_name", (!name.is_empty()).then_some(name)));
     }
 
     if let Some(v) = body.get("bio") {
@@ -152,8 +158,7 @@ pub async fn patch_account(
                 format!("bio must be at most {MAX_BIO} characters"),
             ));
         }
-        db.execute("UPDATE users SET bio = ?1 WHERE id = ?2", rusqlite::params![bio, user_id])
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        updates.push(("bio", Some(bio)));
     }
 
     if let Some(v) = body.get("links") {
@@ -182,8 +187,7 @@ pub async fn patch_account(
             }
         }
         let encoded = serde_json::to_string(arr).unwrap_or_else(|_| "[]".into());
-        db.execute("UPDATE users SET links = ?1 WHERE id = ?2", rusqlite::params![encoded, user_id])
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        updates.push(("links", Some(encoded)));
     }
 
     // A profile accent. Constrained to #rrggbb so it can only ever be a
@@ -192,8 +196,7 @@ pub async fn patch_account(
     if let Some(v) = body.get("accent") {
         let raw = v.as_str().unwrap_or("").trim().to_lowercase();
         if raw.is_empty() {
-            db.execute("UPDATE users SET accent = NULL WHERE id = ?1", rusqlite::params![user_id])
-                .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "write failed".to_string()))?;
+            updates.push(("accent", None));
         } else {
             let ok = raw.len() == 7
                 && raw.starts_with('#')
@@ -201,9 +204,18 @@ pub async fn patch_account(
             if !ok {
                 return Err((StatusCode::BAD_REQUEST, "accent must be #rrggbb".into()));
             }
-            db.execute("UPDATE users SET accent = ?1 WHERE id = ?2", rusqlite::params![raw, user_id])
-                .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "write failed".to_string()))?;
+            updates.push(("accent", Some(raw)));
         }
+    }
+
+    let db = state.db.lock();
+    for (column, value) in updates {
+        // `column` is one of four compile-time literals above, never input.
+        db.execute(
+            &format!("UPDATE users SET {column} = ?1 WHERE id = ?2"),
+            rusqlite::params![value, user_id],
+        )
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     }
 
     Ok(Json(json!({ "ok": true })))
@@ -286,7 +298,9 @@ pub async fn get_creator(
 
     Ok(Json(json!({
         "handle": handle,
-        "displayName": display_name,
+        // A display name is optional since 0.9.4 — the public page falls
+        // back to the handle so nobody renders nameless.
+        "displayName": display_name.unwrap_or_else(|| handle.clone()),
         "bio": bio,
         "links": serde_json::from_str::<Value>(&links).unwrap_or(json!([])),
         "avatarSeed": avatar_seed.unwrap_or_else(|| handle.clone()),
