@@ -21,6 +21,7 @@
     "core:window:allow-inner-size",
     "core:window:allow-current-monitor",
     "core:window:allow-available-monitors",
+    "core:webview:allow-set-webview-zoom",
     "core:webview:allow-create-webview",
     "core:webview:allow-set-webview-position",
     "core:webview:allow-set-webview-size",

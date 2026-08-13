@@ -147,24 +147,46 @@ fn open_browser(url: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Sentinel error for a user-initiated cancel — the caller resets state
+/// WITHOUT surfacing an error message (cancelling is not a failure).
+pub const CONNECT_CANCELLED: &str = "__connect_cancelled__";
+
+/// Set by `discord_cancel_connect`; polled by `wait_for_callback`'s loop.
+static CANCEL_CONNECT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// How long we wait for Discord to redirect back. Was 300s (0.9.5): with a
+/// mistyped Application ID Discord shows its own error page and NEVER
+/// redirects, so the wait always ran to the full deadline with the button
+/// stuck on "Authorizing…". 120s leaves room for a real Discord login;
+/// the Cancel button covers the impatient path.
+const CALLBACK_DEADLINE: Duration = Duration::from_secs(120);
+
 /// Block until exactly one valid HTTP request hits the redirect port, return
 /// the `code` query param. Sends a friendly HTML response so the browser tab
-/// shows confirmation and self-closes. Total deadline 5 minutes — chrome
-/// fetches favicon.ico on the callback page, so we may need to consume a few
-/// stray requests before we see one with a code.
+/// shows confirmation and self-closes. Chrome fetches favicon.ico on the
+/// callback page, so we may need to consume a few stray requests before we
+/// see one with a code. Waits in 500ms slices so a cancel lands promptly.
 fn wait_for_callback() -> Result<String, String> {
     let server = tiny_http::Server::http(("127.0.0.1", REDIRECT_PORT))
         .map_err(|e| format!("bind callback server: {e}"))?;
 
-    let deadline = std::time::Instant::now() + Duration::from_secs(300);
+    let deadline = std::time::Instant::now() + CALLBACK_DEADLINE;
     loop {
+        if CANCEL_CONNECT.load(std::sync::atomic::Ordering::Relaxed) {
+            return Err(CONNECT_CANCELLED.into());
+        }
         let remaining = deadline.saturating_duration_since(std::time::Instant::now());
         if remaining.is_zero() {
-            return Err("callback server timed out".into());
+            return Err(
+                "Didn't hear back from Discord — check that the Application ID is correct \
+                 and that http://localhost:14201/callback is added under OAuth2 → Redirects"
+                    .into(),
+            );
         }
-        let request = match server.recv_timeout(remaining) {
+        let slice = remaining.min(Duration::from_millis(500));
+        let request = match server.recv_timeout(slice) {
             Ok(Some(r)) => r,
-            Ok(None) => return Err("callback server timed out".into()),
+            Ok(None) => continue, // slice elapsed — re-check cancel/deadline
             Err(e) => return Err(format!("recv: {e}")),
         };
 
@@ -371,43 +393,68 @@ pub async fn discord_connect<R: Runtime>(app: AppHandle<R>, client_id: String) -
         drop(s);
         emit_state(&app);
     }
+    // A fresh attempt clears any stale cancel from a previous one.
+    CANCEL_CONNECT.store(false, std::sync::atomic::Ordering::Relaxed);
 
-    let result = (|| -> Result<(), String> {
-        let verifier = random_verifier();
-        let challenge = pkce_challenge(&verifier);
-        let auth_url = format!(
-            "https://discord.com/api/oauth2/authorize?response_type=code&client_id={cid}&scope={scope}&redirect_uri={ru}&code_challenge={ch}&code_challenge_method=S256",
-            cid = client_id,
-            scope = SCOPES.replace(' ', "+"),
-            ru = "http%3A%2F%2Flocalhost%3A14201%2Fcallback",
-            ch = challenge,
-        );
-        open_browser(&auth_url)?;
-        let code = wait_for_callback()?;
-        let tokens = exchange_code(&client_id, &code, &verifier)?;
-        eprintln!("discord: token granted with scopes = [{}]", tokens.scope);
-        let mut creds = CREDS.lock();
-        creds.client_id = Some(client_id.clone());
-        creds.access_token = Some(tokens.access_token);
-        creds.refresh_token = Some(tokens.refresh_token);
-        creds.expires_at = Some(now_secs() + tokens.expires_in);
-        creds.granted_scopes = Some(tokens.scope);
-        save_creds(&app, &creds);
-        drop(creds);
-        Ok(())
-    })();
+    // spawn_blocking (0.9.5): this body blocks for up to the whole callback
+    // deadline — parked directly on a tokio worker it was the same
+    // starve-the-runtime shape the 0.9.2 audit cleaned out elsewhere.
+    let result = tauri::async_runtime::spawn_blocking({
+        let app = app.clone();
+        let client_id = client_id.clone();
+        move || -> Result<(), String> {
+            let verifier = random_verifier();
+            let challenge = pkce_challenge(&verifier);
+            let auth_url = format!(
+                "https://discord.com/api/oauth2/authorize?response_type=code&client_id={cid}&scope={scope}&redirect_uri={ru}&code_challenge={ch}&code_challenge_method=S256",
+                cid = client_id,
+                scope = SCOPES.replace(' ', "+"),
+                ru = "http%3A%2F%2Flocalhost%3A14201%2Fcallback",
+                ch = challenge,
+            );
+            open_browser(&auth_url)?;
+            let code = wait_for_callback()?;
+            let tokens = exchange_code(&client_id, &code, &verifier)?;
+            eprintln!("discord: token granted with scopes = [{}]", tokens.scope);
+            let mut creds = CREDS.lock();
+            creds.client_id = Some(client_id.clone());
+            creds.access_token = Some(tokens.access_token);
+            creds.refresh_token = Some(tokens.refresh_token);
+            creds.expires_at = Some(now_secs() + tokens.expires_in);
+            creds.granted_scopes = Some(tokens.scope);
+            save_creds(&app, &creds);
+            drop(creds);
+            Ok(())
+        }
+    })
+    .await
+    .map_err(|e| format!("connect task failed: {e}"))
+    .and_then(|r| r);
 
     if let Err(ref e) = result {
         let mut s = STATE.lock();
         s.connecting = false;
-        s.error = Some(e.clone());
+        // A user-initiated cancel is not a failure — no error banner, just
+        // back to the editable form.
+        s.error = if e == CONNECT_CANCELLED { None } else { Some(e.clone()) };
         drop(s);
         emit_state(&app);
+        if e == CONNECT_CANCELLED {
+            return Ok(());
+        }
     } else {
         // Kick a poll right away so the UI updates before the next tick.
         poll(&app);
     }
     result
+}
+
+/// Aborts a pending `discord_connect`: the waiting loop notices within
+/// ~500ms, unwinds, and the connect command itself resets `connecting` and
+/// emits — so the tile returns to the editable form without a restart.
+#[tauri::command]
+pub async fn discord_cancel_connect() {
+    CANCEL_CONNECT.store(true, std::sync::atomic::Ordering::Relaxed);
 }
 
 #[tauri::command]

@@ -72,6 +72,7 @@ export interface SettingsValues {
   glassEnabled: boolean;
   /** 0–100; 0 = clear glass, 100 = most opaque frosted. */
   glassStrength: number;
+  uiScale: number;
   /** Auto-hide top bar — slides away until the mouse hits the top edge. */
   autoHideTopBar: boolean;
   /** Streamer mode — hides maps and location details in every tile. */
@@ -316,6 +317,18 @@ export function SettingsWindow({
               labels={{ system: 'System' }}
               onChange={(x) => set('clockFormat', x)}
               accent={accent}
+            />
+          ),
+        },
+        {
+          id: 'appearance-ui-scale', label: 'Interface scale',
+          hint: 'Resizes the whole interface — turn it down on lower-resolution monitors to fit more, up for readability. Applies instantly.',
+          control: (
+            <SliderControl
+              value={v.uiScale} min={0.75} max={1.5} step={0.05}
+              format={(x) => `${Math.round(x * 100)}%`}
+              accent={accent}
+              onChange={(x) => set('uiScale', x)}
             />
           ),
         },

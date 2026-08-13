@@ -689,12 +689,21 @@ mod winimpl {
     // Per-exe cache for the version-info FileDescription. Same pattern as
     // ICON_CACHE: cache misses too so we don't re-query every emit.
     static NAME_CACHE: StdMutex<Option<HashMap<String, Option<String>>>> = StdMutex::new(None);
+    /// Cap for both per-exe caches (0.9.5 leak audit): they grew one entry —
+    /// including a base64 PNG for icons — per distinct exe ever seen, with no
+    /// eviction. 128 distinct audio apps is far past any real session; when
+    /// exceeded the map is simply cleared (re-extraction is cheap and rare)
+    /// rather than carrying LRU bookkeeping for a case that never recurs.
+    pub(super) const EXE_CACHE_CAP: usize = 128;
 
     pub fn cached_friendly_name(exe_path: &str) -> Option<String> {
         let mut guard = NAME_CACHE.lock().ok()?;
         let map = guard.get_or_insert_with(HashMap::new);
         if let Some(v) = map.get(exe_path) {
             return v.clone();
+        }
+        if map.len() >= EXE_CACHE_CAP {
+            map.clear();
         }
         let result = unsafe { friendly_app_name(exe_path) };
         map.insert(exe_path.to_string(), result.clone());
@@ -770,6 +779,9 @@ mod winimpl {
         let map = guard.get_or_insert_with(HashMap::new);
         if let Some(v) = map.get(exe_path) {
             return v.clone();
+        }
+        if map.len() >= EXE_CACHE_CAP {
+            map.clear();
         }
         let result = unsafe { extract_icon_data_url(exe_path) };
         map.insert(exe_path.to_string(), result.clone());

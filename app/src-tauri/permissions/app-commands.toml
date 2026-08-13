@@ -79,6 +79,7 @@ commands.allow = [
 
   # discord / discord_rpc (src/state/tauri.ts).
   "discord_connect",
+  "discord_cancel_connect",
   "discord_disconnect",
   "discord_status",
   "discord_get_client_id",
@@ -244,6 +245,7 @@ commands.allow = [
   "mixer_set_default_output",
   "mixer_refresh",
   "set_mixer_active",
+  "set_claude_active",
 
   # secrets — DPAPI-backed credential store, read by the Settings credential UI
   # (src/state/secrets.ts). This is the command the missing ACL exposed.

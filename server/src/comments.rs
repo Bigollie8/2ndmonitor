@@ -25,6 +25,10 @@ use serde_json::{json, Value};
 use std::collections::HashMap;
 
 const MAX_BODY: usize = 1000;
+/// Distinct OPEN reports one user may hold per target kind (0.9.5). Two is
+/// the community's requested number for shouts; applied uniformly so the
+/// report button can't be spammed anywhere. Resolved reports free the slot.
+const MAX_OPEN_REPORTS_PER_KIND: i64 = 2;
 
 /// Comments on one bundle, newest first.
 ///
@@ -283,6 +287,28 @@ pub async fn report(
         // Success, not an error: their intent is already recorded, and
         // "you already reported that" mostly invites an angrier second try.
         return Ok(Json(json!({ "ok": true, "duplicate": true })));
+    }
+
+    // Cap DISTINCT open reports per (reporter, kind) — 0.9.5, requested for
+    // shouts and applied to every kind: the duplicate check above stops
+    // re-reporting one target, but nothing stopped one person from opening a
+    // report on every message in the box. Resolved/closed reports stop
+    // counting the moment a moderator handles them, so the cap self-heals.
+    let open: i64 = db
+        .query_row(
+            "SELECT COUNT(*) FROM reports
+             WHERE reporter_id = ?1 AND target_kind = ?2 AND status = 'open'",
+            rusqlite::params![user, kind],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
+    if open >= MAX_OPEN_REPORTS_PER_KIND {
+        return Err((
+            StatusCode::TOO_MANY_REQUESTS,
+            format!(
+                "You already have {MAX_OPEN_REPORTS_PER_KIND} open reports here — a moderator will get to them"
+            ),
+        ));
     }
 
     db.execute(

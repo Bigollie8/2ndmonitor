@@ -607,6 +607,62 @@ async fn reporting_the_same_thing_twice_does_not_double_the_queue() {
     assert_eq!(n, 1, "one open report per person per target");
 }
 
+// ── 0.9.5: at most 2 open reports per kind per reporter ─────────────────────
+
+#[tokio::test]
+async fn a_third_distinct_open_report_of_one_kind_is_rejected() {
+    let app = router(test_state());
+    let a = account(&app, "cap1@x.y", Some("capreporter")).await;
+
+    for id in ["s1", "s2"] {
+        let (st, _) = call(&app, "POST", "/reports", Some(&a), Some(serde_json::json!({
+            "targetKind": "shout", "targetId": id, "reason": "spam",
+        }))).await;
+        assert_eq!(st, StatusCode::OK);
+    }
+    let (st, body) = call(&app, "POST", "/reports", Some(&a), Some(serde_json::json!({
+        "targetKind": "shout", "targetId": "s3", "reason": "spam",
+    }))).await;
+    assert_eq!(st, StatusCode::TOO_MANY_REQUESTS, "third distinct shout report: {body}");
+
+    // Re-reporting an already-reported target stays a quiet success even at
+    // the cap (the duplicate short-circuit runs first).
+    let (st, body) = call(&app, "POST", "/reports", Some(&a), Some(serde_json::json!({
+        "targetKind": "shout", "targetId": "s1", "reason": "spam",
+    }))).await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(body["duplicate"], true);
+
+    // The cap is PER KIND: two open shout reports don't block a comment one.
+    let (st, _) = call(&app, "POST", "/reports", Some(&a), Some(serde_json::json!({
+        "targetKind": "comment", "targetId": "c1", "reason": "spam",
+    }))).await;
+    assert_eq!(st, StatusCode::OK, "other kinds unaffected");
+}
+
+#[tokio::test]
+async fn resolving_a_report_frees_a_slot() {
+    let state = test_state();
+    let app = router(state.clone());
+    let a = account(&app, "cap2@x.y", Some("cappedone")).await;
+
+    for id in ["r1", "r2"] {
+        call(&app, "POST", "/reports", Some(&a), Some(serde_json::json!({
+            "targetKind": "shout", "targetId": id, "reason": "spam",
+        }))).await;
+    }
+    // Moderator closes one — status leaves 'open', the slot frees.
+    {
+        let db = state.db.lock();
+        db.execute("UPDATE reports SET status = 'resolved' WHERE target_id = 'r1'", [])
+            .unwrap();
+    }
+    let (st, _) = call(&app, "POST", "/reports", Some(&a), Some(serde_json::json!({
+        "targetKind": "shout", "targetId": "r3", "reason": "spam",
+    }))).await;
+    assert_eq!(st, StatusCode::OK, "a resolved report no longer counts toward the cap");
+}
+
 // A block covers following, not just what you see.
 #[tokio::test]
 async fn a_blocked_person_cannot_follow_you() {

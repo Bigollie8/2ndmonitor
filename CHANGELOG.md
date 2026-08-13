@@ -5,6 +5,52 @@ All notable changes to 2ndMonitor are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.9.5] - 2026-08-13
+
+### Fixed
+- **The idle RAM leak.** Two real causes found by instrumenting the running
+  app. The big one: every now-playing update captured a fresh copy of the
+  album-art styling (~240KB) inside React's update machinery, and with a
+  paused media session those copies accumulated forever — measured at
+  ~7MB/minute of permanently-retained memory, matching the reported
+  multi-gigabyte climb over hours. Unchanged updates are now skipped
+  outright before any of that machinery runs. The second: the Claude Code
+  session scanner re-read entire session transcripts (often multi-MB) every
+  5 seconds, forever, even with no Claude tile on the dashboard — it now
+  runs only while the tile is mounted, reads only the tail of each file,
+  and skips files that haven't changed. Also bounded as hygiene: the
+  marketplace preview cache (now LRU), the mixer's per-app icon cache, and
+  a duplicated internal event listener
+- **Discord Connect can no longer get stuck on "Authorizing…".** A wrong
+  Application ID means Discord never redirects back, and the app waited
+  five silent minutes. There's now a Cancel button the moment authorization
+  starts, and the automatic timeout is 2 minutes with a plain-language
+  error telling you exactly what to check (the ID, and the OAuth2 redirect
+  entry). Cancel or timeout, you can edit the ID and retry immediately
+- **Discord voice list updates when you were already in the call.** If the
+  app started while you were sitting in a voice channel, the member list
+  filled once and then froze — mutes, joins, and leaves never arrived
+  (and Ctrl+R couldn't fix it). The app now subscribes to live voice events
+  for the channel it discovers at startup, same as when you join one later
+- **Discord tile setup fits 1080p.** The not-connected view's paddings were
+  sized for 1440p and crowded/overflowed the tile on 1080p monitors
+- **YouTube's timeline no longer flickers away while playing.** Browser
+  media sessions sometimes report a zero duration/position mid-playback;
+  the app took that at face value and hid the progress bar until the next
+  good report. Transient zeros for the same video now keep the last known
+  values — pausing, resuming, and real track changes behave exactly as
+  before
+- **Shoutbox report spam capped.** One person can now hold at most 2 open
+  reports per content type; the third is politely refused ("a moderator
+  will get to them"). Reporting the same thing twice still quietly counts
+  once, and resolved reports free the slot
+
+### Added
+- **Interface scale.** Settings → Appearance → Interface scale (75%–150%):
+  resizes the entire interface instantly and persists. Turn it down on a
+  1080p monitor to fit more; turn it up for readability. 100% is exactly
+  today's appearance
+
 ## [0.9.4] - 2026-08-12
 
 ### Added
