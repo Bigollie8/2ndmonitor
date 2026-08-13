@@ -20,6 +20,23 @@
  *  asked" from "asked and it has nothing". */
 const cache = new Map<string, string | null>();
 
+/** LRU bound (0.9.5 leak audit): this map held every preview data URL ever
+ *  fetched — tens to hundreds of KB each — for the life of the process,
+ *  unbounded. 150 comfortably covers a full catalog page plus gallery
+ *  browsing; eviction is the same insertion-order Map trick MapView's tile
+ *  caches use. A re-fetch after eviction is one invoke, not a bug. */
+const CACHE_CAP = 150;
+
+function touchAndTrim(key: string, value: string | null): void {
+  cache.delete(key); // re-insert => moves to newest position
+  cache.set(key, value);
+  while (cache.size > CACHE_CAP) {
+    const oldest = cache.keys().next().value;
+    if (oldest === undefined) break;
+    cache.delete(oldest);
+  }
+}
+
 /** In-flight de-dup, keyed the same as `cache`. A cache MISS is not, by
  *  itself, exclusive — two callers can both see a miss before either has
  *  written the result (this is exactly what React 18 StrictMode's dev-only
@@ -64,10 +81,10 @@ export async function loadPreview(
   const promise = (async (): Promise<string | null> => {
     try {
       const result = await fetcher();
-      cache.set(key, result);
+      touchAndTrim(key, result);
       return result;
     } catch {
-      cache.set(key, null);
+      touchAndTrim(key, null);
       return null;
     } finally {
       // Cleared on BOTH outcomes — a key that failed and was later cleared

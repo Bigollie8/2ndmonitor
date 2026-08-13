@@ -174,6 +174,12 @@ interface TweakState extends Record<string, unknown> {
    *  10 ISO octave bands 31.5 Hz–16 kHz; applied by Rust's eq_apply. */
   eqEnabled: boolean;
   eqBands: number[];
+  /** Interface scale (0.9.5): webview zoom factor, 0.75–1.5, default 1.
+   *  Browser-zoom semantics — every CSS px scales uniformly, so all layout
+   *  math (chrome bars, renderRectFrac, pointer fractions) stays consistent
+   *  by construction. Scaling DOWN is the lower-resolution-monitor request:
+   *  more content fits, chrome included. */
+  uiScale: number;
   perfDebug: boolean;
   /** When true, the small live/fps/levels readout overlays the viz. Off by
    *  default — only useful for diagnosing why a viz isn't reacting. */
@@ -265,6 +271,7 @@ const TWEAK_DEFAULTS: TweakState = {
   perfCustomAudioHz: 30,
   eqEnabled: false,
   eqBands: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+  uiScale: 1,
   perfDebug: false,
   audioDebug: false,
   closeToTray: true,
@@ -887,6 +894,19 @@ export default function App() {
     }
   }, [applyGlassNow]);
 
+  // Interface scale (0.9.5): webview zoom, applied at boot and live on
+  // change. Clamped defensively — a corrupted tweak must not zoom the UI
+  // into unusability with the Settings control itself unreachable.
+  useEffect(() => {
+    void (async () => {
+      try {
+        const { getCurrentWebview } = await import('@tauri-apps/api/webview');
+        const factor = Math.max(0.75, Math.min(1.5, t.uiScale || 1));
+        await getCurrentWebview().setZoom(factor);
+      } catch { /* browser dev — no tauri */ }
+    })();
+  }, [t.uiScale]);
+
   // Push the EQ state to Equalizer APO whenever it changes (and once at
   // boot, so a persisted curve survives restarts). Debounced: a slider drag
   // emits many tweak updates, and E-APO re-parses its config on every file
@@ -1008,21 +1028,9 @@ export default function App() {
     })();
     return () => { cancelled = true; un?.(); };
   }, []);
-
-  // wry never flips document.visibilityState when the parent window is
-  // hidden to the tray (SetIsVisible(false) isn't called on a Win32 hide), so
-  // the Rust side tells us explicitly. Without this, the rAF viz loop keeps
-  // drawing at the FPS cap while minimized to the tray.
-  useEffect(() => {
-    let un: (() => void) | undefined;
-    (async () => {
-      try {
-        const { listen } = await import('@tauri-apps/api/event');
-        un = await listen<boolean>('hub://window-visibility', (e) => setWindowHidden(!e.payload));
-      } catch { /* browser dev — no tauri */ }
-    })();
-    return () => { un?.(); };
-  }, []);
+  // (0.9.5 leak audit: a second, guardless copy of this exact effect lived
+  // here — a paste from before the StrictMode fix. It doubled the listener
+  // and the per-event work for the life of the process. Removed.)
 
   useEffect(() => {
     let audioHz = 30;

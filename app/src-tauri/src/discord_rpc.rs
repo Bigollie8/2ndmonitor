@@ -350,11 +350,11 @@ fn handle_message<R: Runtime>(
 
     // GET_SELECTED_VOICE_CHANNEL response — initial fetch.
     if cmd == "GET_SELECTED_VOICE_CHANNEL" && evt != "ERROR" {
-        update_voice_from_channel(app, data, current_voice_channel)?;
+        update_voice_from_channel(app, writer, data, current_voice_channel)?;
         return Ok(());
     }
     if cmd == "GET_CHANNEL" && evt != "ERROR" {
-        update_voice_from_channel(app, data, current_voice_channel)?;
+        update_voice_from_channel(app, writer, data, current_voice_channel)?;
         return Ok(());
     }
 
@@ -373,41 +373,13 @@ fn handle_message<R: Runtime>(
 
             // Unsubscribe from the previous channel's voice-state events.
             if let Some(prev) = current_voice_channel.take() {
-                let _ = write_frame(
-                    writer, 1,
-                    &json!({
-                        "nonce": next_nonce(), "cmd": "UNSUBSCRIBE",
-                        "evt": "VOICE_STATE_CREATE", "args": {"channel_id": &prev}
-                    }).to_string(),
-                );
-                let _ = write_frame(
-                    writer, 1,
-                    &json!({
-                        "nonce": next_nonce(), "cmd": "UNSUBSCRIBE",
-                        "evt": "VOICE_STATE_UPDATE", "args": {"channel_id": &prev}
-                    }).to_string(),
-                );
-                let _ = write_frame(
-                    writer, 1,
-                    &json!({
-                        "nonce": next_nonce(), "cmd": "UNSUBSCRIBE",
-                        "evt": "VOICE_STATE_DELETE", "args": {"channel_id": &prev}
-                    }).to_string(),
-                );
+                let _ = set_voice_state_subscription(writer, &prev, false);
             }
 
             if let Some(cid) = channel_id.clone() {
                 *current_voice_channel = Some(cid.clone());
                 // Subscribe per-channel voice-state events.
-                for evt in ["VOICE_STATE_CREATE", "VOICE_STATE_UPDATE", "VOICE_STATE_DELETE"] {
-                    write_frame(
-                        writer, 1,
-                        &json!({
-                            "nonce": next_nonce(), "cmd": "SUBSCRIBE",
-                            "evt": evt, "args": {"channel_id": &cid}
-                        }).to_string(),
-                    )?;
-                }
+                set_voice_state_subscription(writer, &cid, true)?;
                 // Pull the channel info so we have member list + names right away.
                 write_frame(
                     writer, 1,
@@ -499,8 +471,36 @@ fn handle_message<R: Runtime>(
     Ok(())
 }
 
+/// Subscribe (or unsubscribe) the three per-channel voice-state events for
+/// one channel. Shared by the live VOICE_CHANNEL_SELECT transition AND the
+/// initial-fetch path — before 0.9.5 only the transition subscribed, so an
+/// app started while ALREADY in a voice call populated the member list once
+/// and then never heard another join/leave/mute for that call ("the user
+/// list isn't updating, even after Ctrl+R" — a reload restarts the webview,
+/// not this worker, so nothing ever re-subscribed).
+fn set_voice_state_subscription(
+    writer: &Transport,
+    channel_id: &str,
+    subscribe: bool,
+) -> Result<(), String> {
+    let cmd = if subscribe { "SUBSCRIBE" } else { "UNSUBSCRIBE" };
+    for evt in ["VOICE_STATE_CREATE", "VOICE_STATE_UPDATE", "VOICE_STATE_DELETE"] {
+        write_frame(
+            writer,
+            1,
+            &json!({
+                "nonce": next_nonce(), "cmd": cmd,
+                "evt": evt, "args": {"channel_id": channel_id}
+            })
+            .to_string(),
+        )?;
+    }
+    Ok(())
+}
+
 fn update_voice_from_channel<R: Runtime>(
     app: &AppHandle<R>,
+    writer: &Transport,
     data: Option<&Value>,
     current_voice_channel: &mut Option<String>,
 ) -> Result<(), String> {
@@ -525,6 +525,13 @@ fn update_voice_from_channel<R: Runtime>(
         .collect();
 
     if let Some(cid) = channel_id.clone() {
+        // Subscribe only on a channel we aren't already subscribed to —
+        // the VOICE_CHANNEL_SELECT arm subscribes before requesting
+        // GET_CHANNEL, and this function handles that response too; the
+        // guard keeps that path from double-subscribing (duplicate events).
+        if current_voice_channel.as_deref() != Some(cid.as_str()) {
+            set_voice_state_subscription(writer, &cid, true)?;
+        }
         *current_voice_channel = Some(cid);
     }
 

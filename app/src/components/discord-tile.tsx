@@ -41,7 +41,7 @@ function guildInitials(name: string): string {
 }
 
 export function DiscordTile({ density, accent }: { density: Density; accent: string }) {
-  const { state, connect, disconnect, getStoredClientId } = useDiscord();
+  const { state, connect, cancelConnect, disconnect, getStoredClientId } = useDiscord();
   const [storedClientId, setStoredClientId] = useState<string | null>(null);
 
   useEffect(() => {
@@ -110,6 +110,7 @@ export function DiscordTile({ density, accent }: { density: Density; accent: str
             error={state.error}
             accent={accent}
             connect={connect}
+            cancelConnect={cancelConnect}
             getStoredClientId={getStoredClientId}
           />
         )}
@@ -523,11 +524,12 @@ function GuildIcon({ guild, accent }: { guild: DiscordGuild; accent: string }) {
   );
 }
 
-function ConnectView({ connecting, error, accent, connect, getStoredClientId }: {
+function ConnectView({ connecting, error, accent, connect, cancelConnect, getStoredClientId }: {
   connecting: boolean;
   error: string | null;
   accent: string;
   connect: (id: string) => Promise<void>;
+  cancelConnect: () => Promise<void>;
   getStoredClientId: () => Promise<string | null>;
 }) {
   const [clientId, setClientId] = useState('');
@@ -552,8 +554,12 @@ function ConnectView({ connecting, error, accent, connect, getStoredClientId }: 
   };
 
   return (
-    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', padding: 14, gap: 10, minHeight: 0, overflow: 'auto' }}>
-      <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.85)', lineHeight: 1.5 }}>
+    // Tighter spacing than the original 14/10 (0.9.5): at 1080p this tile's
+    // slot is ~190px tall and the old paddings pushed the button row into
+    // the scroll cut-off — the reported "scaling is off a little". Barely
+    // perceptible at 1440p; everything now fits without scrolling at 1080p.
+    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', padding: '10px 12px', gap: 8, minHeight: 0, overflow: 'auto' }}>
+      <div style={{ fontSize: 11.5, color: 'rgba(255,255,255,0.85)', lineHeight: 1.45 }}>
         Connect Discord to show your user, server list, and avatars in this tile. Read-only —
         we never post on your behalf.
       </div>
@@ -594,7 +600,7 @@ function ConnectView({ connecting, error, accent, connect, getStoredClientId }: 
           disabled={!idCheck.ok || connecting}
           style={{
             flex: 1,
-            padding: '8px 12px', fontSize: 12, fontWeight: 700,
+            padding: '7px 12px', fontSize: 12, fontWeight: 700,
             background: clientId.trim() && !connecting ? accent : 'rgba(255,255,255,0.06)',
             color: clientId.trim() && !connecting ? '#000' : 'rgba(255,255,255,0.4)',
             border: 'none', borderRadius: 6,
@@ -604,10 +610,26 @@ function ConnectView({ connecting, error, accent, connect, getStoredClientId }: 
         >
           {connecting ? 'Authorizing…' : 'Connect Discord'}
         </button>
+        {/* The stuck-"Authorizing" escape hatch (0.9.5): a wrong Application
+            ID means Discord never redirects back — Cancel aborts within
+            ~500ms so the ID can be corrected without restarting the app. */}
+        {connecting && (
+          <button
+            onClick={() => void cancelConnect()}
+            style={{
+              padding: '7px 12px', fontSize: 11, fontWeight: 600,
+              background: 'rgba(239,68,68,0.1)', color: '#fca5a5',
+              border: '1px solid rgba(239,68,68,0.3)', borderRadius: 6,
+              cursor: 'pointer',
+            }}
+          >
+            Cancel
+          </button>
+        )}
         <button
           onClick={() => setShowHelp((v) => !v)}
           style={{
-            padding: '8px 12px', fontSize: 11, fontWeight: 600,
+            padding: '7px 12px', fontSize: 11, fontWeight: 600,
             background: 'rgba(255,255,255,0.04)',
             color: 'rgba(255,255,255,0.6)',
             border: '1px solid rgba(255,255,255,0.08)', borderRadius: 6,
@@ -617,6 +639,11 @@ function ConnectView({ connecting, error, accent, connect, getStoredClientId }: 
           {showHelp ? '×' : '?'}
         </button>
       </div>
+      {connecting && (
+        <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)', lineHeight: 1.4 }}>
+          Waiting for the browser — finish authorizing there, or Cancel to try a different ID.
+        </div>
+      )}
 
       {error && (
         <div style={{ fontSize: 11, color: '#fca5a5', padding: 8, borderRadius: 6, background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)' }}>

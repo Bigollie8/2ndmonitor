@@ -11,10 +11,14 @@
 //! - last entry type=`user`                              →  agent is processing
 //! - file mtime older than 10 minutes                    →  idle
 
+use once_cell::sync::Lazy;
+use parking_lot::Mutex;
 use serde::Serialize;
 use serde_json::Value;
 use std::{
+    collections::HashMap,
     fs,
+    io::{Read, Seek, SeekFrom},
     path::{Path, PathBuf},
     time::{Duration, SystemTime},
 };
@@ -30,8 +34,39 @@ const IDLE_SECS: u64 = 10 * 60;
 /// Project-name substrings to exclude from the active list (case-insensitive).
 /// Match either the encoded folder name or the decoded path.
 const HIDDEN_PROJECT_SUBSTRINGS: &[&str] = &["nsfw"];
+/// How much of a transcript's tail we read to infer status. The doc comment
+/// above always SAID "we only look at the tail" — until 0.9.5 the code read
+/// the whole file. On a machine with hundreds of active multi-MB transcripts
+/// (any Claude Code power user) that was hundreds of MB of allocation churn
+/// every 5 seconds, forever — the RAM-leak report's Rust-side contributor.
+const TAIL_BYTES: u64 = 64 * 1024;
 
-#[derive(Debug, Serialize, Clone)]
+/// Only scan while a Claude tile is actually mounted (0.9.5) — the same
+/// gate mixer.rs uses for its 1Hz COM enumeration. Most users never place
+/// this tile; they paid for the scan on every tick anyway.
+static CLAUDE_ACTIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+#[tauri::command]
+pub fn set_claude_active(active: bool) {
+    CLAUDE_ACTIVE.store(active, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Per-file analysis memo keyed by (mtime, len): an unchanged transcript is
+/// not re-read, let alone re-parsed, on the next tick. Entries for files
+/// that leave the scan window are dropped at the end of each scan, so the
+/// map is bounded by the count of active session files.
+static ANALYSIS_CACHE: Lazy<Mutex<HashMap<PathBuf, AnalysisEntry>>> =
+    Lazy::new(|| Mutex::new(HashMap::new()));
+
+struct AnalysisEntry {
+    mtime: SystemTime,
+    len: u64,
+    status: String,
+    detail: String,
+    last_user: Option<String>,
+}
+
+#[derive(Debug, Serialize, Clone, PartialEq)]
 pub struct ClaudeSession {
     pub project: String,
     pub project_path: String,
@@ -44,10 +79,25 @@ pub struct ClaudeSession {
 }
 
 pub fn spawn<R: Runtime>(app: AppHandle<R>) {
-    std::thread::spawn(move || loop {
-        let sessions = scan();
-        let _ = app.emit("claude:sessions", &sessions);
-        std::thread::sleep(Duration::from_secs(SCAN_INTERVAL_SECS));
+    std::thread::spawn(move || {
+        let mut last_emitted: Option<Vec<ClaudeSession>> = None;
+        loop {
+            if CLAUDE_ACTIVE.load(std::sync::atomic::Ordering::Relaxed) {
+                let sessions = scan();
+                // Identical scans (the common idle case) are not re-emitted:
+                // each emit serializes the whole list into the webview, and
+                // at 12 emits/minute forever that churn adds up.
+                if last_emitted.as_ref() != Some(&sessions) {
+                    let _ = app.emit("claude:sessions", &sessions);
+                    last_emitted = Some(sessions);
+                }
+            } else if last_emitted.is_some() {
+                // Tile unmounted: clear so a remount starts fresh.
+                last_emitted = None;
+                ANALYSIS_CACHE.lock().clear();
+            }
+            std::thread::sleep(Duration::from_secs(SCAN_INTERVAL_SECS));
+        }
     });
 }
 
@@ -59,6 +109,7 @@ fn home_dir() -> Option<PathBuf> {
 
 fn scan() -> Vec<ClaudeSession> {
     let mut out = Vec::new();
+    let mut seen_paths: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
     let Some(home) = home_dir() else { return out };
     let projects_dir = home.join(".claude").join("projects");
     if !projects_dir.exists() {
@@ -120,7 +171,8 @@ fn scan() -> Vec<ClaudeSession> {
                 .unwrap_or("")
                 .to_string();
 
-            let (status, detail, last_user) = analyze_session(&p, age);
+            let (status, detail, last_user) = analyze_session_cached(&p, mtime, meta.len(), age);
+            seen_paths.insert(p.clone());
 
             out.push(ClaudeSession {
                 project: project_human.clone(),
@@ -133,6 +185,10 @@ fn scan() -> Vec<ClaudeSession> {
             });
         }
     }
+
+    // Drop memo entries for files that left the scan window, so the cache
+    // stays bounded by the active session count.
+    ANALYSIS_CACHE.lock().retain(|path, _| seen_paths.contains(path));
 
     // Awaiting-user first, then running, then by recency.
     out.sort_by(|a, b| {
@@ -168,8 +224,63 @@ fn decode_project_path(encoded: &str) -> String {
     }
 }
 
+/// Memoized wrapper: identical (mtime, len) means the transcript hasn't
+/// changed since the last tick — reuse the parsed answer instead of touching
+/// the file at all. Only `age`-derived wording changes between ticks for an
+/// unchanged file, so recompute JUST the idle label from the cached parts.
+fn analyze_session_cached(
+    path: &Path,
+    mtime: SystemTime,
+    len: u64,
+    age_secs: u64,
+) -> (String, String, Option<String>) {
+    {
+        let cache = ANALYSIS_CACHE.lock();
+        if let Some(e) = cache.get(path) {
+            if e.mtime == mtime && e.len == len {
+                if age_secs > IDLE_SECS {
+                    return ("idle".into(), format!("idle {}", fmt_age(age_secs)), e.last_user.clone());
+                }
+                return (e.status.clone(), e.detail.clone(), e.last_user.clone());
+            }
+        }
+    }
+    let (status, detail, last_user) = analyze_session(path, age_secs);
+    ANALYSIS_CACHE.lock().insert(
+        path.to_path_buf(),
+        AnalysisEntry {
+            mtime,
+            len,
+            status: status.clone(),
+            detail: detail.clone(),
+            last_user: last_user.clone(),
+        },
+    );
+    (status, detail, last_user)
+}
+
+/// Reads at most the last [`TAIL_BYTES`] of the transcript. A cut first line
+/// is dropped (it's mid-JSON); every signal this module infers lives in the
+/// final few entries anyway — this makes the module's "we only look at the
+/// tail" doc comment true for the first time (0.9.5).
+fn read_tail(path: &Path) -> Option<String> {
+    let mut f = fs::File::open(path).ok()?;
+    let len = f.metadata().ok()?.len();
+    let start = len.saturating_sub(TAIL_BYTES);
+    f.seek(SeekFrom::Start(start)).ok()?;
+    let mut buf = Vec::with_capacity((len - start) as usize);
+    f.read_to_end(&mut buf).ok()?;
+    let mut s = String::from_utf8_lossy(&buf).into_owned();
+    if start > 0 {
+        if let Some(nl) = s.find('\n') {
+            s.drain(..=nl);
+        }
+    }
+    Some(s)
+}
+
 fn analyze_session(path: &Path, age_secs: u64) -> (String, String, Option<String>) {
-    let Ok(content) = fs::read_to_string(path) else {
+    let Some(content) = read_tail(path) else {
         return ("idle".into(), "couldn't read".into(), None);
     };
     let last_line = content

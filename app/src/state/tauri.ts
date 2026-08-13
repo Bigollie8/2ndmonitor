@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type MutableRefObject } from 'react';
 import type { SysmonHistory, SysmonSample, Track } from '../types';
+import { deriveNextPlayback, tickSignature } from './playbackDerive';
 
 export const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 
@@ -259,71 +260,37 @@ export function useNowPlaying(): NowPlayingState {
     if (!isTauri) return;
     let cleanup: (() => void) | null = null;
     let cancelled = false;
+    // Last tick's change-signature (0.9.5). The Rust side emits every 2s
+    // whether or not anything changed; an unchanged tick used to still
+    // enqueue a setState whose updater closure captured that tick's fresh
+    // track object — cover string included, ~240KB with art — and those
+    // closures ACCUMULATE while the state never changes. That was the
+    // frontend's share of the idle RAM leak (~7MB/min measured). Skipping
+    // setState outright when the signature matches means no closure, no
+    // retention, and no render machinery at 0.5Hz.
+    let lastSig: string | null = null;
 
     import('@tauri-apps/api/event')
       .then(({ listen }) => listen<NowPlayingPayload>('nowplaying:tick', (e) => {
         if (cancelled) return;
         const p = e.payload;
+        const sig = tickSignature(p);
+        if (sig === lastSig) return;
+        lastSig = sig;
         const track = payloadToTrack(p);
 
-        // Drift detection is ASYMMETRIC. GSMTC's reported position routinely
-        // lags real playback by 200-1500ms (Spotify pushes position at ~1Hz),
-        // so a "negative drift" (GSMTC value < our interpolated value) is
-        // almost always a lag spike — re-syncing to it would yank lyrics
-        // backward. We only re-anchor on:
-        //   - track change / play-state change
-        //   - forward drift > 1s (we missed time, e.g. tab throttled, or user
-        //     seeked forward)
-        //   - very large backward drift > 15s (real backward seek; anything
-        //     smaller is treated as GSMTC jitter and ignored)
-        const FORWARD_RESYNC_THRESHOLD = 1.0;
-        const BIG_BACKWARD_SEEK = 15.0;
+        // Drift detection is ASYMMETRIC (see deriveNextPlayback): re-anchor
+        // only on track/play-state change, forward drift > 1s, or backward
+        // seek > 15s — and transient duration/position ZEROS from browser
+        // GSMTC sessions hold the last good values instead of blanking the
+        // timeline (the YouTube flicker fix, 0.9.5).
         setState((prev) => {
-          let nextPlayback: Playback | null;
-          if (!p.has_session) {
-            nextPlayback = null;
-          } else {
-            const prevPb = prev.playback;
-            const trackChanged =
-              !prev.track || track?.title !== prev.track.title || track?.artist !== prev.track.artist;
-            const playStateChanged = !prevPb || prevPb.playing !== p.playing;
-            const reanchor = !prevPb || trackChanged || playStateChanged;
-
-            if (reanchor) {
-              nextPlayback = {
-                positionAtSync: p.position,
-                duration: p.duration,
-                playing: p.playing,
-                syncedAt: performance.now(),
-              };
-            } else {
-              const elapsed = prevPb.playing
-                ? (performance.now() - prevPb.syncedAt) / 1000
-                : 0;
-              const interpolated = prevPb.positionAtSync + elapsed;
-              const driftSigned = p.position - interpolated;
-              const isForwardJump = driftSigned > FORWARD_RESYNC_THRESHOLD;
-              const isBigBackwardSeek = driftSigned < -BIG_BACKWARD_SEEK;
-              if (isForwardJump || isBigBackwardSeek) {
-                nextPlayback = {
-                  positionAtSync: p.position,
-                  duration: p.duration,
-                  playing: p.playing,
-                  syncedAt: performance.now(),
-                };
-              } else if (prevPb.duration !== p.duration) {
-                nextPlayback = { ...prevPb, duration: p.duration };
-              } else {
-                // Hold anchor — interpolation continues forward smoothly.
-                nextPlayback = prevPb;
-              }
-            }
-          }
-          // Referential stability: the Rust side emits every 2s whether or
-          // not anything changed, and payloadToTrack builds a fresh object
-          // each tick. Returning `prev` when nothing actually changed lets
-          // React bail out of the re-render entirely — this hook sits at the
-          // App root, so without this the whole tile tree reconciles at 0.5Hz.
+          const trackChanged =
+            !prev.track || track?.title !== prev.track.title || track?.artist !== prev.track.artist;
+          const nextPlayback = deriveNextPlayback(prev.playback, p, trackChanged, performance.now());
+          // Referential stability: returning `prev` when nothing actually
+          // changed lets React bail out of the re-render entirely — this
+          // hook sits at the App root.
           const sameTrack =
             (track === null && prev.track === null) ||
             (track !== null && prev.track !== null &&
@@ -615,6 +582,8 @@ export function useDiscordRpc(): DiscordRpcState {
 export function useDiscord(): {
   state: DiscordState;
   connect: (clientId: string) => Promise<void>;
+  /** Aborts a pending connect (0.9.5) — the stuck-"Authorizing" escape hatch. */
+  cancelConnect: () => Promise<void>;
   disconnect: () => Promise<void>;
   getStoredClientId: () => Promise<string | null>;
 } {
@@ -646,6 +615,11 @@ export function useDiscord(): {
     const { invoke } = await import('@tauri-apps/api/core');
     await invoke('discord_connect', { clientId });
   };
+  const cancelConnect = async () => {
+    if (!isTauri) return;
+    const { invoke } = await import('@tauri-apps/api/core');
+    await invoke('discord_cancel_connect');
+  };
   const disconnect = async () => {
     if (!isTauri) return;
     const { invoke } = await import('@tauri-apps/api/core');
@@ -658,7 +632,7 @@ export function useDiscord(): {
     catch { return null; }
   };
 
-  return { state, connect, disconnect, getStoredClientId };
+  return { state, connect, cancelConnect, disconnect, getStoredClientId };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -778,6 +752,15 @@ export function useClaudeSessions(): ClaudeSession[] {
     if (!isTauri) return;
     let cancelled = false;
     let cleanup: (() => void) | null = null;
+    // Tell the Rust scanner someone is actually looking (0.9.5): the 5s
+    // transcript walk only runs while a Claude tile is mounted — the same
+    // gate the mixer uses. Without it, every user paid for scanning
+    // ~/.claude/projects forever, tile or no tile.
+    const setActive = (active: boolean) =>
+      import('@tauri-apps/api/core')
+        .then(({ invoke }) => invoke('set_claude_active', { active }))
+        .catch(() => {});
+    void setActive(true);
     import('@tauri-apps/api/event')
       .then(({ listen }) => listen<ClaudeSession[]>('claude:sessions', (e) => {
         if (cancelled) return;
@@ -788,7 +771,7 @@ export function useClaudeSessions(): ClaudeSession[] {
         cleanup = unlisten;
       })
       .catch((err) => console.error('claude listen failed', err));
-    return () => { cancelled = true; cleanup?.(); };
+    return () => { cancelled = true; cleanup?.(); void setActive(false); };
   }, []);
   return sessions;
 }
