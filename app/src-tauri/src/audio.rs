@@ -132,6 +132,10 @@ pub fn set_audio_emit_hz(hz: u64) {
 /// Butterchurn consumes 1024 time-domain samples per frame (its AudioProcessor
 /// fftSize), as unsigned bytes matching Web Audio's getByteTimeDomainData.
 const WAVEFORM_LEN: usize = 1024;
+/// Below this raw sample peak the source counts as silent for the idle
+/// gate (0.9.6). WASAPI loopback of a silent mix is exact zeros; 1e-4 is
+/// ~-80 dBFS, far under anything a meter would show.
+const SILENCE_PEAK: f32 = 1e-4;
 /// Waveform emission is opt-in: only the MilkDrop viz consumes it, so other
 /// styles pay zero extra IPC. Toggled by the `set_waveform_enabled` command.
 static WAVEFORM_ENABLED: std::sync::atomic::AtomicBool =
@@ -1114,10 +1118,33 @@ fn process_loop<R: Runtime>(
     // Initial interval; recomputed each iteration so a runtime change in
     // EMIT_HZ takes effect on the next tick.
 
+    // ── Idle gate (0.9.6) ──────────────────────────────────────────────────
+    // Measured on the packaged app at idle: ~111% of one core, ~69% of it the
+    // WebView GPU process compositing meters fed by 60 all-zero spectrum
+    // emits per second, plus ~24% here running FFTs on silence. After the
+    // spectrum has decayed to zero and the source has stayed silent, this
+    // loop drops to a cheap 10Hz ring-peek — no FFT, no emits, so every
+    // consumer's last frame is a settled zero and nothing repaints. Any
+    // sound (or a hidden→visible flip) resumes within ~100ms.
+    let mut idle = false;
+    let mut quiet_ticks: u32 = 0;
+
     loop {
         let hz = EMIT_HZ.load(std::sync::atomic::Ordering::Relaxed);
-        let frame_interval = Duration::from_millis(1000 / hz.max(1));
+        let frame_interval = if idle {
+            Duration::from_millis(100)
+        } else {
+            Duration::from_millis(1000 / hz.max(1))
+        };
         thread::sleep(frame_interval);
+
+        // Window hidden (tray): nothing can display a spectrum — skip all
+        // analysis and emits until it comes back.
+        if !crate::WINDOW_VISIBLE.load(Ordering::Relaxed) {
+            idle = true;
+            quiet_ticks = 0;
+            continue;
+        }
 
         let rate = SAMPLE_RATE.load(Ordering::Relaxed) as f32;
         if rate != current_rate {
@@ -1183,6 +1210,18 @@ fn process_loop<R: Runtime>(
             continue;
         }
 
+        // One cheap peak over the mono window — used to wake from idle
+        // (below, without paying for an FFT) and to detect silence (after
+        // the emit, so the last frames still go out and meters settle).
+        let peak = samples.iter().fold(0f32, |m, s| m.max(s.abs()));
+        if idle {
+            if peak < SILENCE_PEAK {
+                continue; // still silent — no FFT, no emits, nothing repaints
+            }
+            idle = false;
+            quiet_ticks = 0;
+        }
+
         // Apply window + load into complex workspace.
         for i in 0..FFT_SIZE {
             workspace[i] = Complex32::new(samples[i] * hann[i], 0.0);
@@ -1221,6 +1260,9 @@ fn process_loop<R: Runtime>(
         let rms = (sum_sq / FFT_SIZE as f32).sqrt();
         let level = (rms * 4.0).clamp(0.0, 1.0);
 
+        // Read before the emit moves `bands`: silence needs both the source
+        // quiet (peak) and the DISPLAYED spectrum fully decayed.
+        let display_settled = bands.iter().all(|b| *b < 0.004);
         let _ = app.emit("audio:spectrum", AudioFrame { bands, level });
 
         // Stereo waveform (0.8.4) — the vectorscope and the correlation/width
@@ -1247,6 +1289,19 @@ fn process_loop<R: Runtime>(
                 .map(|s| sample_to_byte(*s))
                 .collect();
             let _ = app.emit("audio:waveform", wave);
+        }
+
+        // Silence bookkeeping (0.9.6) — AFTER the emits, so the decaying
+        // frames still go out and every meter settles at a true zero before
+        // the stream stops. Idle needs both the source silent (peak) and the
+        // DISPLAYED spectrum fully decayed (bands), for ~2s.
+        if peak < SILENCE_PEAK && display_settled {
+            quiet_ticks = quiet_ticks.saturating_add(1);
+            if quiet_ticks as u64 >= 2 * hz.max(1) as u64 {
+                idle = true;
+            }
+        } else {
+            quiet_ticks = 0;
         }
     }
 }

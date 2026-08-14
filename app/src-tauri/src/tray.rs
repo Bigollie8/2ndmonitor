@@ -30,19 +30,22 @@ fn toggle_window<R: Runtime>(app: &AppHandle<R>) {
             let _ = win.show();
             let _ = win.unminimize();
             let _ = win.set_focus();
+            crate::WINDOW_VISIBLE.store(true, std::sync::atomic::Ordering::Relaxed);
             let _ = win.emit("hub://window-visibility", true);
             return;
         }
         match win.is_visible() {
             Ok(true) => {
                 let _ = win.hide();
+                crate::WINDOW_VISIBLE.store(false, std::sync::atomic::Ordering::Relaxed);
                 let _ = win.emit("hub://window-visibility", false);
             }
             _ => {
                 let _ = win.show();
                 let _ = win.unminimize();
                 let _ = win.set_focus();
-                let _ = win.emit("hub://window-visibility", true);
+                crate::WINDOW_VISIBLE.store(true, std::sync::atomic::Ordering::Relaxed);
+            let _ = win.emit("hub://window-visibility", true);
             }
         }
     }

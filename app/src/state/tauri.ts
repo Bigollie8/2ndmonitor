@@ -213,6 +213,19 @@ export function useSpectrumRef(): MutableRefObject<SpectrumState> {
     let cancelled = false;
     let cleanup: (() => void) | null = null;
 
+    // Staleness watchdog (0.9.6): the Rust side STOPS emitting during
+    // sustained silence (the idle-CPU fix), so `live` must age out — a
+    // latched-true `live` would keep every meter writing identical zero
+    // frames per rAF forever, which is exactly the compositing load the
+    // idle gate exists to remove. 1s granularity is plenty: consumers only
+    // use `live` to pick "settle at the floor" vs "track the data".
+    let lastFrameAt = 0;
+    const staleness = window.setInterval(() => {
+      if (ref.current.live && performance.now() - lastFrameAt > 1500) {
+        ref.current.live = false;
+      }
+    }, 1000);
+
     import('@tauri-apps/api/event')
       .then(({ listen }) =>
         listen<AudioFramePayload>('audio:spectrum', (e) => {
@@ -223,6 +236,7 @@ export function useSpectrumRef(): MutableRefObject<SpectrumState> {
           for (let i = 0; i < n; i++) arr[i] = src[i]!;
           ref.current.level = e.payload.level;
           ref.current.live = true;
+          lastFrameAt = performance.now();
         })
       )
       .then((unlisten) => {
@@ -234,6 +248,7 @@ export function useSpectrumRef(): MutableRefObject<SpectrumState> {
     return () => {
       cancelled = true;
       cleanup?.();
+      window.clearInterval(staleness);
     };
   }, []);
 
