@@ -1,12 +1,17 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { ProfilePreview } from './profile';
+import { geocode, type GeocodeResult } from '../state/weatherLocation';
+import type { WeatherLocation } from '../types';
 
-const STEPS = ['Welcome', 'Pick a profile', 'Ready'];
+const STEPS = ['Welcome', 'Pick a profile', 'Your location', 'Ready'];
 
 export interface OnboardingResult {
   audio?: string;          // legacy — no longer collected; kept optional so App.tsx compiles
   profileId?: string;      // id of profile chosen on the "Pick a profile" step
   hiddenForActive?: Partial<Record<string, boolean>>; // legacy — no longer collected; kept optional so App.tsx compiles
+  /** Chosen on the "Your location" step (0.9.6) — undefined means the user
+   *  skipped it, and the labelled default stays. */
+  weatherLocation?: WeatherLocation;
 }
 
 export function Onboarding({ accent, profiles, onFinish }: {
@@ -16,9 +21,11 @@ export function Onboarding({ accent, profiles, onFinish }: {
 }) {
   const [step, setStep] = useState(0);
   const [profile, setProfile] = useState<string | null>(null);
+  const [location, setLocation] = useState<WeatherLocation | null>(null);
 
   const buildResult = (): OnboardingResult => ({
     profileId: profile ?? undefined,
+    weatherLocation: location ?? undefined,
   });
 
   return (
@@ -62,7 +69,8 @@ export function Onboarding({ accent, profiles, onFinish }: {
       <div style={{ flex: 1, position: 'relative', zIndex: 2, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 40 }}>
         {step === 0 && <OnbWelcome accent={accent} />}
         {step === 1 && <OnbProfile accent={accent} profiles={profiles} value={profile} setValue={setProfile} />}
-        {step === 2 && <OnbReady accent={accent} profile={profile} profiles={profiles} />}
+        {step === 2 && <OnbLocation accent={accent} value={location} setValue={setLocation} />}
+        {step === 3 && <OnbReady accent={accent} profile={profile} profiles={profiles} />}
       </div>
       <div style={{ position: 'relative', zIndex: 2, padding: '24px 48px', display: 'flex', alignItems: 'center', gap: 12, borderTop: '1px solid rgba(255,255,255,0.04)' }}>
         <button onClick={() => step > 0 && setStep(step - 1)} disabled={step === 0} style={{
@@ -88,6 +96,87 @@ export function Onboarding({ accent, profiles, onFinish }: {
           }}>Launch Hub →</button>
         )}
       </div>
+    </div>
+  );
+}
+
+/** "Your location" (0.9.6) — every fresh install used to start on the
+ *  hardcoded Knoxville default with nothing ever asking. One search step:
+ *  the same Open-Meteo geocoder Settings uses, skippable (the footer's
+ *  Continue works with nothing chosen; the copy says what the default is). */
+function OnbLocation({ accent, value, setValue }: {
+  accent: string;
+  value: WeatherLocation | null;
+  setValue: (l: WeatherLocation | null) => void;
+}) {
+  const [query, setQuery] = useState('');
+  const [results, setResults] = useState<GeocodeResult[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const q = query.trim();
+    if (q.length < 2) { setResults([]); setSearching(false); return; }
+    setSearching(true);
+    const id = window.setTimeout(() => {
+      geocode(q)
+        .then((r) => { setResults(r); setSearching(false); setError(null); })
+        .catch(() => { setSearching(false); setError('Search failed — check your connection, or skip this step.'); });
+    }, 350);
+    return () => window.clearTimeout(id);
+  }, [query]);
+
+  const field: React.CSSProperties = {
+    width: '100%', padding: '10px 14px', fontSize: 14, borderRadius: 8,
+    background: 'rgba(0,0,0,0.3)', color: '#fff', outline: 'none',
+    border: '1px solid rgba(255,255,255,0.1)', fontFamily: 'inherit',
+  };
+  return (
+    <div style={{ maxWidth: 560, width: '100%', textAlign: 'center' }}>
+      <h2 style={{ fontSize: 24, fontWeight: 700, margin: '0 0 10px' }}>Where are you?</h2>
+      <p style={{ fontSize: 13, color: 'rgba(255,255,255,0.55)', lineHeight: 1.6, margin: '0 0 24px' }}>
+        Weather, radar, sun, air quality and pollen tiles all key off one place.
+        Search your city — or skip and set it later in Settings (until then the
+        tiles show Knoxville, TN as a placeholder).
+      </p>
+      <input
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+        placeholder="Search a city…"
+        autoFocus
+        spellCheck={false}
+        style={field}
+      />
+      {error && (
+        <div style={{ marginTop: 10, fontSize: 12, color: '#fca5a5' }}>{error}</div>
+      )}
+      <div style={{ marginTop: 10, textAlign: 'left', maxHeight: 220, overflowY: 'auto' }}>
+        {searching && <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.4)', padding: 8 }}>Searching…</div>}
+        {!searching && results.map((r) => {
+          const selected = value?.label === r.label;
+          return (
+            <button
+              key={`${r.label}:${r.lat}`}
+              onClick={() => setValue({ label: r.label, lat: r.lat, lon: r.lon })}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 10, width: '100%',
+                padding: '9px 12px', borderRadius: 8, cursor: 'pointer', textAlign: 'left',
+                background: selected ? `${accent}18` : 'transparent',
+                border: selected ? `1px solid ${accent}55` : '1px solid transparent',
+                color: selected ? accent : 'rgba(255,255,255,0.8)', fontSize: 13,
+              }}
+            >
+              <span style={{ fontSize: 14 }}>{selected ? '✓' : '📍'}</span>
+              {r.label}
+            </button>
+          );
+        })}
+      </div>
+      {value && (
+        <div style={{ marginTop: 14, fontSize: 12.5, color: 'rgba(255,255,255,0.6)' }}>
+          Using <span style={{ color: accent, fontWeight: 600 }}>{value.label}</span>
+        </div>
+      )}
     </div>
   );
 }

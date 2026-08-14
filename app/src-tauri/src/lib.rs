@@ -43,6 +43,13 @@ mod tweaks;
 mod weather;
 mod webtiles;
 
+/// Mirrors the `hub://window-visibility` signal for BACKEND consumers
+/// (0.9.6): audio's analysis loop idles while the window is hidden to the
+/// tray, since nothing can display a spectrum. Set at every site that
+/// emits the event; read in audio::process_loop.
+pub static WINDOW_VISIBLE: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(true);
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -55,6 +62,7 @@ pub fn run() {
                 let _ = win.show();
                 let _ = win.unminimize();
                 let _ = win.set_focus();
+                WINDOW_VISIBLE.store(true, std::sync::atomic::Ordering::Relaxed);
                 let _ = win.emit("hub://window-visibility", true);
             }
         }))
@@ -197,6 +205,17 @@ pub fn run() {
             sandbox::sandbox_token,
         ])
         .setup(|app| {
+            // Integrated titlebar (0.9.6): the config ships decorations:false
+            // so Windows never flashes a native title bar — the app's own top
+            // bar IS the titlebar (drag region + min/max/close controls).
+            // macOS keeps its native traffic lights: re-decorate here.
+            #[cfg(target_os = "macos")]
+            {
+                use tauri::Manager;
+                if let Some(win) = app.get_webview_window("main") {
+                    let _ = win.set_decorations(true);
+                }
+            }
             sysmon::spawn(app.handle().clone());
             nowplaying::spawn(app.handle().clone());
             lyrics::spawn(app.handle().clone());
@@ -218,6 +237,7 @@ pub fn run() {
                     use tauri::Emitter;
                     api.prevent_close();
                     let _ = window.hide();
+                    WINDOW_VISIBLE.store(false, std::sync::atomic::Ordering::Relaxed);
                     let _ = window.emit("hub://window-visibility", false);
                 }
             }

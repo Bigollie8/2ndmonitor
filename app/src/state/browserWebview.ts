@@ -34,6 +34,23 @@ export interface UseBrowserWebviewResult {
 
 const WEBVIEW_LABEL = 'browser-tile';
 
+// ── Interface scale for the child webview (0.9.6) ───────────────────────────
+// `setZoom` on the MAIN webview does not reach children — the browser-player
+// surface stayed at 100% while everything else scaled ("ui scaling for the
+// media hub doesnt apply"). The module keeps the current factor so a webview
+// created AFTER a scale change starts at the right zoom, and App pushes live
+// changes here alongside the main-webview call.
+let currentZoom = 1;
+let liveWebview: Webview | null = null;
+
+export function setBrowserPlayerZoom(factor: number): void {
+  currentZoom = factor;
+  const wv = liveWebview;
+  if (wv) {
+    wv.setZoom(factor).catch((e) => console.warn('browser-player zoom failed', e));
+  }
+}
+
 /** Logs `close()` failures unless they're the benign "already closed" path. */
 function logCloseError(e: unknown) {
   const msg = String(e);
@@ -128,6 +145,10 @@ export function useBrowserWebview(args: UseBrowserWebviewArgs): UseBrowserWebvie
           return;
         }
         webviewRef.current = wv;
+        liveWebview = wv;
+        if (currentZoom !== 1) {
+          wv.setZoom(currentZoom).catch((e) => console.warn('browser-player zoom failed', e));
+        }
         setReady(true);
         setError(null);
       } catch (e: unknown) {
@@ -139,6 +160,7 @@ export function useBrowserWebview(args: UseBrowserWebviewArgs): UseBrowserWebvie
       cancelled = true;
       const wv = webviewRef.current;
       webviewRef.current = null;
+      if (liveWebview === wv) liveWebview = null;
       setReady(false);
       if (wv) wv.close().catch(logCloseError);
     };

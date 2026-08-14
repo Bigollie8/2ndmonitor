@@ -55,6 +55,8 @@ import { setWindowHidden } from './state/framePace';
 import { VizHero, setVizDprCap, setVizMaxFps, getVizMaxFps } from './components/viz';
 import * as perfDebug from './perf/debug';
 import { PerfDebugHUD } from './perf/PerfDebugHUD';
+import { IS_MAC } from './state/platform';
+import { setBrowserPlayerZoom } from './state/browserWebview';
 import { F11DiagnosticCard } from './components/F11DiagnosticCard';
 import { useVizStyles } from './components/useVizStyles';
 import {
@@ -758,7 +760,10 @@ export default function App() {
         setF11Report(null);
         await win.setAlwaysOnTop(false);
         await win.setResizable(true);
-        await win.setDecorations(true);
+        // Integrated titlebar (0.9.6): Windows lives undecorated for life —
+        // re-adding decorations here would bring the double bar back after
+        // one F11 round trip. macOS still round-trips its native chrome.
+        if (IS_MAC) await win.setDecorations(true);
         await win.setSize(new PhysicalSize(prev.w, prev.h));
         await win.setPosition(new PhysicalPosition(prev.x, prev.y));
         // Position first, so a re-maximize happens on the monitor the
@@ -894,17 +899,28 @@ export default function App() {
     }
   }, [applyGlassNow]);
 
-  // Interface scale (0.9.5): webview zoom, applied at boot and live on
-  // change. Clamped defensively — a corrupted tweak must not zoom the UI
-  // into unusability with the Settings control itself unreachable.
+  // Interface scale: webview zoom, applied at boot and on change. Clamped
+  // defensively — a corrupted tweak must not zoom the UI into unusability
+  // with the Settings control itself unreachable.
+  //
+  // DEBOUNCED 150ms (0.9.6, "buggy and choppy"): every setZoom relays out
+  // the entire page, and the slider used to fire one per drag notch — a
+  // relayout storm. Now the percentage readout tracks the drag live but the
+  // zoom itself applies once, when the value settles. Also propagated to
+  // the browser-player CHILD webview (0.9.6, "scaling for the media hub
+  // doesnt apply") — children never inherit the main webview's zoom.
   useEffect(() => {
-    void (async () => {
-      try {
-        const { getCurrentWebview } = await import('@tauri-apps/api/webview');
-        const factor = Math.max(0.75, Math.min(1.5, t.uiScale || 1));
-        await getCurrentWebview().setZoom(factor);
-      } catch { /* browser dev — no tauri */ }
-    })();
+    const id = window.setTimeout(() => {
+      void (async () => {
+        try {
+          const { getCurrentWebview } = await import('@tauri-apps/api/webview');
+          const factor = Math.max(0.75, Math.min(1.5, t.uiScale || 1));
+          await getCurrentWebview().setZoom(factor);
+          setBrowserPlayerZoom(factor);
+        } catch { /* browser dev — no tauri */ }
+      })();
+    }, 150);
+    return () => window.clearTimeout(id);
   }, [t.uiScale]);
 
   // Push the EQ state to Equalizer APO whenever it changes (and once at
@@ -1799,6 +1815,12 @@ export default function App() {
               if (result?.profileId) {
                 setTweak('activeProfileId', result.profileId);
               }
+              // Location chosen in onboarding (0.9.6): the existing
+              // t.weatherLocation effect pushes it to Rust, so every
+              // location-aware tile updates from this one write.
+              if (result?.weatherLocation) {
+                setTweak('weatherLocation', result.weatherLocation);
+              }
               if (result?.hiddenForActive) {
                 const targetId = result.profileId ?? t.activeProfileId;
                 const hiddenMap = result.hiddenForActive!;
@@ -2104,6 +2126,12 @@ function TopChrome({ accent, editMode, setEditMode, streamerMode, setStreamerMod
         const next = e.relatedTarget as Node | null;
         if (next === null || !e.currentTarget.contains(next)) onBarLeave();
       }}
+      // Integrated titlebar (0.9.6, Windows): the native title bar is gone —
+      // this bar is the window's drag surface. The attribute only applies to
+      // the exact element under the pointer, so every button stays clickable;
+      // empty stretches (this root + the flex filler) drag the window, and
+      // wry gives drag regions double-click-to-maximize for free.
+      {...(IS_MAC ? {} : { 'data-tauri-drag-region': true })}
       style={{
         position: 'absolute', top: 0, left: 0, right: 0, height: 56,
         background: 'var(--surface-chrome, rgba(8,9,12,0.85))', backdropFilter: 'blur(10px)',
@@ -2137,7 +2165,7 @@ function TopChrome({ accent, editMode, setEditMode, streamerMode, setStreamerMod
           border: '1px solid transparent', cursor: 'pointer',
         }}>{overflow > 0 ? `+${overflow} More` : '⌃ More'}</button>
       </div>
-      <div style={{ flex: 1 }} />
+      <div style={{ flex: 1 }} {...(IS_MAC ? {} : { 'data-tauri-drag-region': true })} />
       <button onClick={() => setEditMode(!editMode)} style={{
         ...ghostButton,
         display: 'flex', alignItems: 'center', gap: 7,
@@ -2237,6 +2265,78 @@ function TopChrome({ accent, editMode, setEditMode, streamerMode, setStreamerMod
           </div>
         )}
       </div>
+      {!IS_MAC && <WindowControls />}
+    </div>
+  );
+}
+
+/** Native-window controls inside the app's own titlebar (0.9.6, Windows).
+ *  The native title bar is gone — these are the minimize / maximize-restore
+ *  / close the OS used to draw, styled like the rest of the bar. Close goes
+ *  through the normal close-request path, so close-to-tray keeps working.
+ *  The maximize glyph tracks real window state via onResized. */
+function WindowControls() {
+  const [maximized, setMaximized] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    let un: (() => void) | undefined;
+    (async () => {
+      try {
+        const { getCurrentWindow } = await import('@tauri-apps/api/window');
+        const win = getCurrentWindow();
+        const update = async () => {
+          try {
+            const m = await win.isMaximized();
+            if (!cancelled) setMaximized(m);
+          } catch { /* ignore */ }
+        };
+        void update();
+        const off = await win.onResized(() => { void update(); });
+        if (cancelled) { off(); return; }
+        un = off;
+      } catch { /* browser dev — no tauri */ }
+    })();
+    return () => { cancelled = true; un?.(); };
+  }, []);
+
+  const act = (fn: 'minimize' | 'toggleMaximize' | 'close') => async () => {
+    try {
+      const { getCurrentWindow } = await import('@tauri-apps/api/window');
+      await getCurrentWindow()[fn]();
+    } catch { /* browser dev */ }
+  };
+  const base: React.CSSProperties = {
+    width: 34, height: 30, borderRadius: 6,
+    background: 'transparent', border: 'none', cursor: 'pointer',
+    color: 'rgba(255,255,255,0.55)', fontSize: 12, lineHeight: 1,
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+  };
+  const hover = (bg: string, fg: string) => ({
+    onMouseEnter: (e: React.MouseEvent<HTMLButtonElement>) => {
+      e.currentTarget.style.background = bg;
+      e.currentTarget.style.color = fg;
+    },
+    onMouseLeave: (e: React.MouseEvent<HTMLButtonElement>) => {
+      e.currentTarget.style.background = 'transparent';
+      e.currentTarget.style.color = 'rgba(255,255,255,0.55)';
+    },
+  });
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 2, marginLeft: 6 }}>
+      <div style={{ width: 1, height: 18, background: 'rgba(255,255,255,0.08)', marginRight: 6 }} />
+      <button title="Minimize" onClick={act('minimize')} style={base} {...hover('rgba(255,255,255,0.08)', '#fff')}>─</button>
+      <button
+        title={maximized ? 'Restore' : 'Maximize'}
+        onClick={act('toggleMaximize')}
+        style={{ ...base, fontSize: 11 }}
+        {...hover('rgba(255,255,255,0.08)', '#fff')}
+      >{maximized ? '❐' : '☐'}</button>
+      <button
+        title="Close"
+        onClick={act('close')}
+        style={base}
+        {...hover('rgba(239,68,68,0.85)', '#fff')}
+      >✕</button>
     </div>
   );
 }

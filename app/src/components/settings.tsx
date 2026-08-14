@@ -596,7 +596,12 @@ export function SettingsWindow({
       }}
     >
       <div style={{
-        width: 820, maxWidth: '90%', maxHeight: '85vh',
+        // FIXED height (0.9.6): the box used to fit its content, so clicking
+        // between a short category (Advanced) and a tall one (Appearance)
+        // visibly grew and shrank the whole dialog. min===max pins it; the
+        // content pane scrolls internally, short categories leave calm empty
+        // space, and the vh units keep it inside small viewports.
+        width: 820, maxWidth: '90%', height: '82vh', maxHeight: 720,
         display: 'flex', flexDirection: 'column',
         background: 'var(--surface-overlay, rgba(20,22,28,0.98))',
         border: '1px solid rgba(255,255,255,0.08)',
@@ -668,7 +673,7 @@ export function SettingsWindow({
             })}
           </div>
 
-          <div style={{ flex: 1, minWidth: 0, minHeight: 380, padding: '20px 24px', overflowY: 'auto' }}>
+          <div style={{ flex: 1, minWidth: 0, padding: '20px 24px', overflowY: 'auto' }}>
             {searching ? (
               filtered.length === 0 ? (
                 <div style={{ fontSize: 11.5, color: 'rgba(255,255,255,0.4)', padding: '20px 0' }}>
