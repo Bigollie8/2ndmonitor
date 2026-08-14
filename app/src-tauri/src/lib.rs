@@ -66,7 +66,20 @@ pub fn run() {
                 let _ = win.emit("hub://window-visibility", true);
             }
         }))
-        .plugin(tauri_plugin_window_state::Builder::default().build())
+        // DECORATIONS excluded from saved state (0.9.6): the plugin restores
+        // whatever the last run had, and every pre-0.9.6 install saved
+        // decorated=true — which resurrected the native title bar on top of
+        // the integrated one for every UPDATING user, overriding the config.
+        // Decorations are a platform decision now (config + macOS setup),
+        // never session state.
+        .plugin(
+            tauri_plugin_window_state::Builder::default()
+                .with_state_flags(
+                    tauri_plugin_window_state::StateFlags::all()
+                        - tauri_plugin_window_state::StateFlags::DECORATIONS,
+                )
+                .build(),
+        )
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             None,
