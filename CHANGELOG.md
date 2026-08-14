@@ -5,6 +5,41 @@ All notable changes to 2ndMonitor are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.9.6] - 2026-08-14
+
+### Changed
+- **The Windows title bar is gone — the app's own bar is the title bar
+  now.** No more double-bar stack: drag the window by the top bar, double
+  click it to maximize, and native minimize / maximize / close buttons live
+  at its right edge, styled like the rest of the app. Close still respects
+  "Close to tray". (macOS keeps its native traffic lights)
+- **Settings window keeps one size.** Clicking between categories used to
+  grow and shrink the whole dialog with the row count; it's now a constant
+  frame and the content scrolls inside
+
+### Added
+- **Onboarding asks where you are.** A new setup step searches your city
+  (same engine as the Settings location picker) so weather, radar, sun,
+  air quality and pollen start on YOUR location instead of everyone
+  defaulting to Knoxville. Skippable — the default stays, clearly labelled.
+  Existing installs are untouched
+
+### Fixed
+- **High CPU while doing nothing.** Reproduced at ~111% of one core with
+  the app idle: the audio engine analyzed pure silence 60 times a second
+  and broadcast all-zero spectrums that kept every meter — and the GPU —
+  repainting forever. After ~2 seconds of silence the engine now goes to
+  sleep (waking within a tenth of a second when sound returns), pauses
+  entirely while the app is hidden in the tray, and the meters settle
+  instead of redrawing zeros. Music reactivity is unchanged
+- **Interface scale is smooth now.** Dragging the slider fired a full-page
+  relayout on every notch — the reported choppiness. The percentage tracks
+  your drag live and the zoom applies once, when you settle
+- **Interface scale reaches the media player.** The embedded browser
+  player renders in its own surface, which never inherited the zoom — it
+  now scales with everything else, including when it's opened after the
+  scale was set
+
 ## [0.9.5] - 2026-08-13
 
 ### Fixed
