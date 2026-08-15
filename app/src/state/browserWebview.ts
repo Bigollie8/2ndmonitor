@@ -42,6 +42,11 @@ const WEBVIEW_LABEL = 'browser-tile';
 // changes here alongside the main-webview call.
 let currentZoom = 1;
 let liveWebview: Webview | null = null;
+/** Hooks subscribe so a LIVE zoom change re-runs their reposition (0.9.7):
+ *  the placeholder rect is measured in zoomed-CSS pixels but the native
+ *  child webview is placed in window-logical pixels, so every position/size
+ *  must be multiplied by the zoom factor — and re-derived when it changes. */
+const zoomListeners = new Set<() => void>();
 
 export function setBrowserPlayerZoom(factor: number): void {
   currentZoom = factor;
@@ -49,6 +54,15 @@ export function setBrowserPlayerZoom(factor: number): void {
   if (wv) {
     wv.setZoom(factor).catch((e) => console.warn('browser-player zoom failed', e));
   }
+  for (const l of zoomListeners) l();
+}
+
+/** Zoomed-CSS px → window-logical px. At interface scale z, one CSS pixel
+ *  renders as z logical pixels — getBoundingClientRect() values must be
+ *  scaled or the child webview only lines up at 100% (the "media player
+ *  does not stay centered unless in 100%" report). */
+function toLogical(cssPx: number): number {
+  return Math.round(cssPx * currentZoom);
 }
 
 /** Logs `close()` failures unless they're the benign "already closed" path. */
@@ -126,10 +140,10 @@ export function useBrowserWebview(args: UseBrowserWebviewArgs): UseBrowserWebvie
         const win = getCurrentWebviewWindow();
         const wv = new Webview(win, WEBVIEW_LABEL, {
           url,
-          x: Math.round(initial.left),
-          y: Math.round(initial.top),
-          width: Math.round(initial.width),
-          height: Math.round(initial.height),
+          x: toLogical(initial.left),
+          y: toLogical(initial.top),
+          width: toLogical(initial.width),
+          height: toLogical(initial.height),
         });
 
         // wv.once() returns Promise<UnlistenFn> that resolves on REGISTRATION,
@@ -186,6 +200,16 @@ export function useBrowserWebview(args: UseBrowserWebviewArgs): UseBrowserWebvie
     });
   }, [hidden, ready]);
 
+  // A live interface-scale change must re-run the reposition below even when
+  // the measured CSS bounds happen to be unchanged — the LOGICAL rect they
+  // map to has moved (0.9.7).
+  const [zoomVersion, setZoomVersion] = useState(0);
+  useEffect(() => {
+    const bump = () => setZoomVersion((v) => v + 1);
+    zoomListeners.add(bump);
+    return () => { zoomListeners.delete(bump); };
+  }, []);
+
   // Reposition / resize whenever bounds change. rAF-debounced so dragging the
   // tile in edit mode or a rapid window resize doesn't queue dozens of IPC
   // calls. We only fire when both a webview exists (`ready` is set after the
@@ -195,10 +219,10 @@ export function useBrowserWebview(args: UseBrowserWebviewArgs): UseBrowserWebvie
     const wv = webviewRef.current;
     if (!wv) return;
     const raf = requestAnimationFrame(() => {
-      const x = Math.round(bounds.left);
-      const y = Math.round(bounds.top);
-      const w = Math.round(bounds.width);
-      const h = Math.round(bounds.height);
+      const x = toLogical(bounds.left);
+      const y = toLogical(bounds.top);
+      const w = toLogical(bounds.width);
+      const h = toLogical(bounds.height);
       // wv was captured at effect-run time and may have been closed before
       // this rAF fires (e.g., enabled flipped to false). setPosition/setSize
       // will reject with "not found" in that case — handled below.
@@ -217,7 +241,7 @@ export function useBrowserWebview(args: UseBrowserWebviewArgs): UseBrowserWebvie
       });
     });
     return () => cancelAnimationFrame(raf);
-  }, [bounds, ready]);
+  }, [bounds, ready, zoomVersion]);
 
   return { error };
 }

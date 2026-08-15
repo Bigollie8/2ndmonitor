@@ -602,6 +602,13 @@ export function SettingsWindow({
         // content pane scrolls internally, short categories leave calm empty
         // space, and the vh units keep it inside small viewports.
         width: 820, maxWidth: '90%', height: '82vh', maxHeight: 720,
+        // Counter-scale (0.9.7): interface scale zooms the whole webview —
+        // including this panel, which hosts the scale slider, so adjusting
+        // it resized the very UI being used ("makes setting scaling hard").
+        // App sets --ui-counter-scale to 1/zoom in the same tick as the
+        // zoom, cancelling it here: the dashboard scales, Settings doesn't.
+        transform: 'scale(var(--ui-counter-scale, 1))',
+        transformOrigin: 'center',
         display: 'flex', flexDirection: 'column',
         background: 'var(--surface-overlay, rgba(20,22,28,0.98))',
         border: '1px solid rgba(255,255,255,0.08)',

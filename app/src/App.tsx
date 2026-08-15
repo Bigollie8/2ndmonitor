@@ -913,8 +913,15 @@ export default function App() {
     const id = window.setTimeout(() => {
       void (async () => {
         try {
-          const { getCurrentWebview } = await import('@tauri-apps/api/webview');
           const factor = Math.max(0.75, Math.min(1.5, t.uiScale || 1));
+          // Counter-scale for chrome that must stay a CONSTANT apparent size
+          // while the dashboard zooms — the Settings panel consumes this so
+          // adjusting the slider doesn't resize the very surface holding it
+          // (0.9.7). Set it in the same tick as the zoom so both land in one
+          // relayout. Also set in browser dev (no tauri) so headless checks
+          // see it.
+          document.documentElement.style.setProperty('--ui-counter-scale', String(1 / factor));
+          const { getCurrentWebview } = await import('@tauri-apps/api/webview');
           await getCurrentWebview().setZoom(factor);
           setBrowserPlayerZoom(factor);
         } catch { /* browser dev — no tauri */ }

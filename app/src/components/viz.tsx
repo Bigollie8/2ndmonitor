@@ -2,7 +2,7 @@ import React, { lazy, Suspense, useEffect, useRef, useState, type MutableRefObje
 import { createAutoGain } from '../state/autoGain';
 import type { VizMode, Track } from '../types';
 import { type SpectrumState, type Playback, mediaControls } from '../state/tauri';
-import { useLyrics, currentLineIndex } from '../state/lyrics';
+import { useLyrics, currentLineIndex, trackKeyOf } from '../state/lyrics';
 import { recordDraw, useRegisterSurface } from '../perf/debug';
 import { paceFrame, isWindowHidden } from '../state/framePace';
 import { BrowserPlayer, type Bookmark } from './browser-player';
@@ -692,7 +692,7 @@ export function VizHero({
           background: 'linear-gradient(180deg, rgba(0,0,0,0.5) 0%, transparent 18%, transparent 75%, rgba(0,0,0,0.55) 100%)',
         }} />
       )}
-      {!showVideo && <LyricsOverlay accent={accent} playback={playback} enabled={lyricsOverlayEnabled} />}
+      {!showVideo && <LyricsOverlay accent={accent} playback={playback} enabled={lyricsOverlayEnabled} track={track} />}
       {!showVideo && audioDebug && <AudioDebugHud spectrumRef={spectrumRef} paused={paused} />}
       {/* VizOverlay (mode buttons + track info + immersive/📺 toggles) hides
        *  entirely when video mode is active. Otherwise its top button row
@@ -758,11 +758,13 @@ function useCurrentLyricIndex(lines: import('../state/lyrics').LrcLine[], playba
 }
 
 export function LyricsOverlay({
-  accent, playback, enabled,
+  accent, playback, enabled, track,
 }: {
   accent: string;
   playback?: Playback | null;
   enabled: boolean;
+  /** The currently-playing track — the lyrics must belong to IT (0.9.7). */
+  track?: Track | null;
 }) {
   const lyrics = useLyrics();
   const idx = useCurrentLyricIndex(lyrics.syncedLines, playback);
@@ -774,6 +776,12 @@ export function LyricsOverlay({
   if (lyrics.syncedLines.length === 0) return null;
   if (!playback?.playing) return null;
   if (!line) return null;
+  // The loaded lyrics must also belong to the CURRENT track (0.9.7): the
+  // store keeps the last song's lines when a new session (a Netflix video
+  // via GSMTC, say) has no lyrics match — without this key check those
+  // stale lines scrolled over the visualizer against the video's position.
+  const currentKey = trackKeyOf(track);
+  if (!currentKey || lyrics.trackKey !== currentKey) return null;
 
   return (
     <div
