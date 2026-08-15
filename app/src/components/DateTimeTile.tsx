@@ -88,7 +88,7 @@ function DateTimeTileImpl({ density, accent, config, setConfig, hour12 }: DateTi
               data-testid="datetime-clock"
               style={{
                 fontSize: cfg.style === 'minimal' ? 76 : 56, fontWeight: 700,
-                fontFamily: '"JetBrains Mono", ui-monospace, monospace',
+                fontFamily: 'var(--font-display, "JetBrains Mono", ui-monospace, monospace)',
                 letterSpacing: '-0.04em', lineHeight: 1, color: '#fff',
               }}
             >

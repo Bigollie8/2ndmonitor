@@ -12,6 +12,7 @@ import type { AudioSourceState, SourceOption } from '../state/useAudioSource';
 import type { GeocodeResult } from '../state/weatherLocation';
 import { redactLocation, REDACTED_TEXT } from '../state/streamer';
 import { ACCENT_PALETTES } from '../data';
+import { SURFACE_THEMES, resolveSurfaceTheme, type SurfaceThemeId } from '../state/appTheme';
 import { useVizStyles } from './useVizStyles';
 import { defaultBookmarks, type Bookmark } from './browser-player';
 import { isTauri } from '../state/tauri';
@@ -21,7 +22,7 @@ import {
 } from '../state/marketplaceConfig';
 
 const MONO = '"JetBrains Mono", ui-monospace, monospace';
-const HAIRLINE = '1px solid rgba(255,255,255,0.05)';
+const HAIRLINE = '1px solid var(--hairline, rgba(255,255,255,0.05))';
 
 // Shared by MarketplaceServerEditor and MarketplaceAccountEditor — both are
 // label-above-input stacked fields inside the Marketplace pane.
@@ -72,6 +73,9 @@ export interface SettingsValues {
   glassEnabled: boolean;
   /** 0–100; 0 = clear glass, 100 = most opaque frosted. */
   glassStrength: number;
+  /** Application-wide surface theme (0.9.7) — see state/appTheme.ts. String
+   *  because it round-trips persisted JSON; resolved on read. */
+  surfaceTheme: string;
   uiScale: number;
   /** Auto-hide top bar — slides away until the mouse hits the top edge. */
   autoHideTopBar: boolean;
@@ -278,6 +282,17 @@ export function SettingsWindow({
     {
       id: 'appearance', icon: '◐', title: 'Appearance',
       rows: [
+        {
+          id: 'appearance-surface', label: 'Surface',
+          hint: SURFACE_THEMES[resolveSurfaceTheme(v.surfaceTheme)].hint,
+          control: (
+            <SettingsSelect<SurfaceThemeId>
+              value={resolveSurfaceTheme(v.surfaceTheme)}
+              options={(Object.keys(SURFACE_THEMES) as SurfaceThemeId[]).map((k) => ({ value: k, label: SURFACE_THEMES[k].label }))}
+              onChange={(x) => set('surfaceTheme', x)}
+            />
+          ),
+        },
         {
           id: 'appearance-accent', label: 'Accent theme',
           hint: accentLinked ? `Theme-linked — colors come from "${trackTitle}"` : 'Manual palette',

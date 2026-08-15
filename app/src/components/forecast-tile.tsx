@@ -51,7 +51,7 @@ function NowAndForecastTileImpl({ density, accent, accent2, streamer = false, ho
               <div style={{ display: 'flex', alignItems: 'baseline', gap: 4 }}>
                 <span style={{
                   fontSize: 52, fontWeight: 700,
-                  fontFamily: '"JetBrains Mono", ui-monospace, monospace',
+                  fontFamily: 'var(--font-display, "JetBrains Mono", ui-monospace, monospace)',
                   letterSpacing: '-0.04em', lineHeight: 0.9, color: '#fff',
                 }}>{clock.hm}</span>
                 <span style={{
@@ -94,7 +94,7 @@ function NowAndForecastTileImpl({ density, accent, accent2, streamer = false, ho
                   <span style={{ fontSize: 56, lineHeight: 1 }}>{weather.current_icon}</span>
                   <span style={{
                     fontSize: 64, fontWeight: 700, color: '#fff',
-                    fontFamily: '"JetBrains Mono", ui-monospace, monospace',
+                    fontFamily: 'var(--font-display, "JetBrains Mono", ui-monospace, monospace)',
                     lineHeight: 0.9, letterSpacing: '-0.04em',
                   }}>
                     {formatTemp(weather.current_temp_f, 'f', tempUnit)}

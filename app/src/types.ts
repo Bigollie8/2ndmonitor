@@ -20,7 +20,7 @@ export interface Profile {
   /** Portrait-orientation layout + visibility (active when viewport is taller than wide). */
   portrait: import('./state/layout').OrientationLayout;
 }
-export type AccentTheme = 'auto' | 'mint' | 'coral' | 'indigo' | 'amber';
+export type AccentTheme = 'auto' | 'mint' | 'coral' | 'indigo' | 'amber' | 'ficus';
 
 export interface Track {
   title: string;

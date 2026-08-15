@@ -28,7 +28,7 @@ export function HFTile({
       background: 'var(--surface-tile, rgba(22,24,30,0.78))',
       backdropFilter: 'blur(20px) saturate(140%)',
       WebkitBackdropFilter: 'blur(20px) saturate(140%)',
-      border: '1px solid rgba(255,255,255,0.06)',
+      border: '1px solid var(--hairline, rgba(255,255,255,0.06))',
       borderRadius: 14,
       overflow: 'hidden',
       position: 'relative',
@@ -278,7 +278,7 @@ function SpotifyTabBar({ tab, setTab, accent }: { tab: SpotifyTab; setTab: (t: S
   ];
   return (
     <div style={{
-      display: 'flex', borderBottom: '1px solid rgba(255,255,255,0.06)',
+      display: 'flex', borderBottom: '1px solid var(--hairline, rgba(255,255,255,0.06))',
       flexShrink: 0,
     }}>
       {tabs.map((t) => {
@@ -314,7 +314,7 @@ function MediaTransportRow({ playback, compact }: { playback?: Playback | null; 
     <div style={{
       display: 'flex', alignItems: 'center', gap: 12, justifyContent: 'center',
       padding: compact ? '6px 0' : '4px 0 8px', flexShrink: 0,
-      ...(compact ? { borderTop: '1px solid rgba(255,255,255,0.06)' } : {}),
+      ...(compact ? { borderTop: '1px solid var(--hairline, rgba(255,255,255,0.06))' } : {}),
     }}>
       <button title="Previous" onClick={() => mediaControls.previous()} style={{ ...iconBtn(), width: side, height: side }}>⏮</button>
       <button
