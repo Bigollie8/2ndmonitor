@@ -54,4 +54,7 @@ export const ACCENT_PALETTES: Record<AccentTheme, PaletteSpec> = {
   coral:  { label: 'Coral',  accent: '#fb7185', accent2: '#facc15' },
   indigo: { label: 'Indigo', accent: '#818cf8', accent2: '#06b6d4' },
   amber:  { label: 'Amber',  accent: '#fbbf24', accent2: '#fb7185' },
+  // Sage + amber from the Ficus Editorial mock (0.9.7) — pairs with the
+  // Editorial surface theme but works on any surface.
+  ficus:  { label: 'Ficus',  accent: '#9db98a', accent2: '#d9a05b' },
 };

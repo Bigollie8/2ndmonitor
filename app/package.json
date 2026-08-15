@@ -1,7 +1,7 @@
 {
   "name": "second-monitor-hub",
   "private": true,
-  "version": "0.9.6",
+  "version": "0.9.7",
   "license": "BUSL-1.1",
   "author": "Bigollie8 <bigollie8@gmail.com>",
   "type": "module",

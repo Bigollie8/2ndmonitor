@@ -54,6 +54,21 @@ export function parseLrc(lrc: string): LrcLine[] {
   return out;
 }
 
+/** Mirrors lyrics.rs `track_key()` — `artist|title|album`, trimmed — so the
+ *  frontend can check WHOSE lyrics the store currently holds (0.9.7). The
+ *  store only clears on `lyrics:clear` (empty title or 404), so a video
+ *  session (Netflix in a browser via GSMTC) with no LRCLIB match leaves the
+ *  previous song's lines cached — and without this check they replayed over
+ *  the visualizer against the video's playback position. Null when there is
+ *  no meaningful track to match (no title). */
+export function trackKeyOf(
+  t: { title?: string | null; artist?: string | null; album?: string | null } | null | undefined,
+): string | null {
+  const title = t?.title?.trim();
+  if (!title) return null;
+  return `${(t?.artist ?? '').trim()}|${title}|${(t?.album ?? '').trim()}`;
+}
+
 /** Returns the current synced-line index, or -1 if before the first line. */
 export function currentLineIndex(lines: LrcLine[], positionSecs: number): number {
   if (lines.length === 0) return -1;

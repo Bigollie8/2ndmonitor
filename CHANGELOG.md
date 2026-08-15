@@ -5,6 +5,49 @@ All notable changes to 2ndMonitor are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.9.7] - 2026-08-15
+
+### Added
+- **Surface themes — the whole app can wear a different look.** Settings →
+  Appearance → Surface now offers three: **Hub** (the classic look,
+  untouched), **Editorial** (ink-black ground, ruled hairlines, serif
+  display type on the clock, forecast temperature and track titles — built
+  to the Ficus design), and **Frameless** (card edges removed entirely;
+  content floats on the ground). Themes restyle every tile, bar and panel
+  at once, persist across restarts, and a corrupted saved value safely
+  falls back to the classic look. Liquid glass composes on top: glass ON
+  keeps its translucency while the theme's hairlines and type still apply.
+  A light "Paper" surface from the same design is deferred — most text in
+  the app is hard-coded for dark grounds and needs its own migration first
+- **Ficus accent palette** — the Editorial design's sage green + warm
+  amber, available to any surface
+
+### Changed
+- **MilkDrop follows the music now.** Auto-advance used to blind-rotate to
+  a random preset every 30 seconds. It now switches when the song changes
+  and when the music's energy genuinely shifts — a drop hitting, a quiet
+  bridge — with a cooldown so busy mixes don't strobe, and picks presets
+  in a way that keeps similar families recurring at similar energies. A
+  flat mix still advances eventually, and without any live audio the old
+  30-second cadence remains. The manual ‹ ⚄ › controls and the auto
+  toggle are unchanged, and a manual pick is never immediately overridden.
+  (Engine checked: bundled Butterchurn 2.6.7 is the latest stable release;
+  the only newer publish is a 3.0 beta, not taken)
+
+### Fixed
+- **Stale lyrics no longer float over the visualizer.** Watching Netflix
+  or a Firefox video after listening to music could leave the previous
+  song's lyrics crawling over the screen — cached lyrics are now shown
+  only while the playing track is the one they belong to
+- **Settings stays a usable size at any Interface scale.** The panel
+  counter-scales against the UI zoom, so turning the scale up no longer
+  balloons the Settings dialog (and turning it down no longer shrinks it)
+- **The media hub sits where it should at any Interface scale.** The
+  embedded player's position and size were computed in unscaled pixels,
+  so any zoom but 100% pushed it off-center; it now converts through the
+  live zoom factor at creation and on every reposition, including when
+  the scale changes while it's open
+
 ## [0.9.6] - 2026-08-14
 
 ### Changed

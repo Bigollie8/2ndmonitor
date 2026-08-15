@@ -6,6 +6,8 @@ import {
   mergePresetLibrary, resolveLoadSource,
   type PresetEntry, type MilkdropLoadSource, type MilkdropHostToFrame, type MilkdropFrameToHost,
 } from '../state/milkdrop-presets';
+import { createEnergyTracker, pickPreset } from '../state/milkdrop-dj';
+import { trackKeyOf } from '../state/lyrics';
 import { ORIGINALS } from '../state/originals';
 import { TRON_PALETTE, paletteFromAccents } from '../state/originals/palette';
 import { IS_MAC } from '../state/platform';
@@ -25,12 +27,11 @@ const USER_PRESETS_HINT = IS_MAC
  *  data channel. In `preview` mode (gallery grid) renders a cheap 2D
  *  placeholder instead: the gallery mounts all surfaces simultaneously and
  *  Chromium caps live WebGL contexts (~16). */
-export function VizMilkdrop({ accent, accent2, spectrumRef, paused, preview, onOpenLibrary }: VizProps) {
+export function VizMilkdrop({ accent, accent2, spectrumRef, paused, preview, track, onOpenLibrary }: VizProps) {
   if (preview) return <MilkdropPreviewCard accent={accent} accent2={accent2} />;
-  return <MilkdropSurface accent={accent} accent2={accent2} spectrumRef={spectrumRef} paused={paused} onOpenLibrary={onOpenLibrary} />;
+  return <MilkdropSurface accent={accent} accent2={accent2} spectrumRef={spectrumRef} paused={paused} track={track} onOpenLibrary={onOpenLibrary} />;
 }
 
-const AUTO_ADVANCE_MS = 30_000;
 const BLEND_SECONDS = 2.7;
 const LS_PRESET = 'milkdrop.preset';
 const LS_AUTO = 'milkdrop.autoAdvance';
@@ -48,7 +49,7 @@ const MILKDROP_LOCAL_SOURCE = { code: MILKDROP_FRAME_CODE };
 const MILKDROP_BUNDLE_ID = 'builtin-milkdrop';
 const LOAD_TIMEOUT_MS = 5000;
 
-function MilkdropSurface({ accent, accent2, spectrumRef, paused, onOpenLibrary }: Pick<VizProps, 'accent' | 'accent2' | 'spectrumRef' | 'paused' | 'onOpenLibrary'>) {
+function MilkdropSurface({ accent, accent2, spectrumRef, paused, track, onOpenLibrary }: Pick<VizProps, 'accent' | 'accent2' | 'spectrumRef' | 'paused' | 'track' | 'onOpenLibrary'>) {
   const libraryRef = useRef<PresetEntry[]>([]);
   const indexRef = useRef(0);
   /** key → resolution error message, shown as ⚠ in the picker. */
@@ -198,9 +199,15 @@ function MilkdropSurface({ accent, accent2, spectrumRef, paused, onOpenLibrary }
     }
   }, [readUserFile, sendLoad, showToast, buildOriginal, readMarketPreset]);
 
+  /** Song-aware DJ (0.9.7): pure energy tracker fed from spectrumRef below.
+   *  Every advance — manual buttons included — resets its cooldown/fallback
+   *  clocks, so a user's click can't be immediately overridden by auto. */
+  const trackerRef = useRef(createEnergyTracker());
+
   const advance = useCallback((how: 'next' | 'prev' | 'random', blend = BLEND_SECONDS) => {
     const lib = libraryRef.current;
     if (!lib.length) return;
+    trackerRef.current.noteAdvance(performance.now());
     let target = indexRef.current;
     if (how === 'next') target = indexRef.current + 1;
     else if (how === 'prev') target = indexRef.current - 1;
@@ -208,6 +215,16 @@ function MilkdropSurface({ accent, accent2, spectrumRef, paused, onOpenLibrary }
       // Random ≠ current so the button always visibly does something.
       do { target = Math.floor(Math.random() * lib.length); } while (target === indexRef.current);
     }
+    void loadAt(target, blend);
+  }, [loadAt]);
+
+  /** Auto-advance's pick: random within the energy tier of the current
+   *  musical moment (see milkdrop-dj.ts for what that honestly means). */
+  const advanceSongAware = useCallback((blend: number) => {
+    const lib = libraryRef.current;
+    if (lib.length < 2) return;
+    trackerRef.current.noteAdvance(performance.now());
+    const target = pickPreset(lib.map((e) => e.key), indexRef.current, trackerRef.current.tier());
     void loadAt(target, blend);
   }, [loadAt]);
 
@@ -314,12 +331,34 @@ function MilkdropSurface({ accent, accent2, spectrumRef, paused, onOpenLibrary }
     }
   }, [onNames]);
 
-  // Auto-advance to a random preset while playing (paused also pauses this).
+  // Song-aware auto-advance (0.9.7). Samples the live level at 4Hz into the
+  // energy tracker; a sustained shift (a drop, a quiet bridge) advances with
+  // a snappier blend, the long fallback keeps a flat mix from freezing on one
+  // preset, and with no live audio at all the tracker reproduces the classic
+  // 30s cadence. Paused also pauses this — same as the old interval.
   useEffect(() => {
     if (!autoAdvance || paused) return;
-    const id = setInterval(() => advance('random'), AUTO_ADVANCE_MS);
+    const id = setInterval(() => {
+      const s = spectrumRef?.current;
+      const verdict = trackerRef.current.feed(s?.live ? s.level : null, performance.now());
+      if (verdict) advanceSongAware(verdict === 'shift' ? 1.8 : BLEND_SECONDS);
+    }, 250);
     return () => clearInterval(id);
-  }, [autoAdvance, paused, advance]);
+  }, [autoAdvance, paused, advanceSongAware, spectrumRef]);
+
+  // A new track gets a new preset. Compared by track KEY, not object identity
+  // — GSMTC polls re-create the Track object with identical content. The
+  // first non-null key only seeds the ref (mount is not a song change), and
+  // key transitions to/from null (player closed) don't advance either.
+  const prevTrackKeyRef = useRef<string | null>(null);
+  useEffect(() => {
+    const key = trackKeyOf(track ?? null);
+    if (key === prevTrackKeyRef.current) return;
+    const prev = prevTrackKeyRef.current;
+    prevTrackKeyRef.current = key;
+    if (prev === null || key === null || !autoAdvance || paused) return;
+    advanceSongAware(1.2);
+  }, [track, autoAdvance, paused, advanceSongAware]);
 
   // Rebuild a TINTED original when the app accents change under it — its
   // colors are baked from the accents at build time, so without this it keeps
@@ -405,7 +444,9 @@ function MilkdropSurface({ accent, accent2, spectrumRef, paused, onOpenLibrary }
         <button style={chip} title="Next preset" onClick={() => advance('next', 1.0)}>›</button>
         <button
           style={{ ...chip, color: autoAdvance ? accent : 'rgba(255,255,255,0.85)' }}
-          title={autoAdvance ? 'Auto-advance on (30s) — click to hold current preset' : 'Auto-advance off — click to cycle every 30s'}
+          title={autoAdvance
+            ? 'Auto-advance on — follows the music (new song, energy shifts) — click to hold current preset'
+            : 'Auto-advance off — click to follow the music (new song, energy shifts)'}
           onClick={toggleAuto}
         >{autoAdvance ? '▶' : '⏸'}</button>
         <button style={chip} title="Preset picker" onClick={() => setPickerOpen((o) => !o)}>☰</button>

@@ -51,6 +51,7 @@ import { ErrorBoundary } from './components/ErrorBoundary';
 import { UpdateToast } from './components/UpdateToast';
 import { useSysmon, useNowPlaying, useSpectrumRef } from './state/tauri';
 import { applySurfaces, computeSurfaces, glassTintAlpha, DEFAULT_GLASS_STRENGTH } from './state/theme';
+import { applySurfaceTheme, resolveSurfaceTheme } from './state/appTheme';
 import { setWindowHidden } from './state/framePace';
 import { VizHero, setVizDprCap, setVizMaxFps, getVizMaxFps } from './components/viz';
 import * as perfDebug from './perf/debug';
@@ -195,6 +196,11 @@ interface TweakState extends Record<string, unknown> {
   glassEnabled: boolean;
   /** 0–100. 0 = clear glass (acrylic cleared), 100 = most opaque frosted. */
   glassStrength: number;
+  /** Application-wide surface theme (0.9.7) — see state/appTheme.ts. Typed
+   *  as string because the value round-trips through persisted JSON; every
+   *  read goes through resolveSurfaceTheme, so corrupt saves degrade to
+   *  'default', never crash. */
+  surfaceTheme: string;
   todos: Todo[];
   weatherLocation: WeatherLocation;
   pomodoro: { state: PomodoroState; settings: PomodoroSettings };
@@ -279,6 +285,7 @@ const TWEAK_DEFAULTS: TweakState = {
   closeToTray: true,
   glassEnabled: false,
   glassStrength: DEFAULT_GLASS_STRENGTH,
+  surfaceTheme: 'default',
   todos: [],
   weatherLocation: { label: 'Knoxville, TN', lat: 35.9606, lon: -83.9207 },
   pomodoro: {
@@ -631,7 +638,9 @@ export default function App() {
   const track: Track = livePlaying ?? manualTrack;
   const setTrack = setManualTrack;
 
-  const palette = ACCENT_PALETTES[t.accentTheme];
+  // ?? auto: a persisted accentTheme the map doesn't know (corrupt save, or
+  // a downgrade from a version that had more palettes) must not crash boot.
+  const palette = ACCENT_PALETTES[t.accentTheme] ?? ACCENT_PALETTES.auto;
   const accent = palette.accent ?? track.accent;
   const accent2 = palette.accent2 ?? track.accent2;
   const accentLinked = t.accentTheme === 'auto';
@@ -701,10 +710,16 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    applySurfaces(computeSurfaces(t.glassEnabled, t.glassStrength));
+    // Order matters: glass first (stamps or REMOVES the four surface vars),
+    // then the theme — which fills the surface vars only when glass isn't
+    // holding them, and always contributes --hairline/--font-display. One
+    // effect for both, so the two writers can never interleave stale.
+    const glassSurfaces = computeSurfaces(t.glassEnabled, t.glassStrength);
+    applySurfaces(glassSurfaces);
+    applySurfaceTheme(resolveSurfaceTheme(t.surfaceTheme), glassSurfaces !== null);
     const timer = setTimeout(() => { void applyGlassNow(); }, 150);
     return () => clearTimeout(timer);
-  }, [t.glassEnabled, t.glassStrength, applyGlassNow]);
+  }, [t.glassEnabled, t.glassStrength, t.surfaceTheme, applyGlassNow]);
 
   // Re-assert acrylic when the window regains focus (0.8.3). Users reported
   // glass dropping out after clicking away to another app and back.
@@ -913,8 +928,15 @@ export default function App() {
     const id = window.setTimeout(() => {
       void (async () => {
         try {
-          const { getCurrentWebview } = await import('@tauri-apps/api/webview');
           const factor = Math.max(0.75, Math.min(1.5, t.uiScale || 1));
+          // Counter-scale for chrome that must stay a CONSTANT apparent size
+          // while the dashboard zooms — the Settings panel consumes this so
+          // adjusting the slider doesn't resize the very surface holding it
+          // (0.9.7). Set it in the same tick as the zoom so both land in one
+          // relayout. Also set in browser dev (no tauri) so headless checks
+          // see it.
+          document.documentElement.style.setProperty('--ui-counter-scale', String(1 / factor));
+          const { getCurrentWebview } = await import('@tauri-apps/api/webview');
           await getCurrentWebview().setZoom(factor);
           setBrowserPlayerZoom(factor);
         } catch { /* browser dev — no tauri */ }
@@ -2135,7 +2157,7 @@ function TopChrome({ accent, editMode, setEditMode, streamerMode, setStreamerMod
       style={{
         position: 'absolute', top: 0, left: 0, right: 0, height: 56,
         background: 'var(--surface-chrome, rgba(8,9,12,0.85))', backdropFilter: 'blur(10px)',
-        borderBottom: '1px solid rgba(255,255,255,0.05)',
+        borderBottom: '1px solid var(--hairline, rgba(255,255,255,0.05))',
         display: 'flex', alignItems: 'center', padding: '0 18px', gap: 16, zIndex: 10,
         transform: hidden ? 'translateY(-100%)' : 'translateY(0)',
         transition: 'transform 150ms ease',
@@ -2517,7 +2539,7 @@ function BottomStatus({
     <div style={{
       position: 'absolute', bottom: 0, left: 0, right: 0, height: 32,
       background: 'var(--surface-chrome, rgba(8,9,12,0.85))', backdropFilter: 'blur(10px)',
-      borderTop: '1px solid rgba(255,255,255,0.05)',
+      borderTop: '1px solid var(--hairline, rgba(255,255,255,0.05))',
       display: 'flex', alignItems: 'center', padding: '0 18px', gap: 18, zIndex: 10,
       fontSize: 10.5, color: 'rgba(255,255,255,0.45)', fontFamily: '"JetBrains Mono", ui-monospace, monospace',
     }}>
