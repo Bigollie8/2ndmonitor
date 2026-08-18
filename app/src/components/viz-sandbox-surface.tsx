@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useAnimateGate, makeSpectrumReader, type VizProps } from './viz';
 import { useWaveformRef } from '../state/waveform';
+import { useVizSync } from '../state/vizSync';
 import { paceFrame, type PaceState } from '../state/framePace';
 import { SANDBOX_ATTR, SANDBOX_SRC } from '../sandbox/sandbox-html';
 import { validateManifest } from '../sandbox/manifest';
@@ -124,6 +125,15 @@ export function SandboxVizSurface({
   const hostRef = useRef<HTMLDivElement | null>(null);
   const [wantsStereo, setWantsStereo] = useState(false);
   const waveRef = useWaveformRef({ stereo: wantsStereo });
+  // Spotify beat/bar/section grid (0.9.10): polled only while a bundle whose
+  // manifest declares "sync": true is mounted and unpaused; reposted to the
+  // frame on track change and after every (re-)init.
+  const [wantsSync, setWantsSync] = useState(false);
+  const { grid: syncGrid, version: syncVersion } = useVizSync(wantsSync && !paused);
+  const syncGridRef = useRef(syncGrid);
+  syncGridRef.current = syncGrid;
+  const wantsSyncRef = useRef(wantsSync);
+  wantsSyncRef.current = wantsSync;
   // Label the perf-debug draw-rate bucket with the concrete bundle (or the
   // authoring surface's fixed id) rather than a hardcoded 'scripted' — all 12
   // installed bundle styles otherwise collapse into a single indistinguishable
@@ -220,6 +230,7 @@ export function SandboxVizSurface({
       // IPC, nothing to validate, and — deliberately — nothing brokered.
       brokerRef.current = null;
       surfaceRef.current = local.surface ?? 'canvas';
+      setWantsSync(false);
       codeRef.current = local.code;
       sendInit();
       return () => { cancelled = true; };
@@ -242,6 +253,7 @@ export function SandboxVizSurface({
             // declaring "stereo": true turn the second emit on, so the ~8 KB
             // per-frame stereo IPC is paid only while a stereo meter is up.
             setWantsStereo(v.manifest.stereo === true);
+            setWantsSync(v.manifest.sync === true);
             brokerRef.current = makeBrokerHandler(permissionsOf(v.manifest.permissions), {
               fetch: async (url) => {
                 const { invoke } = await import('@tauri-apps/api/core');
@@ -288,8 +300,23 @@ export function SandboxVizSurface({
       surface: surfaceRef.current,
     };
     win.postMessage(msg, '*');
+    // A re-inited frame starts with no cached grid — replay it (the sync
+    // post effect below only fires on VERSION changes, and a hot reload or
+    // handshake retry doesn't bump the version).
+    if (wantsSyncRef.current && syncGridRef.current) {
+      win.postMessage({ type: 'sync', grid: syncGridRef.current }, '*');
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bundleId]);
+
+  // Track changed (or grid appeared/vanished) → hand the frame the new grid.
+  useEffect(() => {
+    if (!wantsSync) return;
+    const win = iframeRef.current?.contentWindow;
+    if (!win || !readyRef.current) return;
+    win.postMessage({ type: 'sync', grid: syncGrid }, '*');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [syncVersion, wantsSync]);
 
   // Host→frame payload channel for first-party surfaces (see localSource).
   useEffect(() => {

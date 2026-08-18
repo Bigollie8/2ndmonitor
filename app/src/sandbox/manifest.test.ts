@@ -224,3 +224,13 @@ test('data message: additive host<->frame channel for first-party surfaces', () 
   const narrowed: SandboxToHost = msg;
   assert.equal(narrowed.type, 'data');
 });
+
+test('sync flag parses strictly: literal true only (0.9.10)', () => {
+  const base = { id: 'x', name: 'X', version: '1.0.0', api: 1, permissions: [] };
+  const on = validateManifest({ ...base, sync: true });
+  assert.ok(on.ok && on.manifest.sync === true);
+  for (const v of [undefined, false, 'true', 1, null]) {
+    const r = validateManifest({ ...base, sync: v });
+    assert.ok(r.ok && r.manifest.sync === false, `sync=${String(v)} means off`);
+  }
+});

@@ -1,0 +1,9 @@
+{
+  "id": "beatgrid",
+  "name": "Beatgrid",
+  "author": "official",
+  "version": "1.0.0",
+  "api": 1,
+  "sync": true,
+  "permissions": []
+}

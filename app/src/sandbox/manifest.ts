@@ -23,6 +23,11 @@ export interface VizManifest {
    *  (~8 KB of JSON per frame at 30 Hz) is not paid by bundles that never
    *  read it. */
   stereo?: boolean;
+  /** Declares that this bundle reads f.sync (the Spotify beat/bar/section
+   *  grid, 0.9.10) so the host polls `spotify_sync_grid` while it is
+   *  mounted. Absent = no polling — the grid is only fetched for visuals
+   *  that actually consume it. */
+  sync?: boolean;
   /** Named credentials this tile needs. The host renders an input per entry,
    *  stores the value, and injects it into outgoing requests — the bundle
    *  itself never receives it. Every key here must also appear as a
@@ -229,6 +234,7 @@ export function validateManifest(
       // Lenient: anything other than literal true means mono-only, so an old
       // manifest (no field) and a malformed one behave identically.
       stereo: m.stereo === true,
+      sync: m.sync === true,
     },
   };
 }

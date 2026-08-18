@@ -425,5 +425,31 @@
       "ticker"
     ],
     "icon": "◲"
+  },
+  "shaderlab": {
+    "summary": "Shadertoy-compatible GLSL shaders with a 512x2 audio texture",
+    "description": "A fragment-shader host speaking the standard Shadertoy contract: mainImage(), the standard uniforms, and iChannel0 as the classic 512x2 audio texture (FFT row, waveform row). Eight original audio-reactive shaders ship built in - click the surface to switch (left third goes back), and the choice persists. Shadertoy's site default licence is CC BY-NC-SA, so everything bundled here is original; the host exists so future visuals can be a text file instead of an engine. No permissions, no network.",
+    "category": "engine",
+    "tags": [
+      "glsl",
+      "shadertoy",
+      "webgl",
+      "shaders",
+      "engine"
+    ],
+    "icon": "◮",
+    "featured": true
+  },
+  "beatgrid": {
+    "summary": "Cells, bars and palettes fire on Spotify's actual beat grid",
+    "description": "Musically-synced rather than amplitude-reactive: with Spotify connected, cells flip on the track's analysed BEATS, the frame flashes on BARS, and the palette rotates per SECTION with brightness following each section's mastered loudness. Without a grid (no Spotify, or the analysis endpoint unavailable) it falls back honestly to live onset envelopes and says so in the corner tag. No permissions, no network of its own - the grid arrives through the host.",
+    "category": "spectrum",
+    "tags": [
+      "spotify",
+      "beats",
+      "synced",
+      "grid"
+    ],
+    "icon": "▦"
   }
 }

@@ -5,6 +5,33 @@ All notable changes to 2ndMonitor are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.9.10] - 2026-08-18
+
+### Added
+- **Shader Lab — a Shadertoy-compatible GLSL visualizer.** A new engine
+  bundle that runs fragment shaders written against the standard
+  Shadertoy contract, with the classic 512×2 audio texture (FFT row,
+  waveform row) as iChannel0 — the single largest audio-reactive visual
+  ecosystem, one text file per visual. Eight original shaders ship built
+  in (Spectrum Tunnel, Waveform Ribbon, Bass Bloom, Kaleido Pulse,
+  Plasma Drift, Starburst EQ, Liquid Bars, Night City) — click the
+  surface to switch, left third goes back, and your pick sticks. Only
+  original shaders are bundled: Shadertoy's site default licence is
+  CC BY-NC-SA, so ports are on the porter
+- **Beatgrid — visuals synced to the music's actual structure.** With
+  Spotify connected, cells flip on the track's analysed beats, the frame
+  flashes on bar lines, and the palette turns over per section with
+  brightness following each section's mastered loudness — timing no
+  amplitude-reactive visual can know. Where the analysis isn't available
+  (Spotify's analysis API is closed to newer API apps) it falls back
+  honestly to live onset detection and says so in its corner tag
+- **Sync channel for visualizer bundles.** Any bundle can declare
+  `"sync": true` to receive the current Spotify track's beat/bar/section
+  grid as `f.sync` — polled only while such a bundle is on screen,
+  delivered once per track, cached per track on the Rust side
+- Upgraders also receive the corrected Vectorscope and Console 1.0.2
+  bundles that were previously only fixed on the marketplace
+
 ## [0.9.9] - 2026-08-18
 
 ### Changed

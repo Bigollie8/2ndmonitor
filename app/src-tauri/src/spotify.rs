@@ -991,6 +991,243 @@ fn open_browser(url: &str) -> Result<(), String> {
     }
 }
 
+// ── Musically-synced visuals: the beat/bar/section grid (0.9.10) ─────────────
+//
+// GET /v1/audio-analysis/{id} gives per-track beats, bars and sections —
+// timing data no amplitude-reactive visual can derive. HONEST CAVEAT baked
+// into the design: Spotify deprecated this endpoint for API apps created
+// after Nov 2024; such apps get 403. A 403/404 is therefore a NORMAL outcome
+// here, cached per track like a success, and the command returns None — the
+// visual falls back to live onset envelopes rather than erroring.
+
+#[derive(Serialize, Clone)]
+pub struct SyncEvent {
+    pub start: f64,
+    pub duration: f64,
+    pub confidence: f64,
+}
+
+#[derive(Serialize, Clone)]
+pub struct SyncSection {
+    pub start: f64,
+    pub duration: f64,
+    pub loudness: f64,
+    pub tempo: f64,
+}
+
+#[derive(Serialize, Clone)]
+pub struct SyncGrid {
+    pub track_id: String,
+    /// Player progress at fetch time + when it was read, so a consumer can
+    /// correct a stale local position if it ever needs to.
+    pub progress_ms: u64,
+    pub fetched_at_ms: u64,
+    pub playing: bool,
+    pub beats: Vec<SyncEvent>,
+    pub bars: Vec<SyncEvent>,
+    pub sections: Vec<SyncSection>,
+}
+
+#[derive(Clone)]
+struct AnalysisSlim {
+    beats: Vec<SyncEvent>,
+    bars: Vec<SyncEvent>,
+    sections: Vec<SyncSection>,
+}
+
+/// Per-track analysis memo. `None` records "asked, unavailable" (403/404 —
+/// deprecated endpoint or no analysis for this track) so one bad track or a
+/// post-2024 API app can never cause a refetch loop at the poll cadence.
+/// Bounded: cleared wholesale past 32 entries — a session rarely plays that
+/// many distinct tracks, and a refetch after clearing is one request.
+static ANALYSIS_CACHE: once_cell::sync::Lazy<Mutex<std::collections::HashMap<String, Option<AnalysisSlim>>>> =
+    once_cell::sync::Lazy::new(|| Mutex::new(std::collections::HashMap::new()));
+
+#[derive(Deserialize)]
+struct NowResp {
+    progress_ms: Option<u64>,
+    is_playing: Option<bool>,
+    item: Option<SpotifyItem>,
+}
+
+#[derive(Deserialize)]
+struct AnEvent {
+    start: Option<f64>,
+    duration: Option<f64>,
+    confidence: Option<f64>,
+}
+
+#[derive(Deserialize)]
+struct AnSection {
+    start: Option<f64>,
+    duration: Option<f64>,
+    loudness: Option<f64>,
+    tempo: Option<f64>,
+}
+
+#[derive(Deserialize)]
+struct AnalysisResp {
+    beats: Option<Vec<AnEvent>>,
+    bars: Option<Vec<AnEvent>>,
+    sections: Option<Vec<AnSection>>,
+}
+
+fn slim_events(v: Option<Vec<AnEvent>>, cap: usize) -> Vec<SyncEvent> {
+    v.unwrap_or_default()
+        .into_iter()
+        .take(cap)
+        .map(|e| SyncEvent {
+            start: e.start.unwrap_or(0.0),
+            duration: e.duration.unwrap_or(0.0),
+            confidence: e.confidence.unwrap_or(0.0),
+        })
+        .collect()
+}
+
+/// Blocking — call from spawn_blocking only.
+fn fetch_analysis_slim(token: &str, track_id: &str) -> Result<Option<AnalysisSlim>, ApiErr> {
+    let url = format!("https://api.spotify.com/v1/audio-analysis/{track_id}");
+    let resp = ureq::get(&url)
+        .set("Authorization", &format!("Bearer {token}"))
+        .timeout(Duration::from_secs(10))
+        .call();
+    match resp {
+        Ok(r) => {
+            let a: AnalysisResp = r.into_json().map_err(|e| ApiErr::Other(e.to_string()))?;
+            Ok(Some(AnalysisSlim {
+                // ~10 min at 180bpm fits well under these caps; they exist so
+                // a pathological payload can't balloon the IPC message.
+                beats: slim_events(a.beats, 4000),
+                bars: slim_events(a.bars, 1200),
+                sections: a
+                    .sections
+                    .unwrap_or_default()
+                    .into_iter()
+                    .take(120)
+                    .map(|s| SyncSection {
+                        start: s.start.unwrap_or(0.0),
+                        duration: s.duration.unwrap_or(0.0),
+                        loudness: s.loudness.unwrap_or(-60.0),
+                        tempo: s.tempo.unwrap_or(0.0),
+                    })
+                    .collect(),
+            }))
+        }
+        // 403 = endpoint deprecated for this API app; 404 = no analysis for
+        // this track. Both are the documented "no grid" outcome, not errors.
+        Err(ureq::Error::Status(403, _)) | Err(ureq::Error::Status(404, _)) => Ok(None),
+        Err(ureq::Error::Status(401, _)) => Err(ApiErr::Unauthorized),
+        Err(e) => Err(ApiErr::Other(e.to_string())),
+    }
+}
+
+/// Blocking — call from spawn_blocking only. Resolves what's playing NOW.
+fn fetch_now_playing<R: Runtime>(app: &AppHandle<R>) -> Result<Option<(String, u64, bool)>, ApiErr> {
+    let token = ensure_fresh_token(app)?;
+    let resp = ureq::get("https://api.spotify.com/v1/me/player")
+        .set("Authorization", &format!("Bearer {token}"))
+        .timeout(Duration::from_secs(8))
+        .call();
+    let r = match resp {
+        Ok(r) => r,
+        Err(ureq::Error::Status(401, _)) => match try_refresh(app) {
+            RefreshOutcome::Refreshed => {
+                let token = CREDS.lock().access_token.clone().ok_or(ApiErr::Unauthorized)?;
+                ureq::get("https://api.spotify.com/v1/me/player")
+                    .set("Authorization", &format!("Bearer {token}"))
+                    .timeout(Duration::from_secs(8))
+                    .call()
+                    .map_err(|e| ApiErr::Other(e.to_string()))?
+            }
+            RefreshOutcome::Transient => return Err(ApiErr::Transient),
+            RefreshOutcome::Revoked => return Err(ApiErr::Unauthorized),
+        },
+        Err(ureq::Error::Status(404, _)) => return Ok(None),
+        Err(e) => return Err(ApiErr::Other(e.to_string())),
+    };
+    if r.status() == 204 {
+        return Ok(None); // nothing playing
+    }
+    let now: NowResp = r.into_json().map_err(|e| ApiErr::Other(e.to_string()))?;
+    let Some(item) = now.item else { return Ok(None) };
+    let Some(id) = item.id.filter(|s| !s.is_empty()) else { return Ok(None) };
+    Ok(Some((id, now.progress_ms.unwrap_or(0), now.is_playing.unwrap_or(false))))
+}
+
+/// The current track's beat/bar/section grid, or null when Spotify isn't
+/// connected, nothing is playing, or analysis is unavailable (deprecated
+/// endpoint / unknown track). Poll-friendly: the analysis body is cached per
+/// track, so steady-state cost is one /me/player call per invocation.
+#[tauri::command]
+pub async fn spotify_sync_grid<R: Runtime>(app: AppHandle<R>) -> Option<SyncGrid> {
+    tauri::async_runtime::spawn_blocking(move || {
+        if !CREDS.lock().access_token.is_some() {
+            return None;
+        }
+        let (track_id, progress_ms, playing) = fetch_now_playing(&app).ok().flatten()?;
+        let cached = ANALYSIS_CACHE.lock().get(&track_id).cloned();
+        let slim = match cached {
+            Some(hit) => hit,
+            None => {
+                let token = ensure_fresh_token(&app).ok()?;
+                let fetched = fetch_analysis_slim(&token, &track_id).ok()?;
+                let mut cache = ANALYSIS_CACHE.lock();
+                if cache.len() >= 32 {
+                    cache.clear();
+                }
+                cache.insert(track_id.clone(), fetched.clone());
+                fetched
+            }
+        };
+        let slim = slim?;
+        let fetched_at_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+        Some(SyncGrid {
+            track_id,
+            progress_ms,
+            fetched_at_ms,
+            playing,
+            beats: slim.beats,
+            bars: slim.bars,
+            sections: slim.sections,
+        })
+    })
+    .await
+    .ok()
+    .flatten()
+}
+
+#[cfg(test)]
+mod sync_grid_tests {
+    use super::*;
+
+    #[test]
+    fn slim_events_caps_and_defaults() {
+        let raw: Vec<AnEvent> = (0..5000)
+            .map(|i| AnEvent { start: Some(i as f64), duration: Some(0.5), confidence: None })
+            .collect();
+        let slim = slim_events(Some(raw), 4000);
+        assert_eq!(slim.len(), 4000);
+        assert_eq!(slim[10].start, 10.0);
+        assert_eq!(slim[0].confidence, 0.0);
+        assert!(slim_events(None, 10).is_empty());
+    }
+
+    #[test]
+    fn analysis_resp_parses_spotify_shape() {
+        let json = r#"{
+            "beats": [{"start": 0.5, "duration": 0.4, "confidence": 0.9}],
+            "bars": [{"start": 0.5, "duration": 1.6, "confidence": 0.8}],
+            "sections": [{"start": 0.0, "duration": 30.2, "loudness": -8.1, "tempo": 128.0, "key": 5}]
+        }"#;
+        let a: AnalysisResp = serde_json::from_str(json).unwrap();
+        assert_eq!(a.beats.as_ref().unwrap().len(), 1);
+        assert_eq!(a.sections.as_ref().unwrap()[0].tempo, Some(128.0));
+    }
+}
+
 #[cfg(test)]
 mod pick_a_song_tests {
     use super::is_track_uri;
