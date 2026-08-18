@@ -267,7 +267,7 @@
   "strings": {
     "summary": "Physically-modelled strings plucked by onset detection",
     "description": "Vibrating strings across a fretboard, physically modelled rather than drawn: each is plucked on kick, snare and hat onset edges and continuously excited by its own spectrum bin. The most simulation-driven visualiser in the catalog.",
-    "category": "engine",
+    "category": "scene",
     "tags": [
       "physics",
       "strings",
@@ -451,5 +451,125 @@
       "grid"
     ],
     "icon": "▦"
+  },
+  "beatlab": {
+    "summary": "Onset strength, threshold and detected BPM as a lab strip",
+    "description": "The onset detector's own working view: onset strength scrolling against its threshold line with beat markers, a brightness trace, and the detected BPM in large type. As much a diagnostic as a visual - the number is measured, not guessed.",
+    "category": "meter",
+    "tags": [
+      "beats",
+      "bpm",
+      "meter",
+      "diagnostic"
+    ],
+    "icon": "𝄞"
+  },
+  "chroma": {
+    "summary": "The 12 pitch classes as a radial meter, naming the strongest",
+    "description": "A radial meter over the 12 pitch classes with the strongest named in the center - watch it agree with the song's key. The chroma fold sums every octave of the spectrum into its pitch class, so chords light multiple segments.",
+    "category": "meter",
+    "tags": [
+      "pitch",
+      "key",
+      "chroma",
+      "music-theory"
+    ],
+    "icon": "♪"
+  },
+  "console": {
+    "summary": "L/R meters, level history, and honest dB numbers",
+    "description": "A mixing-console corner: L/R meters with peak-hold, a rolling 5-second level history, and live numbers - peak, RMS, crest factor, correlation - in real dB. Declares stereo; a mono source honestly reads correlation 1.00.",
+    "category": "meter",
+    "tags": [
+      "meters",
+      "db",
+      "stereo",
+      "engineer"
+    ],
+    "icon": "▥"
+  },
+  "equalizer": {
+    "summary": "Classic 20-band segmented LED spectrum analyzer",
+    "description": "The classic hi-fi front panel: 20 frequency bands, 24 segmented LEDs each, green through amber to red at the top, with falling peak-hold dots. Migrated from the built-in style; no permissions, no network.",
+    "category": "spectrum",
+    "tags": [
+      "leds",
+      "retro",
+      "hi-fi",
+      "bars"
+    ],
+    "icon": "▮"
+  },
+  "moire": {
+    "summary": "Two ring systems drift with the bass and interfere",
+    "description": "Two concentric ring systems drift apart on bass energy and interfere, producing live moire patterns that shimmer with the music. Calm source, calm rings; a drop tears them apart.",
+    "category": "scene",
+    "tags": [
+      "rings",
+      "interference",
+      "minimal",
+      "hypnotic"
+    ],
+    "icon": "◎"
+  },
+  "notebars": {
+    "summary": "Three octaves of piano keys lit by the chroma fold",
+    "description": "The spectrum folded onto three octaves of piano keys - black keys dimmed, the loudest pitch classes lighting their keys. Melodies walk visibly along the keyboard.",
+    "category": "meter",
+    "tags": [
+      "piano",
+      "pitch",
+      "chroma",
+      "music-theory"
+    ],
+    "icon": "𝄚"
+  },
+  "ridgeline": {
+    "summary": "Unknown Pleasures as a live scrolling spectrum",
+    "description": "Each tick pushes a new mirrored spectrum line onto a stack of receding ridgelines - the Unknown Pleasures album cover as a live display. History reads top to bottom.",
+    "category": "spectrum",
+    "tags": [
+      "ridgeline",
+      "history",
+      "monochrome",
+      "iconic"
+    ],
+    "icon": "≋"
+  },
+  "silk": {
+    "summary": "One continuous ribbon tracing a bass-driven epicycloid",
+    "description": "A single continuous ribbon traces an epicycloid whose radii breathe with the bass, thickening on energy and fading into its own trail. Slow music draws lace; loud music scribbles.",
+    "category": "scene",
+    "tags": [
+      "ribbon",
+      "curve",
+      "elegant",
+      "trails"
+    ],
+    "icon": "∿"
+  },
+  "terrain": {
+    "summary": "Spectrum history as a wireframe range receding into distance",
+    "description": "The spectrum extrudes a wireframe mountain range that recedes into the distance - each frame is a new front ridge, history rolls away behind it. Louder music builds taller terrain.",
+    "category": "spectrum",
+    "tags": [
+      "wireframe",
+      "3d",
+      "history",
+      "terrain"
+    ],
+    "icon": "⛰"
+  },
+  "vectorscope": {
+    "summary": "Mid/side stereo point cloud with correlation and width",
+    "description": "The stereo field as engineers see it: a mid/side point cloud - tall is mono, wide is spacious - with live correlation and width meters. Declares stereo; a mono source correctly collapses to a vertical line at correlation 1.00.",
+    "category": "meter",
+    "tags": [
+      "stereo",
+      "goniometer",
+      "correlation",
+      "engineer"
+    ],
+    "icon": "✕"
   }
 }

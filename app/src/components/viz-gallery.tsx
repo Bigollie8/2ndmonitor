@@ -9,6 +9,18 @@ const SandboxVizSurface = lazy(() =>
   import('./viz-sandbox-surface').then((m) => ({ default: m.SandboxVizSurface })),
 );
 
+/** Section order and voice for the grouped gallery (0.9.11). Every
+ *  VizCategory appears here; a style with an unknown category files under
+ *  'scene' at merge time (see contentRegistry.officialBundleCategory). */
+const VIZ_GALLERY_SECTIONS: { key: string; title: string; blurb: string }[] = [
+  { key: 'engine', title: 'Engines', blurb: 'whole ecosystems — presets and shaders inside' },
+  { key: 'spectrum', title: 'Spectrum', blurb: 'the frequencies, drawn directly' },
+  { key: 'wave', title: 'Waveform', blurb: 'the signal itself, scopes and ribbons' },
+  { key: 'meter', title: 'Instruments', blurb: 'honest numbers — dB, BPM, pitch, stereo field' },
+  { key: 'scene', title: 'Scenes', blurb: 'painterly worlds that move with the music' },
+  { key: 'ambient', title: 'Ambient', blurb: 'calm, slow, background-friendly' },
+];
+
 export function VizGallery({
   accent, accent2, spectrumRef, currentMode, onPick, onClose,
   sensitivity = 1, smoothing = 0, autoGain = false, catalogRemoved,
@@ -103,28 +115,53 @@ export function VizGallery({
           }}>Esc</button>
         </div>
 
-        <div style={{
-          display: 'grid', gridTemplateColumns: `repeat(${cols}, 1fr)`, gap: 20,
-        }}>
-          {vizStyles.map((s, i) => (
-            <GalleryCard
-              key={s.id}
-              style={s}
-              index={i + 1}
-              accent={accent}
-              accent2={accent2}
-              spectrumRef={spectrumRef}
-              active={s.id === currentMode}
-              sensitivity={sensitivity}
-              autoGain={autoGain}
-              smoothing={smoothing}
-              surfaceMounted={i < mountedCount || s.id === currentMode}
-              onPick={() => { onPick(s.id); onClose(); }}
-              onFocus={() => setFocused(s.id)}
-              catalogRemoved={catalogRemoved}
-            />
-          ))}
-        </div>
+        {/* Grouped by category (0.9.11) — the flat 40-card wall was the
+            "organize the existing ones better" report. Order runs from the
+            engines and readable instruments down to the painterly scenes;
+            `index` keeps the original flat position so the mount-stagger
+            budget behaves exactly as before. */}
+        {VIZ_GALLERY_SECTIONS.map(({ key, title, blurb }) => {
+          const members = vizStyles
+            .map((s, i) => ({ s, i }))
+            .filter(({ s }) => (s.category ?? 'scene') === key);
+          if (!members.length) return null;
+          return (
+            <div key={key} style={{ marginBottom: 34 }}>
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, margin: '0 0 14px 2px' }}>
+                <h2 style={{
+                  fontSize: 13, margin: 0, fontWeight: 700, letterSpacing: '0.08em',
+                  textTransform: 'uppercase', color: 'rgba(255,255,255,0.85)',
+                  fontFamily: 'var(--font-display, inherit)',
+                }}>{title}</h2>
+                <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.35)' }}>{blurb}</span>
+                <span style={{
+                  fontSize: 10, color: 'rgba(255,255,255,0.3)',
+                  fontFamily: '"JetBrains Mono", ui-monospace, monospace',
+                }}>{members.length}</span>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: `repeat(${cols}, 1fr)`, gap: 20 }}>
+                {members.map(({ s, i }) => (
+                  <GalleryCard
+                    key={s.id}
+                    style={s}
+                    index={i + 1}
+                    accent={accent}
+                    accent2={accent2}
+                    spectrumRef={spectrumRef}
+                    active={s.id === currentMode}
+                    sensitivity={sensitivity}
+                    autoGain={autoGain}
+                    smoothing={smoothing}
+                    surfaceMounted={i < mountedCount || s.id === currentMode}
+                    onPick={() => { onPick(s.id); onClose(); }}
+                    onFocus={() => setFocused(s.id)}
+                    catalogRemoved={catalogRemoved}
+                  />
+                ))}
+              </div>
+            </div>
+          );
+        })}
       </div>
 
       {focusedStyle && (

@@ -11,8 +11,12 @@
 // reading folders off disk.
 // ─────────────────────────────────────────────────────────────────────────────
 import type { VizMode } from '../types';
-import type { VizStyle } from '../components/viz-styles';
+import type { VizStyle, VizCategory } from '../components/viz-styles';
 import { BUILTIN_VIZ_STYLES } from '../components/viz-styles';
+// Compile-time import: the repo's bundle metadata is the single source of
+// truth for official-bundle categories, baked into the JS at build so a
+// seeds-only install (no marketplace fetch yet) still groups correctly.
+import bundleMetadata from '../../../bundles/metadata.json';
 import { isFirstParty } from './firstParty';
 
 /** A visualizer folder as reported by the `visualizers_list` Tauri command. */
@@ -38,6 +42,10 @@ export interface VizStyleEntry {
   bundleId?: string;
   author?: string | null;
   version?: string;
+  /** Gallery grouping (0.9.11). Builtins carry their compiled category;
+   *  official bundles resolve through the repo metadata compiled in below;
+   *  third-party bundles default to 'scene'. */
+  category: VizCategory;
 }
 
 export const BUNDLE_PREFIX = 'bundle:';
@@ -61,6 +69,16 @@ export const bundleIdOf = (mode: string): string | null =>
  *  built for editing it. The public catalog — this dropdown, the gallery, the
  *  V-cycle — is for content that was installed deliberately, not for a draft
  *  that merely happens to sit in the same folder tree. */
+const VIZ_CATEGORIES: ReadonlySet<string> = new Set(['spectrum', 'wave', 'ambient', 'scene', 'engine', 'meter']);
+
+/** Category for an official bundle from the compiled-in repo metadata;
+ *  unknown ids (third-party marketplace bundles) file under 'scene'. */
+export function officialBundleCategory(id: string): VizCategory {
+  const entry = (bundleMetadata as Record<string, { category?: string }>)[id];
+  const c = entry?.category;
+  return c && VIZ_CATEGORIES.has(c) ? (c as VizCategory) : 'scene';
+}
+
 export function mergeVizStyles(
   builtin: VizStyle[],
   installed: InstalledVizFolder[],
@@ -72,6 +90,7 @@ export function mergeVizStyles(
     label: s.label,
     desc: s.desc,
     source: 'builtin',
+    category: s.category,
   }));
 
   const bundleEntries: VizStyleEntry[] = installed
@@ -84,6 +103,7 @@ export function mergeVizStyles(
       bundleId: f.id,
       author: f.author,
       version: f.version,
+      category: officialBundleCategory(f.id),
     }))
     .sort((a, b) => a.label.localeCompare(b.label));
 
