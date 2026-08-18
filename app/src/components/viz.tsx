@@ -444,7 +444,7 @@ export function VizOverlay({
       </div>
       <div style={{ padding: 22, display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 20, pointerEvents: 'auto' }}>
         <div style={{ display: 'flex', gap: 14, alignItems: 'center', minWidth: 0 }}>
-          <div style={{ width: 78, height: 78, borderRadius: 10, background: track.cover, position: 'relative', overflow: 'hidden', flexShrink: 0, boxShadow: `0 12px 40px ${accent}66` }}>
+          <div style={{ width: 78, height: 78, borderRadius: 10, background: track.cover, position: 'relative', overflow: 'hidden', flexShrink: 0, boxShadow: '0 12px 40px rgba(0,0,0,0.55)' }}>
             <div style={{ position: 'absolute', inset: 0, background: 'radial-gradient(circle at 30% 30%, rgba(255,255,255,0.3), transparent 60%)' }} />
           </div>
           <div style={{ minWidth: 0 }}>
@@ -635,10 +635,10 @@ export function VizHero({
     <div style={{
       position: 'relative', overflow: 'hidden',
       width: '100%', height: '100%',
-      borderRadius: 14,
+      borderRadius: 'var(--tile-radius, 14px)',
       background: '#06070a',
-      border: '1px solid rgba(255,255,255,0.05)',
-      boxShadow: `0 0 32px -16px ${accent}66`,
+      border: '1px solid var(--hairline, rgba(255,255,255,0.05))',
+      boxShadow: 'var(--tile-shadow, 0 8px 24px -8px rgba(0,0,0,0.4))',
     }}>
       {showArtBg && !showVideo && (
         <div style={{

@@ -2179,7 +2179,7 @@ function TopChrome({ accent, editMode, setEditMode, streamerMode, setStreamerMod
       }}
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-        <div style={{ width: 16, height: 16, borderRadius: 5, background: `linear-gradient(135deg, ${accent}, ${accent}99)`, boxShadow: `0 0 12px ${accent}66` }} />
+        <div style={{ width: 16, height: 16, borderRadius: 5, background: `linear-gradient(135deg, ${accent}, ${accent}99)` }} />
         <span style={{ fontSize: 12, fontWeight: 700, letterSpacing: '-0.01em' }}>Hub</span>
       </div>
       <div style={{ width: 1, height: 18, background: 'rgba(255,255,255,0.08)' }} />

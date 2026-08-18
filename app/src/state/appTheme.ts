@@ -37,6 +37,18 @@ export interface SurfaceThemeTokens {
   hairline: string;
   /** null = keep each site's own font (only Editorial carries a serif). */
   displayFont: string | null;
+  // ── Material language (0.9.8) ─────────────────────────────────────────
+  // Three more axes so each theme reads as its own design system rather
+  // than a recolor: corner language, backdrop treatment, and elevation.
+  // Stamped as --tile-radius / --tile-blur / --tile-shadow; the shared
+  // card sites (HFTile, the viz hero shell) read them with today's Hub
+  // values as fallbacks, so 'default' stays pixel-identical.
+  /** Corner radius for cards, e.g. '14px'. Sharp = print, round = soft. */
+  tileRadius: string;
+  /** backdrop-filter behind card surfaces ('none' for opaque materials). */
+  tileBlur: string;
+  /** Resting card elevation ('none' for flat systems). */
+  tileShadow: string;
 }
 
 export interface SurfaceThemeDef {
@@ -53,25 +65,31 @@ export const SURFACE_THEMES: Record<SurfaceThemeId, SurfaceThemeDef> = {
     tokens: null,
   },
   editorial: {
-    // The mock's 3a synthesis, the design's "recommended default": ink-black
-    // ground with a green undertone, ruled hairlines in warm paper-grey, and
-    // a serif voice for display numerals ("Weightless", 14:32, 18°).
+    // A printed page in ink: near-opaque flat cards (no glassy blur — ink
+    // doesn't shimmer), corners cropped nearly square, NO elevation — the
+    // warm ruled hairlines carry all the structure, and display numerals
+    // speak serif. The whole system is "set in print", not "recolored dark".
     label: 'Editorial',
-    hint: 'Ink ground, ruled hairlines, serif display — the Ficus look',
+    hint: 'Set in print — flat ink cards, ruled hairlines, serif display, square corners',
     tokens: {
       canvas: '#0a0b09',
-      tile: 'rgba(15,17,13,0.92)',
+      tile: 'rgba(15,17,13,0.97)',
       overlay: 'rgba(13,15,11,0.97)',
       chrome: 'rgba(10,11,9,0.9)',
-      hairline: 'rgba(216,211,196,0.14)',
+      hairline: 'rgba(216,211,196,0.16)',
       displayFont: 'Georgia, "Times New Roman", "Songti SC", serif',
+      tileRadius: '3px',
+      tileBlur: 'none',
+      tileShadow: 'none',
     },
   },
   frameless: {
-    // The mock's 2a surface: card edges removed entirely — content sits on
-    // the ground and grouping is done with air alone.
+    // The opposite pole: no card material at all. Content sits directly on
+    // a deep blue-black ground, grouped by air; edges, rules, blur, and
+    // shadows all go to zero. The round radius only survives on overlays
+    // (pickers, settings), which keep their own surface.
     label: 'Frameless',
-    hint: 'No card edges — content floats on the ground, grouped by air',
+    hint: 'No cards at all — content floats on the ground, grouped by air',
     tokens: {
       canvas: '#07080a',
       tile: 'rgba(7,8,10,0)',
@@ -79,6 +97,9 @@ export const SURFACE_THEMES: Record<SurfaceThemeId, SurfaceThemeDef> = {
       chrome: 'rgba(7,8,10,0.55)',
       hairline: 'rgba(255,255,255,0)',
       displayFont: null,
+      tileRadius: '18px',
+      tileBlur: 'none',
+      tileShadow: 'none',
     },
   },
 };
@@ -105,6 +126,9 @@ export function applySurfaceTheme(id: SurfaceThemeId, glassActive: boolean): voi
     if (!glassActive) for (const v of SURFACE_VARS) root.style.removeProperty(v);
     root.style.removeProperty('--hairline');
     root.style.removeProperty('--font-display');
+    root.style.removeProperty('--tile-radius');
+    root.style.removeProperty('--tile-blur');
+    root.style.removeProperty('--tile-shadow');
     delete root.dataset.surfaceTheme;
     return;
   }
@@ -117,5 +141,12 @@ export function applySurfaceTheme(id: SurfaceThemeId, glassActive: boolean): voi
   root.style.setProperty('--hairline', tokens.hairline);
   if (tokens.displayFont) root.style.setProperty('--font-display', tokens.displayFont);
   else root.style.removeProperty('--font-display');
+  root.style.setProperty('--tile-radius', tokens.tileRadius);
+  // Blur IS the glass material — a theme's 'none' would flatten liquid
+  // glass into plain translucency, so glass keeps the blur fallback while
+  // active. Radius and elevation compose fine with glass and stay themed.
+  if (glassActive) root.style.removeProperty('--tile-blur');
+  else root.style.setProperty('--tile-blur', tokens.tileBlur);
+  root.style.setProperty('--tile-shadow', tokens.tileShadow);
   root.dataset.surfaceTheme = id;
 }

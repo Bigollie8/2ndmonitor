@@ -10,12 +10,14 @@ import type { TempUnit } from '../state/units';
 import { Slider } from './Slider';
 
 export function HFTile({
-  title, badge, headRight, children, accent, density = 'regular', noHead, style, onClick,
+  title, badge, headRight, children, density = 'regular', noHead, style, onClick,
 }: {
   title?: React.ReactNode;
   badge?: React.ReactNode;
   headRight?: React.ReactNode;
   children?: React.ReactNode;
+  /** Accepted for call-site compatibility; the resting card no longer uses
+   *  it — its accent ring/glow was removed in 0.9.8 (glow = state cues only). */
   accent?: string;
   density?: Density;
   noHead?: boolean;
@@ -26,15 +28,18 @@ export function HFTile({
   return (
     <div onClick={onClick} style={{
       background: 'var(--surface-tile, rgba(22,24,30,0.78))',
-      backdropFilter: 'blur(20px) saturate(140%)',
-      WebkitBackdropFilter: 'blur(20px) saturate(140%)',
+      backdropFilter: 'var(--tile-blur, blur(20px) saturate(140%))',
+      WebkitBackdropFilter: 'var(--tile-blur, blur(20px) saturate(140%))',
       border: '1px solid var(--hairline, rgba(255,255,255,0.06))',
-      borderRadius: 14,
+      borderRadius: 'var(--tile-radius, 14px)',
       overflow: 'hidden',
       position: 'relative',
       display: 'flex',
       flexDirection: 'column',
-      boxShadow: accent ? `0 0 0 1px ${accent}33, 0 0 30px -8px ${accent}55` : '0 8px 24px -8px rgba(0,0,0,0.4)',
+      // Neutral elevation only (0.9.8): the old accent-tinted ring + 30px
+      // accent glow lit every RESTING card up — glow now belongs solely to
+      // state cues (selection, needs-attention, live meters).
+      boxShadow: 'var(--tile-shadow, 0 8px 24px -8px rgba(0,0,0,0.4))',
       ...style,
     }}>
       {!noHead && (
@@ -352,7 +357,7 @@ function SpotifyNowView({ accent, accent2, track, playback, sourceKind, spectrum
           maxWidth: 'min(100%, 230px)', maxHeight: '100%', width: '100%',
           borderRadius: 12,
           background: track.cover, backgroundSize: 'cover', backgroundPosition: 'center',
-          boxShadow: `0 14px 44px ${accent}66, 0 0 0 1px rgba(255,255,255,0.04)`,
+          boxShadow: '0 14px 44px rgba(0,0,0,0.55), 0 0 0 1px rgba(255,255,255,0.04)',
           position: 'relative', overflow: 'hidden',
         }}>
           {!track.cover.startsWith('center') && (
