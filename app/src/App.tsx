@@ -2148,9 +2148,9 @@ function TopChrome({ accent, editMode, setEditMode, streamerMode, setStreamerMod
   }, [menuOpen, onMenuOpenChange]);
 
   const ghostButton: React.CSSProperties = {
-    padding: '5px 10px', fontSize: 11, borderRadius: 6,
+    padding: '5px 10px', fontSize: 11, borderRadius: 'var(--control-radius, 6px)',
     background: 'transparent', color: 'rgba(255,255,255,0.7)',
-    border: '1px solid rgba(255,255,255,0.1)',
+    border: '1px solid var(--control-border, rgba(255,255,255,0.1))',
     cursor: 'pointer', fontWeight: 600,
   };
   const menuItem: React.CSSProperties = {
@@ -2204,7 +2204,7 @@ function TopChrome({ accent, editMode, setEditMode, streamerMode, setStreamerMod
           const active = p.id === activeProfileId;
           return (
             <button key={p.id} onClick={() => setActiveProfileId(p.id)} style={{
-              padding: '5px 12px', fontSize: 11, borderRadius: 6,
+              padding: '5px 12px', fontSize: 11, borderRadius: 'var(--control-radius, 6px)',
               background: active ? `${p.color}22` : 'transparent',
               color: active ? p.color : 'rgba(255,255,255,0.5)',
               border: active ? `1px solid ${p.color}66` : '1px solid transparent',
@@ -2213,7 +2213,7 @@ function TopChrome({ accent, editMode, setEditMode, streamerMode, setStreamerMod
           );
         })}
         <button onClick={onSwitcher} title="Open profile switcher" style={{
-          padding: '5px 8px', fontSize: 11, borderRadius: 6,
+          padding: '5px 8px', fontSize: 11, borderRadius: 'var(--control-radius, 6px)',
           background: 'transparent', color: 'rgba(255,255,255,0.4)',
           border: '1px solid transparent', cursor: 'pointer',
         }}>{overflow > 0 ? `+${overflow} More` : '⌃ More'}</button>

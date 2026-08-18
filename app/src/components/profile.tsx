@@ -232,23 +232,23 @@ export function ProfileSwitcher({
               color: setupPicker ? accent : 'rgba(255,255,255,0.7)',
               background: 'transparent',
               border: `1px solid ${setupPicker ? `${accent}66` : 'rgba(255,255,255,0.15)'}`,
-              borderRadius: 6, cursor: 'pointer',
+              borderRadius: 'var(--control-radius, 6px)', cursor: 'pointer',
             }}
           >Export setup…</button>
           <button onClick={() => { void importSetup(); }} title="Merge a shared setup's tiles into this profile" style={{
             padding: '10px 16px', fontSize: 12, color: 'rgba(255,255,255,0.7)',
-            background: 'transparent', border: '1px solid rgba(255,255,255,0.15)',
-            borderRadius: 6, cursor: 'pointer',
+            background: 'transparent', border: '1px solid var(--control-border, rgba(255,255,255,0.15))',
+            borderRadius: 'var(--control-radius, 6px)', cursor: 'pointer',
           }}>Import setup…</button>
           <button onClick={() => { void importProfile(); }} style={{
             padding: '10px 16px', fontSize: 12, color: 'rgba(255,255,255,0.7)',
-            background: 'transparent', border: '1px solid rgba(255,255,255,0.15)',
-            borderRadius: 6, cursor: 'pointer',
+            background: 'transparent', border: '1px solid var(--control-border, rgba(255,255,255,0.15))',
+            borderRadius: 'var(--control-radius, 6px)', cursor: 'pointer',
           }}>Import profile…</button>
           <button onClick={onClose} style={{
             padding: '10px 16px', fontSize: 12, color: 'rgba(255,255,255,0.5)',
             background: 'transparent', border: '1px solid rgba(255,255,255,0.08)',
-            borderRadius: 6, cursor: 'pointer',
+            borderRadius: 'var(--control-radius, 6px)', cursor: 'pointer',
           }}>Esc</button>
         </div>
         {setupPicker && (
@@ -274,7 +274,7 @@ export function ProfileSwitcher({
                       setSetupPicker(next);
                     }}
                     style={{
-                      padding: '5px 10px', fontSize: 11, borderRadius: 6, cursor: 'pointer',
+                      padding: '5px 10px', fontSize: 11, borderRadius: 'var(--control-radius, 6px)', cursor: 'pointer',
                       background: on ? `${accent}22` : 'rgba(255,255,255,0.04)',
                       color: on ? accent : 'rgba(255,255,255,0.55)',
                       border: `1px solid ${on ? `${accent}66` : 'rgba(255,255,255,0.1)'}`,
@@ -300,7 +300,7 @@ export function ProfileSwitcher({
               <button onClick={() => setSetupPicker(null)} style={{
                 padding: '8px 14px', fontSize: 12, color: 'rgba(255,255,255,0.6)',
                 background: 'transparent', border: '1px solid rgba(255,255,255,0.12)',
-                borderRadius: 6, cursor: 'pointer',
+                borderRadius: 'var(--control-radius, 6px)', cursor: 'pointer',
               }}>Cancel</button>
             </div>
           </div>
@@ -482,7 +482,7 @@ function ImportProfileDialog({ accent, parsed, profiles, onApply, onCancel }: {
           <button onClick={onCancel} style={{
             padding: '8px 14px', fontSize: 12, color: 'rgba(255,255,255,0.5)',
             background: 'transparent', border: '1px solid rgba(255,255,255,0.08)',
-            borderRadius: 6, cursor: 'pointer',
+            borderRadius: 'var(--control-radius, 6px)', cursor: 'pointer',
           }}>Cancel</button>
           <button
             onClick={() => onApply(choice === 'new' ? { mode: 'new' } : { mode: 'overwrite', profileId: choice })}

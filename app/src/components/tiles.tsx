@@ -73,8 +73,8 @@ export function Sparkline({ data, color, height = 28, width = '100%' }: { data: 
 }
 
 const iconBtn = (): React.CSSProperties => ({
-  background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.08)',
-  color: 'rgba(255,255,255,0.85)', width: 28, height: 28, borderRadius: 999,
+  background: 'var(--control-bg, rgba(255,255,255,0.06))', border: '1px solid var(--control-border, rgba(255,255,255,0.08))',
+  color: 'rgba(255,255,255,0.85)', width: 28, height: 28, borderRadius: 'var(--control-radius-round, 999px)',
   display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer',
   fontSize: 11, padding: 0,
 });
@@ -326,7 +326,7 @@ function MediaTransportRow({ playback, compact }: { playback?: Playback | null; 
       <button
         title={playback?.playing ? 'Pause' : 'Play'}
         onClick={() => mediaControls.togglePlayPause()}
-        style={{ ...iconBtn(), width: main, height: main, background: '#fff', color: '#000', borderRadius: 999, fontSize: compact ? 13 : 16 }}
+        style={{ ...iconBtn(), width: main, height: main, background: '#fff', color: '#000', borderRadius: 'var(--control-radius-round, 999px)', fontSize: compact ? 13 : 16 }}
       >{playback?.playing ? '⏸' : '⏵'}</button>
       <button title="Next" onClick={() => mediaControls.next()} style={{ ...iconBtn(), width: side, height: side }}>⏭</button>
     </div>
