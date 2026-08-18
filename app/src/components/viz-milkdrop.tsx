@@ -381,7 +381,7 @@ function MilkdropSurface({ accent, accent2, spectrumRef, paused, track, onOpenLi
   const chip: React.CSSProperties = {
     padding: '4px 9px', fontSize: 12, lineHeight: 1, cursor: 'pointer',
     background: 'rgba(0,0,0,0.55)', color: 'rgba(255,255,255,0.85)',
-    border: '1px solid rgba(255,255,255,0.12)', borderRadius: 8,
+    border: '1px solid var(--control-border, rgba(255,255,255,0.12))', borderRadius: 'var(--control-radius, 8px)',
   };
 
   return (

@@ -649,9 +649,9 @@ export function SettingsWindow({
             spellCheck={false}
             style={{
               width: 200, fontSize: 11.5, padding: '5px 9px',
-              background: 'rgba(0,0,0,0.3)',
-              border: '1px solid rgba(255,255,255,0.08)',
-              borderRadius: 6, color: '#fff', outline: 'none',
+              background: 'var(--control-bg, rgba(0,0,0,0.3))',
+              border: '1px solid var(--control-border, rgba(255,255,255,0.08))',
+              borderRadius: 'var(--control-radius, 6px)', color: '#fff', outline: 'none',
             }}
           />
           <button
@@ -681,7 +681,7 @@ export function SettingsWindow({
                   style={{
                     display: 'flex', alignItems: 'center', gap: 8,
                     padding: '7px 10px', fontSize: 11.5, textAlign: 'left',
-                    borderRadius: 7, cursor: 'pointer',
+                    borderRadius: 'var(--control-radius, 7px)', cursor: 'pointer',
                     background: active ? `${accent}14` : 'transparent',
                     border: active ? `1px solid ${accent}44` : '1px solid transparent',
                     color: active ? accent : 'rgba(255,255,255,0.6)',
@@ -787,17 +787,17 @@ function Toggle({ checked, onChange, accent, disabled }: {
       role="switch" aria-checked={checked} disabled={disabled}
       onClick={() => onChange(!checked)}
       style={{
-        width: 34, height: 20, borderRadius: 10, position: 'relative',
+        width: 34, height: 20, borderRadius: 'var(--control-radius-round, 10px)', position: 'relative',
         cursor: disabled ? 'not-allowed' : 'pointer', padding: 0,
-        background: checked ? accent : 'rgba(255,255,255,0.12)',
-        border: '1px solid rgba(255,255,255,0.1)',
+        background: checked ? accent : 'var(--control-bg, rgba(255,255,255,0.12))',
+        border: '1px solid var(--control-border, rgba(255,255,255,0.1))',
         transition: 'background .15s', opacity: disabled ? 0.5 : 1,
         flexShrink: 0,
       }}
     >
       <span style={{
         position: 'absolute', top: 2, left: checked ? 16 : 2,
-        width: 14, height: 14, borderRadius: '50%',
+        width: 14, height: 14, borderRadius: 'var(--control-radius-round, 50%)',
         background: checked ? '#0b0c10' : '#fff',
         transition: 'left .15s',
       }} />
@@ -832,10 +832,10 @@ function SettingsSelect<T extends string>({ value, options, onChange }: {
       style={{
         appearance: 'none', WebkitAppearance: 'none',
         fontSize: 11.5, padding: '5px 24px 5px 9px',
-        background: 'rgba(0,0,0,0.3)',
+        background: 'var(--control-bg, rgba(0,0,0,0.3))',
         backgroundImage: 'url("data:image/svg+xml;utf8,<svg xmlns=\'http://www.w3.org/2000/svg\' width=\'10\' height=\'6\' viewBox=\'0 0 10 6\'><path fill=\'rgba(255,255,255,.5)\' d=\'M0 0h10L5 6z\'/></svg>")',
         backgroundRepeat: 'no-repeat', backgroundPosition: 'right 8px center',
-        border: '1px solid rgba(255,255,255,0.1)', borderRadius: 6,
+        border: '1px solid var(--control-border, rgba(255,255,255,0.1))', borderRadius: 'var(--control-radius, 6px)',
         color: '#fff', outline: 'none', cursor: 'pointer', maxWidth: 220,
       }}
     >
@@ -904,8 +904,8 @@ function Segmented<T extends string>({ value, options, onChange, accent, labels 
 }) {
   return (
     <div style={{
-      display: 'flex', padding: 2, borderRadius: 7,
-      background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.06)',
+      display: 'flex', padding: 2, borderRadius: 'var(--control-radius, 7px)',
+      background: 'var(--control-bg, rgba(0,0,0,0.3))', border: '1px solid var(--control-border, rgba(255,255,255,0.06))',
       userSelect: 'none',
     }}>
       {options.map((o) => {
@@ -914,7 +914,7 @@ function Segmented<T extends string>({ value, options, onChange, accent, labels 
           <button
             key={o} type="button" onClick={() => onChange(o)}
             style={{
-              padding: '4px 10px', fontSize: 10.5, borderRadius: 5,
+              padding: '4px 10px', fontSize: 10.5, borderRadius: 'var(--control-radius, 5px)',
               background: active ? `${accent}22` : 'transparent',
               border: active ? `1px solid ${accent}44` : '1px solid transparent',
               color: active ? accent : 'rgba(255,255,255,0.55)',
@@ -956,9 +956,9 @@ function SettingsButton({ label, onClick, accent }: { label: string; onClick: ()
       type="button" onClick={onClick}
       style={{
         padding: '5px 14px', fontSize: 11.5, fontWeight: 600,
-        borderRadius: 6, cursor: 'pointer',
-        background: accent ? `${accent}22` : 'rgba(255,255,255,0.08)',
-        border: accent ? `1px solid ${accent}44` : '1px solid rgba(255,255,255,0.12)',
+        borderRadius: 'var(--control-radius, 6px)', cursor: 'pointer',
+        background: accent ? `${accent}22` : 'var(--control-bg, rgba(255,255,255,0.08))',
+        border: accent ? `1px solid ${accent}44` : '1px solid var(--control-border, rgba(255,255,255,0.12))',
         color: accent ?? 'rgba(255,255,255,0.85)',
       }}
     >{label}</button>

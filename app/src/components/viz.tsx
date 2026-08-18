@@ -331,8 +331,8 @@ function VizEmptyState({ accent }: { accent: string }) {
 
 const overlayBtn: React.CSSProperties = {
   background: 'rgba(0,0,0,0.4)', backdropFilter: 'blur(20px)',
-  border: '1px solid rgba(255,255,255,0.08)',
-  color: 'rgba(255,255,255,0.85)', padding: '7px 12px', borderRadius: 8,
+  border: '1px solid var(--control-border, rgba(255,255,255,0.08))',
+  color: 'rgba(255,255,255,0.85)', padding: '7px 12px', borderRadius: 'var(--control-radius, 8px)',
   cursor: 'pointer', fontSize: 11, fontWeight: 500,
   display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
 };
@@ -415,7 +415,7 @@ export function VizOverlay({
             padding: '7px 13px', fontSize: 11, fontWeight: 600,
             background: 'rgba(0,0,0,0.4)', backdropFilter: 'blur(20px)',
             color: 'rgba(255,255,255,0.75)',
-            border: '1px solid var(--hairline, rgba(255,255,255,0.06))', borderRadius: 10,
+            border: '1px solid var(--control-border, rgba(255,255,255,0.06))', borderRadius: 'var(--control-radius, 10px)',
             cursor: 'pointer',
           }}
         >

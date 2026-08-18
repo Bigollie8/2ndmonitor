@@ -5,6 +5,18 @@ All notable changes to 2ndMonitor are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.9.9] - 2026-08-18
+
+### Changed
+- **Surface themes now restyle the controls too.** Buttons, switches,
+  selects, segmented pickers, text fields and slider thumbs follow each
+  theme's design language instead of looking identical everywhere:
+  Editorial sets them like print — squared corners (even the switch
+  knobs), visible warm rules, flat ink-wash fills — while Frameless
+  drops every control border and lets soft-rounded fills carry the
+  shape. Hub stays exactly the classic look, and liquid glass is
+  unaffected
+
 ## [0.9.8] - 2026-08-18
 
 ### Added

@@ -49,6 +49,22 @@ export interface SurfaceThemeTokens {
   tileBlur: string;
   /** Resting card elevation ('none' for flat systems). */
   tileShadow: string;
+  // ── Control language (0.9.9) ──────────────────────────────────────────
+  // 0.9.8's material axes stopped at the cards; buttons/switches/sliders
+  // stayed identical across themes ("still all the same" report). Four
+  // more tokens carry each system into the interactive layer. Shared
+  // control components (Toggle, SettingsSelect, Slider, iconBtn,
+  // overlayBtn, milkdrop chips, switcher buttons) read them with their
+  // current literals as fallbacks — Hub stays pixel-identical.
+  /** Radius for rectangular controls: buttons, selects, chips, inputs. */
+  controlRadius: string;
+  /** Radius for round/pill controls: switch tracks+knobs, slider thumbs,
+   *  circular icon buttons. Print squares them; air keeps them round. */
+  controlRadiusRound: string;
+  /** Control border color ('transparent' for borderless systems). */
+  controlBorder: string;
+  /** Resting control fill. */
+  controlBg: string;
 }
 
 export interface SurfaceThemeDef {
@@ -81,6 +97,13 @@ export const SURFACE_THEMES: Record<SurfaceThemeId, SurfaceThemeDef> = {
       tileRadius: '3px',
       tileBlur: 'none',
       tileShadow: 'none',
+      // Controls as print artifacts: squared, visibly ruled in the same
+      // warm ink as the hairlines, flat wash fills. Even the switch knob
+      // and slider thumb go square.
+      controlRadius: '2px',
+      controlRadiusRound: '2px',
+      controlBorder: 'rgba(216,211,196,0.28)',
+      controlBg: 'rgba(216,211,196,0.05)',
     },
   },
   frameless: {
@@ -100,6 +123,12 @@ export const SURFACE_THEMES: Record<SurfaceThemeId, SurfaceThemeDef> = {
       tileRadius: '18px',
       tileBlur: 'none',
       tileShadow: 'none',
+      // Controls as air: no borders at all — a slightly stronger fill
+      // carries the shape instead, soft-rounded, pills stay pills.
+      controlRadius: '10px',
+      controlRadiusRound: '999px',
+      controlBorder: 'rgba(255,255,255,0)',
+      controlBg: 'rgba(255,255,255,0.09)',
     },
   },
 };
@@ -129,6 +158,10 @@ export function applySurfaceTheme(id: SurfaceThemeId, glassActive: boolean): voi
     root.style.removeProperty('--tile-radius');
     root.style.removeProperty('--tile-blur');
     root.style.removeProperty('--tile-shadow');
+    root.style.removeProperty('--control-radius');
+    root.style.removeProperty('--control-radius-round');
+    root.style.removeProperty('--control-border');
+    root.style.removeProperty('--control-bg');
     delete root.dataset.surfaceTheme;
     return;
   }
@@ -148,5 +181,11 @@ export function applySurfaceTheme(id: SurfaceThemeId, glassActive: boolean): voi
   if (glassActive) root.style.removeProperty('--tile-blur');
   else root.style.setProperty('--tile-blur', tokens.tileBlur);
   root.style.setProperty('--tile-shadow', tokens.tileShadow);
+  // Control tokens compose with glass unchanged — glass owns surfaces and
+  // blur, never the control language.
+  root.style.setProperty('--control-radius', tokens.controlRadius);
+  root.style.setProperty('--control-radius-round', tokens.controlRadiusRound);
+  root.style.setProperty('--control-border', tokens.controlBorder);
+  root.style.setProperty('--control-bg', tokens.controlBg);
   root.dataset.surfaceTheme = id;
 }

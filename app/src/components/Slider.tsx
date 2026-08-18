@@ -112,7 +112,7 @@ export function Slider({
       <div style={{
         position: 'absolute', left: `${pct}%`, top: '50%',
         transform: 'translate(-50%,-50%)',
-        width: 11, height: 11, background: '#fff', borderRadius: 999,
+        width: 11, height: 11, background: '#fff', borderRadius: 'var(--control-radius-round, 999px)',
         boxShadow: `0 0 8px ${accent}`,
         transition: drag === null ? 'left 0.18s linear' : 'none',
         pointerEvents: 'none',
