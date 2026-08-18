@@ -86,6 +86,10 @@ var root = document.getElementById('root');
 var ctx2d = null;
 var userGotContext = false;
 var lastSpectrum = null;
+// Spotify beat/bar/section grid (0.9.10). Sent once per track via
+// { type: 'sync' } - NOT per frame (it is kilobytes) - and handed to every
+// frame callback as f.sync (null when unavailable; fall back to f.onset).
+var lastSync = null;
 var binCache = {};
 
 // Broker RPC: requests go up as {type:'rpc', rpcId, rpc, ...}; the host
@@ -226,10 +230,13 @@ window.addEventListener('message', function (ev) {
       theme: msg.theme,
       track: msg.track,
       playback: msg.playback || null,
+      sync: lastSync,
     };
     for (var i = 0; i < frameCbs.length; i++) {
       try { frameCbs[i](payload); } catch (e) { reportError(e); }
     }
+  } else if (msg.type === 'sync') {
+    lastSync = msg.grid || null;
   } else if (msg.type === 'data') {
     for (var i = 0; i < dataCbs.length; i++) {
       try { dataCbs[i](msg.payload); } catch (e) { reportError(e); }
