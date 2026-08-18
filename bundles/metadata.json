@@ -571,5 +571,245 @@
       "engineer"
     ],
     "icon": "✕"
+  },
+  "fireplace": {
+    "summary": "Layered flames on glowing logs, embers rising on the beat",
+    "description": "Seven flame tongues each ride their own spectrum slice over glowing logs; bass feeds the height, kicks throw spark bursts, and embers cool from white heat to the accent color as they rise. Warm fire palette by design - the accents tint only the embers.",
+    "category": "scene",
+    "tags": [
+      "fire",
+      "cozy",
+      "warm",
+      "particles"
+    ],
+    "icon": "~"
+  },
+  "rainstorm": {
+    "summary": "Rain rides the level; hard kicks strike lightning",
+    "description": "Rain streak density follows the overall level with treble drizzle on top, drops ripple where they land, and a hard kick strikes a fresh lightning bolt with a decaying thunder flash.",
+    "category": "scene",
+    "tags": [
+      "rain",
+      "storm",
+      "lightning",
+      "weather"
+    ],
+    "icon": "/"
+  },
+  "jellyfish": {
+    "summary": "A bell that pulses on the kick, tentacles tracing the waveform",
+    "description": "The bell contracts on kicks and drifts on its own thrust; nine tentacles trail the actual waveform, and plankton motes brighten with the treble. The calm pick for slow sets.",
+    "category": "scene",
+    "tags": [
+      "ocean",
+      "calm",
+      "organic",
+      "waveform"
+    ],
+    "icon": "ϟ"
+  },
+  "lasers": {
+    "summary": "Two concert laser fans sweeping with the mids",
+    "description": "Beam fans from the bottom corners sweep with mid energy, beam brightness rides the spectrum, and kicks slam the rig through a fast crossing pass with haze puddles where beams land.",
+    "category": "scene",
+    "tags": [
+      "concert",
+      "beams",
+      "stage",
+      "night"
+    ],
+    "icon": "✦"
+  },
+  "inkdrop": {
+    "summary": "Onsets drop ink that marbles through a swirling bath",
+    "description": "Kicks drop accent ink and snares drop the second color; blooms diffuse, slow, and marble in a gently swirling medium with the longest trails in the pack. Quiet passages leave faint wisps.",
+    "category": "scene",
+    "tags": [
+      "ink",
+      "fluid",
+      "slow",
+      "marble"
+    ],
+    "icon": "◉"
+  },
+  "galaxy": {
+    "summary": "A differential-rotation spiral galaxy lit band by band",
+    "description": "480 stars in three arms with real differential rotation - inner stars orbit faster. Radius maps to frequency, mids twist the arms tighter, the warm core flares on kicks, and treble sparkles the outer dust.",
+    "category": "scene",
+    "tags": [
+      "space",
+      "spiral",
+      "stars",
+      "rotation"
+    ],
+    "icon": "✧"
+  },
+  "koipond": {
+    "summary": "Koi trace noise paths; kicks ring ripples where they turn",
+    "description": "Five koi follow smooth noise paths, speeding up with the music; kicks make one flick and ring a ripple, lily pads hold the corners, and treble glints the surface. The calmest scene here.",
+    "category": "scene",
+    "tags": [
+      "koi",
+      "pond",
+      "calm",
+      "zen"
+    ],
+    "icon": "≈"
+  },
+  "circuit": {
+    "summary": "Signal pulses travel a fixed PCB on the beat",
+    "description": "A stable printed-circuit net whose pads glow with their frequency band; kicks inject hot pulses and hats inject fast ones, and the electricity walks the doglegged traces edge to edge. The board never moves - only the signals do.",
+    "category": "scene",
+    "tags": [
+      "pcb",
+      "tech",
+      "pulses",
+      "traces"
+    ],
+    "icon": "⌁"
+  },
+  "smoke": {
+    "summary": "Incense columns curling with the mids",
+    "description": "Three incense columns rise and curl; mids bend the plumes, bass thickens them, kicks puff a dense accent knot into each. Slow fade keeps the air hazy.",
+    "category": "scene",
+    "tags": [
+      "incense",
+      "smoke",
+      "ambient",
+      "soft"
+    ],
+    "icon": "∿"
+  },
+  "polyhedra": {
+    "summary": "A wireframe icosahedron with band-lit edges",
+    "description": "An icosahedron tumbles in 3D with depth-shaded edges, one spectrum bin per edge; bass inflates the solid, kicks jolt the spin axis, and treble frosts the vertices.",
+    "category": "scene",
+    "tags": [
+      "3d",
+      "wireframe",
+      "geometry",
+      "minimal"
+    ],
+    "icon": "◇"
+  },
+  "fountain": {
+    "summary": "One water jet per band - the spectrum as spray height",
+    "description": "Twelve jets along a basin, each launched by its band's energy, so the spectrum literally reads as spray height; droplets arc under gravity and splash into the water line.",
+    "category": "spectrum",
+    "tags": [
+      "water",
+      "jets",
+      "physics",
+      "bars"
+    ],
+    "icon": "⌆"
+  },
+  "meteors": {
+    "summary": "Treble rains meteors; kicks drop slow bolides",
+    "description": "A meteor shower over a still starfield: treble sets the rate, snares send fast bright crossers, and a hard kick drops a slow fat bolide that ends in a terminal flare ring.",
+    "category": "scene",
+    "tags": [
+      "meteors",
+      "night",
+      "streaks",
+      "sky"
+    ],
+    "icon": "☄"
+  },
+  "sonar": {
+    "summary": "A PPI sweep that paints contacts where the energy is",
+    "description": "The sweep arm turns at a constant rate like a real sonar - what changes is what it finds: bearing maps to frequency and range to loudness, contacts decay like phosphor, and the bearing readout is honest to the arm.",
+    "category": "meter",
+    "tags": [
+      "sonar",
+      "sweep",
+      "instrument",
+      "submarine"
+    ],
+    "icon": "◠"
+  },
+  "stainedglass": {
+    "summary": "A fixed voronoi window lit pane by pane",
+    "description": "A leaded voronoi window whose panes glow with their frequency band; kicks send a light-through-the-window bloom drifting across the whole field. The window never changes - only the light does.",
+    "category": "scene",
+    "tags": [
+      "glass",
+      "voronoi",
+      "panes",
+      "cathedral"
+    ],
+    "icon": "▣"
+  },
+  "pulse": {
+    "summary": "An ECG monitor: kicks write the QRS, snares the T-wave",
+    "description": "Constant paper speed like a real monitor, with the actual waveform carried in the baseline at low gain; kicks write the QRS spike, snares the T-wave, and the sweep bar erases ahead of the pen.",
+    "category": "wave",
+    "tags": [
+      "ecg",
+      "medical",
+      "sweep",
+      "monitor"
+    ],
+    "icon": "∿"
+  },
+  "braids": {
+    "summary": "Five waveform strands weaving over and under",
+    "description": "Five strands read the same waveform at different phases and braid around a shared axis with true over/under crossings; energy tightens the braid and thickens the strands.",
+    "category": "wave",
+    "tags": [
+      "weave",
+      "strands",
+      "flow",
+      "elegant"
+    ],
+    "icon": "≀"
+  },
+  "ascii": {
+    "summary": "The spectrum as a terminal character raster",
+    "description": "A terminal renders the spectrum in density characters ( .:-=+*#%@ ) with white peak caps, a blinking cursor, and a status line carrying honest level numbers; kicks invert the bottom row like a TTY bell.",
+    "category": "spectrum",
+    "tags": [
+      "terminal",
+      "retro",
+      "text",
+      "hacker"
+    ],
+    "icon": "▚"
+  },
+  "hexgrid": {
+    "summary": "A honeycomb lit from the core outward by frequency",
+    "description": "Hexagon rings map to frequency - bass at the core, treble at the rim - so drops bloom from the center; kicks send a travelling ring wave across the comb.",
+    "category": "spectrum",
+    "tags": [
+      "hex",
+      "honeycomb",
+      "rings",
+      "geometry"
+    ],
+    "icon": "⬡"
+  },
+  "dna": {
+    "summary": "A rotating double helix with band-lit base pairs",
+    "description": "Two depth-shaded backbones twist across the screen with one frequency bin per rung; bass stretches the pitch and a hard kick briefly unwinds the helix.",
+    "category": "scene",
+    "tags": [
+      "helix",
+      "biology",
+      "3d",
+      "rungs"
+    ],
+    "icon": "§"
+  },
+  "bounce": {
+    "summary": "One physics ball per band; energy sets the bounce",
+    "description": "Sixteen balls, one per band: floor contact plus band energy launches a ballistic arc, so the low end thuds tall slow arcs while the hats jitter the small fast balls. Squash on landing, honest shadows.",
+    "category": "spectrum",
+    "tags": [
+      "physics",
+      "balls",
+      "playful",
+      "bars"
+    ],
+    "icon": "●"
   }
 }
