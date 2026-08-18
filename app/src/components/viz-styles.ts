@@ -5,7 +5,10 @@ import type { VizMode } from '../types';
  *  — App.tsx's 'V' cycle shortcut, Settings' dropdown, Stream Deck actions —
  *  don't statically pull in viz-gallery.tsx (which renders ~27 live canvases
  *  and is otherwise lazy-loaded only when the gallery overlay opens). */
-export type VizCategory = 'spectrum' | 'wave' | 'ambient' | 'scene' | 'engine';
+/** 'meter' (0.9.11): honest instrumentation — scopes with real numbers,
+ *  correlation, BPM, pitch detection — split out of 'spectrum'/'scene' so
+ *  the gallery can group them as what they are. */
+export type VizCategory = 'spectrum' | 'wave' | 'ambient' | 'scene' | 'engine' | 'meter';
 
 export interface VizStyle { id: VizMode; label: string; desc: string; category: VizCategory }
 

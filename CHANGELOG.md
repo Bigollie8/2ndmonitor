@@ -5,6 +5,34 @@ All notable changes to 2ndMonitor are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.9.11] - 2026-08-18
+
+### Added
+- **Twenty new visualizers.** Scenes: Fireplace, Rainstorm, Jellyfish,
+  Lasers, Ink drop, Galaxy, Koi pond, Circuit board, Smoke, Polyhedra,
+  Meteor shower, Stained glass, Double helix. Spectrum: Fountain, ASCII
+  terminal, Hex grid, Bounce. Waveform: Pulse (a real ECG sweep), Braids.
+  Instruments: Sonar (a constant-rate PPI sweep that paints contacts
+  where the energy is). Every one ships as a seed bundle, runs sandboxed
+  with no permissions, and was verified drawing real content in the
+  harness before release
+
+### Changed
+- **The visualizer gallery is organized now.** Six titled shelves —
+  Engines, Spectrum, Waveform, Instruments, Scenes, Ambient — replace
+  the flat wall of cards, and every bundle is filed: the ten previously
+  undocumented visualizers got real descriptions, and honest measuring
+  instruments (vectorscope, console, chroma, beatlab, note bars, sonar)
+  now live together under Instruments
+
+### Fixed
+- **Full quality audit of all existing visualizers.** Every bundle was
+  executed against real synthetic audio and eyeballed: no errors, no
+  blank renders, and the instruments verified accurate — the BPM readout
+  matches the test signal exactly, the key detector names the right key,
+  and the vectorscope correctly collapses to a labelled vertical line on
+  mono sources. No defects found; nothing needed patching
+
 ## [0.9.10] - 2026-08-18
 
 ### Added

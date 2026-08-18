@@ -328,3 +328,20 @@ for (const id of ids) {
     }
   });
 }
+
+// ── Catalog taxonomy (0.9.11) ───────────────────────────────────────────────
+// The gallery groups by category via bundles/metadata.json compiled into the
+// app (contentRegistry.officialBundleCategory). These keep that file honest:
+// every visualizer bundle must be filed, and filed under a real category.
+
+const VIZ_CATEGORIES = new Set(['spectrum', 'wave', 'ambient', 'scene', 'engine', 'meter']);
+
+test('metadata.json: every visualizer bundle has an entry with a valid category', () => {
+  const meta = JSON.parse(readFileSync(join(BUNDLES, 'metadata.json'), 'utf8')) as Record<string, { category?: string; summary?: string }>;
+  for (const id of ids.filter((i) => !i.startsWith('tile-'))) {
+    const m = meta[id];
+    assert.ok(m, `bundles/metadata.json is missing "${id}" — the gallery would file it under Scenes by default`);
+    assert.ok(m.category && VIZ_CATEGORIES.has(m.category), `"${id}" category "${m.category}" is not a VizCategory`);
+    assert.ok(m.summary && m.summary.length > 0, `"${id}" needs a summary`);
+  }
+});
