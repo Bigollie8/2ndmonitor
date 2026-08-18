@@ -1851,6 +1851,7 @@ export default function App() {
             activeProfileId={t.activeProfileId}
             setActiveProfileId={(id) => setTweak('activeProfileId', id)}
             setProfiles={(next) => setTweak('profiles', next)}
+            orientation={orientation}
             onClose={() => setShowSwitcher(false)}
           />
         )}

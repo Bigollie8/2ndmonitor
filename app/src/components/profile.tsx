@@ -2,7 +2,12 @@ import React, { useState } from 'react';
 import type { Profile } from '../types';
 import type { TileInstance } from './../state/layout';
 import { newId } from './../state/layout';
-import { buildProfileExport, exportFileName, parseProfileExport, type ParsedProfile } from '../state/profileIO';
+import {
+  buildProfileExport, exportFileName, parseProfileExport, type ParsedProfile,
+  buildSetupExport, parseSetupExport, mergeSetupTiles, setupExportFileName,
+} from '../state/profileIO';
+import { TILE_META } from '../state/tileMeta';
+import type { BuiltinTileType } from '../state/layout';
 
 const CARD_PALETTE = [
   '#a78bfa', '#f59e0b', '#22d3ee', '#22c55e',
@@ -10,13 +15,16 @@ const CARD_PALETTE = [
 ];
 
 export function ProfileSwitcher({
-  accent, profiles, activeProfileId, setActiveProfileId, setProfiles, onClose,
+  accent, profiles, activeProfileId, setActiveProfileId, setProfiles, orientation, onClose,
 }: {
   accent: string;
   profiles: Profile[];
   activeProfileId: string;
   setActiveProfileId: (id: string) => void;
   setProfiles: (next: Profile[]) => void;
+  /** Which orientation setup export/import targets (0.9.8) — the one the
+   *  user is looking at. */
+  orientation: 'landscape' | 'portrait';
   onClose: () => void;
 }) {
   const activeProfile = profiles.find((p) => p.id === activeProfileId) ?? profiles[0];
@@ -92,6 +100,59 @@ export function ProfileSwitcher({
     }
   };
 
+  // ── Partial setups (0.9.8): share an arrangement without a whole profile ──
+  /** Open state of the export-setup tile picker; holds the selected ids. */
+  const [setupPicker, setSetupPicker] = useState<Set<string> | null>(null);
+  const [setupNote, setSetupNote] = useState<string | null>(null);
+
+  const activeTiles = activeProfile?.[orientation].tiles ?? [];
+
+  const tileLabel = (t: TileInstance): string =>
+    t.name ?? TILE_META[t.type as BuiltinTileType]?.label ?? t.type;
+
+  const exportSetup = async (tiles: TileInstance[]) => {
+    if (!activeProfile || tiles.length === 0) return;
+    const name = `${activeProfile.name} setup`;
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      await invoke('tweaks_export', {
+        json: JSON.stringify(buildSetupExport(name, orientation, tiles)),
+        fileName: setupExportFileName(name),
+      });
+      setSetupPicker(null);
+    } catch (err) {
+      console.warn('setup export failed:', err);
+    }
+  };
+
+  const importSetup = async () => {
+    setImportError(null);
+    setSetupNote(null);
+    if (!activeProfile) return;
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      const text = await invoke<string | null>('tweaks_import');
+      if (!text) return;
+      const result = parseSetupExport(JSON.parse(text));
+      if (!result.ok) { setImportError(result.error); return; }
+      // Additive merge into the CURRENT orientation of the active profile —
+      // nothing existing moves or disappears, so no confirmation dialog.
+      const { tiles, dropped } = mergeSetupTiles(activeTiles, result.setup.tiles);
+      setProfiles(profiles.map((p) => (p.id === activeProfile.id
+        ? { ...p, [orientation]: { tiles } }
+        : p)));
+      const added = result.setup.tiles.length - dropped;
+      setSetupNote(
+        `Added ${added} tile${added === 1 ? '' : 's'} from “${result.setup.name}”` +
+        (result.setup.orientation !== orientation ? ` (designed for ${result.setup.orientation})` : '') +
+        (dropped > 0 ? ` — ${dropped} dropped at the tile cap` : ''),
+      );
+    } catch (err) {
+      console.warn('setup import failed:', err);
+      setImportError('Import needs the desktop app.');
+    }
+  };
+
   const applyImport = (choice: { mode: 'new' } | { mode: 'overwrite'; profileId: string }) => {
     if (!importPending) return;
     if (choice.mode === 'overwrite') {
@@ -160,6 +221,25 @@ export function ProfileSwitcher({
           {importError && (
             <span style={{ fontSize: 12, color: '#fb7185' }}>{importError}</span>
           )}
+          {setupNote && (
+            <span style={{ fontSize: 12, color: accent }}>{setupNote}</span>
+          )}
+          <button
+            onClick={() => setSetupPicker(setupPicker ? null : new Set(activeTiles.map((t) => t.instanceId)))}
+            title={`Share some or all of the ${orientation} arrangement as a setup file`}
+            style={{
+              padding: '10px 16px', fontSize: 12,
+              color: setupPicker ? accent : 'rgba(255,255,255,0.7)',
+              background: 'transparent',
+              border: `1px solid ${setupPicker ? `${accent}66` : 'rgba(255,255,255,0.15)'}`,
+              borderRadius: 6, cursor: 'pointer',
+            }}
+          >Export setup…</button>
+          <button onClick={() => { void importSetup(); }} title="Merge a shared setup's tiles into this profile" style={{
+            padding: '10px 16px', fontSize: 12, color: 'rgba(255,255,255,0.7)',
+            background: 'transparent', border: '1px solid rgba(255,255,255,0.15)',
+            borderRadius: 6, cursor: 'pointer',
+          }}>Import setup…</button>
           <button onClick={() => { void importProfile(); }} style={{
             padding: '10px 16px', fontSize: 12, color: 'rgba(255,255,255,0.7)',
             background: 'transparent', border: '1px solid rgba(255,255,255,0.15)',
@@ -171,6 +251,60 @@ export function ProfileSwitcher({
             borderRadius: 6, cursor: 'pointer',
           }}>Esc</button>
         </div>
+        {setupPicker && (
+          <div style={{
+            marginTop: 16, padding: 16, borderRadius: 10,
+            background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.1)',
+          }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 10 }}>
+              <span style={{ fontSize: 13, fontWeight: 600 }}>Export setup — {orientation}</span>
+              <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.45)' }}>
+                All tiles selected = the whole arrangement. Untick to share just a subset.
+              </span>
+            </div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 12 }}>
+              {activeTiles.map((tile) => {
+                const on = setupPicker.has(tile.instanceId);
+                return (
+                  <button
+                    key={tile.instanceId}
+                    onClick={() => {
+                      const next = new Set(setupPicker);
+                      if (on) next.delete(tile.instanceId); else next.add(tile.instanceId);
+                      setSetupPicker(next);
+                    }}
+                    style={{
+                      padding: '5px 10px', fontSize: 11, borderRadius: 6, cursor: 'pointer',
+                      background: on ? `${accent}22` : 'rgba(255,255,255,0.04)',
+                      color: on ? accent : 'rgba(255,255,255,0.55)',
+                      border: `1px solid ${on ? `${accent}66` : 'rgba(255,255,255,0.1)'}`,
+                    }}
+                  >{on ? '✓ ' : ''}{tileLabel(tile)}</button>
+                );
+              })}
+              {activeTiles.length === 0 && (
+                <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)' }}>This orientation has no tiles.</span>
+              )}
+            </div>
+            <div style={{ display: 'flex', gap: 10 }}>
+              <button
+                disabled={setupPicker.size === 0}
+                onClick={() => { void exportSetup(activeTiles.filter((tile) => setupPicker.has(tile.instanceId))); }}
+                style={{
+                  padding: '8px 14px', fontSize: 12, fontWeight: 600, borderRadius: 6,
+                  background: setupPicker.size > 0 ? accent : 'rgba(255,255,255,0.06)',
+                  color: setupPicker.size > 0 ? '#000' : 'rgba(255,255,255,0.4)',
+                  border: 'none', cursor: setupPicker.size > 0 ? 'pointer' : 'not-allowed',
+                }}
+              >Export {setupPicker.size} tile{setupPicker.size === 1 ? '' : 's'}</button>
+              <button onClick={() => setSetupPicker(null)} style={{
+                padding: '8px 14px', fontSize: 12, color: 'rgba(255,255,255,0.6)',
+                background: 'transparent', border: '1px solid rgba(255,255,255,0.12)',
+                borderRadius: 6, cursor: 'pointer',
+              }}>Cancel</button>
+            </div>
+          </div>
+        )}
         {importPending && (
           <ImportProfileDialog
             accent={accent}
