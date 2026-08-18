@@ -1462,7 +1462,6 @@ export default function App() {
         return (
           <VizHero
             mode={t.vizMode}
-            setMode={setVizModeStable}
             accent={vizAccent}
             accent2={vizAccent2}
             track={track}

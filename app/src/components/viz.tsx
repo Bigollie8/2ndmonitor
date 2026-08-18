@@ -328,7 +328,6 @@ function VizEmptyState({ accent }: { accent: string }) {
 
 /** How many entries of the merged catalog VizOverlay's quick-select strip
  *  offers before "+ More". Matches the width of the old hardcoded five. */
-const QUICK_MODE_COUNT = 5;
 
 const overlayBtn: React.CSSProperties = {
   background: 'rgba(0,0,0,0.4)', backdropFilter: 'blur(20px)',
@@ -361,12 +360,11 @@ function useLivePos(playback: Playback | null): number {
 }
 
 export function VizOverlay({
-  track, mode, setMode, accent, accent2, playback, onConfigure, onToggleImmersive, immersive = false,
+  track, mode, accent, accent2, playback, onConfigure, onToggleImmersive, immersive = false,
   videoEnabled = false, videoAvailable = false, onToggleVideo, catalogRemoved,
 }: {
   track: Track;
   mode: VizMode;
-  setMode: (m: VizMode) => void;
   accent: string;
   accent2: string;
   playback?: Playback | null;
@@ -392,56 +390,39 @@ export function VizOverlay({
   // The merged catalog (not just BUILTIN_VIZ_STYLES) so an installed
   // `bundle:` style's label still shows in the "● Label" badge.
   const { styles: vizStyles, loaded: vizStylesLoaded } = useVizStyles(catalogRemoved);
-  // The quick-select strip used to be a hardcoded five (bars/waveform/radial/
-  // particles/ambient) filtered against catalogRemoved. All five are bundles
-  // now, so a fixed list would offer ids that may not be installed at all.
-  // Take the head of the merged catalog instead: already removal-filtered by
-  // useVizStyles, already in V-cycle order, and it shrinks to nothing rather
-  // than lying when the user has removed everything.
-  const modes = vizStyles.slice(0, QUICK_MODE_COUNT);
-  const isOriginalMode = modes.some((m) => m.id === mode);
+  // The quick-select strip is gone (0.9.8 — "it crowds up space"): one
+  // compact button carries the ACTIVE style's name and opens the gallery,
+  // where all switching now happens. The V-key cycle and StreamDeck actions
+  // go through setVizMode in App and are untouched by this overlay.
   // Same tri-state reasoning as HiFiVizSurface's dispatch gate above:
   // `vizStyles` holds builtins only until the installed-bundle list
-  // resolves, so an active `bundle:` style's badge would otherwise flash
+  // resolves, so an active `bundle:` style's label would otherwise flash
   // absent for a tick before popping in. Gate the lookup on
   // `vizStylesLoaded` for bundle modes so that's a deliberate "not known
   // yet" rather than an accidental side effect of the merge — builtin
-  // styles never depend on the async list, so their badge is unaffected.
+  // styles never depend on the async list, so their label is unaffected.
   const styleEntry = (!isBundleMode(mode) || vizStylesLoaded)
     ? vizStyles.find((s) => s.id === mode)
     : undefined;
   return (
     <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
       <div style={{ padding: 18, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', pointerEvents: 'auto' }}>
-        <div style={{ display: 'flex', gap: 4, padding: 4, background: 'rgba(0,0,0,0.4)', backdropFilter: 'blur(20px)', borderRadius: 10, border: '1px solid rgba(255,255,255,0.06)', alignItems: 'center' }}>
-          {modes.map((m) => (
-            <button key={m.id} onClick={() => setMode(m.id)} style={{
-              padding: '6px 12px', fontSize: 11, fontWeight: 600,
-              background: mode === m.id ? accent : 'transparent',
-              color: mode === m.id ? '#000' : 'rgba(255,255,255,0.7)',
-              border: 'none', borderRadius: 6, cursor: 'pointer',
-              boxShadow: mode === m.id ? `0 0 12px ${accent}77` : 'none',
-              transition: 'all 0.2s',
-            }}>{m.label}</button>
-          ))}
-          <button onClick={onConfigure} style={{
-            padding: '6px 12px', fontSize: 11, fontWeight: 500,
-            background: 'transparent', color: 'rgba(255,255,255,0.6)',
-            border: 'none', borderRadius: 6, cursor: 'pointer',
-          }}>+ More</button>
-          {!isOriginalMode && styleEntry && (
-            <span style={{
-              padding: '6px 10px', fontSize: 10, fontWeight: 600,
-              background: `${accent}22`, color: accent,
-              border: `1px solid ${accent}55`, borderRadius: 6,
-              fontFamily: '"JetBrains Mono", ui-monospace, monospace',
-              letterSpacing: '.05em',
-              display: 'flex', alignItems: 'center', gap: 4,
-            }}>● {styleEntry.label}</span>
-          )}
-        </div>
+        <button
+          onClick={onConfigure}
+          title="Change visualizer (V cycles styles)"
+          style={{
+            display: 'flex', alignItems: 'center', gap: 7,
+            padding: '7px 13px', fontSize: 11, fontWeight: 600,
+            background: 'rgba(0,0,0,0.4)', backdropFilter: 'blur(20px)',
+            color: 'rgba(255,255,255,0.75)',
+            border: '1px solid var(--hairline, rgba(255,255,255,0.06))', borderRadius: 10,
+            cursor: 'pointer',
+          }}
+        >
+          <span style={{ color: accent }}>◈</span>
+          {styleEntry?.label ?? 'Visualizer'}
+        </button>
         <div style={{ display: 'flex', gap: 6 }}>
-          <button onClick={onConfigure} style={overlayBtn} title="Browse all visualizers">⚙ Configure</button>
           <button
             onClick={videoAvailable ? onToggleVideo : undefined}
             disabled={!videoAvailable}
@@ -589,14 +570,13 @@ function AudioDebugHud({ spectrumRef, paused }: {
 }
 
 export function VizHero({
-  mode, setMode, accent, accent2, track, spectrumRef, playback,
+  mode, accent, accent2, track, spectrumRef, playback,
   showArtBg = false, sensitivity = 1, smoothing = 0, autoGain = false, lyricsOverlayEnabled = true,
   videoEnabled = false, videoCurrentUrl = null, videoBookmarks = [],
   videoAvailable = false, onToggleVideo, onNavigate, onExit, overlaysOpen = false,
   paused = false, onConfigure, audioDebug = false, catalogRemoved, onOpenLibrary,
 }: {
   mode: VizMode;
-  setMode: (m: VizMode) => void;
   accent: string;
   accent2: string;
   track: Track;
@@ -704,7 +684,7 @@ export function VizHero({
       {!immersive && !showVideo && (
         <div style={{ position: 'absolute', inset: 0, zIndex: 3, pointerEvents: 'none' }}>
           <VizOverlay
-            track={track} mode={mode} setMode={setMode}
+            track={track} mode={mode}
             accent={accent} accent2={accent2} playback={playback}
             onConfigure={onConfigure}
             onToggleImmersive={() => setImmersive(true)}
