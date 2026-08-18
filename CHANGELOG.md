@@ -5,6 +5,65 @@ All notable changes to 2ndMonitor are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.9.8] - 2026-08-18
+
+### Added
+- **Gold price tile.** Live 24K spot gold in both USD per troy ounce and
+  USD per gram (per-gram is spot ÷ 31.1035 — spot IS fine gold), on the
+  same quote engine and 60-second cadence as the Stocks tile
+- **48 Laws of Power tile.** One concisely-worded law at a time, rotating
+  on your chosen cadence (every 3/4/6/12 hours or daily — set it in edit
+  mode). Which law is showing survives restarts instead of reshuffling,
+  and rotation always moves to a different law
+- **Share setups, not just profiles.** The profile switcher gains
+  "Export setup…" — pick any subset of the current arrangement's tiles
+  (or keep all selected for the whole layout) and save it as a setup
+  file — and "Import setup…", which ADDS a shared setup's tiles into
+  your current profile without touching anything you already have. Same
+  privacy guarantees as profile files: saved map locations and unsafe
+  keys are stripped, imported tiles get fresh identities
+- **Todo reminders and timestamps.** Hover a todo → ⏰ sets a due time;
+  upcoming todos show amber, overdue red, and when the moment arrives
+  the tile shows an in-app banner (once per deadline — editing the time
+  re-arms it). Every todo also carries a tiny fine-print note of when it
+  was written. New items still go on top
+
+### Changed
+- **Each surface theme is now its own design system, not a recolor.**
+  Editorial is "set in print": flat near-opaque ink cards, no blur, no
+  shadows, square corners, ruled hairlines carrying the structure, serif
+  display type. Frameless is "air": card material gone entirely, content
+  floats on the ground. Hub remains exactly the classic look, and liquid
+  glass keeps its blur on top of any theme
+- **Glow now means something.** Resting tiles no longer emit an ambient
+  accent glow — cards sit on neutral elevation, and glow is reserved for
+  real state cues: edit-mode selection, Claude "needs you" dots, Discord
+  speaking rings, live audio meters
+- **The visualizer strip is gone.** The row of mode buttons that crowded
+  the top of the visualizer is replaced by a single compact button
+  carrying the current style's name — click it for the full gallery.
+  V-key cycling and Stream Deck actions are unchanged
+- **Creating an account signs you in.** Registering with an invite (or on
+  a dev-mail server) flows straight into a signed-in session — no more
+  retyping into an empty form or reopening the panel; the whole app
+  reflects sign-in/sign-out instantly now
+
+### Fixed
+- **The Claude Code tile now tells the truth.** It read only the last
+  transcript line — which is often bookkeeping — so working sessions
+  showed idle, long builds showed "Permission needed", and sessions
+  killed mid-tool pulsed NEEDS YOU for a day. It now finds the last
+  meaningful entry, knows which sessions have a live process, never
+  flags read-only tools or long-running commands as permission prompts,
+  and keeps the 15-second prompt heuristic only where it's accurate
+- **F11 means fullscreen.** The window can no longer be dragged around by
+  its header while in fullscreen; leaving F11 restores normal dragging
+- **New tiles land where you can see them.** Adding a tile used to drop
+  it into the vinyl backdrop's footprint (and sometimes behind it). The
+  visualizer backdrop now always paints beneath other tiles and no
+  longer blocks the empty-slot search, so a fresh tile appears clear of
+  your real tiles without any manual rescue
+
 ## [0.9.7] - 2026-08-15
 
 ### Added
