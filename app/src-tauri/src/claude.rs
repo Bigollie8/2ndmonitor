@@ -3,13 +3,41 @@
 //! tool? idle? — so the hub tile can pulse the ones that need attention.
 //!
 //! The session JSONL format is one JSON object per line. We only look at the
-//! tail (last few entries) to infer status. The most useful signals:
+//! tail (last few entries) to infer status. Verified against real 2.1.x
+//! transcripts (0.9.8):
 //!
-//! - last entry type=`assistant`, stop_reason=`end_turn`  →  awaiting your reply
-//! - last entry type=`assistant`, stop_reason=`tool_use`  →  running a tool
-//! - last entry type=`tool_result` and very recent       →  agent is processing
-//! - last entry type=`user`                              →  agent is processing
-//! - file mtime older than 10 minutes                    →  idle
+//! - Only `type=user` / `type=assistant` lines carry conversational state.
+//!   The file is FULL of bookkeeping lines that can be the physical last
+//!   line — `attachment`, `last-prompt`, `mode`, `permission-mode`,
+//!   `ai-title`, `custom-title`, `agent-name`, `agent-color`,
+//!   `bridge-session`, `file-history-*`, `queue-operation`, `system`,
+//!   `summary`, … — so status walks BACKWARD to the last meaningful line
+//!   instead of keying on whatever happens to be final (the old behavior
+//!   read "idle" for a hard-working session whose last line was metadata;
+//!   that was the "only catches certain commands" report).
+//! - Tool results are NOT `type=tool_result`: they arrive as `type=user`
+//!   with a `tool_result` block inside `message.content`.
+//! - `isSidechain: true` lines are subagent traffic — skipped; the main
+//!   thread's state is what the tile should reflect.
+//! - assistant + `tool_use` blocks           →  a tool was dispatched
+//! - assistant + stop_reason=`end_turn`      →  awaiting your reply
+//! - file mtime older than 10 minutes        →  idle
+//!
+//! Running vs. waiting-for-permission: the transcript records NOTHING when a
+//! permission prompt is showing (verified — no marker entry exists), so that
+//! distinction is inferred:
+//! - `~/.claude/sessions/<pid>.json` registers each live interactive
+//!   process. A session with no live process can be neither running a tool
+//!   nor prompting — this kills the old failure mode where a session killed
+//!   mid-tool showed "Permission needed" for 24 hours. The registry is
+//!   treated as advisory: if it's missing or unreadable (older Claude Code)
+//!   we fail OPEN and assume alive.
+//! - Read-only tools (Read/Grep/Glob/…) are auto-approved and never prompt.
+//! - Known long-runners (Bash/Task/agents) routinely run for minutes; a
+//!   quiet transcript there means "still running", and only the detail text
+//!   hints at a possible approval wait — never a false "NEEDS YOU".
+//! - Everything else (Edit/Write/MCP tools) completes in seconds once
+//!   approved, so quiet-beyond-15s genuinely does mean a prompt is up.
 
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
@@ -27,8 +55,25 @@ use tauri::{AppHandle, Emitter, Runtime};
 const SCAN_INTERVAL_SECS: u64 = 5;
 /// Sessions older than this drop off the active list.
 const MAX_AGE_SECS: u64 = 24 * 3600;
-/// "Stuck" / awaiting-tool-permission heuristic threshold.
+/// "Stuck" / awaiting-tool-permission heuristic threshold — applied only to
+/// tools that complete quickly once approved (NOT the long-runner list).
 const STALE_TOOL_SECS: u64 = 15;
+/// Past this, a quiet long-runner's detail text mentions the approval
+/// possibility. Status stays `running_tool` — builds/tests legitimately run
+/// for many minutes and must never read as "NEEDS YOU".
+const LONG_TOOL_HINT_SECS: u64 = 60;
+/// Auto-approved, read-only tools: these never show a permission prompt, so
+/// a pending call is always "running" no matter how quiet the transcript is.
+const READONLY_TOOLS: &[&str] = &[
+    "Read", "Glob", "Grep", "LS", "TaskOutput", "TaskList", "TaskGet",
+    "TodoWrite", "NotebookRead", "ToolSearch",
+];
+/// Tools that routinely run for minutes when approved (shell commands,
+/// subagents, workflows). A quiet transcript with one of these pending means
+/// "still running" far more often than "waiting for approval".
+const LONG_RUNNER_TOOLS: &[&str] = &[
+    "Bash", "PowerShell", "Task", "Agent", "Workflow", "Monitor",
+];
 /// Idle threshold for the "idle" status.
 const IDLE_SECS: u64 = 10 * 60;
 /// Project-name substrings to exclude from the active list (case-insensitive).
@@ -58,11 +103,29 @@ pub fn set_claude_active(active: bool) {
 static ANALYSIS_CACHE: Lazy<Mutex<HashMap<PathBuf, AnalysisEntry>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 
+/// What the transcript SAYS, independent of clock and process state. The
+/// memo stores this instead of a final status string because two of the
+/// status inputs — elapsed time and process liveness — change without the
+/// file changing. The old cache froze "running_tool" vs "permission" at
+/// whatever was true on the first parse; `finalize()` now re-derives the
+/// final status from this snapshot on every tick, cache hit or not.
+#[derive(Clone, PartialEq)]
+enum ParsedState {
+    /// Empty file, unreadable, or nothing but bookkeeping lines.
+    NoConversation(String),
+    /// The last meaningful line dispatched one or more tools.
+    PendingTool { label: String, readonly: bool, long_runner: bool },
+    /// assistant + stop_reason=end_turn.
+    AwaitingUser,
+    /// Claude is between visible states (user prompt landed, tool result
+    /// landed, or an assistant line that isn't end_turn/tool_use).
+    Working(String),
+}
+
 struct AnalysisEntry {
     mtime: SystemTime,
     len: u64,
-    status: String,
-    detail: String,
+    state: ParsedState,
     last_user: Option<String>,
 }
 
@@ -107,10 +170,56 @@ fn home_dir() -> Option<PathBuf> {
         .or_else(|| std::env::var_os("HOME").map(PathBuf::from))
 }
 
+/// Session ids with a LIVE Claude Code process, from the
+/// `~/.claude/sessions/<pid>.json` registry, PID-verified via sysinfo.
+/// `None` = the registry is unavailable (missing dir, unreadable, or no
+/// parseable entries — e.g. an older Claude Code) → callers fail OPEN and
+/// treat every session as possibly alive. `Some(empty)` is real information:
+/// the registry works and nothing is running.
+fn live_session_ids() -> Option<std::collections::HashSet<String>> {
+    let dir = home_dir()?.join(".claude").join("sessions");
+    let entries = fs::read_dir(&dir).ok()?;
+    let mut candidates: Vec<(u32, String)> = Vec::new();
+    for e in entries.flatten() {
+        let p = e.path();
+        if p.extension().and_then(|s| s.to_str()) != Some("json") {
+            continue;
+        }
+        let Ok(text) = fs::read_to_string(&p) else { continue };
+        let Ok(v) = serde_json::from_str::<Value>(&text) else { continue };
+        let (Some(pid), Some(sid)) = (
+            v.get("pid").and_then(|p| p.as_u64()),
+            v.get("sessionId").and_then(|s| s.as_str()),
+        ) else {
+            continue;
+        };
+        candidates.push((pid as u32, sid.to_string()));
+    }
+    if candidates.is_empty() {
+        return None;
+    }
+    // Registry files can linger after a crash — verify each PID is actually
+    // alive. A handful of targeted refreshes every 5s is negligible.
+    let mut sys = sysinfo::System::new();
+    let pids: Vec<sysinfo::Pid> = candidates
+        .iter()
+        .map(|(p, _)| sysinfo::Pid::from_u32(*p))
+        .collect();
+    sys.refresh_processes(sysinfo::ProcessesToUpdate::Some(&pids), false);
+    Some(
+        candidates
+            .into_iter()
+            .filter(|(p, _)| sys.process(sysinfo::Pid::from_u32(*p)).is_some())
+            .map(|(_, s)| s)
+            .collect(),
+    )
+}
+
 fn scan() -> Vec<ClaudeSession> {
     let mut out = Vec::new();
     let mut seen_paths: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
     let Some(home) = home_dir() else { return out };
+    let live_ids = live_session_ids();
     let projects_dir = home.join(".claude").join("projects");
     if !projects_dir.exists() {
         return out;
@@ -171,7 +280,9 @@ fn scan() -> Vec<ClaudeSession> {
                 .unwrap_or("")
                 .to_string();
 
-            let (status, detail, last_user) = analyze_session_cached(&p, mtime, meta.len(), age);
+            // None (registry unavailable) → unknown → fail open (alive).
+            let alive = live_ids.as_ref().map(|ids| ids.contains(&session_id));
+            let (status, detail, last_user) = analyze_session_cached(&p, mtime, meta.len(), age, alive);
             seen_paths.insert(p.clone());
 
             out.push(ClaudeSession {
@@ -225,36 +336,32 @@ fn decode_project_path(encoded: &str) -> String {
 }
 
 /// Memoized wrapper: identical (mtime, len) means the transcript hasn't
-/// changed since the last tick — reuse the parsed answer instead of touching
-/// the file at all. Only `age`-derived wording changes between ticks for an
-/// unchanged file, so recompute JUST the idle label from the cached parts.
+/// changed since the last tick — reuse the PARSED state instead of touching
+/// the file at all. Time- and liveness-derived status (idle aging, the
+/// permission threshold, a session's process dying) is re-finalized from the
+/// cached snapshot on every tick, so those transitions happen on schedule
+/// even while the file itself is quiet.
 fn analyze_session_cached(
     path: &Path,
     mtime: SystemTime,
     len: u64,
     age_secs: u64,
+    alive: Option<bool>,
 ) -> (String, String, Option<String>) {
     {
         let cache = ANALYSIS_CACHE.lock();
         if let Some(e) = cache.get(path) {
             if e.mtime == mtime && e.len == len {
-                if age_secs > IDLE_SECS {
-                    return ("idle".into(), format!("idle {}", fmt_age(age_secs)), e.last_user.clone());
-                }
-                return (e.status.clone(), e.detail.clone(), e.last_user.clone());
+                let (status, detail) = finalize(&e.state, age_secs, alive);
+                return (status, detail, e.last_user.clone());
             }
         }
     }
-    let (status, detail, last_user) = analyze_session(path, age_secs);
+    let (state, last_user) = parse_transcript(path);
+    let (status, detail) = finalize(&state, age_secs, alive);
     ANALYSIS_CACHE.lock().insert(
         path.to_path_buf(),
-        AnalysisEntry {
-            mtime,
-            len,
-            status: status.clone(),
-            detail: detail.clone(),
-            last_user: last_user.clone(),
-        },
+        AnalysisEntry { mtime, len, state, last_user: last_user.clone() },
     );
     (status, detail, last_user)
 }
@@ -279,22 +386,32 @@ fn read_tail(path: &Path) -> Option<String> {
     Some(s)
 }
 
-fn analyze_session(path: &Path, age_secs: u64) -> (String, String, Option<String>) {
+fn parse_transcript(path: &Path) -> (ParsedState, Option<String>) {
     let Some(content) = read_tail(path) else {
-        return ("idle".into(), "couldn't read".into(), None);
+        return (ParsedState::NoConversation("couldn't read".into()), None);
     };
-    let last_line = content
-        .lines()
-        .rev()
-        .find(|l| !l.trim().is_empty());
-    let Some(last_line) = last_line else {
-        return ("idle".into(), "empty session".into(), None);
-    };
-    let Ok(last) = serde_json::from_str::<Value>(last_line) else {
-        return ("idle".into(), "parse error".into(), None);
-    };
+    parse_transcript_content(&content)
+}
 
-    let entry_type = last.get("type").and_then(|v| v.as_str()).unwrap_or("");
+/// Pure over the tail text — the unit-testable core.
+fn parse_transcript_content(content: &str) -> (ParsedState, Option<String>) {
+    // The last MEANINGFUL line: only user/assistant lines carry
+    // conversational state (see module docs for the bookkeeping-type zoo),
+    // and subagent (isSidechain) traffic doesn't speak for the main thread.
+    let last = content.lines().rev().find_map(|l| {
+        if l.trim().is_empty() {
+            return None;
+        }
+        let v: Value = serde_json::from_str(l).ok()?;
+        let t = v.get("type").and_then(|t| t.as_str())?;
+        if t != "user" && t != "assistant" {
+            return None;
+        }
+        if v.get("isSidechain").and_then(|s| s.as_bool()) == Some(true) {
+            return None;
+        }
+        Some(v)
+    });
 
     // Walk the file backwards once for the most recent user-typed prompt.
     let last_user_msg = content.lines().rev().find_map(|l| {
@@ -342,11 +459,12 @@ fn analyze_session(path: &Path, age_secs: u64) -> (String, String, Option<String
         })
     });
 
-    if age_secs > IDLE_SECS {
-        return ("idle".into(), format!("idle {}", fmt_age(age_secs)), last_user_msg);
-    }
+    let Some(last) = last else {
+        return (ParsedState::NoConversation("no conversation yet".into()), last_user_msg);
+    };
 
-    match entry_type {
+    let entry_type = last.get("type").and_then(|v| v.as_str()).unwrap_or("");
+    let state = match entry_type {
         "assistant" => {
             let stop = last
                 .get("message")
@@ -370,25 +488,79 @@ fn analyze_session(path: &Path, age_secs: u64) -> (String, String, Option<String
                 .unwrap_or_default();
 
             if !tool_uses.is_empty() {
-                let label = tool_uses.join(", ");
-                if age_secs > STALE_TOOL_SECS {
-                    return (
-                        "permission".into(),
-                        format!("Permission needed: {label}"),
-                        last_user_msg,
-                    );
+                ParsedState::PendingTool {
+                    readonly: tool_uses.iter().all(|t| READONLY_TOOLS.contains(&t.as_str())),
+                    long_runner: tool_uses.iter().any(|t| LONG_RUNNER_TOOLS.contains(&t.as_str())),
+                    label: tool_uses.join(", "),
                 }
-                return ("running_tool".into(), format!("Running: {label}"), last_user_msg);
-            }
-            match stop {
-                Some("end_turn") => ("awaiting_user".into(), "Awaiting your reply".into(), last_user_msg),
-                Some(other) => ("working".into(), format!("stop: {other}"), last_user_msg),
-                None => ("working".into(), "Generating".into(), last_user_msg),
+            } else {
+                match stop {
+                    Some("end_turn") => ParsedState::AwaitingUser,
+                    // Mid-turn assistant lines (thinking/text blocks of a
+                    // tool-calling turn carry stop_reason=tool_use with no
+                    // tool_use block on THIS line; streaming lines carry
+                    // null) — all mean "Claude is doing something".
+                    Some(_) | None => ParsedState::Working("Generating".into()),
+                }
             }
         }
-        "user" => ("working".into(), "Claude is processing".into(), last_user_msg),
-        "tool_result" => ("working".into(), "Tool finished, generating reply".into(), last_user_msg),
-        other => ("idle".into(), other.to_string(), last_user_msg),
+        // A `user` line is either a real prompt or a tool_result envelope —
+        // both mean Claude has input in hand and is (about to be) working.
+        "user" => {
+            let is_tool_result = last
+                .get("message")
+                .and_then(|m| m.get("content"))
+                .and_then(|c| c.as_array())
+                .map(|arr| {
+                    arr.iter().any(|b| {
+                        b.get("type").and_then(|t| t.as_str()) == Some("tool_result")
+                    })
+                })
+                .unwrap_or(false);
+            if is_tool_result {
+                ParsedState::Working("Tool finished, generating reply".into())
+            } else {
+                ParsedState::Working("Claude is processing".into())
+            }
+        }
+        other => ParsedState::NoConversation(other.to_string()),
+    };
+    (state, last_user_msg)
+}
+
+/// Combine what the transcript says with the clock and process liveness.
+/// Pure — unit-tested. `alive: None` = registry unavailable → assume alive.
+fn finalize(state: &ParsedState, age_secs: u64, alive: Option<bool>) -> (String, String) {
+    if age_secs > IDLE_SECS {
+        return ("idle".into(), format!("idle {}", fmt_age(age_secs)));
+    }
+    // A dead process can't be running, prompting, or generating; and a
+    // closed session shouldn't pulse "awaiting your reply" either.
+    if alive == Some(false) {
+        return ("idle".into(), "session ended".into());
+    }
+    match state {
+        ParsedState::NoConversation(detail) => ("idle".into(), detail.clone()),
+        ParsedState::AwaitingUser => ("awaiting_user".into(), "Awaiting your reply".into()),
+        ParsedState::Working(detail) => ("working".into(), detail.clone()),
+        ParsedState::PendingTool { label, readonly, long_runner } => {
+            if *readonly {
+                return ("running_tool".into(), format!("Running: {label}"), );
+            }
+            if *long_runner {
+                let detail = if age_secs > LONG_TOOL_HINT_SECS {
+                    format!("Running: {label} · {} (or awaiting approval)", fmt_age(age_secs))
+                } else {
+                    format!("Running: {label}")
+                };
+                return ("running_tool".into(), detail);
+            }
+            if age_secs > STALE_TOOL_SECS {
+                ("permission".into(), format!("Permission needed: {label}"))
+            } else {
+                ("running_tool".into(), format!("Running: {label}"))
+            }
+        }
     }
 }
 
@@ -399,5 +571,152 @@ fn fmt_age(secs: u64) -> String {
         format!("{}m", secs / 60)
     } else {
         format!("{}h", secs / 3600)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Line shapes distilled from real 2.1.x transcripts (see module docs).
+    fn asst_tool(name: &str) -> String {
+        format!(
+            r#"{{"type":"assistant","message":{{"role":"assistant","stop_reason":"tool_use","content":[{{"type":"tool_use","name":"{name}","input":{{}}}}]}}}}"#
+        )
+    }
+    const ASST_END_TURN: &str = r#"{"type":"assistant","message":{"role":"assistant","stop_reason":"end_turn","content":[{"type":"text","text":"done."}]}}"#;
+    const ASST_TEXT_MIDTURN: &str = r#"{"type":"assistant","message":{"role":"assistant","stop_reason":"tool_use","content":[{"type":"text","text":"Let me check."}]}}"#;
+    const USER_PROMPT: &str = r#"{"type":"user","message":{"role":"user","content":"fix the bug please"}}"#;
+    const USER_TOOL_RESULT: &str = r#"{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"ok"}]},"toolUseResult":{}}"#;
+    const META_TAIL: &str = concat!(
+        "{\"type\":\"attachment\",\"attachment\":{\"type\":\"skill_listing\"}}\n",
+        "{\"type\":\"last-prompt\",\"lastPrompt\":\"x\"}\n",
+        "{\"type\":\"ai-title\",\"aiTitle\":\"t\"}\n",
+        "{\"type\":\"mode\",\"mode\":\"default\"}\n",
+        "{\"type\":\"queue-operation\",\"operation\":\"enqueue\"}\n",
+    );
+    const SIDECHAIN_TOOL: &str = r#"{"type":"assistant","isSidechain":true,"message":{"role":"assistant","stop_reason":"tool_use","content":[{"type":"tool_use","name":"Bash","input":{}}]}}"#;
+
+    fn status_of(tail: &str, age: u64, alive: Option<bool>) -> (String, String) {
+        let (state, _) = parse_transcript_content(tail);
+        finalize(&state, age, alive)
+    }
+
+    #[test]
+    fn metadata_lines_after_end_turn_still_read_awaiting_user() {
+        // The reported bug class: the physical last line is bookkeeping, so
+        // the old last-line-only logic said "idle" for a session that just
+        // finished its turn.
+        let tail = format!("{USER_PROMPT}\n{ASST_END_TURN}\n{META_TAIL}");
+        let (status, _) = status_of(&tail, 30, Some(true));
+        assert_eq!(status, "awaiting_user");
+    }
+
+    #[test]
+    fn metadata_lines_after_tool_use_still_read_running() {
+        let tail = format!("{}\n{META_TAIL}", asst_tool("Bash"));
+        let (status, detail) = status_of(&tail, 5, Some(true));
+        assert_eq!(status, "running_tool");
+        assert!(detail.contains("Bash"));
+    }
+
+    #[test]
+    fn long_running_bash_never_flips_to_permission() {
+        // A build/test running 5 minutes must not read "NEEDS YOU".
+        let tail = asst_tool("Bash");
+        let (status, detail) = status_of(&tail, 300, Some(true));
+        assert_eq!(status, "running_tool");
+        assert!(detail.contains("awaiting approval"), "past the hint window the detail mentions the possibility: {detail}");
+        let (status, detail) = status_of(&tail, 30, Some(true));
+        assert_eq!(status, "running_tool");
+        assert!(!detail.contains("approval"), "quiet-but-short stays a plain Running: {detail}");
+    }
+
+    #[test]
+    fn quick_tool_stale_means_permission_prompt() {
+        // Edit completes in seconds once approved — 20s of silence is a
+        // prompt sitting on screen.
+        let tail = asst_tool("Edit");
+        assert_eq!(status_of(&tail, 20, Some(true)).0, "permission");
+        assert_eq!(status_of(&tail, 5, Some(true)).0, "running_tool");
+    }
+
+    #[test]
+    fn readonly_tools_never_prompt() {
+        for t in ["Read", "Grep", "Glob"] {
+            let tail = asst_tool(t);
+            let (status, _) = status_of(&tail, 120, Some(true));
+            assert_eq!(status, "running_tool", "{t} is auto-approved");
+        }
+    }
+
+    #[test]
+    fn dead_process_cannot_run_or_prompt() {
+        // Session killed mid-tool used to show "Permission needed" for the
+        // whole 24h window.
+        let tail = asst_tool("Edit");
+        let (status, detail) = status_of(&tail, 120, Some(false));
+        assert_eq!(status, "idle");
+        assert!(detail.contains("ended"));
+        // ...and a closed session doesn't pulse "awaiting your reply".
+        assert_eq!(status_of(ASST_END_TURN, 30, Some(false)).0, "idle");
+    }
+
+    #[test]
+    fn registry_unavailable_fails_open() {
+        let tail = asst_tool("Edit");
+        assert_eq!(status_of(&tail, 20, None).0, "permission");
+        assert_eq!(status_of(ASST_END_TURN, 30, None).0, "awaiting_user");
+    }
+
+    #[test]
+    fn tool_result_envelope_is_working() {
+        // tool results arrive as type=user with a tool_result block, NOT a
+        // top-level type=tool_result.
+        let tail = format!("{}\n{USER_TOOL_RESULT}", asst_tool("Bash"));
+        let (status, detail) = status_of(&tail, 3, Some(true));
+        assert_eq!(status, "working");
+        assert!(detail.contains("Tool finished"));
+    }
+
+    #[test]
+    fn real_user_prompt_is_working() {
+        assert_eq!(status_of(USER_PROMPT, 2, Some(true)).0, "working");
+    }
+
+    #[test]
+    fn midturn_assistant_text_is_working() {
+        // stop_reason=tool_use with no tool_use block on THIS line — the
+        // thinking/text lines of a tool-calling turn.
+        assert_eq!(status_of(ASST_TEXT_MIDTURN, 5, Some(true)).0, "working");
+    }
+
+    #[test]
+    fn sidechain_traffic_does_not_speak_for_the_main_thread() {
+        let tail = format!("{ASST_END_TURN}\n{SIDECHAIN_TOOL}");
+        assert_eq!(status_of(&tail, 30, Some(true)).0, "awaiting_user");
+    }
+
+    #[test]
+    fn idle_age_wins_over_everything() {
+        assert_eq!(status_of(ASST_END_TURN, IDLE_SECS + 1, Some(true)).0, "idle");
+    }
+
+    #[test]
+    fn empty_or_garbage_is_idle() {
+        assert_eq!(status_of("", 5, Some(true)).0, "idle");
+        assert_eq!(status_of("not json at all\n{\"type\":\"mode\"}", 5, Some(true)).0, "idle");
+    }
+
+    #[test]
+    fn last_user_prompt_is_extracted_and_truncated() {
+        let long = "x".repeat(100);
+        let tail = format!(
+            "{{\"type\":\"user\",\"message\":{{\"role\":\"user\",\"content\":\"{long}\"}}}}\n{ASST_END_TURN}"
+        );
+        let (_, last_user) = parse_transcript_content(&tail);
+        let msg = last_user.expect("prompt found");
+        assert!(msg.chars().count() <= 81);
+        assert!(msg.ends_with('…'));
     }
 }

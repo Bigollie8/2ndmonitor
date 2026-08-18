@@ -637,7 +637,7 @@ export function SettingsWindow({
           padding: '12px 16px', borderBottom: '1px solid rgba(255,255,255,0.06)',
           flexShrink: 0,
         }}>
-          <div style={{ width: 8, height: 8, borderRadius: 2, background: accent, boxShadow: `0 0 8px ${accent}66` }} />
+          <div style={{ width: 8, height: 8, borderRadius: 2, background: accent }} />
           <span style={{ fontSize: 13, fontWeight: 600 }}>Settings</span>
           <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.35)', fontFamily: MONO }}>⌘,</span>
           <div style={{ flex: 1 }} />

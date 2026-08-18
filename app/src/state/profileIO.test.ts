@@ -160,3 +160,76 @@ test('exportFileName: sanitizes and appends the profile extension', () => {
   // ASCII control characters (e.g. embedded NUL / unit separator) are stripped too
   assert.equal(exportFileName('Wo\x00rk\x1f!'), 'Work!.2ndmonitor-profile.json');
 });
+
+// ── Setup export/import (0.9.8) ─────────────────────────────────────────────
+
+import {
+  buildSetupExport, parseSetupExport, mergeSetupTiles, setupExportFileName,
+  SETUP_EXPORT_KIND, SETUP_EXPORT_VERSION,
+} from './profileIO';
+
+test('setup round-trip: build → parse preserves tiles, strips mapView + proto keys, fresh ids', () => {
+  const built = buildSetupExport('My corner', 'landscape', FIXTURE.landscape.tiles);
+  assert.equal(built.kind, SETUP_EXPORT_KIND);
+  assert.equal(built.version, SETUP_EXPORT_VERSION);
+  assert.equal(built.orientation, 'landscape');
+  const radar = built.tiles.find((t) => t.type === 'weatherRadar')!;
+  assert.ok(!('mapView' in (radar.config ?? {})), 'mapView stripped on export');
+  assert.deepEqual(radar.config, { layers: ['rain'] });
+
+  const roundTripped = JSON.parse(JSON.stringify(built));
+  // sneak dangerous keys in — they must not survive the parse
+  roundTripped.tiles[0].config = { ['__proto__']: { polluted: true }, mapView: { center: {} }, keep: 1 };
+  const parsed = parseSetupExport(roundTripped);
+  assert.ok(parsed.ok);
+  assert.equal(parsed.setup.name, 'My corner');
+  assert.equal(parsed.setup.tiles.length, 3);
+  assert.deepEqual(parsed.setup.tiles[0].config, { keep: 1 });
+  const originalIds = new Set(FIXTURE.landscape.tiles.map((t) => t.instanceId));
+  for (const t of parsed.setup.tiles) assert.ok(!originalIds.has(t.instanceId), 'fresh instanceIds');
+});
+
+test('setup files and profile files are never confused', () => {
+  const setup = JSON.parse(JSON.stringify(buildSetupExport('s', 'portrait', FIXTURE.portrait.tiles)));
+  assert.equal(parseProfileExport(setup).ok, false);
+  const profile = JSON.parse(JSON.stringify(buildProfileExport(FIXTURE)));
+  assert.equal(parseSetupExport(profile).ok, false);
+});
+
+test('parseSetupExport rejects malformed input', () => {
+  assert.equal(parseSetupExport(null).ok, false);
+  assert.equal(parseSetupExport([]).ok, false);
+  assert.equal(parseSetupExport({ kind: SETUP_EXPORT_KIND, version: 99, orientation: 'landscape', tiles: [] }).ok, false);
+  assert.equal(parseSetupExport({ kind: SETUP_EXPORT_KIND, version: 1, orientation: 'diagonal', tiles: [] }).ok, false);
+  assert.equal(parseSetupExport({ kind: SETUP_EXPORT_KIND, version: 1, orientation: 'landscape', tiles: [] }).ok, false, 'empty tile list rejected');
+  assert.equal(parseSetupExport({ kind: SETUP_EXPORT_KIND, version: 1, orientation: 'landscape', tiles: [{ type: 'viz' }] }).ok, false, 'tile without rect rejected');
+});
+
+test('setup rects are clamped like profile rects', () => {
+  const parsed = parseSetupExport({
+    kind: SETUP_EXPORT_KIND, version: 1, orientation: 'landscape',
+    tiles: [{ instanceId: 'x', type: 'viz', rect: { x: 5, y: -3, w: 99, h: 99 } }],
+  });
+  assert.ok(parsed.ok);
+  const r = parsed.setup.tiles[0].rect;
+  assert.ok(r.x >= 0 && r.y >= 0 && r.x + r.w <= 1.0001 && r.y + r.h <= 1.0001);
+});
+
+test('mergeSetupTiles is additive and honors the tile cap', () => {
+  const existing = FIXTURE.landscape.tiles;
+  const incoming = [{ instanceId: 'n1', type: 'clock', rect: { x: 0.1, y: 0.1, w: 0.2, h: 0.2 } }] as typeof existing;
+  const { tiles, dropped } = mergeSetupTiles(existing, incoming);
+  assert.equal(tiles.length, 4);
+  assert.equal(dropped, 0);
+  assert.deepEqual(tiles.slice(0, 3), existing, 'existing untouched, order preserved');
+
+  const big = Array.from({ length: 300 }, (_, i) => ({ instanceId: `b${i}`, type: 'clock', rect: { x: 0, y: 0, w: 0.1, h: 0.1 } })) as typeof existing;
+  const capped = mergeSetupTiles(existing, big);
+  assert.equal(capped.tiles.length, 200);
+  assert.equal(capped.dropped, 300 - (200 - existing.length));
+});
+
+test('setupExportFileName strips forbidden characters', () => {
+  assert.equal(setupExportFileName('My: cool/setup?'), 'My coolsetup.2ndmonitor-setup.json');
+  assert.equal(setupExportFileName('   '), 'setup.2ndmonitor-setup.json');
+});

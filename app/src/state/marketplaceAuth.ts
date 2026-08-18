@@ -135,6 +135,14 @@ export interface UseMarketplaceAuthResult {
  *  is no secret store to sign into, so the status check resolves straight to
  *  'signed-out' and signIn fails fast with an explanatory message instead of
  *  attempting an invoke() that has no host to answer it. */
+/** Every mounted useMarketplaceAuth has its OWN reducer, so before 0.9.8 a
+ *  sign-in performed in AccountSignIn was invisible to the other instances
+ *  (ProfileView's header, CommunityView, useCatalogData) until they
+ *  remounted — the "have to close and reopen the popout" report. Sign-in
+ *  and sign-out now announce themselves; every other instance re-fetches
+ *  the session status and re-renders in place. */
+const AUTH_CHANGED_EVENT = 'marketplace-auth:changed';
+
 export function useMarketplaceAuth(): UseMarketplaceAuthResult {
   const [state, dispatch] = useReducer(authReducer, initialAuthState);
 
@@ -144,14 +152,21 @@ export function useMarketplaceAuth(): UseMarketplaceAuthResult {
       return;
     }
     let cancelled = false;
-    fetchSessionStatus()
-      .then((s) => {
-        if (!cancelled) dispatch({ type: 'STATUS_LOADED', signedIn: s.signedIn, email: s.email });
-      })
-      .catch(() => {
-        if (!cancelled) dispatch({ type: 'STATUS_LOADED', signedIn: false, email: null });
-      });
-    return () => { cancelled = true; };
+    const load = () => {
+      fetchSessionStatus()
+        .then((s) => {
+          if (!cancelled) dispatch({ type: 'STATUS_LOADED', signedIn: s.signedIn, email: s.email });
+        })
+        .catch(() => {
+          if (!cancelled) dispatch({ type: 'STATUS_LOADED', signedIn: false, email: null });
+        });
+    };
+    load();
+    window.addEventListener(AUTH_CHANGED_EVENT, load);
+    return () => {
+      cancelled = true;
+      window.removeEventListener(AUTH_CHANGED_EVENT, load);
+    };
   }, []);
 
   const signIn = useCallback(async (email: string, password: string) => {
@@ -164,6 +179,7 @@ export function useMarketplaceAuth(): UseMarketplaceAuthResult {
       await login(cfgUrl(), email, password);
       const status = await fetchSessionStatus();
       dispatch({ type: 'LOGIN_SUCCESS', email: status.email });
+      window.dispatchEvent(new Event(AUTH_CHANGED_EVENT));
     } catch (e) {
       dispatch({ type: 'LOGIN_FAILURE', message: String(e) });
     }
@@ -182,6 +198,7 @@ export function useMarketplaceAuth(): UseMarketplaceAuthResult {
       }
     }
     dispatch({ type: 'LOGOUT' });
+    window.dispatchEvent(new Event(AUTH_CHANGED_EVENT));
   }, []);
 
   return { state, signIn, signOut };

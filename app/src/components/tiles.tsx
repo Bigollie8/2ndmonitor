@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState, type MutableRefObject } from 'react
 import { getDensity } from '../data';
 import type { Density, Track } from '../types';
 import type { Todo } from '../types';
+import { pendingReminders, markReminded, setDue, todoUrgency, fmtWhen, fmtDue } from '../state/todos';
 import { type Playback, type SpectrumState, mediaControls, useSpotify, useSysmon, type SpotifyTrack } from '../state/tauri';
 import { useLyrics, currentLineIndex } from '../state/lyrics';
 import { mediaSourceFor, type MediaSourceInfo, type MediaSourceKind } from '../state/mediaSource';
@@ -10,12 +11,14 @@ import type { TempUnit } from '../state/units';
 import { Slider } from './Slider';
 
 export function HFTile({
-  title, badge, headRight, children, accent, density = 'regular', noHead, style, onClick,
+  title, badge, headRight, children, density = 'regular', noHead, style, onClick,
 }: {
   title?: React.ReactNode;
   badge?: React.ReactNode;
   headRight?: React.ReactNode;
   children?: React.ReactNode;
+  /** Accepted for call-site compatibility; the resting card no longer uses
+   *  it — its accent ring/glow was removed in 0.9.8 (glow = state cues only). */
   accent?: string;
   density?: Density;
   noHead?: boolean;
@@ -26,15 +29,18 @@ export function HFTile({
   return (
     <div onClick={onClick} style={{
       background: 'var(--surface-tile, rgba(22,24,30,0.78))',
-      backdropFilter: 'blur(20px) saturate(140%)',
-      WebkitBackdropFilter: 'blur(20px) saturate(140%)',
+      backdropFilter: 'var(--tile-blur, blur(20px) saturate(140%))',
+      WebkitBackdropFilter: 'var(--tile-blur, blur(20px) saturate(140%))',
       border: '1px solid var(--hairline, rgba(255,255,255,0.06))',
-      borderRadius: 14,
+      borderRadius: 'var(--tile-radius, 14px)',
       overflow: 'hidden',
       position: 'relative',
       display: 'flex',
       flexDirection: 'column',
-      boxShadow: accent ? `0 0 0 1px ${accent}33, 0 0 30px -8px ${accent}55` : '0 8px 24px -8px rgba(0,0,0,0.4)',
+      // Neutral elevation only (0.9.8): the old accent-tinted ring + 30px
+      // accent glow lit every RESTING card up — glow now belongs solely to
+      // state cues (selection, needs-attention, live meters).
+      boxShadow: 'var(--tile-shadow, 0 8px 24px -8px rgba(0,0,0,0.4))',
       ...style,
     }}>
       {!noHead && (
@@ -352,7 +358,7 @@ function SpotifyNowView({ accent, accent2, track, playback, sourceKind, spectrum
           maxWidth: 'min(100%, 230px)', maxHeight: '100%', width: '100%',
           borderRadius: 12,
           background: track.cover, backgroundSize: 'cover', backgroundPosition: 'center',
-          boxShadow: `0 14px 44px ${accent}66, 0 0 0 1px rgba(255,255,255,0.04)`,
+          boxShadow: '0 14px 44px rgba(0,0,0,0.55), 0 0 0 1px rgba(255,255,255,0.04)',
           position: 'relative', overflow: 'hidden',
         }}>
           {!track.cover.startsWith('center') && (
@@ -925,7 +931,33 @@ export function NotesTile({
 }) {
   const [draft, setDraft] = useState('');
   const [hoveredId, setHoveredId] = useState<string | null>(null);
+  /** Row whose due-time editor is open (0.9.8). */
+  const [dueEditId, setDueEditId] = useState<string | null>(null);
+  /** In-app reminder banner text; null = hidden. In-app only by design —
+   *  no OS notification permission. */
+  const [reminder, setReminder] = useState<string | null>(null);
 
+  // A 30s clock drives urgency colors, the written-at fineprint, and the
+  // reminder check. Reminders fire once per deadline: markReminded stamps
+  // remindedAt through setTodos, so the next tick's pending list is empty.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 30_000);
+    return () => clearInterval(id);
+  }, []);
+  useEffect(() => {
+    const due = pendingReminders(todos, now);
+    if (!due.length) return;
+    setReminder(due.map((t) => t.text).join(' · '));
+    setTodos(markReminded(todos, new Set(due.map((t) => t.id)), now));
+  }, [todos, now, setTodos]);
+  useEffect(() => {
+    if (!reminder) return;
+    const id = setTimeout(() => setReminder(null), 12_000);
+    return () => clearTimeout(id);
+  }, [reminder]);
+
+  // Newest on top (the user's preferred order — confirmed 0.9.8), done sunk.
   const sorted = [...todos].sort((a, b) => {
     if (a.done !== b.done) return a.done ? 1 : -1;
     return b.createdAt - a.createdAt;
@@ -972,6 +1004,27 @@ export function NotesTile({
         fontFamily: '"JetBrains Mono", ui-monospace, monospace',
         display: 'flex', flexDirection: 'column', gap: 2, overflow: 'hidden',
       }}>
+        {reminder && (
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 6, padding: '4px 8px',
+            background: `${accent}1e`, border: `1px solid ${accent}66`, borderRadius: 5,
+            flexShrink: 0, marginBottom: 2,
+          }}>
+            <span style={{ fontSize: 10, color: accent, fontWeight: 700, flexShrink: 0 }}>⏰ Due now</span>
+            <span style={{
+              flex: 1, fontSize: 10.5, color: 'rgba(255,255,255,0.9)',
+              overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis',
+            }}>{reminder}</span>
+            <button
+              onClick={() => setReminder(null)}
+              style={{
+                background: 'transparent', border: 'none', cursor: 'pointer',
+                color: 'rgba(255,255,255,0.6)', fontSize: 11, lineHeight: 1, padding: 0,
+              }}
+              aria-label="Dismiss reminder"
+            >×</button>
+          </div>
+        )}
         {todos.length === 0 && (
           <div style={{ color: 'rgba(255,255,255,0.4)' }}>No todos yet — type below to add.</div>
         )}
@@ -1009,18 +1062,90 @@ export function NotesTile({
                   color: todo.done ? 'rgba(255,255,255,0.4)' : 'rgba(255,255,255,0.85)',
                 }}
               >{todo.text}</span>
+              {(() => {
+                const urgency = todoUrgency(todo, now);
+                if (todo.dueAt == null || todo.done) return null;
+                return (
+                  <span style={{
+                    fontSize: 8.5, flexShrink: 0, lineHeight: 1,
+                    color: urgency === 'overdue' ? '#f87171' : urgency === 'upcoming' ? '#fbbf24' : 'rgba(255,255,255,0.35)',
+                    fontWeight: urgency === 'none' ? 400 : 700,
+                  }}>{fmtDue(todo.dueAt, now)}</span>
+                );
+              })()}
+              {/* the written-at fineprint — deliberately tiny and faint */}
+              <span style={{
+                fontSize: 8, color: 'rgba(255,255,255,0.22)', flexShrink: 0, lineHeight: 1,
+              }}>{fmtWhen(todo.createdAt, now)}</span>
               {hoveredId === todo.id && (
-                <button
-                  onClick={() => removeTodo(todo.id)}
-                  style={{
-                    background: 'transparent', border: 'none', cursor: 'pointer',
-                    color: 'rgba(255,255,255,0.5)', fontSize: 12, padding: '0 2px', lineHeight: 1,
-                  }}
-                  aria-label="Delete todo"
-                >×</button>
+                <>
+                  <button
+                    onClick={() => setDueEditId(dueEditId === todo.id ? null : todo.id)}
+                    title={todo.dueAt != null ? 'Change or clear reminder' : 'Set a reminder'}
+                    style={{
+                      background: 'transparent', border: 'none', cursor: 'pointer',
+                      color: todo.dueAt != null ? accent : 'rgba(255,255,255,0.5)',
+                      fontSize: 11, padding: '0 2px', lineHeight: 1,
+                    }}
+                    aria-label="Set reminder"
+                  >⏰</button>
+                  <button
+                    onClick={() => removeTodo(todo.id)}
+                    style={{
+                      background: 'transparent', border: 'none', cursor: 'pointer',
+                      color: 'rgba(255,255,255,0.5)', fontSize: 12, padding: '0 2px', lineHeight: 1,
+                    }}
+                    aria-label="Delete todo"
+                  >×</button>
+                </>
               )}
             </div>
           ))}
+          {dueEditId != null && (() => {
+            const target = todos.find((t) => t.id === dueEditId);
+            if (!target) return null;
+            const toLocal = (ms: number) => {
+              const d = new Date(ms - new Date(ms).getTimezoneOffset() * 60_000);
+              return d.toISOString().slice(0, 16);
+            };
+            return (
+              <div style={{
+                display: 'flex', alignItems: 'center', gap: 6, padding: '4px 6px',
+                background: 'rgba(255,255,255,0.04)', borderRadius: 4, flexShrink: 0,
+              }}>
+                <input
+                  type="datetime-local"
+                  value={target.dueAt != null ? toLocal(target.dueAt) : ''}
+                  onChange={(e) => {
+                    const ms = e.target.value ? new Date(e.target.value).getTime() : NaN;
+                    if (isFinite(ms)) setTodos(setDue(todos, dueEditId, ms));
+                  }}
+                  style={{
+                    flex: 1, fontSize: 10, padding: '2px 4px', borderRadius: 3,
+                    background: 'rgba(255,255,255,0.06)', color: '#fff',
+                    border: '1px solid rgba(255,255,255,0.12)', fontFamily: 'inherit',
+                    colorScheme: 'dark',
+                  }}
+                />
+                {target.dueAt != null && (
+                  <button
+                    onClick={() => { setTodos(setDue(todos, dueEditId, null)); setDueEditId(null); }}
+                    style={{
+                      background: 'transparent', border: 'none', cursor: 'pointer',
+                      color: 'rgba(255,255,255,0.55)', fontSize: 10, lineHeight: 1,
+                    }}
+                  >clear</button>
+                )}
+                <button
+                  onClick={() => setDueEditId(null)}
+                  style={{
+                    background: 'transparent', border: 'none', cursor: 'pointer',
+                    color: accent, fontSize: 10, fontWeight: 600, lineHeight: 1,
+                  }}
+                >done</button>
+              </div>
+            );
+          })()}
         </div>
         <div style={{
           display: 'flex', alignItems: 'center', gap: 6, paddingTop: 6,

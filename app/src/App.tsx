@@ -13,6 +13,8 @@ import {
   migrateLayoutHiddenToTiles,
   findInstance,
   findEmptyRect,
+  occupiedRects,
+  paintOrder,
   addInstance,
   removeInstance,
   removeTilesOfType,
@@ -104,6 +106,8 @@ const SunTile = lazy(() => import('./components/SunTile').then((m) => ({ default
 const AuroraTile = lazy(() => import('./components/AuroraTile').then((m) => ({ default: m.AuroraTile })));
 const AirQualityTile = lazy(() => import('./components/AirQualityTile').then((m) => ({ default: m.AirQualityTile })));
 const StocksTile = lazy(() => import('./components/StocksTile').then((m) => ({ default: m.StocksTile })));
+const GoldTile = lazy(() => import('./components/GoldTile').then((m) => ({ default: m.GoldTile })));
+const LawsOfPowerTile = lazy(() => import('./components/LawsOfPowerTile').then((m) => ({ default: m.LawsOfPowerTile })));
 const NewsTile = lazy(() => import('./components/NewsTile').then((m) => ({ default: m.NewsTile })));
 const TidesTile = lazy(() => import('./components/TidesTile').then((m) => ({ default: m.TidesTile })));
 const StreamChatTile = lazy(() => import('./components/StreamChatTile').then((m) => ({ default: m.StreamChatTile })));
@@ -739,6 +743,10 @@ export default function App() {
 
   /** Remembers the windowed geometry so exiting fullscreen restores it. */
   const preFullscreenRef = useRef<{ x: number; y: number; w: number; h: number; max: boolean } | null>(null);
+  /** Mirror of preFullscreenRef for render: while F11-fullscreen the top
+   *  bar's drag regions are suppressed so the borderless window can't be
+   *  dragged off the monitor by its header (0.9.8). */
+  const [isFullscreen, setIsFullscreen] = useState(false);
 
   /** Set when the F11 converge loop gives up: a human-readable diagnostic the
    *  on-screen card shows with a Copy button. Round 4 (0.9.1) exists because
@@ -772,6 +780,7 @@ export default function App() {
       if (prev) {
         // Restore.
         preFullscreenRef.current = null;
+        setIsFullscreen(false);
         setF11Report(null);
         await win.setAlwaysOnTop(false);
         await win.setResizable(true);
@@ -826,6 +835,7 @@ export default function App() {
           w: winSize.width, h: winSize.height,
           max: wasMax,
         };
+        setIsFullscreen(true);
         await win.setDecorations(false);
         // An undecorated RESIZABLE window keeps invisible resize handles on
         // its edges — Windows hit-tests the top few pixels as non-client, so
@@ -1309,7 +1319,11 @@ export default function App() {
     const defaults = orientation === 'portrait' ? DEFAULT_PORTRAIT_LAYOUT : DEFAULT_LANDSCAPE_LAYOUT;
     // A bundle tile (`bundle:<id>`) has no compile-time entry in the default
     // layout maps — fall back to the shared bundle default rect.
-    const rect = isBundleTile(type) ? DEFAULT_BUNDLE_TILE_RECT[orientation] : defaults[type];
+    const preferred = isBundleTile(type) ? DEFAULT_BUNDLE_TILE_RECT[orientation] : defaults[type];
+    // Same empty-slot placement as addTileInstance (0.9.8) — this path used
+    // the raw default rect and could bury the new tile inside an existing
+    // one. occupiedRects excludes the viz backdrop on purpose.
+    const rect = findEmptyRect(occupiedRects(activeOrientation.tiles), preferred, canvas, topInsetPx);
     updateActiveOrientation({
       tiles: addInstance(activeOrientation.tiles, {
         instanceId: newId(), type, rect,
@@ -1326,7 +1340,7 @@ export default function App() {
   const addTileInstance = (type: TileType) => {
     const defaults = orientation === 'portrait' ? DEFAULT_PORTRAIT_LAYOUT : DEFAULT_LANDSCAPE_LAYOUT;
     const preferred = isBundleTile(type) ? DEFAULT_BUNDLE_TILE_RECT[orientation] : defaults[type];
-    const rect = findEmptyRect(activeOrientation.tiles.map((inst) => inst.rect), preferred, canvas, topInsetPx);
+    const rect = findEmptyRect(occupiedRects(activeOrientation.tiles), preferred, canvas, topInsetPx);
     updateActiveOrientation({
       tiles: addInstance(activeOrientation.tiles, { instanceId: newId(), type, rect }),
     });
@@ -1450,7 +1464,6 @@ export default function App() {
         return (
           <VizHero
             mode={t.vizMode}
-            setMode={setVizModeStable}
             accent={vizAccent}
             accent2={vizAccent2}
             track={track}
@@ -1555,6 +1568,19 @@ export default function App() {
       case 'stocks':
         return (
           <StocksTile
+            instanceId={instance.instanceId}
+            density={t.density}
+            accent={accent}
+            editing={editMode}
+            config={instance.config as Record<string, unknown> | undefined}
+            setConfig={configSetterFor(instance.instanceId)}
+          />
+        );
+      case 'gold':
+        return <GoldTile density={t.density} accent={accent} />;
+      case 'lawsOfPower':
+        return (
+          <LawsOfPowerTile
             instanceId={instance.instanceId}
             density={t.density}
             accent={accent}
@@ -1726,6 +1752,7 @@ export default function App() {
           streamerMode={t.streamerMode}
           setStreamerMode={(b) => setTweak('streamerMode', b)}
           hidden={topBarHidden}
+          dragLocked={isFullscreen}
           onBarEnter={() => setTopBarRevealed(true)}
           onBarLeave={() => setTopBarRevealed(false)}
           // Only wired when the feature is on: when it's off topBarHidden is
@@ -1763,7 +1790,7 @@ export default function App() {
         {accentLinked && !showOnboarding && themeToast !== null && (
           <ThemeToast accent={accent} title={themeToast} />
         )}
-        {activeOrientation.tiles.map((instance) => {
+        {paintOrder(activeOrientation.tiles).map((instance) => {
           return (
             <TileFrame
               key={instance.instanceId}
@@ -1824,6 +1851,7 @@ export default function App() {
             activeProfileId={t.activeProfileId}
             setActiveProfileId={(id) => setTweak('activeProfileId', id)}
             setProfiles={(next) => setTweak('profiles', next)}
+            orientation={orientation}
             onClose={() => setShowSwitcher(false)}
           />
         )}
@@ -2042,7 +2070,7 @@ export default function App() {
   );
 }
 
-function TopChrome({ accent, editMode, setEditMode, streamerMode, setStreamerMode, profiles, activeProfileId, setActiveProfileId, onSwitcher, onOnboarding, onSettings, onShortcuts, onProfile, onCommunity, onAdmin, onNotifications, unread, hidden, onBarEnter, onBarLeave, onMenuOpenChange }: {
+function TopChrome({ accent, editMode, setEditMode, streamerMode, setStreamerMode, profiles, activeProfileId, setActiveProfileId, onSwitcher, onOnboarding, onSettings, onShortcuts, onProfile, onCommunity, onAdmin, onNotifications, unread, hidden, dragLocked, onBarEnter, onBarLeave, onMenuOpenChange }: {
   accent: string;
   editMode: boolean;
   setEditMode: (b: boolean) => void;
@@ -2071,6 +2099,9 @@ function TopChrome({ accent, editMode, setEditMode, streamerMode, setStreamerMod
   /** Auto-hide (0.6.7 §3): when true the bar translates up out of view.
    *  App owns the decision — see topBarHidden in App(). */
   hidden: boolean;
+  /** F11 fullscreen (0.9.8): suppress the bar's drag regions so the
+   *  borderless-maximized window can't be dragged off the monitor. */
+  dragLocked: boolean;
   /** Pointer entered/left the bar — App sets/clears topBarRevealed. */
   onBarEnter: () => void;
   onBarLeave: () => void;
@@ -2153,7 +2184,7 @@ function TopChrome({ accent, editMode, setEditMode, streamerMode, setStreamerMod
       // the exact element under the pointer, so every button stays clickable;
       // empty stretches (this root + the flex filler) drag the window, and
       // wry gives drag regions double-click-to-maximize for free.
-      {...(IS_MAC ? {} : { 'data-tauri-drag-region': true })}
+      {...(IS_MAC || dragLocked ? {} : { 'data-tauri-drag-region': true })}
       style={{
         position: 'absolute', top: 0, left: 0, right: 0, height: 56,
         background: 'var(--surface-chrome, rgba(8,9,12,0.85))', backdropFilter: 'blur(10px)',
@@ -2164,7 +2195,7 @@ function TopChrome({ accent, editMode, setEditMode, streamerMode, setStreamerMod
       }}
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-        <div style={{ width: 16, height: 16, borderRadius: 5, background: `linear-gradient(135deg, ${accent}, ${accent}99)`, boxShadow: `0 0 12px ${accent}66` }} />
+        <div style={{ width: 16, height: 16, borderRadius: 5, background: `linear-gradient(135deg, ${accent}, ${accent}99)` }} />
         <span style={{ fontSize: 12, fontWeight: 700, letterSpacing: '-0.01em' }}>Hub</span>
       </div>
       <div style={{ width: 1, height: 18, background: 'rgba(255,255,255,0.08)' }} />
@@ -2187,7 +2218,7 @@ function TopChrome({ accent, editMode, setEditMode, streamerMode, setStreamerMod
           border: '1px solid transparent', cursor: 'pointer',
         }}>{overflow > 0 ? `+${overflow} More` : '⌃ More'}</button>
       </div>
-      <div style={{ flex: 1 }} {...(IS_MAC ? {} : { 'data-tauri-drag-region': true })} />
+      <div style={{ flex: 1 }} {...(IS_MAC || dragLocked ? {} : { 'data-tauri-drag-region': true })} />
       <button onClick={() => setEditMode(!editMode)} style={{
         ...ghostButton,
         display: 'flex', alignItems: 'center', gap: 7,

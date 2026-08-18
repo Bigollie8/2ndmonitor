@@ -155,3 +155,92 @@ export function exportFileName(profileName: string): string {
   const safe = profileName.replace(/[\\/:*?"<>|\x00-\x1F]/g, '').trim() || 'profile';
   return `${safe}.2ndmonitor-profile.json`;
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Partial SETUP export/import (0.9.8) — "share setups, not whole profiles".
+//
+// A setup file carries a tile list for ONE orientation (a user-picked subset
+// or the whole arrangement) under its own `kind`, so the two formats can
+// never be confused: parseProfileExport rejects setup files and vice versa.
+// Import MERGES into the current profile's orientation instead of replacing
+// anything. Same safeguards as the profile format, via the same helpers:
+// fresh instanceIds, mapView + prototype keys stripped, tile cap, rect
+// clamping.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const SETUP_EXPORT_KIND = '2ndmonitor-setup';
+export const SETUP_EXPORT_VERSION = 1;
+
+export interface SetupExportFile {
+  kind: typeof SETUP_EXPORT_KIND;
+  version: typeof SETUP_EXPORT_VERSION;
+  name: string;
+  /** Which orientation the rects were designed for. Import into the other
+   *  orientation still works — rects are fractional — it just may need a
+   *  tidy-up, so the UI shows this label. */
+  orientation: 'landscape' | 'portrait';
+  tiles: TileInstance[];
+}
+
+export type ParseSetupResult =
+  | { ok: true; setup: { name: string; orientation: 'landscape' | 'portrait'; tiles: TileInstance[] } }
+  | { ok: false; error: string };
+
+export function buildSetupExport(
+  name: string,
+  orientation: 'landscape' | 'portrait',
+  tiles: TileInstance[],
+): SetupExportFile {
+  return {
+    kind: SETUP_EXPORT_KIND,
+    version: SETUP_EXPORT_VERSION,
+    name: name.trim() || 'setup',
+    orientation,
+    tiles: tiles.map((t) => {
+      const out: TileInstance = { instanceId: t.instanceId, type: t.type, rect: { ...t.rect } };
+      if (t.name !== undefined) out.name = t.name;
+      const config = sanitizeConfig(t.config);
+      if (config !== undefined) out.config = config;
+      return out;
+    }),
+  };
+}
+
+export function parseSetupExport(raw: unknown): ParseSetupResult {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return { ok: false, error: 'Not a setup file.' };
+  }
+  const f = raw as Record<string, unknown>;
+  if (f.kind !== SETUP_EXPORT_KIND) {
+    return { ok: false, error: 'Not a 2ndmonitor setup file.' };
+  }
+  if (f.version !== SETUP_EXPORT_VERSION) {
+    return { ok: false, error: `Unsupported setup file version (${String(f.version)}).` };
+  }
+  const orientation = f.orientation === 'portrait' ? 'portrait' : f.orientation === 'landscape' ? 'landscape' : null;
+  if (!orientation) return { ok: false, error: 'Setup file has no orientation.' };
+  const parsed = parseOrientation({ tiles: f.tiles }, 'setup');
+  if ('error' in parsed) return { ok: false, error: parsed.error };
+  if (parsed.tiles.length === 0) return { ok: false, error: 'Setup file contains no tiles.' };
+  const name = typeof f.name === 'string' && f.name.trim() !== '' ? f.name.trim() : 'Imported setup';
+  return { ok: true, setup: { name, orientation, tiles: parsed.tiles } };
+}
+
+/** Merge imported setup tiles into an existing tile list. Additive only —
+ *  nothing existing is removed or moved; the cap applies to the RESULT so a
+ *  merge can't blow past the same limit imports honor. Returns the merged
+ *  list plus how many tiles were dropped to stay under the cap. */
+export function mergeSetupTiles(
+  existing: TileInstance[],
+  imported: TileInstance[],
+): { tiles: TileInstance[]; dropped: number } {
+  const room = Math.max(0, MAX_TILES_PER_ORIENTATION - existing.length);
+  const take = imported.slice(0, room);
+  return { tiles: [...existing, ...take], dropped: imported.length - take.length };
+}
+
+export function setupExportFileName(setupName: string): string {
+  // eslint-disable-next-line no-control-regex -- deliberately stripping ASCII control chars from a filename
+  const safe = setupName.replace(/[\\/:*?"<>|\x00-\x1F]/g, '').trim() || 'setup';
+  return `${safe}.2ndmonitor-setup.json`;
+}
