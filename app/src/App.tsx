@@ -106,6 +106,8 @@ const SunTile = lazy(() => import('./components/SunTile').then((m) => ({ default
 const AuroraTile = lazy(() => import('./components/AuroraTile').then((m) => ({ default: m.AuroraTile })));
 const AirQualityTile = lazy(() => import('./components/AirQualityTile').then((m) => ({ default: m.AirQualityTile })));
 const StocksTile = lazy(() => import('./components/StocksTile').then((m) => ({ default: m.StocksTile })));
+const GoldTile = lazy(() => import('./components/GoldTile').then((m) => ({ default: m.GoldTile })));
+const LawsOfPowerTile = lazy(() => import('./components/LawsOfPowerTile').then((m) => ({ default: m.LawsOfPowerTile })));
 const NewsTile = lazy(() => import('./components/NewsTile').then((m) => ({ default: m.NewsTile })));
 const TidesTile = lazy(() => import('./components/TidesTile').then((m) => ({ default: m.TidesTile })));
 const StreamChatTile = lazy(() => import('./components/StreamChatTile').then((m) => ({ default: m.StreamChatTile })));
@@ -1566,6 +1568,19 @@ export default function App() {
       case 'stocks':
         return (
           <StocksTile
+            instanceId={instance.instanceId}
+            density={t.density}
+            accent={accent}
+            editing={editMode}
+            config={instance.config as Record<string, unknown> | undefined}
+            setConfig={configSetterFor(instance.instanceId)}
+          />
+        );
+      case 'gold':
+        return <GoldTile density={t.density} accent={accent} />;
+      case 'lawsOfPower':
+        return (
+          <LawsOfPowerTile
             instanceId={instance.instanceId}
             density={t.density}
             accent={accent}

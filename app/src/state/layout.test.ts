@@ -160,8 +160,8 @@ test('DEFAULT_PORTRAIT_LAYOUT contains all tile types', () => {
   // (airQuality precedes aircraft, etc.).
   assert.deepEqual(ids, [
     'activeWindow', 'airQuality', 'aircraft', 'aurora', 'claude',
-    'clock', 'dateTime', 'discord', 'docker', 'energy',
-    'homeAssistant', 'iss', 'lightning', 'mixer',
+    'clock', 'dateTime', 'discord', 'docker', 'energy', 'gold',
+    'homeAssistant', 'iss', 'lawsOfPower', 'lightning', 'mixer',
     'musicLyrics', 'musicPlayer', 'musicQueue', 'news', 'notes',
     'onThisDay', 'pollen', 'pomodoro',
     'scratchpad', 'solarFlare', 'spotify', 'stocks', 'streamChat',

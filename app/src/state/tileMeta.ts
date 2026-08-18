@@ -71,4 +71,6 @@ export const TILE_META: Record<BuiltinTileType, TileMeta> = {
   docker: { icon: '◫', label: 'Docker', description: 'Local container list + running state', multiInstance: false, category: 'system' },
   energy: { icon: '⌁', label: 'Energy', description: 'Solar production + grid consumption from HA', multiInstance: false, category: 'system', needsKey: true },
   dateTime: { icon: '◔', label: 'Date & time', description: 'Large clock with a full date line, optional seconds', multiInstance: true, category: 'productivity' },
+  gold: { icon: '◉', label: 'Gold price', description: '24K spot gold, live — USD per gram and per troy ounce', multiInstance: false, category: 'productivity' },
+  lawsOfPower: { icon: '♟', label: '48 Laws of Power', description: 'One concisely-worded law at a time, rotating through the day', multiInstance: false, category: 'productivity' },
 };
