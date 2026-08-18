@@ -75,6 +75,17 @@ export interface SysmonHistory {
   latest: SysmonSample;
 }
 
-export interface Todo { id: string; text: string; done: boolean; createdAt: number }
+export interface Todo {
+  id: string;
+  text: string;
+  done: boolean;
+  createdAt: number;
+  /** Optional due time (epoch ms) — 0.9.8 reminders. Absent on todos saved
+   *  by older versions; every consumer treats undefined as "no due time". */
+  dueAt?: number;
+  /** Set when the due reminder fired, so it never re-fires for the same
+   *  deadline. Cleared when dueAt changes. */
+  remindedAt?: number;
+}
 
 export interface WeatherLocation { label: string; lat: number; lon: number }
