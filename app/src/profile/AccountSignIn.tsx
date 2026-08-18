@@ -88,22 +88,32 @@ export function AccountSignIn({ accent }: { accent: string }) {
       const { verifyToken, verified } = await register(
         cfgUrl(), email.trim(), password, invite,
       );
-      if (verified) {
-        // An invite already proved a human vouched for them, so there is
-        // nothing left to confirm and no email to wait for.
-        setRegisterNote('Account created. You can sign in now.');
-        setMode('sign-in');
-      } else if (verifyToken) {
-        // The server is in dev-email mode and handed the token straight back,
-        // so finish the job rather than asking someone to go and find an
-        // email that was only ever printed to a log.
-        await verifyAccount(cfgUrl(), verifyToken);
-        setRegisterNote('Account created and confirmed. You can sign in now.');
-        setMode('sign-in');
+      if (verified || verifyToken) {
+        if (verifyToken) {
+          // The server is in dev-email mode and handed the token straight
+          // back, so finish the job rather than asking someone to go and
+          // find an email that was only ever printed to a log. (An invite
+          // (`verified`) already proved a human vouched for them — nothing
+          // to confirm at all.)
+          await verifyAccount(cfgUrl(), verifyToken);
+        }
+        // The account is immediately usable — sign straight in with the
+        // credentials just typed instead of dumping the user back onto an
+        // empty sign-in form (the 0.9.8 "it should be fluid" report). The
+        // password stays in state only until this resolves; the signed-in
+        // effect above then clears both fields, and the popout re-renders
+        // into its signed-in view without being reopened. On sign-in
+        // failure the hook surfaces the server's message through the error
+        // line below with the form still filled — one click from retry.
+        setRegisterNote('Account created — signing you in…');
+        await signIn(email.trim(), password);
       } else {
-        setRegisterNote('Account created. Check your email for the confirmation link, then sign in.');
+        // Real email confirmation happens out-of-band — stay in the same
+        // panel with the form intact; after confirming, sign-in is one
+        // click away with everything still filled in.
+        setMode('sign-in');
+        setRegisterNote('Account created. Click the confirmation link in your email, then press Sign in — your details are still filled in.');
       }
-      setPassword('');
     } catch (e) {
       // The server's own words: "already exists", "not accepting new
       // accounts", a password rule. All different problems that read
