@@ -16,6 +16,8 @@ import {
   removeTilesOfType,
   reclampTilesBelowChrome,
   reclampProfilesBelowChrome,
+  paintOrder,
+  occupiedRects,
 } from './layout';
 import type { TileInstance } from './layout';
 
@@ -551,4 +553,33 @@ test('renderRectFrac minimums are capped at the design fraction on small canvase
   const r = { x: 0.1, y: 0.5, w: 0.4, h: 140 / 1440 };
   const out = renderRectFrac(r, canvas);
   assert.ok(out.h <= r.h + 1e-9, `height not inflated: ${out.h} vs ${r.h}`);
+});
+
+test('paintOrder puts viz backdrops first, keeps relative order, no-ops without viz', () => {
+  const mk = (type: string, id: string) => ({ instanceId: id, type, rect: { x: 0, y: 0, w: 0.1, h: 0.1 } }) as unknown as import('./layout').TileInstance;
+  const tiles = [mk('clock', 'a'), mk('viz', 'v1'), mk('notes', 'b'), mk('viz', 'v2')];
+  const out = paintOrder(tiles);
+  assert.deepEqual(out.map((t) => t.instanceId), ['v1', 'v2', 'a', 'b']);
+  const noViz = [mk('clock', 'a'), mk('notes', 'b')];
+  assert.equal(paintOrder(noViz), noViz, 'returned by reference when nothing to move');
+  const stored = tiles.map((t) => t.instanceId);
+  assert.deepEqual(tiles.map((t) => t.instanceId), stored, 'input array untouched');
+});
+
+test('occupiedRects excludes the viz backdrop so placement can use its space', () => {
+  const mk = (type: string, x: number) => ({ instanceId: type + x, type, rect: { x, y: 0.2, w: 0.2, h: 0.2 } }) as unknown as import('./layout').TileInstance;
+  const tiles = [mk('viz', 0), mk('clock', 0.4)];
+  const occ = occupiedRects(tiles);
+  assert.equal(occ.length, 1);
+  assert.equal(occ[0].x, 0.4);
+});
+
+test('findEmptyRect over occupiedRects places on top of a full-bleed viz', () => {
+  const viz = { instanceId: 'v', type: 'viz', rect: { x: 0, y: 0, w: 1, h: 1 } } as unknown as import('./layout').TileInstance;
+  const clock = { instanceId: 'c', type: 'clock', rect: { x: 0.4, y: 0.3, w: 0.3, h: 0.3 } } as unknown as import('./layout').TileInstance;
+  const preferred = { x: 0.45, y: 0.35, w: 0.2, h: 0.2 }; // collides with clock only
+  const rect = findEmptyRect(occupiedRects([viz, clock]), preferred, { w: 2560, h: 1440 });
+  // an empty slot exists (the viz doesn't block), and it must not overlap the clock
+  const overlaps = rect.x < 0.7 && rect.x + rect.w > 0.4 && rect.y < 0.6 && rect.y + rect.h > 0.3;
+  assert.ok(!overlaps, `placed clear of the real tile: ${JSON.stringify(rect)}`);
 });

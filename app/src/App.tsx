@@ -13,6 +13,8 @@ import {
   migrateLayoutHiddenToTiles,
   findInstance,
   findEmptyRect,
+  occupiedRects,
+  paintOrder,
   addInstance,
   removeInstance,
   removeTilesOfType,
@@ -1315,7 +1317,11 @@ export default function App() {
     const defaults = orientation === 'portrait' ? DEFAULT_PORTRAIT_LAYOUT : DEFAULT_LANDSCAPE_LAYOUT;
     // A bundle tile (`bundle:<id>`) has no compile-time entry in the default
     // layout maps — fall back to the shared bundle default rect.
-    const rect = isBundleTile(type) ? DEFAULT_BUNDLE_TILE_RECT[orientation] : defaults[type];
+    const preferred = isBundleTile(type) ? DEFAULT_BUNDLE_TILE_RECT[orientation] : defaults[type];
+    // Same empty-slot placement as addTileInstance (0.9.8) — this path used
+    // the raw default rect and could bury the new tile inside an existing
+    // one. occupiedRects excludes the viz backdrop on purpose.
+    const rect = findEmptyRect(occupiedRects(activeOrientation.tiles), preferred, canvas, topInsetPx);
     updateActiveOrientation({
       tiles: addInstance(activeOrientation.tiles, {
         instanceId: newId(), type, rect,
@@ -1332,7 +1338,7 @@ export default function App() {
   const addTileInstance = (type: TileType) => {
     const defaults = orientation === 'portrait' ? DEFAULT_PORTRAIT_LAYOUT : DEFAULT_LANDSCAPE_LAYOUT;
     const preferred = isBundleTile(type) ? DEFAULT_BUNDLE_TILE_RECT[orientation] : defaults[type];
-    const rect = findEmptyRect(activeOrientation.tiles.map((inst) => inst.rect), preferred, canvas, topInsetPx);
+    const rect = findEmptyRect(occupiedRects(activeOrientation.tiles), preferred, canvas, topInsetPx);
     updateActiveOrientation({
       tiles: addInstance(activeOrientation.tiles, { instanceId: newId(), type, rect }),
     });
@@ -1770,7 +1776,7 @@ export default function App() {
         {accentLinked && !showOnboarding && themeToast !== null && (
           <ThemeToast accent={accent} title={themeToast} />
         )}
-        {activeOrientation.tiles.map((instance) => {
+        {paintOrder(activeOrientation.tiles).map((instance) => {
           return (
             <TileFrame
               key={instance.instanceId}

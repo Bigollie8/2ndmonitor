@@ -572,6 +572,28 @@ export function addInstance(tiles: TileInstance[], instance: TileInstance): Tile
   return [...tiles, instance];
 }
 
+/** Paint order for the canvas (0.9.8). Tiles stack purely by DOM order, and
+ *  the `viz` tile is typically a full-bleed backdrop — a profile whose array
+ *  happened to list it late covered every earlier tile, and "every tile I
+ *  add goes behind the vinyl backdrop". Stable partition: viz surfaces paint
+ *  first (beneath), everything else keeps its relative order above them.
+ *  Pure reorder for RENDERING only — the stored array is untouched, so
+ *  export/import and edit-mode indices are unaffected. */
+export function paintOrder(tiles: TileInstance[]): TileInstance[] {
+  const backdrop = tiles.filter((t) => t.type === 'viz');
+  if (backdrop.length === 0 || backdrop.length === tiles.length) return tiles;
+  return [...backdrop, ...tiles.filter((t) => t.type !== 'viz')];
+}
+
+/** The rects that count as OCCUPIED when placing a new tile (0.9.8). The viz
+ *  backdrop is deliberately not an obstacle: it is designed to sit behind
+ *  tiles, and treating its (often full-canvas) rect as solid made
+ *  findEmptyRect give up and drop every new tile at its default spot — the
+ *  "always goes behind the vinyl and I have to move it" report. */
+export function occupiedRects(tiles: TileInstance[]): Rect[] {
+  return tiles.filter((t) => t.type !== 'viz').map((t) => t.rect);
+}
+
 /** Remove an instance by id immutably. */
 export function removeInstance(tiles: TileInstance[], instanceId: string): TileInstance[] {
   return tiles.filter((t) => t.instanceId !== instanceId);
