@@ -200,12 +200,19 @@ const P_FULL_W = 1 - 2 * P_SIDE;
 const P_HALF_W = (P_FULL_W - P_GAP) / 2;
 
 // Row heights (fractions of canvas height). Tuned for ~1080x1920.
-const P_VIZ_H = 0.40;
-const P_NOWP_H = 0.10;
+// Rebalanced (0.9.12) after measuring the real render at 1080×1920 and
+// 864×1536: the old notes row (0.045 ≈ 86px) sat below MIN_SIZE_PX.h, so
+// renderRectFrac inflated it UPWARD into the sysmon/clock row (a 19px
+// overlap hiding the Todos header), and the column's total already
+// overran the bottom-bar limit. Every row now clears the 140px minimum at
+// 1536-tall-and-up portrait canvases and the column ends inside the limit
+// (bottom ≈ 0.974 vs 0.978).
+const P_VIZ_H = 0.36;
+const P_NOWP_H = 0.095;
 const P_2UP1_H = 0.12;          // discord + mixer
-const P_CLAUDE_H = 0.11;
+const P_CLAUDE_H = 0.10;
 const P_2UP2_H = 0.11;          // sysmon + clock
-const P_NOTES_H = 0.045;
+const P_NOTES_H = 0.092;
 
 let py = P_TOP + 8 / 1920;
 

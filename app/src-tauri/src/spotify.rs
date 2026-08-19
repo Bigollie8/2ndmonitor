@@ -794,6 +794,100 @@ fn control_request<R: Runtime>(
     classify_control(resp, app)
 }
 
+/// Skip forward to a track that is ALREADY in the queue, preserving what
+/// follows it (0.9.12). A bare `play {uris:[one]}` REPLACES the playback
+/// context — tapping a queued row used to collapse the whole queue to that
+/// one song. Two strategies, in order:
+///  1. The player is inside a playlist/album context → jump within the SAME
+///     context via `offset: {uri}` — everything after still follows.
+///  2. Otherwise (manual queue, radio, mixes) → POST /me/player/next
+///     (index+1) times; Spotify pops the queue forward, keeping the rest.
+///     Capped defensively: the Up Next tile only shows 20 rows.
+#[derive(Deserialize)]
+struct PlayerContextResp {
+    context: Option<PlayerContext>,
+}
+#[derive(Deserialize)]
+struct PlayerContext {
+    uri: Option<String>,
+    #[serde(rename = "type")]
+    kind: Option<String>,
+}
+
+#[tauri::command]
+pub async fn spotify_skip_to_queued<R: Runtime>(
+    app: AppHandle<R>,
+    uri: String,
+    index: u32,
+) -> Result<(), String> {
+    if !is_track_uri(&uri) {
+        return Err("only spotify:track: URIs can be skipped to".into());
+    }
+    if index > 25 {
+        return Err("queue position out of range".into());
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        // What context is the player in right now?
+        let ctx: Option<PlayerContext> = ensure_fresh_token(&app).ok().and_then(|token| {
+            ureq::get("https://api.spotify.com/v1/me/player")
+                .set("Authorization", &format!("Bearer {token}"))
+                .timeout(Duration::from_secs(8))
+                .call()
+                .ok()
+                .filter(|r| r.status() != 204)
+                .and_then(|r| r.into_json::<PlayerContextResp>().ok())
+                .and_then(|p| p.context)
+        });
+
+        let in_jumpable_context = ctx
+            .as_ref()
+            .map(|c| matches!(c.kind.as_deref(), Some("playlist") | Some("album")))
+            .unwrap_or(false);
+
+        if in_jumpable_context {
+            let context_uri = ctx.and_then(|c| c.uri);
+            if let Some(context_uri) = context_uri {
+                let body = serde_json::json!({
+                    "context_uri": context_uri,
+                    "offset": { "uri": uri },
+                })
+                .to_string();
+                let jumped = control_request(&app, |token| {
+                    ureq::put("https://api.spotify.com/v1/me/player/play")
+                        .set("Authorization", &format!("Bearer {token}"))
+                        .set("Content-Type", "application/json")
+                        .timeout(Duration::from_secs(8))
+                        .send_string(&body)
+                });
+                // A track only reachable through the manual queue is not in
+                // the context — Spotify 404s the offset. Fall through to
+                // next-stepping rather than failing the tap.
+                if jumped.is_ok() {
+                    return Ok(());
+                }
+            }
+        }
+
+        // Next-step to the target. index is the row's position in the queue
+        // array, so index+1 skips land on it. Each next() pops the real
+        // queue forward — nothing after the target is lost.
+        for _ in 0..=index {
+            control_request(&app, |token| {
+                ureq::post("https://api.spotify.com/v1/me/player/next")
+                    .set("Authorization", &format!("Bearer {token}"))
+                    .timeout(Duration::from_secs(8))
+                    .send_string("")
+            })?;
+            // Spotify applies next() asynchronously; a small gap keeps the
+            // steps from racing each other on slower devices.
+            std::thread::sleep(Duration::from_millis(120));
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|e| format!("skip task failed: {e}"))?
+}
+
 /// Start playing one specific track on the user's active device.
 #[tauri::command]
 pub async fn spotify_play<R: Runtime>(app: AppHandle<R>, uri: String) -> Result<(), String> {

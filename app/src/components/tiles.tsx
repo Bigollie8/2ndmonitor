@@ -407,7 +407,7 @@ function SpotifyNowView({ accent, accent2, track, playback, sourceKind, spectrum
 }
 
 function SpotifyUpNextView({ accent }: { accent: string }) {
-  const { state, connect, disconnect, getStoredClientId, play, queueAdd, search } = useSpotify();
+  const { state, connect, disconnect, getStoredClientId, play, queueAdd, search, skipToQueued } = useSpotify();
   const [draftId, setDraftId] = useState('');
   const [showHelp, setShowHelp] = useState(false);
 
@@ -532,8 +532,12 @@ function SpotifyUpNextView({ accent }: { accent: string }) {
       <SpotifyPickASong accent={accent} play={play} queueAdd={queueAdd} search={search} />
       <div style={{ flex: 1, overflowY: 'auto', padding: '4px 8px 10px' }}>
         {state.queue.map((q, i) => (
+          // skipToQueued, NOT play (0.9.12): play() replaces the whole
+          // context with one track, which collapsed the queue to the tapped
+          // song. Skip-to preserves everything after it. Search rows keep
+          // play() — starting a fresh track is what they mean.
           <UpNextRow key={(q.id || q.title) + ':' + i} track={q} accent={accent}
-            onPlay={q.id ? () => play(`spotify:track:${q.id}`) : undefined} />
+            onPlay={q.id ? () => skipToQueued(`spotify:track:${q.id}`, i) : undefined} />
         ))}
       </div>
     </div>

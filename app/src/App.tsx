@@ -1488,7 +1488,12 @@ export default function App() {
             // visualizer rendering at full FPS behind it. The Market joins the
             // set for the same reason, and more so: it is full-bleed, so it
             // covers the canvas completely rather than partially.
-            paused={(t.videoEnabled && t.videoBookmarks.length > 0) || anyOverlayOpen || (t.perfMode !== 'uncapped' && livePlayback?.playing !== true)}
+            // editMode (0.9.12): drag/resize gestures only exist in edit
+            // mode, and a live (potentially 4K WebGL) draw loop competing
+            // with pointer handling was the reported jank — freeze the viz
+            // for the whole editing session. useAnimateGate keeps scheduling
+            // rAF while paused, so leaving edit mode resumes instantly.
+            paused={editMode || (t.videoEnabled && t.videoBookmarks.length > 0) || anyOverlayOpen || (t.perfMode !== 'uncapped' && livePlayback?.playing !== true)}
             onConfigure={() => setShowGallery(true)}
             audioDebug={t.audioDebug}
             catalogRemoved={t.catalogRemoved}

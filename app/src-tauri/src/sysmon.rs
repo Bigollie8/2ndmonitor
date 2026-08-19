@@ -337,7 +337,23 @@ fn sample_app_gpu(
 #[cfg(windows)]
 fn sample_gpu(nvml: Option<&GpuHandle>) -> (f32, String, String) {
     let Some(nvml) = nvml else {
-        return (0.0, "n/a".into(), "no NVIDIA GPU".into());
+        // Vendor-neutral fallback (0.9.12): no NVML means AMD/Intel (or no
+        // NVIDIA driver). LibreHardwareMonitor's WMI namespace exposes the
+        // GPU's total Load for any vendor, and temps.rs already reads it on
+        // the same refresh that feeds temps/power. Coarser cadence (~5s vs
+        // per-tick) — a fallback, not a peer.
+        if let Some((pct, vendor)) = crate::temps::lhm_gpu_load() {
+            return (
+                (pct / 100.0).clamp(0.0, 1.0),
+                format!("{}%", pct as u32),
+                format!("{vendor} · via LibreHardwareMonitor"),
+            );
+        }
+        return (
+            0.0,
+            "n/a".into(),
+            "no GPU data — NVIDIA driver or LibreHardwareMonitor needed".into(),
+        );
     };
     let Ok(device) = nvml.device_by_index(0) else {
         return (0.0, "n/a".into(), "device 0 unavailable".into());
