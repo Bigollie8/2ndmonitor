@@ -1,6 +1,6 @@
 [package]
 name = "second-monitor-hub"
-version = "0.9.11"
+version = "0.9.12"
 description = "Second-Monitor Hub"
 authors = ["Bigollie8 <bigollie8@gmail.com>"]
 license = "BUSL-1.1"
