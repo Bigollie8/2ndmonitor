@@ -289,3 +289,30 @@ async fn an_author_with_no_handle_yields_null() {
         .expect("the bundle is still listed");
     assert!(b["authorHandle"].is_null(), "no handle means null, not an empty string");
 }
+
+/// The public read-only surface is fetched directly by browsers — the studio
+/// site's /market/ shelf among them — so it carries open CORS. This is signed
+/// public data; authored and admin endpoints stay same-origin-only.
+#[tokio::test]
+async fn public_read_endpoints_carry_open_cors() {
+    let app = router(test_state());
+    setup_approved_preset(&app).await;
+
+    for uri in ["/index.json", "/bundle/cool-preset/1.0.0"] {
+        let req = Request::builder()
+            .method("GET")
+            .uri(uri)
+            .header("x-forwarded-for", "1.1.1.1")
+            .body(Body::empty())
+            .unwrap();
+        let res = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(res.status(), StatusCode::OK, "{uri}");
+        assert_eq!(
+            res.headers()
+                .get(header::ACCESS_CONTROL_ALLOW_ORIGIN)
+                .map(|v| v.to_str().unwrap()),
+            Some("*"),
+            "{uri} must allow cross-origin reads"
+        );
+    }
+}

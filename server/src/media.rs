@@ -50,7 +50,15 @@ pub async fn get_media(
             |r| Ok((r.get(0)?, r.get(1)?)),
         )
         .map_err(|_| StatusCode::NOT_FOUND)?;
-    Ok(([(header::CONTENT_TYPE, mime)], bytes).into_response())
+    Ok((
+        [
+            (header::CONTENT_TYPE, mime),
+            // Public read surface — same open CORS as index.rs, same reason.
+            (header::ACCESS_CONTROL_ALLOW_ORIGIN, "*".to_string()),
+        ],
+        bytes,
+    )
+        .into_response())
 }
 
 pub async fn put_media(
