@@ -124,6 +124,7 @@ pub fn run() {
             spotify::spotify_get_client_id,
             spotify::spotify_set_volume,
             spotify::spotify_play,
+            spotify::spotify_skip_to_queued,
             spotify::spotify_sync_grid,
             spotify::spotify_queue_add,
             spotify::spotify_search,

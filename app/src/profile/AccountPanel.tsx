@@ -63,7 +63,19 @@ export function AccountPanel({ accent, signedIn }: { accent: string; signedIn: b
     }
   }, []);
 
-  useEffect(() => { if (signedIn) void load(); }, [signedIn, load]);
+  useEffect(() => {
+    if (signedIn) { void load(); return; }
+    // Signed-out (0.9.12): drop the previous account's data and form drafts,
+    // or a re-register into a NEW account starts from the OLD account's
+    // email/handle/bio still sitting in this panel.
+    setAccount(null);
+    setHandleDraft('');
+    setName('');
+    setBio('');
+    setLinks('');
+    setProfileAccent(null);
+    setNoticeState(null);
+  }, [signedIn, load]);
 
   if (!signedIn) {
     return (

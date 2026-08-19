@@ -174,6 +174,16 @@ export function TileFrame({
       onPointerDown={startMoveOnFrame}
       style={{
         position: 'absolute',
+        // Contain every tile's INTERNAL z-indexes (0.9.12). The frame has no
+        // z-index of its own, so without this it creates no stacking
+        // context — and any positioned child with zIndex > 0 (the viz hero
+        // stacks its overlay/lyrics/transport at zIndex 1–5) escapes into
+        // the canvas-root context and paints ABOVE every z-auto sibling
+        // tile regardless of DOM order. That defeated 0.9.8's paintOrder()
+        // and was the real "new tiles still hide behind the visualizer"
+        // mechanism. isolation creates the context with no other side
+        // effects; sibling stacking is now purely DOM order again.
+        isolation: 'isolate',
         // Render from the live rect while a gesture is in flight: an unrelated
         // App re-render mid-drag would otherwise snap the tile back to the
         // last committed rect.

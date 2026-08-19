@@ -60,7 +60,20 @@ export function ProfileView({ accent, catalogRemoved, onClose }: {
   const data = useCatalogData({ catalogRemoved });
 
   useEffect(() => {
-    if (!signedIn) return;
+    if (!signedIn) {
+      // Signed-out transition (0.9.12): every personal-read cache clears, or
+      // the PREVIOUS account's identity (header, avatar, stats, lists)
+      // survives a sign-out and is what a newly registered account briefly —
+      // or, before the auth-changed broadcast existed, permanently — saw.
+      setAccount(null);
+      setPublished(null);
+      setInstalls(null);
+      setFollowers(null);
+      setFollowingList(null);
+      setFavIds(null);
+      setFavCounts({});
+      return;
+    }
     let cancelled = false;
     void (async () => {
       try {

@@ -5,6 +5,38 @@ All notable changes to 2ndMonitor are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.9.12] - 2026-08-18
+
+### Fixed
+- **New tiles really do land on top of the visualizer now.** 0.9.8's fix
+  ordered the tiles correctly, but the visualizer's internal overlay
+  layers were escaping their tile and painting above every neighbour
+  anyway. Each tile now contains its own layers, so stacking follows
+  tile order — a freshly added tile is fully visible immediately
+- **Editing is smooth around the visualizer.** The (potentially 4K)
+  visualizer draw loop now freezes for the whole edit-mode session, so
+  selecting, dragging and resizing tiles no longer competes with it.
+  Leaving edit mode resumes the animation instantly
+- **Tapping a queued song no longer wipes your queue.** Skipping to a
+  song in Up Next used to replace all playback with just that track.
+  Inside a playlist or album it now jumps within the same context, and
+  otherwise it steps the real queue forward to your pick — everything
+  after it still plays. Search results' play button is unchanged
+- **Signing out really signs you out everywhere.** Registering a new
+  account after signing out no longer shows the previous account's
+  email, handle, avatar, stats or lists anywhere in the profile UI
+- **Portrait layouts no longer overlap.** On vertical monitors the
+  default arrangement squeezed the Todos tile under the system monitor
+  row and overran the bottom bar; the portrait column is rebalanced and
+  verified clean at 1080×1920 and scaled portrait resolutions
+
+### Added
+- **AMD and Intel GPU stats.** The system monitor's GPU cell no longer
+  requires NVIDIA: with LibreHardwareMonitor (or OpenHardwareMonitor)
+  running — the same app that already feeds temperatures and power —
+  GPU utilization now appears for any vendor, labelled accordingly.
+  NVIDIA machines keep their richer NVML readings unchanged
+
 ## [0.9.11] - 2026-08-18
 
 ### Added

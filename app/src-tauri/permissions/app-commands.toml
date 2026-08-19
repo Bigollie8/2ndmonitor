@@ -112,6 +112,7 @@ commands.allow = [
   "spotify_get_client_id",
   "spotify_set_volume",
   "spotify_play",
+  "spotify_skip_to_queued",
   "spotify_sync_grid",
   "spotify_queue_add",
   "spotify_search",

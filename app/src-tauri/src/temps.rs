@@ -29,6 +29,34 @@ pub struct TempReading {
     pub celsius: f32,
 }
 
+/// Latest LHM/OHM GPU utilization: (percent 0–100, vendor label), captured
+/// as a side effect of the sensor refresh — the same WMI round trip that
+/// feeds temps/power (0.9.12). None when the namespace is absent or exposes
+/// no GPU Load row. This is the vendor-neutral fallback sysmon's GPU cell
+/// uses on AMD/Intel machines; NVIDIA boxes keep NVML and never read it.
+pub static LHM_GPU_LOAD: Lazy<Mutex<Option<(f32, String)>>> = Lazy::new(|| Mutex::new(None));
+
+/// Snapshot accessor for sysmon. Cadence caveat, stated honestly: the LHM
+/// refresh runs every ~5s (see `sample`), so this value is coarser than
+/// NVML's per-tick utilization — a fallback, not a peer.
+pub fn lhm_gpu_load() -> Option<(f32, String)> {
+    LHM_GPU_LOAD.lock().clone()
+}
+
+/// Vendor label from an LHM sensor parent path (`/gpu-amd/0` etc.). Pure so
+/// it's testable; the WMI reader applies it to the 'GPU Core' Load row.
+pub fn gpu_vendor_label(parent: &str) -> &'static str {
+    if parent.contains("/gpu-amd") {
+        "AMD GPU"
+    } else if parent.contains("/gpu-intel") {
+        "Intel GPU"
+    } else if parent.contains("/gpu-nvidia") {
+        "NVIDIA GPU"
+    } else {
+        "GPU"
+    }
+}
+
 /// A raw temperature sensor row, decoupled from the `wmi` crate types so the
 /// reduction logic is pure and unit-testable on any OS.
 #[derive(Debug, Clone)]
@@ -264,11 +292,13 @@ mod windows_impl {
         current_temperature: u32,
     }
 
-    /// One query fetches BOTH sensor kinds (0.9.2): temperature rows feed
-    /// `reduce_sensors`, power rows feed `reduce_power_sensors` — same
-    /// round-trip cost as the old temperature-only query.
+    /// One query fetches ALL sensor kinds we use (0.9.2, +Load in 0.9.12):
+    /// temperature rows feed `reduce_sensors`, power rows feed
+    /// `reduce_power_sensors`, and the GPU 'Load' row feeds the vendor-
+    /// neutral GPU-utilization fallback for AMD/Intel machines where NVML
+    /// has nothing — same round-trip cost either way.
     const SENSOR_QUERY: &str = "SELECT Name, Value, SensorType, Parent FROM Sensor \
-         WHERE SensorType='Temperature' OR SensorType='Power'";
+         WHERE SensorType='Temperature' OR SensorType='Power' OR SensorType='Load'";
 
     /// Reader 1: LibreHardwareMonitor, then the older OpenHardwareMonitor
     /// fork. Reconnects on every (5 s) refresh on purpose: the namespace only
@@ -287,7 +317,24 @@ mod windows_impl {
             };
             let mut temp_rows: Vec<SensorRow> = Vec::new();
             let mut power_rows: Vec<SensorRow> = Vec::new();
+            let mut gpu_load: Option<(f32, String)> = None;
             for r in rows {
+                if r.sensor_type == "Load" {
+                    // The GPU's total utilization is the 'GPU Core' Load row
+                    // under /gpu-amd/N, /gpu-nvidia/N or /gpu-intel/N. This
+                    // is the vendor-neutral utilization source sysmon falls
+                    // back to when NVML has nothing (0.9.12).
+                    if r.name == "GPU Core" && r.parent.contains("/gpu") {
+                        // First GPU wins, matching NVML's device_by_index(0).
+                        if gpu_load.is_none() {
+                            gpu_load = Some((
+                                r.value.clamp(0.0, 100.0),
+                                super::gpu_vendor_label(&r.parent).to_string(),
+                            ));
+                        }
+                    }
+                    continue;
+                }
                 let row = SensorRow { name: r.name, value: r.value, parent: r.parent };
                 match r.sensor_type.as_str() {
                     "Temperature" => temp_rows.push(row),
@@ -297,9 +344,11 @@ mod windows_impl {
             }
             let reduced = reduce_sensors(&temp_rows);
             if !reduced.is_empty() {
+                *super::LHM_GPU_LOAD.lock() = gpu_load;
                 return Some((reduced, super::reduce_power_sensors(&power_rows)));
             }
         }
+        *super::LHM_GPU_LOAD.lock() = None;
         None
     }
 
@@ -456,5 +505,19 @@ mod tests {
     #[test]
     fn power_empty_input_is_none_not_zero() {
         assert_eq!(reduce_power_sensors(&[]), None);
+    }
+}
+
+#[cfg(test)]
+mod gpu_load_tests {
+    use super::gpu_vendor_label;
+
+    #[test]
+    fn vendor_labels_from_lhm_parent_paths() {
+        assert_eq!(gpu_vendor_label("/gpu-amd/0"), "AMD GPU");
+        assert_eq!(gpu_vendor_label("/gpu-intel/0"), "Intel GPU");
+        assert_eq!(gpu_vendor_label("/gpu-nvidia/0"), "NVIDIA GPU");
+        assert_eq!(gpu_vendor_label("/gpu/0"), "GPU");
+        assert_eq!(gpu_vendor_label("/atigpu/0"), "GPU"); // old OHM naming stays generic
     }
 }

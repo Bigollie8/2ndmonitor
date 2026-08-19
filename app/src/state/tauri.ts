@@ -696,6 +696,11 @@ export function useSpotify(): {
   play: (uri: string) => Promise<void>;
   queueAdd: (uri: string) => Promise<void>;
   search: (query: string) => Promise<SpotifyTrack[]>;
+  /** Skip forward to a track already shown in the queue, PRESERVING what
+   *  follows it (0.9.12). `index` is the row's position in `state.queue`.
+   *  Distinct from `play`, which replaces the whole playback context with
+   *  one track — correct for search results, destructive for queue rows. */
+  skipToQueued: (uri: string, index: number) => Promise<void>;
 } {
   const [state, setState] = useState<SpotifyState>(EMPTY_SPOTIFY);
 
@@ -757,8 +762,13 @@ export function useSpotify(): {
     const { invoke } = await import('@tauri-apps/api/core');
     return invoke<SpotifyTrack[]>('spotify_search', { query });
   };
+  const skipToQueued = async (uri: string, index: number) => {
+    if (!isTauri) throw new Error('Requires the installed app');
+    const { invoke } = await import('@tauri-apps/api/core');
+    await invoke('spotify_skip_to_queued', { uri, index });
+  };
 
-  return { state, connect, disconnect, getStoredClientId, setVolume, play, queueAdd, search };
+  return { state, connect, disconnect, getStoredClientId, setVolume, play, queueAdd, search, skipToQueued };
 }
 
 export function useClaudeSessions(): ClaudeSession[] {
