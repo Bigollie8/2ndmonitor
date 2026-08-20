@@ -16,6 +16,7 @@ import {
   occupiedRects,
   paintOrder,
   rectsOverlap,
+  refitTiles,
   addInstance,
   removeInstance,
   removeTilesOfType,
@@ -1352,6 +1353,39 @@ export default function App() {
     if (!inst) return;
     updateActiveOrientation({ tiles: removeInstance(activeOrientation.tiles, inst.instanceId) });
   };
+
+  // ── Monitor-change re-fit (0.9.13) ─────────────────────────────────────
+  // Fractional rects + renderRectFrac already keep tiles VISIBLE on any
+  // canvas, but the STORED rects were only re-clamped once at boot against
+  // an estimate. Moving the window to a monitor with a different
+  // resolution/DPI/orientation now re-fits the saved arrangement against
+  // the real canvas: debounced 600ms so nothing thrashes mid-drag, gated
+  // on a >8% size change or an orientation flip so transient resize noise
+  // is ignored, and refitTiles returns by reference when nothing moves so
+  // the common case writes no state at all. Per-orientation arrangements
+  // stay separate — moving back restores the other layout untouched.
+  const lastFitRef = useRef<{ w: number; h: number; orient: string } | null>(null);
+  const activeTilesRef = useRef(activeOrientation.tiles);
+  activeTilesRef.current = activeOrientation.tiles;
+  const updateActiveOrientationStable = useRef(updateActiveOrientation);
+  updateActiveOrientationStable.current = updateActiveOrientation;
+  useEffect(() => {
+    if (canvas.w <= 0 || canvas.h <= 0) return;
+    const id = setTimeout(() => {
+      const prev = lastFitRef.current;
+      const big = !prev || prev.orient !== orientation
+        || Math.abs(prev.w - canvas.w) / canvas.w > 0.08
+        || Math.abs(prev.h - canvas.h) / canvas.h > 0.08;
+      if (!big) return;
+      lastFitRef.current = { w: canvas.w, h: canvas.h, orient: orientation };
+      const fitted = refitTiles(activeTilesRef.current, canvas, topInsetPx);
+      if (fitted !== activeTilesRef.current) {
+        updateActiveOrientationStable.current({ tiles: fitted });
+      }
+    }, 600);
+    return () => clearTimeout(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canvas.w, canvas.h, orientation]);
   const addTileByType = (type: TileType) => {
     if (findInstance(activeOrientation.tiles, type)) return;
     const defaults = orientation === 'portrait' ? DEFAULT_PORTRAIT_LAYOUT : DEFAULT_LANDSCAPE_LAYOUT;

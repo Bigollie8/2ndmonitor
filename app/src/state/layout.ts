@@ -583,6 +583,30 @@ export function addInstance(tiles: TileInstance[], instance: TileInstance): Tile
   return [...tiles, instance];
 }
 
+/** Persistent re-fit against a REAL canvas (0.9.13 — "smarter resizing
+ *  when moving between monitors"). Runs every tile through clampRectFrac so
+ *  nothing sits off-canvas, under the chrome bars, or below MIN_SIZE_PX on
+ *  the new resolution. Returns the input array BY REFERENCE when nothing
+ *  moved (callers skip the state write), and only replaces tiles whose rect
+ *  actually changed — instanceIds and array order are untouched, so
+ *  export/import and edit indices are unaffected. */
+export function refitTiles(
+  tiles: TileInstance[],
+  canvasPx: { w: number; h: number },
+  topInsetPx: number = CHROME_TOP_PX,
+): TileInstance[] {
+  let changed = false;
+  const out = tiles.map((t) => {
+    const r = clampRectFrac(t.rect, canvasPx, topInsetPx);
+    const moved = Math.abs(r.x - t.rect.x) > 1e-4 || Math.abs(r.y - t.rect.y) > 1e-4
+      || Math.abs(r.w - t.rect.w) > 1e-4 || Math.abs(r.h - t.rect.h) > 1e-4;
+    if (!moved) return t;
+    changed = true;
+    return { ...t, rect: r };
+  });
+  return changed ? out : tiles;
+}
+
 /** Paint order for the canvas (0.9.8). Tiles stack purely by DOM order, and
  *  the `viz` tile is typically a full-bleed backdrop — a profile whose array
  *  happened to list it late covered every earlier tile, and "every tile I
