@@ -413,6 +413,14 @@ struct Supervisor<R: Runtime> {
     /// mix capture is bound to. `None` when it could not be read (no audio
     /// device, COM unavailable), which the watcher compares like any value.
     endpoint_id: Option<String>,
+    /// macOS backstop (0.9.13): minimum gap between STALENESS-driven tap
+    /// rebuilds. Every `AudioHardwareCreateProcessTap` is a fresh chance for
+    /// the TCC permission prompt, so even if some future liveness signal
+    /// misfires the way the callback-progress one did, prompts are bounded
+    /// to one per cooldown rather than one per 2s tick. User-initiated
+    /// source changes are NOT gated by this.
+    #[cfg(target_os = "macos")]
+    last_stale_rebuild: Option<std::time::Instant>,
 }
 
 /// How often the watcher looks for an app to (re)attach to, a dead backend to
@@ -435,6 +443,8 @@ fn supervisor<R: Runtime>(
         supported: true,
         reason: None,
         endpoint_id: None,
+        #[cfg(target_os = "macos")]
+        last_stale_rebuild: None,
     };
     // Startup goes through the same path as any later change, so the frontend
     // has a state event before it asks for anything.
@@ -714,6 +724,20 @@ impl<R: Runtime> Supervisor<R> {
             endpoint_moved || mix_died
         };
         if stale {
+            // macOS cooldown (0.9.13): staleness-driven rebuilds recreate the
+            // process tap, and each creation can re-show the TCC permission
+            // prompt — see the field doc. 30s bounds worst-case prompts while
+            // real device switches still recover within one cooldown.
+            #[cfg(target_os = "macos")]
+            {
+                if let Some(last) = self.last_stale_rebuild {
+                    if last.elapsed() < Duration::from_secs(30) {
+                        eprintln!("audio: stale rebuild suppressed (cooldown)");
+                        return;
+                    }
+                }
+                self.last_stale_rebuild = Some(std::time::Instant::now());
+            }
             // A rebuild triggered by real evidence of change (a dead capture,
             // a session appearing or moving) is a fresh start for per-app
             // activation: re-arm the sticky flag so a transient failure is

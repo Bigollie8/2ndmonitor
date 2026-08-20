@@ -57,4 +57,8 @@ export const ACCENT_PALETTES: Record<AccentTheme, PaletteSpec> = {
   // Sage + amber from the Ficus Editorial mock (0.9.7) — pairs with the
   // Editorial surface theme but works on any surface.
   ficus:  { label: 'Ficus',  accent: '#9db98a', accent2: '#d9a05b' },
+  // Glass Cyan + Iris Violet — the Glasswing brand pair (0.9.13). 'auto'
+  // stays the default: the design system's own rule is that accent is an
+  // input that follows what's playing.
+  glasswing: { label: 'Glasswing', accent: '#5FD2E0', accent2: '#8C9CF2' },
 };
