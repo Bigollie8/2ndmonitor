@@ -5,6 +5,48 @@ All notable changes to 2ndMonitor are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.9.13] - 2026-08-19
+
+### Changed
+- **The app wears the Glasswing design language by default.** Graded
+  glass tile panes over the Ink palette, Vapor hairlines, Schibsted
+  Grotesk type (bundled), 4px controls, and a Glasswing accent palette
+  (Glass Cyan + Iris Violet) — implemented from the studio's design
+  system as surface-theme tokens, so Editorial and Frameless keep their
+  own systems and the classic look survives untouched as **Hub** in
+  Settings → Appearance → Surface
+- **Todos read top-down in the order you wrote them.** First-entered
+  stays on top, done still sinks — and you can now drag the ⠿ handle to
+  reorder tasks; the arrangement persists
+
+### Fixed
+- **Major CPU reduction with tiles over the visualizer.** Measured on a
+  live report of ~300% CPU: eight glass tiles blurring an animating
+  backdrop cost ~110% of a core in GPU compositing versus ~37% without —
+  re-blurring every frame was the dominant term. Tiles overlapping the
+  visualizer now drop their backdrop blur automatically (they keep it
+  everywhere else, and liquid-glass mode is exempt by choice). All 59
+  visualizer bundles were also benchmarked: their draw code was already
+  cheap, the compositing was the burn
+- **The "offline" badge no longer reads as broken.** The
+  zero-permissions badge on marketplace cards now says "no network" —
+  it always meant "cannot phone home," not "unavailable"
+- **Moving the window between monitors re-fits the layout.** A different
+  resolution, DPI or orientation now re-clamps the saved arrangement to
+  the new screen (debounced, no thrash while dragging); each
+  orientation's layout stays separate and intact
+- **macOS stops re-asking for audio permission.** The tap-liveness check
+  misread quiet audio as a dead capture and rebuilt the tap — and every
+  rebuild is a fresh macOS permission prompt. Liveness now uses the
+  device's real error signal, with a rebuild cooldown as a second
+  guard. First-time prompts and real device changes behave as before
+
+### Added
+- **Discord Rich Presence.** With Discord connected, your profile shows
+  2ndMonitor and what you're listening to, with a live timestamp —
+  updates on track change, clears when you turn it off (Settings →
+  System, on by default), and stays quiet when Discord isn't running
+
 ## [0.9.12] - 2026-08-18
 
 ### Fixed

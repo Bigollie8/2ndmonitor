@@ -915,6 +915,62 @@ fn writer_or_err() -> Result<Transport, String> {
         .ok_or_else(|| "RPC not connected — voice features unavailable".to_string())
 }
 
+/// Publish (or clear) the app's OWN Rich Presence via SET_ACTIVITY (0.9.13).
+/// Rides the existing session: SET_ACTIVITY needs only the RPC handshake,
+/// none of the voice/notification scopes this session verifies, so it works
+/// whenever the pipe is up. Passing neither `details` nor `state` clears the
+/// activity (activity: null). The large-image asset key is "app" — if the
+/// user's Discord application has no uploaded asset by that name, Discord
+/// simply shows a text-only card; nothing breaks.
+#[tauri::command]
+pub async fn discord_rpc_set_activity(
+    details: Option<String>,
+    state: Option<String>,
+    start_ms: Option<u64>,
+) -> Result<(), String> {
+    let writer = writer_or_err()?;
+    let activity = if details.is_none() && state.is_none() {
+        Value::Null
+    } else {
+        let mut a = serde_json::Map::new();
+        if let Some(d) = details {
+            a.insert("details".into(), Value::String(d));
+        }
+        if let Some(s) = state {
+            a.insert("state".into(), Value::String(s));
+        }
+        if let Some(ts) = start_ms {
+            a.insert("timestamps".into(), json!({ "start": ts }));
+        }
+        a.insert(
+            "assets".into(),
+            json!({ "large_image": "app", "large_text": "2ndMonitor" }),
+        );
+        Value::Object(a)
+    };
+
+    let nonce = next_nonce();
+    let (tx, rx) = channel();
+    PENDING.lock().insert(nonce.clone(), tx);
+
+    let payload = json!({
+        "nonce": nonce,
+        "cmd": "SET_ACTIVITY",
+        "args": { "pid": std::process::id(), "activity": activity },
+    });
+    if let Err(e) = write_frame(&writer, 1, &payload.to_string()) {
+        PENDING.lock().remove(&nonce);
+        return Err(e);
+    }
+    match rx.recv_timeout(Duration::from_millis(2000)) {
+        Ok(resp) => parse_command_response(&resp),
+        Err(_) => {
+            PENDING.lock().remove(&nonce);
+            Err("Discord did not respond within 2s".into())
+        }
+    }
+}
+
 /// Toggle the user's own mute / deafen via SET_VOICE_SETTINGS.
 /// Either field may be omitted; the other passes through unchanged.
 #[tauri::command]

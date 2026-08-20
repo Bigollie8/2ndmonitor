@@ -107,6 +107,7 @@ pub fn run() {
             discord::discord_get_client_id,
             discord_rpc::discord_rpc_status,
             discord_rpc::discord_rpc_set_voice_settings,
+            discord_rpc::discord_rpc_set_activity,
             discord_rpc::discord_rpc_get_voice_settings,
             discord_rpc::discord_rpc_leave_voice,
             actions::app_open_url,

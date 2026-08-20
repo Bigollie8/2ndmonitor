@@ -18,6 +18,7 @@ import {
   reclampProfilesBelowChrome,
   paintOrder,
   occupiedRects,
+  refitTiles,
 } from './layout';
 import type { TileInstance } from './layout';
 
@@ -582,4 +583,26 @@ test('findEmptyRect over occupiedRects places on top of a full-bleed viz', () =>
   // an empty slot exists (the viz doesn't block), and it must not overlap the clock
   const overlaps = rect.x < 0.7 && rect.x + rect.w > 0.4 && rect.y < 0.6 && rect.y + rect.h > 0.3;
   assert.ok(!overlaps, `placed clear of the real tile: ${JSON.stringify(rect)}`);
+});
+
+test('refitTiles clamps off-canvas and undersized rects, by-reference when clean (0.9.13)', () => {
+  const mk = (id: string, rect: { x: number; y: number; w: number; h: number }) =>
+    ({ instanceId: id, type: 'clock', rect }) as unknown as TileInstance;
+  const canvas = { w: 1080, h: 1920 };
+  const clean = [mk('ok', { x: 0.1, y: 0.2, w: 0.5, h: 0.3 })];
+  assert.equal(refitTiles(clean, canvas), clean, 'no move → same reference');
+  const dirty = [
+    mk('off', { x: 0.9, y: 0.95, w: 0.5, h: 0.3 }),
+    mk('tiny', { x: 0.1, y: 0.5, w: 0.01, h: 0.01 }),
+    mk('fine', { x: 0.1, y: 0.2, w: 0.5, h: 0.3 }),
+  ];
+  const out = refitTiles(dirty, canvas);
+  assert.notEqual(out, dirty);
+  for (const t of out) {
+    assert.ok(t.rect.x >= 0 && t.rect.x + t.rect.w <= 1.0001, t.instanceId + ' x in canvas');
+    assert.ok(t.rect.y + t.rect.h <= 1 - 32 / 1920 + 1e-6, t.instanceId + ' clears bottom bar');
+    assert.ok(t.rect.w * canvas.w >= 200 - 1e-6 && t.rect.h * canvas.h >= 140 - 1e-6, t.instanceId + ' >= MIN');
+  }
+  assert.equal(out[2], dirty[2], 'untouched tile keeps identity');
+  assert.deepEqual(out.map((t) => t.instanceId), ['off', 'tiny', 'fine'], 'order preserved');
 });

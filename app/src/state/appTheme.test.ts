@@ -6,6 +6,7 @@ test('resolveSurfaceTheme falls back to default on garbage', () => {
   assert.equal(resolveSurfaceTheme('editorial'), 'editorial');
   assert.equal(resolveSurfaceTheme('frameless'), 'frameless');
   assert.equal(resolveSurfaceTheme('default'), 'default');
+  assert.equal(resolveSurfaceTheme('hub'), 'hub');
   assert.equal(resolveSurfaceTheme('paper'), 'default'); // not shipped yet
   assert.equal(resolveSurfaceTheme(42), 'default');
   assert.equal(resolveSurfaceTheme(null), 'default');
@@ -13,8 +14,16 @@ test('resolveSurfaceTheme falls back to default on garbage', () => {
   assert.equal(resolveSurfaceTheme('__proto__'), 'default');
 });
 
-test('default theme stamps nothing — per-site fallbacks keep today\'s look', () => {
-  assert.equal(SURFACE_THEMES.default.tokens, null);
+test('hub stamps nothing (the pixel-identical classic); default IS Glasswing (0.9.13)', () => {
+  assert.equal(SURFACE_THEMES.hub.tokens, null);
+  const gw = SURFACE_THEMES.default.tokens;
+  assert.ok(gw, 'default carries the Glasswing token set now');
+  assert.equal(gw!.canvas, '#0D1116');
+  assert.ok(gw!.tile.startsWith('linear-gradient'), 'tile is a graded pane, not a flat fill');
+  assert.equal(gw!.hairline, 'rgba(154,166,178,0.16)', 'Vapor at 16% — every border in the system');
+  assert.match(gw!.uiFont ?? '', /Schibsted Grotesk/);
+  assert.equal(gw!.controlRadius, '4px');
+  assert.equal(gw!.tileRadius, '14px');
 });
 
 test('every non-default theme defines the full token set', () => {

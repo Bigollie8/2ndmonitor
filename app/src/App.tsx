@@ -15,6 +15,8 @@ import {
   findEmptyRect,
   occupiedRects,
   paintOrder,
+  rectsOverlap,
+  refitTiles,
   addInstance,
   removeInstance,
   removeTilesOfType,
@@ -194,6 +196,9 @@ interface TweakState extends Record<string, unknown> {
   /** When true, the window close button hides to the system tray instead of
    *  quitting the app. Quit is then only available from the tray menu. */
   closeToTray: boolean;
+  /** Discord Rich Presence (0.9.13): publish 2ndMonitor + now-playing on
+   *  the user's Discord profile over the existing RPC session. */
+  discordRichPresence: boolean;
   /** Liquid glass: translucent surfaces + Windows acrylic behind the
    *  transparent window. Off by default — glass off must render
    *  pixel-identical to pre-0.6.6 (see state/theme.ts). */
@@ -287,6 +292,7 @@ const TWEAK_DEFAULTS: TweakState = {
   perfDebug: false,
   audioDebug: false,
   closeToTray: true,
+  discordRichPresence: true,
   glassEnabled: false,
   glassStrength: DEFAULT_GLASS_STRENGTH,
   surfaceTheme: 'default',
@@ -648,6 +654,39 @@ export default function App() {
   const accent = palette.accent ?? track.accent;
   const accent2 = palette.accent2 ?? track.accent2;
   const accentLinked = t.accentTheme === 'auto';
+
+  // ── Discord Rich Presence (0.9.13) ─────────────────────────────────────
+  // Publishes over the existing RPC session; every failure is silent by
+  // design (Discord closed / not connected is normal, not an error). The
+  // 1.5s debounce keeps rapid track skips from spamming SET_ACTIVITY, and
+  // the key comparison means steady playback posts nothing.
+  const richPresenceKeyRef = useRef<string | null>(null);
+  useEffect(() => {
+    const playing = livePlayback?.playing === true && !!track.title;
+    const key = !t.discordRichPresence ? 'off' : playing ? `p|${track.title}|${track.artist}` : 'idle';
+    if (key === richPresenceKeyRef.current) return;
+    richPresenceKeyRef.current = key;
+    const id = setTimeout(() => {
+      void (async () => {
+        try {
+          const { invoke } = await import('@tauri-apps/api/core');
+          if (!t.discordRichPresence) {
+            await invoke('discord_rpc_set_activity', {});
+          } else if (playing) {
+            await invoke('discord_rpc_set_activity', {
+              details: `Listening to ${track.title}`.slice(0, 120),
+              state: track.artist ? `by ${track.artist}`.slice(0, 120) : null,
+              startMs: Date.now() - Math.round((livePlayback?.positionAtSync ?? 0) * 1000),
+            });
+          } else {
+            await invoke('discord_rpc_set_activity', { details: 'Watching the dashboard', state: null, startMs: null });
+          }
+        } catch { /* RPC not connected — silent, retried on the next change */ }
+      })();
+    }, 1500);
+    return () => clearTimeout(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [t.discordRichPresence, track.title, track.artist, livePlayback?.playing]);
   const vizAccent  = t.vizColorOverride.enabled ? t.vizColorOverride.accent  : accent;
   const vizAccent2 = t.vizColorOverride.enabled ? t.vizColorOverride.accent2 : accent2;
 
@@ -1314,6 +1353,39 @@ export default function App() {
     if (!inst) return;
     updateActiveOrientation({ tiles: removeInstance(activeOrientation.tiles, inst.instanceId) });
   };
+
+  // ── Monitor-change re-fit (0.9.13) ─────────────────────────────────────
+  // Fractional rects + renderRectFrac already keep tiles VISIBLE on any
+  // canvas, but the STORED rects were only re-clamped once at boot against
+  // an estimate. Moving the window to a monitor with a different
+  // resolution/DPI/orientation now re-fits the saved arrangement against
+  // the real canvas: debounced 600ms so nothing thrashes mid-drag, gated
+  // on a >8% size change or an orientation flip so transient resize noise
+  // is ignored, and refitTiles returns by reference when nothing moves so
+  // the common case writes no state at all. Per-orientation arrangements
+  // stay separate — moving back restores the other layout untouched.
+  const lastFitRef = useRef<{ w: number; h: number; orient: string } | null>(null);
+  const activeTilesRef = useRef(activeOrientation.tiles);
+  activeTilesRef.current = activeOrientation.tiles;
+  const updateActiveOrientationStable = useRef(updateActiveOrientation);
+  updateActiveOrientationStable.current = updateActiveOrientation;
+  useEffect(() => {
+    if (canvas.w <= 0 || canvas.h <= 0) return;
+    const id = setTimeout(() => {
+      const prev = lastFitRef.current;
+      const big = !prev || prev.orient !== orientation
+        || Math.abs(prev.w - canvas.w) / canvas.w > 0.08
+        || Math.abs(prev.h - canvas.h) / canvas.h > 0.08;
+      if (!big) return;
+      lastFitRef.current = { w: canvas.w, h: canvas.h, orient: orientation };
+      const fitted = refitTiles(activeTilesRef.current, canvas, topInsetPx);
+      if (fitted !== activeTilesRef.current) {
+        updateActiveOrientationStable.current({ tiles: fitted });
+      }
+    }, 600);
+    return () => clearTimeout(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canvas.w, canvas.h, orientation]);
   const addTileByType = (type: TileType) => {
     if (findInstance(activeOrientation.tiles, type)) return;
     const defaults = orientation === 'portrait' ? DEFAULT_PORTRAIT_LAYOUT : DEFAULT_LANDSCAPE_LAYOUT;
@@ -1796,11 +1868,20 @@ export default function App() {
           <ThemeToast accent={accent} title={themeToast} />
         )}
         {paintOrder(activeOrientation.tiles).map((instance) => {
+          // Backdrop-blur suppression (0.9.13): blurring an ANIMATING
+          // backdrop costs ~10x blurring a static one (measured — see
+          // TileFrame). Tiles overlapping a viz rect drop their glass blur;
+          // everything else keeps the exact look. Glass mode is exempt on
+          // purpose: translucency is its whole point and the user opted in.
+          const overViz = !t.glassEnabled
+            && instance.type !== 'viz'
+            && activeOrientation.tiles.some((v) => v.type === 'viz' && rectsOverlap(v.rect, instance.rect));
           return (
             <TileFrame
               key={instance.instanceId}
               id={instance.instanceId}
               rect={renderRectFrac(instance.rect, canvas, topInsetPx)}
+              suppressBackdropBlur={overViz}
               editing={editMode}
               snap={t.editSnap}
               topInsetPx={topInsetPx}

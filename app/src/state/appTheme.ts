@@ -27,7 +27,13 @@
 // Pure module: nothing touches `document` at import time (node-testable),
 // mirroring state/theme.ts.
 
-export type SurfaceThemeId = 'default' | 'editorial' | 'frameless';
+// 0.9.13 (Glasswing design language): 'default' now IS the Glasswing look —
+// the studio's own surface, per the design system's THEMES AND THE DEFAULT
+// section — and the old pixel-identical stamp-nothing guarantee moves to the
+// preserved 'hub' entry. Existing saves that say 'default' pick up Glasswing
+// on update, exactly as the spec intends; anyone who preferred the classic
+// look selects Hub in Settings.
+export type SurfaceThemeId = 'default' | 'hub' | 'editorial' | 'frameless';
 
 export interface SurfaceThemeTokens {
   canvas: string;
@@ -37,6 +43,9 @@ export interface SurfaceThemeTokens {
   hairline: string;
   /** null = keep each site's own font (only Editorial carries a serif). */
   displayFont: string | null;
+  /** App-wide UI family via --font-ui (0.9.13). Glasswing stamps Schibsted
+   *  Grotesk (bundled, OFL); null keeps the classic Inter stack. */
+  uiFont: string | null;
   // ── Material language (0.9.8) ─────────────────────────────────────────
   // Three more axes so each theme reads as its own design system rather
   // than a recolor: corner language, backdrop treatment, and elevation.
@@ -76,8 +85,32 @@ export interface SurfaceThemeDef {
 
 export const SURFACE_THEMES: Record<SurfaceThemeId, SurfaceThemeDef> = {
   default: {
+    // The Glasswing surface — the studio's own look and the app default
+    // (0.9.13). Graded glass panes over the Ink ramp, Vapor hairlines,
+    // Schibsted Grotesk, 4px controls. Values from the Glasswing design
+    // system's tokens/ (colors.css, shape.css, fonts.css).
+    label: 'Glasswing',
+    hint: 'Graded glass over ink — the Ficus by Glasswing look',
+    tokens: {
+      canvas: '#0D1116',
+      tile: 'linear-gradient(178deg, rgba(38,47,58,0.82) 0%, rgba(26,32,40,0.76) 46%, rgba(17,22,29,0.74) 100%)',
+      overlay: 'rgba(18,22,28,0.97)',
+      chrome: 'rgba(13,17,22,0.9)',
+      hairline: 'rgba(154,166,178,0.16)',
+      displayFont: '"Schibsted Grotesk", ui-sans-serif, system-ui, sans-serif',
+      uiFont: '"Schibsted Grotesk", ui-sans-serif, system-ui, sans-serif',
+      tileRadius: '14px',
+      tileBlur: 'blur(20px) saturate(140%)',
+      tileShadow: '0 8px 24px -8px rgba(0,0,0,0.45)',
+      controlRadius: '4px',
+      controlRadiusRound: '999px',
+      controlBorder: 'rgba(154,166,178,0.28)',
+      controlBg: 'rgba(154,166,178,0.12)',
+    },
+  },
+  hub: {
     label: 'Hub',
-    hint: 'The classic look — unchanged',
+    hint: 'The classic pre-Glasswing look — unchanged',
     tokens: null,
   },
   editorial: {
@@ -94,6 +127,7 @@ export const SURFACE_THEMES: Record<SurfaceThemeId, SurfaceThemeDef> = {
       chrome: 'rgba(10,11,9,0.9)',
       hairline: 'rgba(216,211,196,0.16)',
       displayFont: 'Georgia, "Times New Roman", "Songti SC", serif',
+      uiFont: null,
       tileRadius: '3px',
       tileBlur: 'none',
       tileShadow: 'none',
@@ -120,6 +154,7 @@ export const SURFACE_THEMES: Record<SurfaceThemeId, SurfaceThemeDef> = {
       chrome: 'rgba(7,8,10,0.55)',
       hairline: 'rgba(255,255,255,0)',
       displayFont: null,
+      uiFont: null,
       tileRadius: '18px',
       tileBlur: 'none',
       tileShadow: 'none',
@@ -155,6 +190,7 @@ export function applySurfaceTheme(id: SurfaceThemeId, glassActive: boolean): voi
     if (!glassActive) for (const v of SURFACE_VARS) root.style.removeProperty(v);
     root.style.removeProperty('--hairline');
     root.style.removeProperty('--font-display');
+    root.style.removeProperty('--font-ui');
     root.style.removeProperty('--tile-radius');
     root.style.removeProperty('--tile-blur');
     root.style.removeProperty('--tile-shadow');
@@ -174,6 +210,8 @@ export function applySurfaceTheme(id: SurfaceThemeId, glassActive: boolean): voi
   root.style.setProperty('--hairline', tokens.hairline);
   if (tokens.displayFont) root.style.setProperty('--font-display', tokens.displayFont);
   else root.style.removeProperty('--font-display');
+  if (tokens.uiFont) root.style.setProperty('--font-ui', tokens.uiFont);
+  else root.style.removeProperty('--font-ui');
   root.style.setProperty('--tile-radius', tokens.tileRadius);
   // Blur IS the glass material — a theme's 'none' would flatten liquid
   // glass into plain translucency, so glass keeps the blur fallback while

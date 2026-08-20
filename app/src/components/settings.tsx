@@ -69,6 +69,8 @@ export interface SettingsValues {
   videoEnabled: boolean;
   videoBookmarks: Bookmark[];
   closeToTray: boolean;
+  /** Discord Rich Presence toggle (0.9.13). */
+  discordRichPresence: boolean;
   /** Liquid glass — translucent surfaces + acrylic. See state/theme.ts. */
   glassEnabled: boolean;
   /** 0–100; 0 = clear glass, 100 = most opaque frosted. */
@@ -538,6 +540,11 @@ export function SettingsWindow({
           id: 'system-tray', label: 'Close to tray',
           hint: 'The window close button hides to the system tray instead of quitting — quit from the tray menu',
           control: <Toggle checked={v.closeToTray} onChange={(c) => set('closeToTray', c)} accent={accent} />,
+        },
+        {
+          id: 'system-rich-presence', label: 'Discord Rich Presence',
+          hint: 'Show 2ndMonitor — and what you\'re listening to — on your Discord profile. Needs the Discord connection; off = nothing is published',
+          control: <Toggle checked={v.discordRichPresence} onChange={(c) => set('discordRichPresence', c)} accent={accent} />,
         },
         {
           id: 'system-bookmarks', label: 'Streaming bookmarks', stacked: true,

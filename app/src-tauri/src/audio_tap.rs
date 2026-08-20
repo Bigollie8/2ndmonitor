@@ -183,7 +183,8 @@ const FALLBACK_SAMPLE_RATE: u32 = 48_000;
 /// capture dead. The supervisor watches on a 2 s tick, so this is two to three
 /// polls — long enough to ride out a device format change, short enough that a
 /// frozen visualizer gets rebuilt before it reads as broken.
-const STALE_AFTER: Duration = Duration::from_secs(5);
+// (STALE_AFTER + the liveness clock were removed in 0.9.13 with the
+// callback-progress check — see `is_alive`.)
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -231,10 +232,6 @@ pub struct TapCapture {
     /// discipline: nothing may report this capture as live once teardown has
     /// begun.
     alive: AtomicBool,
-    /// `(last observed callback count, when it last changed)`. Keeping the
-    /// clock read here rather than in the IOProc leaves the audio callback
-    /// doing one relaxed increment and nothing else.
-    liveness: Mutex<(u64, Instant)>,
     sample_rate: u32,
     /// The pids this tap was actually built with — a SUBSET of what `start`
     /// was asked for, because an app that stopped playing between the caller's
@@ -270,24 +267,21 @@ impl TapCapture {
     /// leaves the ring frozen on its last samples with the visualizer locked to
     /// a static frame. Callback progress is the signal we do have.
     ///
-    /// This rests on an assumption we have not been able to verify on hardware:
-    /// that the IO cycle is clocked by the aggregate's main sub-device and so
-    /// keeps firing through silence, making a *stopped* callback mean a stopped
-    /// device rather than a quiet one. If that turns out to be wrong the
-    /// symptom is specific and recognisable — the supervisor rebuilding the
-    /// capture every few seconds while nothing is playing — and the fix is to
-    /// pin this to the `alive` flag alone.
+    /// 0.9.13: the callback-progress staleness check is GONE, exactly per the
+    /// contingency the previous version of this comment documented. The
+    /// assumption (the IO cycle keeps firing through silence) proved wrong on
+    /// real hardware: quiet audio stalled the callback counter, this method
+    /// reported the tap dead, the supervisor rebuilt it, and EVERY rebuild is
+    /// a fresh `AudioHardwareCreateProcessTap` — which is a fresh chance for
+    /// macOS to show the capture-permission prompt. That was the "it still
+    /// spams you with permission requests even though you may grant it once"
+    /// report. Liveness is now the `alive` error flag alone: Core Audio sets
+    /// it on genuine device death, and a genuinely dead device also fires the
+    /// default-output-changed path, which still rebuilds. The trade — a
+    /// stopped-but-not-erroring device could freeze the visualizer until the
+    /// next real device event — is strictly better than prompt spam.
     pub fn is_alive(&self) -> bool {
-        if !self.alive.load(Ordering::Relaxed) {
-            return false;
-        }
-        let n = self.shared.callbacks.load(Ordering::Relaxed);
-        let mut seen = self.liveness.lock();
-        if n != seen.0 {
-            *seen = (n, Instant::now());
-            return true;
-        }
-        seen.1.elapsed() < STALE_AFTER
+        self.alive.load(Ordering::Relaxed)
     }
 }
 
@@ -441,7 +435,6 @@ pub fn start(
         Ok(TapCapture {
             shared,
             alive: AtomicBool::new(true),
-            liveness: Mutex::new((0, Instant::now())),
             sample_rate,
             included_pids,
             tap_id,
