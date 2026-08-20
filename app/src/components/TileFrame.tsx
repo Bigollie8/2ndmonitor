@@ -28,12 +28,16 @@ function getCanvasPx(): { w: number; h: number } {
 
 export function TileFrame({
   id, rect, editing, selected, onSelect, onChange, accent, children, snap: snapEnabled = true,
-  topInsetPx = CHROME_TOP_PX,
+  topInsetPx = CHROME_TOP_PX, suppressBackdropBlur = false,
 }: {
   id: string;
   rect: Rect;
   editing: boolean;
   selected: boolean;
+  /** True when this tile overlaps an animating surface (a viz tile) and
+   *  its backdrop blur must switch off — see the perf comment on the root
+   *  style (0.9.13). */
+  suppressBackdropBlur?: boolean;
   onSelect: () => void;
   onChange: (next: Rect) => void;
   accent: string;
@@ -184,6 +188,14 @@ export function TileFrame({
         // mechanism. isolation creates the context with no other side
         // effects; sibling stacking is now purely DOM order again.
         isolation: 'isolate',
+        // Perf (0.9.13): a tile whose backdrop contains an ANIMATING surface
+        // forces the compositor to re-blur its whole backdrop-filter region
+        // every frame — measured at ~+75% of a core for eight glass tiles
+        // over one animating canvas, vs ~free over static content. App flags
+        // tiles that overlap a visualizer rect; their glass blur switches
+        // off via the same CSS var the themes use. Non-overlapping tiles
+        // keep the exact glass look.
+        ...(suppressBackdropBlur ? ({ '--tile-blur': 'none' } as React.CSSProperties) : null),
         // Render from the live rect while a gesture is in flight: an unrelated
         // App re-render mid-drag would otherwise snap the tile back to the
         // last committed rect.

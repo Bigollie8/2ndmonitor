@@ -15,6 +15,7 @@ import {
   findEmptyRect,
   occupiedRects,
   paintOrder,
+  rectsOverlap,
   addInstance,
   removeInstance,
   removeTilesOfType,
@@ -1796,11 +1797,20 @@ export default function App() {
           <ThemeToast accent={accent} title={themeToast} />
         )}
         {paintOrder(activeOrientation.tiles).map((instance) => {
+          // Backdrop-blur suppression (0.9.13): blurring an ANIMATING
+          // backdrop costs ~10x blurring a static one (measured — see
+          // TileFrame). Tiles overlapping a viz rect drop their glass blur;
+          // everything else keeps the exact look. Glass mode is exempt on
+          // purpose: translucency is its whole point and the user opted in.
+          const overViz = !t.glassEnabled
+            && instance.type !== 'viz'
+            && activeOrientation.tiles.some((v) => v.type === 'viz' && rectsOverlap(v.rect, instance.rect));
           return (
             <TileFrame
               key={instance.instanceId}
               id={instance.instanceId}
               rect={renderRectFrac(instance.rect, canvas, topInsetPx)}
+              suppressBackdropBlur={overViz}
               editing={editMode}
               snap={t.editSnap}
               topInsetPx={topInsetPx}
