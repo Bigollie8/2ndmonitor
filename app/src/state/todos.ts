@@ -45,6 +45,38 @@ export function setDue(todos: Todo[], id: string, dueAt: number | null): Todo[] 
   });
 }
 
+/** Sort key: manual order when the user has dragged, else createdAt —
+ *  ascending, so FIRST-ENTERED stays on top (0.9.13; supersedes the 0.9.8
+ *  newest-on-top reading of the same feedback thread). */
+export function todoSortKey(t: Todo): number {
+  return t.order ?? t.createdAt;
+}
+
+/** Display order: active todos oldest-first (or manual order), done sunk. */
+export function sortTodos(todos: Todo[]): Todo[] {
+  return [...todos].sort((a, b) => {
+    if (a.done !== b.done) return a.done ? 1 : -1;
+    return todoSortKey(a) - todoSortKey(b);
+  });
+}
+
+/** Drag-to-reorder: move `fromId` so it lands where `toId` currently sits,
+ *  within the ACTIVE (not-done) ordering. Stamps explicit `order` onto every
+ *  active todo so the arrangement survives reloads; done todos keep their
+ *  keys (they sink regardless). Unknown ids → unchanged input. */
+export function reorderTodos(todos: Todo[], fromId: string, toId: string): Todo[] {
+  if (fromId === toId) return todos;
+  const active = sortTodos(todos).filter((t) => !t.done);
+  const fromIdx = active.findIndex((t) => t.id === fromId);
+  const toIdx = active.findIndex((t) => t.id === toId);
+  if (fromIdx < 0 || toIdx < 0) return todos;
+  const arranged = [...active];
+  const [moved] = arranged.splice(fromIdx, 1);
+  arranged.splice(toIdx, 0, moved);
+  const orderOf = new Map(arranged.map((t, i) => [t.id, i]));
+  return todos.map((t) => (orderOf.has(t.id) ? { ...t, order: orderOf.get(t.id) } : t));
+}
+
 /** The subtle "when it was written" fineprint: time-of-day for today,
  *  month+day otherwise (year added when it differs). */
 export function fmtWhen(createdAt: number, nowMs: number): string {

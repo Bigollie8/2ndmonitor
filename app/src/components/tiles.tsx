@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState, type MutableRefObject } from 'react
 import { getDensity } from '../data';
 import type { Density, Track } from '../types';
 import type { Todo } from '../types';
-import { pendingReminders, markReminded, setDue, todoUrgency, fmtWhen, fmtDue } from '../state/todos';
+import { pendingReminders, markReminded, setDue, todoUrgency, fmtWhen, fmtDue, sortTodos, reorderTodos } from '../state/todos';
 import { type Playback, type SpectrumState, mediaControls, useSpotify, useSysmon, type SpotifyTrack } from '../state/tauri';
 import { useLyrics, currentLineIndex } from '../state/lyrics';
 import { mediaSourceFor, type MediaSourceInfo, type MediaSourceKind } from '../state/mediaSource';
@@ -961,12 +961,13 @@ export function NotesTile({
     return () => clearTimeout(id);
   }, [reminder]);
 
-  // Newest on top (the user's preferred order — confirmed 0.9.8), done sunk.
-  const sorted = [...todos].sort((a, b) => {
-    if (a.done !== b.done) return a.done ? 1 : -1;
-    return b.createdAt - a.createdAt;
-  });
+  // First-entered on top (0.9.13 — supersedes 0.9.8's newest-on-top reading
+  // of the same thread), manual drag order once dragged, done sunk.
+  const sorted = sortTodos(todos);
   const undoneCount = todos.filter((t) => !t.done).length;
+  /** Drag-to-reorder (0.9.13): id being dragged + id currently hovered. */
+  const [dragId, setDragId] = useState<string | null>(null);
+  const [overId, setOverId] = useState<string | null>(null);
 
   const addTodo = () => {
     const text = draft.trim();
@@ -1036,14 +1037,58 @@ export function NotesTile({
           {sorted.map((todo) => (
             <div
               key={todo.id}
+              data-todo-id={todo.id}
               onMouseEnter={() => setHoveredId(todo.id)}
               onMouseLeave={() => setHoveredId(null)}
+              onPointerMove={() => { if (dragId && dragId !== todo.id && !todo.done) setOverId(todo.id); }}
               style={{
                 display: 'flex', alignItems: 'center', gap: 6,
                 padding: '2px 4px', borderRadius: 3,
-                background: hoveredId === todo.id ? 'rgba(255,255,255,0.04)' : 'transparent',
+                background: dragId === todo.id ? 'rgba(255,255,255,0.09)'
+                  : overId === todo.id && dragId ? 'rgba(255,255,255,0.06)'
+                  : hoveredId === todo.id ? 'rgba(255,255,255,0.04)' : 'transparent',
+                borderTop: overId === todo.id && dragId ? `1px solid ${accent}` : '1px solid transparent',
+                opacity: dragId === todo.id ? 0.6 : 1,
               }}
             >
+              {!todo.done && (
+                <span
+                  title="Drag to reorder"
+                  onPointerDown={(e) => {
+                    e.preventDefault();
+                    (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
+                    setDragId(todo.id);
+                    setOverId(null);
+                    const onUp = () => {
+                      // Read the latest hover target from state via the
+                      // functional set below — pointer capture keeps move
+                      // events flowing to the handle, so onPointerMove on
+                      // rows won't fire; track by elementFromPoint instead.
+                      window.removeEventListener('pointerup', onUp);
+                    };
+                    window.addEventListener('pointerup', onUp);
+                  }}
+                  onPointerMove={(e) => {
+                    if (dragId !== todo.id) return;
+                    const el = document.elementFromPoint(e.clientX, e.clientY);
+                    const row = el?.closest?.('[data-todo-id]') as HTMLElement | null;
+                    const id = row?.dataset.todoId ?? null;
+                    if (id && id !== todo.id) setOverId(id);
+                  }}
+                  onPointerUp={() => {
+                    if (dragId === todo.id && overId && overId !== todo.id) {
+                      setTodos(reorderTodos(todos, todo.id, overId));
+                    }
+                    setDragId(null);
+                    setOverId(null);
+                  }}
+                  style={{
+                    cursor: 'grab', color: 'rgba(255,255,255,0.3)', fontSize: 10,
+                    flexShrink: 0, touchAction: 'none', userSelect: 'none',
+                    width: 10, textAlign: 'center',
+                  }}
+                >⠿</span>
+              )}
               <button
                 onClick={() => toggleTodo(todo.id)}
                 style={{

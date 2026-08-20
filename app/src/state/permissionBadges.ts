@@ -31,7 +31,11 @@ export function permissionBadges(permissions: string[]): PermBadge[] {
   if (permissions.length === 0) {
     // Declaring nothing is a genuine selling point — "this cannot phone home"
     // — so it gets a badge rather than an empty space.
-    return [{ text: 'offline', title: 'Declares no permissions', tone: 'neutral' }];
+    // 'no network', not 'offline' (0.9.13): users read the bare word
+    // 'offline' as "this item is unavailable" — the tester report. The
+    // badge means the OPPOSITE: this bundle declares no permissions and
+    // cannot phone home.
+    return [{ text: 'no network', title: 'Declares no permissions', tone: 'neutral' }];
   }
 
   const hosts: string[] = [];

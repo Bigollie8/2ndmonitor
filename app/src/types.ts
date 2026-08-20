@@ -86,6 +86,10 @@ export interface Todo {
   /** Set when the due reminder fired, so it never re-fires for the same
    *  deadline. Cleared when dueAt changes. */
   remindedAt?: number;
+  /** Manual position (0.9.13 drag-to-reorder). Absent on todos that were
+   *  never dragged — they sort by createdAt ascending (first-entered on
+   *  top). A drag stamps order onto every active todo. */
+  order?: number;
 }
 
 export interface WeatherLocation { label: string; lat: number; lon: number }

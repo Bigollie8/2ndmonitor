@@ -59,3 +59,35 @@ test('due label says overdue past deadline', () => {
   assert.equal(fmtDue(now - 1, now), 'overdue');
   assert.match(fmtDue(new Date(2026, 7, 18, 15, 0).getTime(), now), /^due /);
 });
+
+// ── Ordering + drag reorder (0.9.13) ────────────────────────────────────────
+
+import { sortTodos, reorderTodos, todoSortKey } from './todos';
+
+test('default order is first-entered on top, done sunk (0.9.13)', () => {
+  const todos = [
+    mk({ id: 'b', createdAt: 2 }),
+    mk({ id: 'done', createdAt: 1, done: true }),
+    mk({ id: 'a', createdAt: 1 }),
+    mk({ id: 'c', createdAt: 3 }),
+  ];
+  assert.deepEqual(sortTodos(todos).map((t) => t.id), ['a', 'b', 'c', 'done']);
+});
+
+test('reorder stamps explicit order on every active todo and persists the arrangement', () => {
+  const todos = [mk({ id: 'a', createdAt: 1 }), mk({ id: 'b', createdAt: 2 }), mk({ id: 'c', createdAt: 3 }), mk({ id: 'z', createdAt: 0, done: true })];
+  const after = reorderTodos(todos, 'c', 'a'); // drag c to the top
+  assert.deepEqual(sortTodos(after).map((t) => t.id), ['c', 'a', 'b', 'z']);
+  for (const t of after.filter((t) => !t.done)) assert.ok(typeof t.order === 'number');
+  assert.equal(after.find((t) => t.id === 'z')!.order, undefined, 'done todos untouched');
+  // a later ADD (no order field) lands at the bottom of the actives:
+  const withNew = [...after, mk({ id: 'new', createdAt: 99 })];
+  assert.deepEqual(sortTodos(withNew).map((t) => t.id), ['c', 'a', 'b', 'new', 'z']);
+});
+
+test('reorder with unknown ids or self-drop is a no-op; legacy todos keep createdAt order', () => {
+  const todos = [mk({ id: 'a', createdAt: 5 }), mk({ id: 'b', createdAt: 9 })];
+  assert.equal(reorderTodos(todos, 'a', 'a'), todos);
+  assert.equal(reorderTodos(todos, 'ghost', 'b'), todos);
+  assert.equal(todoSortKey(todos[0]), 5, 'no order field → createdAt drives');
+});

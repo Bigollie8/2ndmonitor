@@ -4,7 +4,7 @@ import { permissionBadges, describePermission } from './permissionBadges';
 
 test('no permissions reads as offline-safe, which is a selling point not an absence', () => {
   const b = permissionBadges([]);
-  assert.deepEqual(b.map((x) => x.text), ['offline']);
+  assert.deepEqual(b.map((x) => x.text), ['no network']);
   assert.equal(b[0].tone, 'neutral');
 });
 
@@ -35,7 +35,7 @@ test('a command permission is the warning tone -- running an app command is the 
 
 test('offline never appears alongside a real capability', () => {
   const b = permissionBadges(['net:a.example']);
-  assert.equal(b.some((x) => x.text === 'offline'), false);
+  assert.equal(b.some((x) => x.text === 'no network'), false);
 });
 
 test('an unparseable permission still produces a badge rather than vanishing', () => {

@@ -24,7 +24,7 @@ export function FilterChips({ accent, facets, onRemove, onClear }: {
   if (facets.updates) chips.push({ key: 'updates', label: 'updates', clear: { updates: undefined } });
   if (facets.needsSetup) chips.push({ key: 'needsSetup', label: 'needs setup', clear: { needsSetup: undefined } });
   if (facets.hasPreview) chips.push({ key: 'hasPreview', label: 'has preview', clear: { hasPreview: undefined } });
-  if (facets.noPermissions) chips.push({ key: 'noPermissions', label: 'offline-safe', clear: { noPermissions: undefined } });
+  if (facets.noPermissions) chips.push({ key: 'noPermissions', label: 'no network', clear: { noPermissions: undefined } });
   if (facets.removed) chips.push({ key: 'removed', label: 'removed', clear: { removed: undefined } });
   if (facets.incompatible) chips.push({ key: 'incompatible', label: 'incompatible', clear: { incompatible: undefined } });
 
