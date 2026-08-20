@@ -91,6 +91,19 @@ pub fn router(state: AppState) -> Router {
         .route("/admin/collections/:slug", delete(collections::remove))
         .route("/reviews", get(reviews::list).post(reviews::post))
         .route("/admin/reviews/:bundle_id/:user_id/hide", post(reviews::hide))
+        .layer(
+            // CORS is browser plumbing, not authorization: bearer tokens
+            // (user + admin) still gate every protected route. Wildcard
+            // origin is safe because nothing here uses cookies — tokens are
+            // ordinary headers the site attaches itself.
+            tower_http::cors::CorsLayer::new()
+                .allow_origin(tower_http::cors::Any)
+                .allow_methods(tower_http::cors::Any)
+                .allow_headers([
+                    axum::http::header::CONTENT_TYPE,
+                    axum::http::header::AUTHORIZATION,
+                ]),
+        )
         .with_state(state)
 }
 

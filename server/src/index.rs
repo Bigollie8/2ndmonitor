@@ -96,14 +96,8 @@ pub async fn index_json(State(state): State<AppState>) -> Result<Response, Statu
         sig
     );
     Ok((
-        // Open CORS on the whole public read surface (index, download,
-        // preview, media): browsers — the studio site's /market/ shelf among
-        // them — read this signed public data directly. Authored and admin
-        // endpoints carry no such header.
-        [
-            (header::CONTENT_TYPE, "application/json"),
-            (header::ACCESS_CONTROL_ALLOW_ORIGIN, "*"),
-        ],
+        // CORS for the whole router lives in lib.rs (CorsLayer).
+        [(header::CONTENT_TYPE, "application/json")],
         body,
     )
         .into_response())
@@ -124,14 +118,7 @@ pub async fn preview(
         rusqlite::params![id, version],
         |r| Ok((r.get::<_, String>(0)?, r.get::<_, Vec<u8>>(1)?)),
     ) {
-        return Ok((
-            [
-                (header::CONTENT_TYPE, mime),
-                (header::ACCESS_CONTROL_ALLOW_ORIGIN, "*".to_string()),
-            ],
-            bytes,
-        )
-            .into_response());
+        return Ok(([(header::CONTENT_TYPE, mime)], bytes).into_response());
     }
     let bytes: Vec<u8> = db
         .query_row(
@@ -141,14 +128,7 @@ pub async fn preview(
         )
         .map_err(|_| StatusCode::NOT_FOUND)?;
     let mime = crate::submit::sniff_image(&bytes).ok_or(StatusCode::NOT_FOUND)?;
-    Ok((
-        [
-            (header::CONTENT_TYPE, mime.to_string()),
-            (header::ACCESS_CONTROL_ALLOW_ORIGIN, "*".to_string()),
-        ],
-        bytes,
-    )
-        .into_response())
+    Ok(([(header::CONTENT_TYPE, mime)], bytes).into_response())
 }
 
 pub async fn download(
@@ -174,7 +154,6 @@ pub async fn download(
                 header::CONTENT_DISPOSITION,
                 format!("attachment; filename=\"{id}-{version}.zip\""),
             ),
-            (header::ACCESS_CONTROL_ALLOW_ORIGIN, "*".to_string()),
         ],
         zip,
     )

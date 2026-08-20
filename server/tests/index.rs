@@ -316,3 +316,43 @@ async fn public_read_endpoints_carry_open_cors() {
         );
     }
 }
+
+/// The site signs in and posts (ratings, reviews, favourites) from the
+/// browser, cross-origin: those requests preflight. Per-handler headers
+/// cannot answer OPTIONS — the CORS layer must.
+#[tokio::test]
+async fn preflight_and_authed_calls_carry_cors() {
+    let app = router(test_state());
+
+    let req = Request::builder()
+        .method("OPTIONS")
+        .uri("/auth/login")
+        .header("origin", "http://localhost:8080")
+        .header("access-control-request-method", "POST")
+        .header("access-control-request-headers", "content-type, authorization")
+        .body(Body::empty())
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert!(res.status().is_success(), "preflight must succeed, got {}", res.status());
+    let allow_origin = res.headers().get(header::ACCESS_CONTROL_ALLOW_ORIGIN);
+    assert_eq!(allow_origin.map(|v| v.to_str().unwrap()), Some("*"));
+    let allow_headers = res.headers().get(header::ACCESS_CONTROL_ALLOW_HEADERS)
+        .map(|v| v.to_str().unwrap().to_lowercase()).unwrap_or_default();
+    assert!(allow_headers.contains("authorization"), "authorization must be allowed, got {allow_headers}");
+    assert!(allow_headers.contains("content-type"), "content-type must be allowed, got {allow_headers}");
+
+    // A plain authed GET carries the header too (the layer covers everything).
+    let req = Request::builder()
+        .method("GET")
+        .uri("/auth/whoami")
+        .header("origin", "http://localhost:8080")
+        .header("x-forwarded-for", "1.1.1.1")
+        .body(Body::empty())
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(
+        res.headers().get(header::ACCESS_CONTROL_ALLOW_ORIGIN).map(|v| v.to_str().unwrap()),
+        Some("*"),
+        "even a 401 response must carry CORS so the browser can read the status"
+    );
+}

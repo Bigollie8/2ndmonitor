@@ -25,6 +25,7 @@ base64 = "0.22"
 # above is already configured.
 lettre = { version = "0.11", default-features = false, features = ["smtp-transport", "rustls-tls", "builder", "pool"] }
 url = "2"
+tower-http = { version = "0.7.0", features = ["cors"] }
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }
