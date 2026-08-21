@@ -4,7 +4,7 @@ import { parseNewsConfig, headlineAge, DEFAULT_NEWS_CONFIG, NEWS_CATEGORIES } fr
 
 test('parseNewsConfig: valid categories pass, everything else falls back', () => {
   for (const { id } of NEWS_CATEGORIES) {
-    assert.deepEqual(parseNewsConfig({ category: id }), { category: id });
+    assert.deepEqual(parseNewsConfig({ category: id }), { category: id, region: 'uk' });
   }
   assert.deepEqual(parseNewsConfig(undefined), DEFAULT_NEWS_CONFIG);
   assert.deepEqual(parseNewsConfig(null), DEFAULT_NEWS_CONFIG);
@@ -16,7 +16,7 @@ test('parseNewsConfig: valid categories pass, everything else falls back', () =>
 test('parseNewsConfig: tolerates shared config keys in the same blob', () => {
   // instance.config is shared storage — a mapView key from some future change
   // must not break the parse (the parseRadarConfig lesson).
-  assert.deepEqual(parseNewsConfig({ category: 'sports', mapView: { x: 1 } }), { category: 'sports' });
+  assert.deepEqual(parseNewsConfig({ category: 'sports', mapView: { x: 1 } }), { category: 'sports', region: 'uk' });
 });
 
 test('headlineAge: RFC 2822 pubDate → compact age', () => {
@@ -33,4 +33,14 @@ test('headlineAge: unknown, garbage, and future dates never mislead', () => {
   assert.equal(headlineAge('yesterday-ish', now), null);
   // Clock skew: a feed stamped slightly ahead reads as "now", never "-3m".
   assert.equal(headlineAge('Tue, 05 Aug 2026 12:03:00 GMT', now), 'now');
+});
+
+test('parseNewsConfig: region (0.9.14) falls back independently of category', () => {
+  assert.deepEqual(parseNewsConfig({ category: 'world', region: 'us' }), { category: 'world', region: 'us' });
+  // legacy blob without region keeps its category and gains the UK default
+  assert.deepEqual(parseNewsConfig({ category: 'world' }), { category: 'world', region: 'uk' });
+  // garbage region degrades only the region
+  assert.deepEqual(parseNewsConfig({ category: 'tech', region: 'mars' }), { category: 'tech', region: 'uk' });
+  // garbage category degrades only the category
+  assert.deepEqual(parseNewsConfig({ category: 'crypto', region: 'us' }), { category: 'top', region: 'us' });
 });

@@ -99,6 +99,7 @@ commands.allow = [
   "fetch_stock_quotes",
   # News tile: category RSS headlines via the BBC/Guardian proxy (0.8.6).
   "fetch_news_headlines",
+  "crash_log_path",
   "fetch_tide_predictions",
   "fetch_aircraft_states",
 

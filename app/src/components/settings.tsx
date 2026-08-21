@@ -575,6 +575,11 @@ export function SettingsWindow({
           control: <Toggle checked={v.audioDebug} onChange={(c) => set('audioDebug', c)} accent={accent} />,
         },
         {
+          id: 'advanced-crash-log', label: 'Crash log', stacked: true,
+          hint: 'Every internal error (including Rust panics) is appended here with a timestamp and location. Attach it to a bug report',
+          control: <CrashLogRow accent={accent} />,
+        },
+        {
           id: 'advanced-onboarding', label: 'Replay onboarding',
           hint: 'Run the first-launch setup flow again',
           control: <SettingsButton label="Replay" onClick={onReplayOnboarding} />,
@@ -952,6 +957,42 @@ function SliderControl({ value, min, max, step, format, accent, onChange }: {
         type="range" min={min} max={max} step={step} value={value}
         onChange={(e) => onChange(parseFloat(e.target.value))}
         style={{ width: 150, accentColor: accent }}
+      />
+    </div>
+  );
+}
+
+/** Crash log locator (0.9.14): resolves the file path once, shows it in
+ *  selectable mono, and copies it to the clipboard — the retrievable-log
+ *  half of making "random crashes" reportable. */
+function CrashLogRow({ accent }: { accent: string }) {
+  const [path, setPath] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    if (!isTauri) { setPath('(desktop app only)'); return; }
+    let cancelled = false;
+    void import('@tauri-apps/api/core')
+      .then(({ invoke }) => invoke<string>('crash_log_path'))
+      .then((p) => { if (!cancelled) setPath(p); })
+      .catch((e) => { if (!cancelled) setPath(`unavailable: ${String(e)}`); });
+    return () => { cancelled = true; };
+  }, []);
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+      <code style={{
+        flex: 1, minWidth: 0, fontSize: 10.5, fontFamily: MONO, color: 'rgba(255,255,255,0.7)',
+        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', userSelect: 'text',
+      }} title={path ?? ''}>{path ?? '…'}</code>
+      <SettingsButton
+        label={copied ? 'Copied' : 'Copy path'}
+        accent={copied ? accent : undefined}
+        onClick={() => {
+          if (!path) return;
+          void navigator.clipboard?.writeText(path).then(() => {
+            setCopied(true);
+            setTimeout(() => setCopied(false), 1500);
+          });
+        }}
       />
     </div>
   );

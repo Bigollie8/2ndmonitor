@@ -122,11 +122,18 @@ export function makeSpectrumReader(
           const b = Math.sin(t * 0.7 + i * 0.05) * 0.12;
           const c = Math.sin(t * 4.2 + i * 1.1) * 0.06;
           const noise = (Math.sin(i * 1.7 + t) * 0.5 + Math.cos(i * 0.9 + t * 2) * 0.5) * 0.08;
-          // 120 bpm fake onsets
+          // 120 bpm fake onsets as CONTINUOUS envelopes (0.9.14). The old
+          // shapes were hard on/off gates (kick: 8% of the beat then zero,
+          // snare: a 2%-wide step, hat: a 4% step), so the idle motion
+          // snapped instead of breathing: the "choppy/jumpy idle" report.
+          // Each is now a smooth attack/decay curve of the beat phase; the
+          // live-audio branch above is untouched.
           const beatT = (beatPhase % 0.5) / 0.5;
-          const fkick = beatT < 0.08 ? Math.exp(-beatT * 30) : 0;
-          const fsnare = (beatPhase % 0.5) > 0.25 && (beatPhase % 0.5) < 0.27 ? 1 : 0;
-          const fhat = (beatPhase * 4) % 1 < 0.04 ? 0.6 : 0;
+          const fkick = (1 - Math.exp(-beatT * 40)) * Math.exp(-beatT * 4.5);
+          const sn = (beatT - 0.5) / 0.045;
+          const fsnare = Math.exp(-sn * sn);
+          const hatT = (beatPhase * 4) % 1;
+          const fhat = 0.6 * (1 - Math.exp(-hatT * 50)) * Math.exp(-hatT * 9);
           const kickBoost = i < bassN ? fkick * 0.6 : 0;
           const snareBoost = i >= bassN && i < midEnd ? fsnare * 0.4 : 0;
           const hatBoost = i >= midEnd ? fhat * 0.3 : 0;

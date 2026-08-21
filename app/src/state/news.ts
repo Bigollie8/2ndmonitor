@@ -34,19 +34,35 @@ export const NEWS_CATEGORIES = [
 
 export type NewsCategory = (typeof NEWS_CATEGORIES)[number]['id'];
 
+/** Publisher sets the Rust side maps per region (0.9.14). `uk` stays the
+ *  default so existing tiles are unchanged. */
+export const NEWS_REGIONS = [
+  { id: 'uk', label: 'UK', publishers: ['BBC', 'The Guardian'] },
+  { id: 'us', label: 'US', publishers: ['NYT', 'NPR'] },
+] as const;
+
+export type NewsRegion = (typeof NEWS_REGIONS)[number]['id'];
+
 export interface NewsConfig {
   category: NewsCategory;
+  region: NewsRegion;
 }
 
-export const DEFAULT_NEWS_CONFIG: NewsConfig = { category: 'top' };
+export const DEFAULT_NEWS_CONFIG: NewsConfig = { category: 'top', region: 'uk' };
 
 /** Parse a persisted `instance.config` blob — same parse-with-fallback
  *  pattern as parseStocksConfig / parseRadarConfig. */
 export function parseNewsConfig(raw: unknown): NewsConfig {
   if (!raw || typeof raw !== 'object') return DEFAULT_NEWS_CONFIG;
   const c = raw as Record<string, unknown>;
-  const valid = NEWS_CATEGORIES.some((k) => k.id === c.category);
-  return valid ? { category: c.category as NewsCategory } : DEFAULT_NEWS_CONFIG;
+  const category = NEWS_CATEGORIES.some((k) => k.id === c.category)
+    ? (c.category as NewsCategory) : DEFAULT_NEWS_CONFIG.category;
+  // Each field falls back independently: an old {category} blob keeps its
+  // category and gains the UK default region; garbage in either field
+  // degrades only that field.
+  const region = NEWS_REGIONS.some((r) => r.id === c.region)
+    ? (c.region as NewsRegion) : DEFAULT_NEWS_CONFIG.region;
+  return { category, region };
 }
 
 /** "Sat, 05 Aug 2026 06:00:00 GMT" → "2h" style age, or null when unknown /
@@ -64,10 +80,16 @@ export function headlineAge(published: string | null, nowMs: number): string | n
   return `${Math.floor(hours / 24)}d`;
 }
 
-export async function fetchNewsHeadlines(category: NewsCategory): Promise<NewsResult> {
+export async function fetchNewsHeadlines(category: NewsCategory, region: NewsRegion = 'uk'): Promise<NewsResult> {
   if (!isTauri) return { headlines: [], error: null };
   const { invoke } = await import('@tauri-apps/api/core');
   // No catch: usePoll drives its backoff off thrown errors, and unlike stocks
   // there IS a meaningful whole-fetch failure here (both feeds down).
-  return await invoke<NewsResult>('fetch_news_headlines', { category });
+  return await invoke<NewsResult>('fetch_news_headlines', { category, region });
+}
+
+/** Short badge for a headline's publisher name ("The Guardian" -> "GRD"). */
+export function sourceBadge(source: string): string {
+  const known: Record<string, string> = { 'BBC': 'BBC', 'The Guardian': 'GRD', 'NYT': 'NYT', 'NPR': 'NPR' };
+  return known[source] ?? source.replace(/[^A-Za-z]/g, '').slice(0, 3).toUpperCase();
 }
