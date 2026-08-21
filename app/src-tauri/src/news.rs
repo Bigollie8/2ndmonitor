@@ -42,7 +42,38 @@ pub struct NewsResult {
 /// Category → (source name, feed URL) pairs. Fixed at compile time: the URLs
 /// are part of the app's network surface, the same way `net:<host>` is fixed
 /// at authoring time for declarative tiles.
-fn feeds_for(category: &str) -> Option<[(&'static str, &'static str); 2]> {
+/// Publisher sets by region (0.9.14). `uk` is the original BBC + Guardian
+/// pair and stays the default, so existing tiles are unchanged; `us` adds
+/// The New York Times + NPR. Every feed here was captured live and its
+/// shape is covered by a parser test below: the parser is hand-rolled, so
+/// a publisher only joins this list with a fixture that proves it parses.
+pub const NEWS_REGIONS: &[&str] = &["uk", "us"];
+
+fn feeds_for(region: &str, category: &str) -> Option<[(&'static str, &'static str); 2]> {
+    match region {
+        "us" => feeds_us(category),
+        _ => feeds_uk(category),
+    }
+}
+
+fn feeds_us(category: &str) -> Option<[(&'static str, &'static str); 2]> {
+    // NYT section feeds + NPR topic feeds (ids verified live 2026-08-21:
+    // 1001 News, 1004 World, 1014 Politics, 1006 Business, 1019 Technology,
+    // 1007 Science, 1055 Sports, 1008 Culture).
+    Some(match category {
+        "top" => [("NYT", "https://rss.nytimes.com/services/xml/rss/nyt/HomePage.xml"), ("NPR", "https://feeds.npr.org/1001/rss.xml")],
+        "world" => [("NYT", "https://rss.nytimes.com/services/xml/rss/nyt/World.xml"), ("NPR", "https://feeds.npr.org/1004/rss.xml")],
+        "politics" => [("NYT", "https://rss.nytimes.com/services/xml/rss/nyt/Politics.xml"), ("NPR", "https://feeds.npr.org/1014/rss.xml")],
+        "business" => [("NYT", "https://rss.nytimes.com/services/xml/rss/nyt/Business.xml"), ("NPR", "https://feeds.npr.org/1006/rss.xml")],
+        "tech" => [("NYT", "https://rss.nytimes.com/services/xml/rss/nyt/Technology.xml"), ("NPR", "https://feeds.npr.org/1019/rss.xml")],
+        "science" => [("NYT", "https://rss.nytimes.com/services/xml/rss/nyt/Science.xml"), ("NPR", "https://feeds.npr.org/1007/rss.xml")],
+        "sports" => [("NYT", "https://rss.nytimes.com/services/xml/rss/nyt/Sports.xml"), ("NPR", "https://feeds.npr.org/1055/rss.xml")],
+        "entertainment" => [("NYT", "https://rss.nytimes.com/services/xml/rss/nyt/Arts.xml"), ("NPR", "https://feeds.npr.org/1008/rss.xml")],
+        _ => return None,
+    })
+}
+
+fn feeds_uk(category: &str) -> Option<[(&'static str, &'static str); 2]> {
     Some(match category {
         "top" => [
             ("BBC", "https://feeds.bbci.co.uk/news/rss.xml"),
@@ -81,8 +112,11 @@ fn feeds_for(category: &str) -> Option<[(&'static str, &'static str); 2]> {
 }
 
 #[tauri::command]
-pub async fn fetch_news_headlines(category: String) -> Result<NewsResult, String> {
-    let Some(feeds) = feeds_for(&category) else {
+pub async fn fetch_news_headlines(category: String, region: Option<String>) -> Result<NewsResult, String> {
+    // Unknown/absent region falls back to the UK default, never an error: a
+    // tile config that predates regions must keep working untouched.
+    let region = region.filter(|r| NEWS_REGIONS.contains(&r.as_str())).unwrap_or_else(|| "uk".to_string());
+    let Some(feeds) = feeds_for(&region, &category) else {
         return Err(format!("unknown news category {category:?}"));
     };
     tokio::task::spawn_blocking(move || {
@@ -239,6 +273,72 @@ mod tests {
         let items = parse_rss_items(GUARDIAN);
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].0, "Women must not feel pressure to have 'ideal birth', says minister");
+    }
+
+    // Captured from the live NYT World feed, 2026-08-21: plain titles,
+    // namespaced <atom:link href=...> siblings that must NOT be mistaken for
+    // the plain <link>, raw UTF-8 curly quotes in the description.
+    const NYT: &str = r#"<rss xmlns:atom="http://www.w3.org/2005/Atom" version="2.0"><channel>
+      <title>NYT &gt; World News</title>
+      <atom:link href="https://rss.nytimes.com/services/xml/rss/nyt/World.xml" rel="self"></atom:link>
+      <item>
+        <title>Giorgia Meloni Cuts the Hard Right a Path to Power</title>
+        <link>https://www.nytimes.com/2026/08/21/world/europe/italy.html</link>
+        <guid isPermaLink="true">https://www.nytimes.com/2026/08/21/world/europe/italy.html</guid>
+        <atom:link href="https://www.nytimes.com/2026/08/21/world/europe/italy.html" rel="standout"></atom:link>
+        <description>In a rare interview, the onetime outcast reflects on “the uncomfortable side of history”.</description>
+        <pubDate>Fri, 21 Aug 2026 09:01:21 +0000</pubDate>
+      </item>
+    </channel></rss>"#;
+
+    // Captured from the live NPR World feed, 2026-08-21: plain title, &apos;
+    // in the description, <content:encoded> CDATA AFTER the link that must
+    // not leak into the title, pubDate before link.
+    const NPR: &str = r#"<rss xmlns:content="http://purl.org/rss/1.0/modules/content/" version="2.0"><channel>
+      <title>NPR Topics: World</title>
+      <item>
+        <title>Top Iran official says US focus on economic warfare shows it has failed militarily</title>
+        <description>The regime dismissed President Trump&apos;s threats.</description>
+        <pubDate>Fri, 21 Aug 2026 07:42:10 -0400</pubDate>
+        <link>https://www.npr.org/2026/08/21/nx-s1-5940610/iran-us-threat</link>
+        <guid>https://www.npr.org/2026/08/21/nx-s1-5940610/iran-us-threat</guid>
+        <content:encoded><![CDATA[<img src='x' alt='Parliament'/><p>body</p>]]></content:encoded>
+      </item>
+    </channel></rss>"#;
+
+    #[test]
+    fn parses_the_nyt_shape_plain_title_and_namespaced_atom_links() {
+        let items = parse_rss_items(NYT);
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].0, "Giorgia Meloni Cuts the Hard Right a Path to Power");
+        // The plain <link>, not the atom:link href.
+        assert_eq!(items[0].1, "https://www.nytimes.com/2026/08/21/world/europe/italy.html");
+        assert_eq!(items[0].2.as_deref(), Some("Fri, 21 Aug 2026 09:01:21 +0000"));
+    }
+
+    #[test]
+    fn parses_the_npr_shape_pubdate_before_link_and_content_encoded() {
+        let items = parse_rss_items(NPR);
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].0, "Top Iran official says US focus on economic warfare shows it has failed militarily");
+        assert_eq!(items[0].1, "https://www.npr.org/2026/08/21/nx-s1-5940610/iran-us-threat");
+        assert_eq!(items[0].2.as_deref(), Some("Fri, 21 Aug 2026 07:42:10 -0400"));
+    }
+
+    #[test]
+    fn every_region_covers_every_category_with_two_feeds() {
+        for region in super::NEWS_REGIONS {
+            for cat in ["top", "world", "politics", "business", "tech", "science", "sports", "entertainment"] {
+                let feeds = super::feeds_for(region, cat).unwrap_or_else(|| panic!("{region}/{cat} missing"));
+                assert_eq!(feeds.len(), 2);
+                for (src, url) in feeds {
+                    assert!(!src.is_empty() && url.starts_with("https://"), "{region}/{cat}: {src} {url}");
+                }
+            }
+        }
+        assert!(super::feeds_for("uk", "nope").is_none());
+        // Unknown region falls back to UK rather than erroring.
+        assert!(super::feeds_for("mars", "top").is_some());
     }
 
     #[test]

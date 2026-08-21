@@ -1892,9 +1892,13 @@ export default function App() {
               })}
               accent={accent}
             >
-              <Suspense fallback={<TileSkeleton rows={3} />}>
-                {renderTile(instance)}
-              </Suspense>
+              {/* Per-tile boundary (0.9.14): one tile's throw renders as
+                  one broken tile with a Try-again, never a blank canvas. */}
+              <ErrorBoundary inline surface={instance.name ?? instance.type}>
+                <Suspense fallback={<TileSkeleton rows={3} />}>
+                  {renderTile(instance)}
+                </Suspense>
+              </ErrorBoundary>
             </TileFrame>
           );
         })}

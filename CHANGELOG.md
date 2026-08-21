@@ -5,6 +5,36 @@ All notable changes to 2ndMonitor are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.9.14] - 2026-08-21
+
+### Added
+- **News tile: choose your region.** A UK / US switch in the tile header
+  picks the publisher set: UK stays BBC + The Guardian (the default, so
+  nothing changes for existing tiles), US adds The New York Times + NPR
+  across all eight categories. The header and source badges now reflect
+  the actual publishers. Every new feed was captured live and is covered
+  by parser tests
+- **Crashes are reportable now.** A root-level error boundary means a
+  fault in any surface shows what broke (with a Reload button) instead
+  of a black window; every dashboard tile has its own boundary, so one
+  broken tile is one broken tile; and Rust panics are written to a
+  persistent crash log with timestamp, thread and location. Find the
+  file in Settings → Advanced → Crash log (with a Copy-path button) and
+  attach it to a report
+
+### Fixed
+- **The visualizer's idle animation is smooth.** The no-music fallback
+  used hard on/off beat gates, so idle motion snapped instead of
+  breathing; the kick, snare and hat are now continuous envelopes. Live
+  audio is untouched
+
+### Audited
+- A stability pass across the frontend and Rust side (see
+  `docs/STABILITY_AUDIT.md`): every event-listener effect carries proper
+  cleanup, the 130+ `unwrap()`s are almost entirely test code, the
+  remaining production `expect` is a static-response invariant, and
+  WebGL contexts live inside sandbox iframes that release on unmount
+
 ## [0.9.13] - 2026-08-19
 
 ### Changed

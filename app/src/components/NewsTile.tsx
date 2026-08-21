@@ -1,8 +1,8 @@
 import React, { useMemo, useState } from 'react';
 import { HFTile } from './tiles';
 import {
-  type Headline, type NewsCategory,
-  NEWS_CATEGORIES, fetchNewsHeadlines, parseNewsConfig, headlineAge,
+  type Headline, type NewsCategory, type NewsRegion,
+  NEWS_CATEGORIES, NEWS_REGIONS, fetchNewsHeadlines, parseNewsConfig, headlineAge, sourceBadge,
 } from '../state/news';
 import { usePoll } from '../state/usePoll';
 import { TileSkeleton } from './tileStates';
@@ -26,9 +26,9 @@ export interface NewsTileProps {
 function NewsTileImpl({ density, accent, editing, config, setConfig }: NewsTileProps) {
   const parsed = useMemo(() => parseNewsConfig(config), [config]);
   const { data, error, loading } = usePoll(
-    () => fetchNewsHeadlines(parsed.category),
+    () => fetchNewsHeadlines(parsed.category, parsed.region),
     REFRESH_MS,
-    [parsed.category],
+    [parsed.category, parsed.region],
   );
   const headlines: Headline[] = data?.headlines ?? [];
   const feedError = error ?? data?.error ?? null;
@@ -41,11 +41,37 @@ function NewsTileImpl({ density, accent, editing, config, setConfig }: NewsTileP
   };
 
   const label = NEWS_CATEGORIES.find((c) => c.id === parsed.category)?.label ?? 'News';
+  const regionDef = NEWS_REGIONS.find((r) => r.id === parsed.region) ?? NEWS_REGIONS[0];
+  const setRegion = (region: NewsRegion) => setConfig({ ...(config ?? {}), region });
 
+  // Region picker (0.9.14) replaces the hardcoded "BBC · Guardian" label;
+  // the publisher list is derived from the selected region.
   const headRight = (
-    <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.45)', fontFamily: MONO }}>
-      BBC · Guardian
-    </span>
+    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+      <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.45)', fontFamily: MONO }}>
+        {regionDef.publishers.join(' · ')}
+      </span>
+      <div style={{ display: 'flex', gap: 2 }}>
+        {NEWS_REGIONS.map((r) => {
+          const on = r.id === parsed.region;
+          return (
+            <button
+              key={r.id}
+              onClick={() => setRegion(r.id)}
+              data-no-drag
+              title={`${r.label} publishers: ${r.publishers.join(', ')}`}
+              style={{
+                padding: '1px 6px', fontSize: 9, fontFamily: MONO, fontWeight: on ? 700 : 400,
+                borderRadius: 'var(--control-radius, 4px)', cursor: 'pointer',
+                background: on ? `${accent}22` : 'transparent',
+                color: on ? accent : 'rgba(255,255,255,0.45)',
+                border: `1px solid ${on ? `${accent}55` : 'rgba(255,255,255,0.1)'}`,
+              }}
+            >{r.label}</button>
+          );
+        })}
+      </div>
+    </div>
   );
 
   return (
@@ -101,8 +127,8 @@ function NewsTileImpl({ density, accent, editing, config, setConfig }: NewsTileP
               >
                 <span style={{
                   fontSize: 9, fontFamily: MONO, fontWeight: 700, flexShrink: 0,
-                  color: h.source === 'BBC' ? '#fca5a5' : accent, minWidth: 26,
-                }}>{h.source === 'BBC' ? 'BBC' : 'GRD'}</span>
+                  color: regionDef.publishers.indexOf(h.source as never) === 0 ? '#fca5a5' : accent, minWidth: 26,
+                }}>{sourceBadge(h.source)}</span>
                 <span style={{
                   fontSize: 11.5, color: 'rgba(255,255,255,0.85)', lineHeight: 1.4,
                   flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis',

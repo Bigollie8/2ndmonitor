@@ -25,6 +25,7 @@ mod glass;
 mod lyrics;
 mod market;
 mod news;
+mod crash_log;
 mod mixer;
 mod nowplaying;
 mod marketplace;
@@ -115,6 +116,7 @@ pub fn run() {
             actions::app_send_hotkey,
             market::fetch_stock_quotes,
             news::fetch_news_headlines,
+            crash_log::crash_log_path,
             market::fetch_tide_predictions,
             market::fetch_aircraft_states,
             foreground::foreground_get,
@@ -221,6 +223,10 @@ pub fn run() {
             sandbox::sandbox_token,
         ])
         .setup(|app| {
+            // Crash legibility (0.9.14): every Rust panic now lands in
+            // <app-data>/crash.log with message + location before the
+            // default hook runs — Settings → Advanced shows the path.
+            crash_log::install(&app.handle().clone());
             // Integrated titlebar (0.9.6): the config ships decorations:false
             // so Windows never flashes a native title bar — the app's own top
             // bar IS the titlebar (drag region + min/max/close controls).
