@@ -379,7 +379,17 @@ export function useCanvas(): { w: number; h: number } {
     h: typeof window !== 'undefined' ? window.innerHeight : 1440,
   }));
   useEffect(() => {
-    const onResize = () => setSize({ w: window.innerWidth, h: window.innerHeight });
+    const onResize = () => {
+      // 0.9.15: a minimized/alt-tabbed window reports a tiny (or zero)
+      // viewport FOR AS LONG AS IT STAYS MINIMIZED — long enough to outlast
+      // any debounce. Feeding that downstream flipped orientation, produced
+      // NaN render rects, and (via the 0.9.13 monitor re-fit) permanently
+      // clamped saved layouts against a 160x28 canvas — the "after alt-tab
+      // only the forecast shows" corruption. No real dashboard window is
+      // ever this small; hold the last good size instead.
+      if (window.innerWidth < 320 || window.innerHeight < 240) return;
+      setSize({ w: window.innerWidth, h: window.innerHeight });
+    };
     window.addEventListener('resize', onResize);
     return () => window.removeEventListener('resize', onResize);
   }, []);
@@ -597,7 +607,21 @@ export function refitTiles(
 ): TileInstance[] {
   let changed = false;
   const out = tiles.map((t) => {
-    const r = clampRectFrac(t.rect, canvasPx, topInsetPx);
+    // Domain repair first (0.9.15): profiles hit by the tiny-canvas clamp
+    // carry rects like {x:0, y:2, w:1.25, h:5} — off-canvas below and wider
+    // than the screen. Fold any such rect back into the unit square before
+    // the pixel clamp, so a corrupted layout heals itself on the next boot
+    // or monitor change instead of staying invisible. Healthy rects are
+    // already in-domain and pass through bit-identical.
+    const w0 = Math.min(Math.max(t.rect.w, 0), 1);
+    const h0 = Math.min(Math.max(t.rect.h, 0), 1);
+    const inDomain = {
+      w: w0,
+      h: h0,
+      x: Math.min(Math.max(t.rect.x, 0), 1 - w0),
+      y: Math.min(Math.max(t.rect.y, 0), 1 - h0),
+    };
+    const r = clampRectFrac(inDomain, canvasPx, topInsetPx);
     const moved = Math.abs(r.x - t.rect.x) > 1e-4 || Math.abs(r.y - t.rect.y) > 1e-4
       || Math.abs(r.w - t.rect.w) > 1e-4 || Math.abs(r.h - t.rect.h) > 1e-4;
     if (!moved) return t;

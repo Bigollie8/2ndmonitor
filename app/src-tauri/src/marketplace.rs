@@ -182,7 +182,7 @@ fn login_status_message(status: u16) -> Option<String> {
 /// outgoing request. It is read Rust-side via `secrets::secret_get_inner`
 /// by the caller and passed in as a borrow here; this function does not
 /// store, log, or otherwise retain it beyond building the one header.
-fn post_capped_json(
+pub(crate) fn post_capped_json(
     url: &str,
     body: &serde_json::Value,
     cap: usize,
@@ -236,7 +236,7 @@ fn post_capped_json(
 /// `marketplace_rate` does: the token is resolved Rust-side from the DPAPI/
 /// Keychain-backed secret store and is never accepted as a command parameter,
 /// so the frontend cannot supply (or leak) one.
-fn session_token<R: Runtime>(app: &AppHandle<R>) -> Result<String, String> {
+pub(crate) fn session_token<R: Runtime>(app: &AppHandle<R>) -> Result<String, String> {
     let raw = crate::secrets::secret_get_inner(app, SESSION_SECRET_KEY)
         .ok_or_else(|| "not signed in".to_string())?;
     serde_json::from_str::<serde_json::Value>(&raw)
@@ -248,7 +248,7 @@ fn session_token<R: Runtime>(app: &AppHandle<R>) -> Result<String, String> {
 /// Authenticated GET. Same https-only and redirects(0) reasoning as
 /// `post_capped_json` — a followed redirect would carry the Authorization
 /// header to wherever `Location` pointed.
-fn get_capped_auth(url: &str, cap: usize, bearer: &str) -> Result<(u16, Vec<u8>), String> {
+pub(crate) fn get_capped_auth(url: &str, cap: usize, bearer: &str) -> Result<(u16, Vec<u8>), String> {
     if !url.starts_with("https://") {
         return Err("only https URLs are allowed".into());
     }

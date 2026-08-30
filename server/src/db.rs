@@ -233,6 +233,16 @@ pub fn init(conn: &Connection) {
             idx       INTEGER NOT NULL,
             PRIMARY KEY (slug, bundle_id)
         );
+        CREATE TABLE IF NOT EXISTS user_presets (
+            user_id    INTEGER NOT NULL,
+            file       TEXT    NOT NULL, -- filename only; presets::valid_file_name
+            content    BLOB    NOT NULL, -- preset text bytes, stored not pathed
+                                         -- (same reasoning as users.avatar)
+            sha256     TEXT    NOT NULL,
+            size       INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL,
+            PRIMARY KEY (user_id, file)
+        );
         "#,
     )
     .expect("schema init");

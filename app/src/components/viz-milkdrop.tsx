@@ -11,6 +11,7 @@ import { trackKeyOf } from '../state/lyrics';
 import { ORIGINALS } from '../state/originals';
 import { TRON_PALETTE, paletteFromAccents } from '../state/originals/palette';
 import { IS_MAC } from '../state/platform';
+import { PresetCloudSync } from './PresetCloudSync';
 
 /** Where user-dropped presets live, for the folder hint shown under the
  *  "Your presets" group. Real path per platform (see src-tauri's app-data-dir
@@ -544,6 +545,13 @@ function PresetPicker({ library, failures, currentKey, accent, onPick, onClose, 
           borderTop: '1px solid rgba(255,255,255,0.06)',
         }}>
           Drop Butterchurn .json presets in the folder above. MilkDrop 2 presets only — .milk2 (MilkDrop 3) is not supported.
+        </div>
+        <div style={{
+          padding: '8px 12px', borderTop: '1px solid rgba(255,255,255,0.06)',
+          display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8,
+        }}>
+          <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.4)', paddingTop: 5 }}>Cloud</div>
+          <PresetCloudSync accent={accent} />
         </div>
         <div style={{
           padding: '8px 12px 10px', borderTop: '1px solid rgba(255,255,255,0.06)',

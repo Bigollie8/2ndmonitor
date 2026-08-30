@@ -606,3 +606,16 @@ test('refitTiles clamps off-canvas and undersized rects, by-reference when clean
   assert.equal(out[2], dirty[2], 'untouched tile keeps identity');
   assert.deepEqual(out.map((t) => t.instanceId), ['off', 'tiny', 'fine'], 'order preserved');
 });
+
+test('refitTiles repairs tiny-canvas corruption back into the unit square (0.9.15)', () => {
+  // The exact shape the 0.9.13 refit wrote when a minimized window reported
+  // a 160x28 canvas: y at 200% of the canvas, wider than the screen.
+  const corrupted = [{ instanceId: 'z', type: 'clock', rect: { x: 0, y: 2, w: 1.25, h: 5 } }] as unknown as TileInstance[];
+  const out = refitTiles(corrupted, { w: 1920, h: 1080 });
+  const r = out[0].rect;
+  assert.ok(r.x >= 0 && r.y >= 0 && r.x + r.w <= 1.0001 && r.y + r.h <= 1.0001, JSON.stringify(r));
+  assert.ok(r.y + r.h <= 1 - 32 / 1080 + 1e-6, 'clears the bottom bar');
+  // ...and a healthy layout still passes through by reference.
+  const healthy = [{ instanceId: 'h', type: 'clock', rect: { x: 0.1, y: 0.2, w: 0.4, h: 0.3 } }] as unknown as TileInstance[];
+  assert.equal(refitTiles(healthy, { w: 1920, h: 1080 }), healthy);
+});

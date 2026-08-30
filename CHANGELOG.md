@@ -5,6 +5,40 @@ All notable changes to 2ndMonitor are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.9.15] - 2026-08-30
+
+### Added
+- **Your visualizer presets can back up to the cloud.** Signed in to the
+  marketplace, the preset picker and Settings → Visualizer gain a
+  "Back up / Restore" pair for the presets you dropped into the presets
+  folder. Back up uploads new and changed files; Restore downloads what's
+  missing on this device and **never overwrites a local file** — a preset
+  that differs on both sides stays local and is reported, not clobbered.
+  Manual by design: nothing syncs in the background
+
+### Fixed
+- **No more yesterday's track on launch.** Windows reports the last app
+  that held media focus even when it's long paused, so the Now Playing
+  tile showed whatever you had open last time. A session now has to
+  actually play once this run before it appears; a track already playing
+  when the app starts shows immediately, and pausing behaves exactly as
+  before
+- **Idle CPU: the visualizer now rests when the music does.** The audio
+  side has idled during silence since 0.9.6, but the animation kept
+  running at full frame rate for as long as the window was visible — on
+  an always-visible second monitor, that's forever. The idle animation
+  now keeps full smoothness for 10 s after audio ends, then steps down to
+  30 fps, and settles at 12 fps after two minutes of quiet. Any sound
+  restores full rate instantly. This also flattens the reported CPU
+  "sawtooth" while the app just sits open
+- **Alt-tab could collapse a profile to a single tile.** A minimized or
+  freshly restored window can briefly report an absurd viewport (we
+  measured 160×28), and the monitor re-fit introduced in 0.9.13 would
+  clamp every tile against it — corrupting the saved layout so only one
+  tile survived. Implausible viewport reports are now ignored, the re-fit
+  refuses to run against a tiny or hidden window, and layouts that were
+  already corrupted heal themselves on next launch
+
 ## [0.9.14] - 2026-08-21
 
 ### Added

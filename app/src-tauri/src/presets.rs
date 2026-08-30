@@ -14,7 +14,7 @@ pub struct UserPreset {
     pub ext: String,
 }
 
-fn presets_dir<R: Runtime>(app: &AppHandle<R>) -> Result<std::path::PathBuf, String> {
+pub(crate) fn presets_dir<R: Runtime>(app: &AppHandle<R>) -> Result<std::path::PathBuf, String> {
     let dir = app
         .path()
         .app_data_dir()
@@ -25,7 +25,7 @@ fn presets_dir<R: Runtime>(app: &AppHandle<R>) -> Result<std::path::PathBuf, Str
 }
 
 /// Reject anything that could escape the presets dir. Filenames only.
-fn is_safe_name(name: &str) -> bool {
+pub(crate) fn is_safe_name(name: &str) -> bool {
     !name.is_empty()
         && !name.contains(['/', '\\'])
         && !name.contains("..")

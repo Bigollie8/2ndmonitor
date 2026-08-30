@@ -20,6 +20,7 @@ import { IS_MAC } from '../state/platform';
 import {
   LS_URL, LS_PUBKEY, DEFAULT_URL, DEFAULT_PUBKEY, cfgUrl, cfgPubkey, isDefaultServer,
 } from '../state/marketplaceConfig';
+import { PresetCloudSync } from './PresetCloudSync';
 
 const MONO = '"JetBrains Mono", ui-monospace, monospace';
 const HAIRLINE = '1px solid var(--hairline, rgba(255,255,255,0.05))';
@@ -200,6 +201,11 @@ export function SettingsWindow({
           id: 'viz-artbg', label: 'Album-art backdrop',
           hint: 'Blur the current album art behind the visualizer',
           control: <Toggle checked={v.vizArtBg} onChange={(c) => set('vizArtBg', c)} accent={accent} />,
+        },
+        {
+          id: 'viz-cloud-backup', label: 'Preset cloud backup',
+          hint: 'Back up the presets in your presets folder to your marketplace account, or restore them on another machine. Restoring never overwrites a local file',
+          control: <PresetCloudSync accent={accent} />,
         },
         {
           id: 'viz-audio-source', label: 'Audio source',

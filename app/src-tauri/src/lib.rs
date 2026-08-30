@@ -30,6 +30,7 @@ mod mixer;
 mod nowplaying;
 mod marketplace;
 mod presets;
+mod presets_cloud;
 mod sandbox;
 mod secrets;
 mod seed;
@@ -149,6 +150,9 @@ pub fn run() {
             presets::presets_read,
             presets::presets_market_list,
             presets::presets_market_read,
+            presets_cloud::presets_cloud_list,
+            presets_cloud::presets_cloud_push,
+            presets_cloud::presets_cloud_pull,
             visualizers::visualizers_list,
             visualizers::visualizers_read,
             visualizers::visualizers_write,

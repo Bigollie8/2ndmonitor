@@ -1370,7 +1370,12 @@ export default function App() {
   const updateActiveOrientationStable = useRef(updateActiveOrientation);
   updateActiveOrientationStable.current = updateActiveOrientation;
   useEffect(() => {
-    if (canvas.w <= 0 || canvas.h <= 0) return;
+    // 0.9.15: useCanvas now holds its last good size through minimize, but
+    // keep an explicit plausibility + visibility gate here too — refitting
+    // WRITES the saved layout, and a wrong write is the worst failure this
+    // effect can produce (it corrupted Work profiles via 160x28 canvases).
+    if (canvas.w < 480 || canvas.h < 360) return;
+    if (document.hidden) return;
     const id = setTimeout(() => {
       const prev = lastFitRef.current;
       const big = !prev || prev.orient !== orientation

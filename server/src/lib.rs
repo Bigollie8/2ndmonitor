@@ -25,6 +25,7 @@ pub mod staff;
 pub mod keys;
 pub mod manifest;
 pub mod media;
+pub mod presets;
 pub mod ratings;
 pub mod reviews;
 pub mod state;
@@ -52,6 +53,9 @@ pub fn router(state: AppState) -> Router {
         .route("/creators/:handle", get(profiles::get_creator))
         .route("/creators", get(directory::list))
         .route("/account/avatar", post(avatar::put_avatar))
+        .route("/account/presets", get(presets::list).post(presets::put))
+        .route("/account/presets/get", post(presets::get_one))
+        .route("/account/presets/delete", post(presets::delete_one))
         .route("/creators/:handle/avatar", get(avatar::get_avatar))
         .route("/topics", get(forum::list_topics).post(forum::create_topic))
         .route("/topics/replies", get(forum::list_replies).post(forum::create_reply))

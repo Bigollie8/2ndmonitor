@@ -284,6 +284,15 @@ export function useNowPlaying(): NowPlayingState {
     // setState outright when the signature matches means no closure, no
     // retention, and no render machinery at 0.5Hz.
     let lastSig: string | null = null;
+    // Stale-session gate (0.9.15): on launch, Windows GSMTC's
+    // GetCurrentSession() happily returns whatever app last held media
+    // focus — paused Spotify from yesterday included — so the tile showed
+    // "what I had open last time". Policy: a session that has NOT been seen
+    // playing during THIS app run presents as no track at all; the moment
+    // it actually plays (playing: true on any tick) it appears and then
+    // behaves exactly as before, pauses included. A track already playing
+    // at launch passes immediately.
+    let everSawPlaying = false;
 
     import('@tauri-apps/api/event')
       .then(({ listen }) => listen<NowPlayingPayload>('nowplaying:tick', (e) => {
@@ -292,7 +301,15 @@ export function useNowPlaying(): NowPlayingState {
         const sig = tickSignature(p);
         if (sig === lastSig) return;
         lastSig = sig;
-        const track = payloadToTrack(p);
+        if (p.playing) everSawPlaying = true;
+        // Suppression covers the WHOLE tick, not just the track: a stale
+        // session's playback anchor and source-app id would otherwise still
+        // render transport pills for the phantom session.
+        const suppressStale = !everSawPlaying;
+        const track = suppressStale ? null : payloadToTrack(p);
+        const effective: NowPlayingPayload = suppressStale
+          ? { ...p, has_session: false, source_app_id: '' }
+          : p;
 
         // Drift detection is ASYMMETRIC (see deriveNextPlayback): re-anchor
         // only on track/play-state change, forward drift > 1s, or backward

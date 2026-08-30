@@ -5,6 +5,7 @@ import { type SpectrumState, type Playback, mediaControls } from '../state/tauri
 import { useLyrics, currentLineIndex, trackKeyOf } from '../state/lyrics';
 import { recordDraw, useRegisterSurface } from '../perf/debug';
 import { paceFrame, isWindowHidden } from '../state/framePace';
+import { idleFpsCap } from '../state/idlePace';
 import { BrowserPlayer, type Bookmark } from './browser-player';
 import { bundleIdOf, isBundleMode, resolveVizSurface, resolvedVizModeLabel } from '../state/contentRegistry';
 import { useVizStyles } from './useVizStyles';
@@ -218,9 +219,19 @@ export interface VizProps {
  *
  *  `name` (optional): when provided + perfDebug is on, every successful draw is
  *  recorded for per-viz draw-rate attribution and long-task heuristic tagging. */
-export function useAnimateGate(paused?: boolean, name?: string): { shouldDraw(): boolean } {
+export function useAnimateGate(
+  paused?: boolean,
+  name?: string,
+  /** When given, the gate stages the frame rate down while `live` is false —
+   *  see state/idlePace.ts for the policy and the measurements behind it.
+   *  Surfaces without real-audio semantics (previews) simply omit it. */
+  liveRef?: { current: { live: boolean } },
+): { shouldDraw(): boolean } {
   const visibleRef = useRef(true);
   const paceRef = useRef({ nextDue: 0 });
+  /** Mount counts as "just live" so the fallback opens at full rate and only
+   *  settles once the window has provably been silent. */
+  const idleRef = useRef({ lastLiveAt: performance.now(), pace: { nextDue: 0 } });
   useEffect(() => {
     const update = () => {
       visibleRef.current = !paused && (typeof document === 'undefined' || document.visibilityState !== 'hidden');
@@ -237,7 +248,18 @@ export function useAnimateGate(paused?: boolean, name?: string): { shouldDraw():
     shouldDraw(): boolean {
       if (isWindowHidden()) return false;
       if (!visibleRef.current) return false;
-      if (vizMaxFps > 0 && !paceFrame(performance.now(), paceRef.current, 1000 / vizMaxFps)) {
+      const now = performance.now();
+      if (liveRef) {
+        if (liveRef.current.live) {
+          idleRef.current.lastLiveAt = now;
+        } else {
+          const cap = idleFpsCap(now - idleRef.current.lastLiveAt);
+          if (cap !== null && !paceFrame(now, idleRef.current.pace, 1000 / cap)) {
+            return false;
+          }
+        }
+      }
+      if (vizMaxFps > 0 && !paceFrame(now, paceRef.current, 1000 / vizMaxFps)) {
         return false;
       }
       if (name) recordDraw(name);

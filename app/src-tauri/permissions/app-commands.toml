@@ -151,6 +151,9 @@ commands.allow = [
   # list/read for the picker/catalog.
   "presets_market_list",
   "presets_market_read",
+  "presets_cloud_list",
+  "presets_cloud_push",
+  "presets_cloud_pull",
 
   # installed visualizer bundles, incl. the authoring surface's write path
   # (src/components/{viz-scripted,viz-editor,viz-sandbox-surface,useVizStyles}.tsx).

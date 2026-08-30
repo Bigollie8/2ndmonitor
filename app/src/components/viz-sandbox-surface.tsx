@@ -138,7 +138,9 @@ export function SandboxVizSurface({
   // authoring surface's fixed id) rather than a hardcoded 'scripted' — all 12
   // installed bundle styles otherwise collapse into a single indistinguishable
   // bucket in the perf HUD.
-  const gate = useAnimateGate(paused, bundleId ? `scripted:${bundleId}` : 'scripted');
+  // The idle stage (state/idlePace.ts) rides the spectrum ref: full rate
+  // while real audio flows, staged down during sustained silence.
+  const gate = useAnimateGate(paused, bundleId ? `scripted:${bundleId}` : 'scripted', spectrumRef);
 
   const [scriptError, setScriptErrorState] = useState<ScriptError>(null);
   const onErrorRef = useRef(onError);
