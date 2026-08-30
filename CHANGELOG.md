@@ -24,13 +24,17 @@ All notable changes to 2ndMonitor are documented here. Format follows
   when the app starts shows immediately, and pausing behaves exactly as
   before
 - **Idle CPU: the visualizer now rests when the music does.** The audio
-  side has idled during silence since 0.9.6, but the animation kept
-  running at full frame rate for as long as the window was visible — on
-  an always-visible second monitor, that's forever. The idle animation
-  now keeps full smoothness for 10 s after audio ends, then steps down to
-  30 fps, and settles at 12 fps after two minutes of quiet. Any sound
-  restores full rate instantly. This also flattens the reported CPU
-  "sawtooth" while the app just sits open
+  side has idled during silence since 0.9.6, and capped Performance
+  modes already pause the visualizer outright — but with Performance
+  mode Uncapped, the no-music idle animation ran at the display's raw
+  frame rate for as long as the window was visible (measured at ~500
+  draws/second, forever, on a high-refresh monitor). The idle animation
+  now keeps full smoothness for 10 s after audio ends, then steps down
+  to 30 fps, and settles at 12 fps after two minutes of quiet — any
+  sound restores full rate instantly. Verified in the packaged build
+  with the perf HUD: 500/s → 30/s → 12/s. This is the main suspect
+  behind the reported CPU "sawtooth" while the app just sits open, and
+  it cuts the churn that fed it either way
 - **Alt-tab could collapse a profile to a single tile.** A minimized or
   freshly restored window can briefly report an absurd viewport (we
   measured 160×28), and the monitor re-fit introduced in 0.9.13 would
