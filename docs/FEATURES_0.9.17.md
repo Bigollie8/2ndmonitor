@@ -22,4 +22,17 @@ Adaptive automatic FPS/DPR adjustment remains deferred. The review explicitly ca
 
 ## Release verification
 
-Local checks: **1,297 frontend tests**, **193 Windows Rust library tests**, **21 changelog/release-note tests**, production frontend build, and an isolated Windows debug build all passed. The full root script suite is **33 passed, 1 pre-existing metadata failure**. Published release verification will be recorded after the release jobs finish. The established changelog-driven GitHub notes, updater notes and both Discord webhooks are used. `RELEASES_TOKEN` remains absent, so the documented maintainer mirror fallback is expected after private installer builds complete.
+Local checks: **1,297 frontend tests**, **193 Windows Rust library tests**, **21 changelog/release-note tests**, production frontend build, and an isolated Windows debug build all passed. The full root script suite is **33 passed, 1 pre-existing metadata failure**.
+
+Published on 2026-09-04:
+
+- Source commit: `8213cf3b3ddc859063463058383b4c794cee8a22`; annotated tag `v0.9.17` points to that tested commit.
+- [macOS check](https://github.com/Bigollie8/2ndmonitor/actions/runs/33920003769) passed: frontend checks passed; 195 Rust tests passed, one hardware-only test ignored.
+- [Release build](https://github.com/Bigollie8/2ndmonitor/actions/runs/33920272690): both Windows and universal macOS build/sign/upload jobs succeeded. Combined manifest generation succeeded. The automatic mirror step failed because `RELEASES_TOKEN` is absent.
+- The documented maintainer fallback completed the [public release](https://github.com/Bigollie8/2ndmonitor-releases/releases/tag/v0.9.17). All six assets were staged as a draft and compared by name, size and SHA-256 against the source release before publishing it as latest.
+- Both updater signatures verified against the app's configured public key using `minisign-verify 0.2.5`, the same version used by the app updater.
+- Anonymous `releases/latest/download/latest.json` reports 0.9.17. The Windows x64 and all three Darwin entries match the verified manifest; full updater notes and both GitHub release descriptions match the tagged changelog.
+- Anonymous HEAD requests returned HTTP 200 for the Windows setup EXE, universal macOS DMG and universal app updater archive.
+- [Discord announcement job](https://github.com/Bigollie8/2ndmonitor/actions/runs/33920272681) succeeded. Its log confirms both `posted: release v0.9.17` and `posted: spotlight v0.9.17`. No duplicate local sends were made.
+
+Automatic cross-repository publishing still needs a scoped `RELEASES_TOKEN` for future unattended releases. This release is complete despite that workflow mirror failure; the verified public assets and updater feed are live.
