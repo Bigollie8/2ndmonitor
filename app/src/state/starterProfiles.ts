@@ -13,7 +13,7 @@ export const PROFILE_DEFAULT_COLORS = ['#a78bfa', '#f59e0b', '#22d3ee', '#22c55e
  *  Kept to subsets of that designed core so the default rects never collide.
  *  Order must follow ALL_TILE_TYPES (the canonical render order). */
 export const STARTER_TILE_SETS: Record<'work' | 'gaming' | 'chill', BuiltinTileType[]> = {
-  work:   ['viz', 'spotify', 'discord', 'claude', 'mixer', 'notes', 'sysmon', 'clock'],
+  work:   ['viz', 'spotify', 'mixer', 'notes', 'sysmon', 'clock'],
   gaming: ['viz', 'spotify', 'mixer', 'sysmon', 'clock'],
   chill:  ['viz', 'spotify', 'clock'],
 };

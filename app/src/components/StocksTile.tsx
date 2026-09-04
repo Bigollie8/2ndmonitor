@@ -30,6 +30,7 @@ function StocksTileImpl({ density, accent, editing, config, setConfig }: StocksT
     () => fetchStockQuotes(parsed.symbols),
     REFRESH_MS,
     [symbolsKey],
+    'Stocks',
   );
   const quotes: StockQuote[] = data ?? [];
 

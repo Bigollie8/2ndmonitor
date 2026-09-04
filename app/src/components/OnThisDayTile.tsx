@@ -24,6 +24,8 @@ function OnThisDayTileImpl({ density, accent }: { density: Density; accent: stri
       return d;
     },
     REFRESH_MS,
+    [],
+    'On this day',
   );
 
   const items: OnThisDayItem[] = data ? data[tab] : [];

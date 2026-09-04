@@ -5,6 +5,21 @@ All notable changes to 2ndMonitor are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.9.17] - 2026-09-04
+
+### Added
+- **Layout undo, redo and recovery checkpoints.** Edit mode now has Undo/Redo controls and Ctrl/⌘ Z / Ctrl/⌘ Shift Z shortcuts. Dragging, resizing, adding and removing tiles have separate histories for each profile and orientation. Hub keeps the arrangement before your first edit as a recovery checkpoint; use Save checkpoint to replace it and Restore checkpoint to recover it after a restart. Undo history holds the last 50 edits for this session.
+- **Live data status.** Settings → Data status shows active polling tiles, the last successful check, setup requirements, unavailable or stale data, and Retry now. Failed checks keep the last good data visible, and switching a tile's source clears the old source's timestamp.
+- **Opt-in automatic profiles.** Open the profile switcher and expand Automatic profiles and display recall to add exact process-name rules. A match must stay stable for four seconds. Manual profile selection pauses automation for 30 minutes, with Resume now available; editing and dialogs pause switching too.
+- **Remember profiles per display.** In the same panel, Remember this display saves the active profile and UI scale. Enabled automation recalls them when the window enters that display. Unrecognized displays keep the current profile; saved tile positions survive temporary fitting to a smaller viewport.
+- **A more useful first run.** Onboarding now includes an audio activity check and optional Discord / Claude tiles. New Work profiles start with music, mixer, notes, system stats and a clock; existing profiles are preserved.
+- **Preview shared setups.** Profile and setup imports show the arrangement, required bundles and connections before applying. Missing bundles remain visible as placeholders for installation or restoration through the library. New shared exports omit personal content, locations and bundle configuration, keeping the arrangement and selected display options.
+
+### Fixed
+- Settings cannot save before hydration succeeds. Unreadable settings pause saving and show a retryable error; serialized writes keep slower saves from overwriting newer edits. Save failures are visible too.
+- Older onboarding location searches can no longer replace results for a newer query.
+- Polling payloads that report an error no longer count as successful data updates.
+
 ## [0.9.16] - 2026-09-04
 
 ### Fixed

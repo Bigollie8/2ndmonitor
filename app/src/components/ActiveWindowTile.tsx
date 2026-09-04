@@ -45,6 +45,7 @@ function ActiveWindowTileImpl({ density, accent }: { density: Density; accent: s
     },
     POLL_MS,
     [],
+    'Active window',
   );
 
   // Reset bucket on date roll-over.

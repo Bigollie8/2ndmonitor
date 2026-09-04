@@ -1,3 +1,4 @@
+import { SetupPreview } from './SetupPreview';
 import React, { useState } from 'react';
 import type { Profile } from '../types';
 import type { TileInstance } from './../state/layout';
@@ -15,8 +16,10 @@ const CARD_PALETTE = [
 ];
 
 export function ProfileSwitcher({
-  accent, profiles, activeProfileId, setActiveProfileId, setProfiles, orientation, onClose,
+  availableTiles, automationPanel, accent, profiles, activeProfileId, setActiveProfileId, setProfiles, orientation, onClose,
 }: {
+  availableTiles: string[] | null;
+  automationPanel?: React.ReactNode;
   accent: string;
   profiles: Profile[];
   activeProfileId: string;
@@ -103,6 +106,7 @@ export function ProfileSwitcher({
   // ── Partial setups (0.9.8): share an arrangement without a whole profile ──
   /** Open state of the export-setup tile picker; holds the selected ids. */
   const [setupPicker, setSetupPicker] = useState<Set<string> | null>(null);
+  const [pendingSetup, setPendingSetup] = useState<{ name: string; orientation: 'landscape' | 'portrait'; tiles: TileInstance[] } | null>(null);
   const [setupNote, setSetupNote] = useState<string | null>(null);
 
   const activeTiles = activeProfile?.[orientation].tiles ?? [];
@@ -135,22 +139,19 @@ export function ProfileSwitcher({
       if (!text) return;
       const result = parseSetupExport(JSON.parse(text));
       if (!result.ok) { setImportError(result.error); return; }
-      // Additive merge into the CURRENT orientation of the active profile —
-      // nothing existing moves or disappears, so no confirmation dialog.
-      const { tiles, dropped } = mergeSetupTiles(activeTiles, result.setup.tiles);
-      setProfiles(profiles.map((p) => (p.id === activeProfile.id
-        ? { ...p, [orientation]: { tiles } }
-        : p)));
-      const added = result.setup.tiles.length - dropped;
-      setSetupNote(
-        `Added ${added} tile${added === 1 ? '' : 's'} from “${result.setup.name}”` +
-        (result.setup.orientation !== orientation ? ` (designed for ${result.setup.orientation})` : '') +
-        (dropped > 0 ? ` — ${dropped} dropped at the tile cap` : ''),
-      );
+      setPendingSetup(result.setup);
     } catch (err) {
       console.warn('setup import failed:', err);
       setImportError('Import needs the desktop app.');
     }
+  };
+
+  const applySetup = () => {
+    if (!activeProfile || !pendingSetup) return;
+    const { tiles, dropped } = mergeSetupTiles(activeTiles, pendingSetup.tiles);
+    setProfiles(profiles.map(p => p.id === activeProfile.id ? { ...p, [orientation]: { tiles } } : p));
+    setSetupNote(`Added ${pendingSetup.tiles.length - dropped} tiles from “${pendingSetup.name}”${dropped ? ` (${dropped} omitted at the 200-tile cap)` : ''}.`);
+    setPendingSetup(null);
   };
 
   const applyImport = (choice: { mode: 'new' } | { mode: 'overwrite'; profileId: string }) => {
@@ -175,11 +176,10 @@ export function ProfileSwitcher({
       display: 'flex', alignItems: 'center', justifyContent: 'center',
     }}>
       <div onClick={(e) => e.stopPropagation()} style={{
-        width: 1600, padding: 48, borderRadius: 18,
+        width: 1600, maxWidth: '96vw', maxHeight: '92vh', overflowY: 'auto', padding: 32, borderRadius: 18,
         background: 'var(--surface-overlay, rgba(15,17,22,0.95))',
         border: '1px solid rgba(255,255,255,0.08)',
         boxShadow: '0 40px 100px rgba(0,0,0,0.6)',
-        maxHeight: 'calc(100vh - 120px)', overflow: 'auto',
       }}>
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 16, marginBottom: 8 }}>
           <h2 style={{ fontSize: 28, margin: 0, fontWeight: 700, letterSpacing: '-0.02em' }}>Switch profile</h2>
@@ -251,6 +251,7 @@ export function ProfileSwitcher({
             borderRadius: 'var(--control-radius, 6px)', cursor: 'pointer',
           }}>Esc</button>
         </div>
+        {automationPanel}
         {setupPicker && (
           <div style={{
             marginTop: 16, padding: 16, borderRadius: 10,
@@ -305,9 +306,17 @@ export function ProfileSwitcher({
             </div>
           </div>
         )}
+        {pendingSetup && <div className="feature-controls" role="dialog" aria-label="Preview shared setup" style={{ padding: 20, marginTop: 16, border: '1px solid #a78bfa66', borderRadius: 12 }}>
+          <h3>Import “{pendingSetup.name}” into {activeProfile?.name} · {orientation}</h3>
+          <SetupPreview tiles={pendingSetup.tiles} orientation={pendingSetup.orientation} available={availableTiles} />
+          {pendingSetup.orientation !== orientation && <p>This setup was designed for {pendingSetup.orientation}; placement may need adjusting.</p>}
+          <p>Existing tiles stay in place. {Math.max(0, activeTiles.length + pendingSetup.tiles.length - 200)} imported tiles will be omitted if the 200-tile limit is exceeded.</p>
+          <button onClick={() => setPendingSetup(null)}>Cancel</button> <button onClick={applySetup}>Add setup</button>
+        </div>}
         {importPending && (
           <ImportProfileDialog
             accent={accent}
+            availableTiles={availableTiles}
             parsed={importPending}
             profiles={profiles}
             onApply={applyImport}
@@ -439,8 +448,9 @@ function ProfileCard({
 /** Small modal offered after a VALID profile file is picked (0.7.1 §3):
  *  overwrite one existing profile (radio list by name — keeps that profile's
  *  id) or add as a new profile (fresh id, becomes active). */
-function ImportProfileDialog({ accent, parsed, profiles, onApply, onCancel }: {
+function ImportProfileDialog({ availableTiles, accent, parsed, profiles, onApply, onCancel }: {
   accent: string;
+  availableTiles: string[] | null;
   parsed: ParsedProfile;
   profiles: Profile[];
   onApply: (choice: { mode: 'new' } | { mode: 'overwrite'; profileId: string }) => void;
@@ -459,7 +469,7 @@ function ImportProfileDialog({ accent, parsed, profiles, onApply, onCancel }: {
       display: 'flex', alignItems: 'center', justifyContent: 'center',
     }}>
       <div onClick={(e) => e.stopPropagation()} style={{
-        width: 380, maxWidth: 'calc(100vw - 48px)', padding: 20, borderRadius: 12,
+        maxHeight: '88vh', overflowY: 'auto', width: 480, maxWidth: 'calc(100vw - 48px)', padding: 20, borderRadius: 12,
         background: 'var(--surface-overlay, rgba(20,22,28,0.96))',
         border: '1px solid rgba(255,255,255,0.08)',
         boxShadow: '0 24px 80px rgba(0,0,0,0.6)',
@@ -468,6 +478,8 @@ function ImportProfileDialog({ accent, parsed, profiles, onApply, onCancel }: {
         <div style={{ fontSize: 14, fontWeight: 700, color: '#fff' }}>
           Import “{parsed.name}”
         </div>
+        <SetupPreview tiles={parsed.landscape.tiles} orientation="landscape" available={availableTiles} />
+        <SetupPreview tiles={parsed.portrait.tiles} orientation="portrait" available={availableTiles} />
         <label style={radioRow}>
           <input type="radio" name="import-target" checked={choice === 'new'} onChange={() => setChoice('new')} />
           Add as new profile

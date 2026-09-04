@@ -1,11 +1,13 @@
 import React, { useEffect, useState } from 'react';
 import { ProfilePreview } from './profile';
 import { geocode, type GeocodeResult } from '../state/weatherLocation';
+import type { SpectrumState } from '../state/tauri';
 import type { WeatherLocation } from '../types';
 
-const STEPS = ['Welcome', 'Pick a profile', 'Your location', 'Ready'];
+const STEPS = ['Welcome', 'Pick a profile', 'Audio & connections', 'Your location', 'Ready'];
 
 export interface OnboardingResult {
+  integrations?: ('discord' | 'claude')[];
   audio?: string;          // legacy — no longer collected; kept optional so App.tsx compiles
   profileId?: string;      // id of profile chosen on the "Pick a profile" step
   hiddenForActive?: Partial<Record<string, boolean>>; // legacy — no longer collected; kept optional so App.tsx compiles
@@ -14,17 +16,21 @@ export interface OnboardingResult {
   weatherLocation?: WeatherLocation;
 }
 
-export function Onboarding({ accent, profiles, onFinish }: {
+export function Onboarding({ accent, profiles, spectrumRef, audioSourceLabel, onFinish }: {
+  spectrumRef: React.MutableRefObject<SpectrumState>;
+  audioSourceLabel: string;
   accent: string;
   profiles: { id: string; name: string }[];
   onFinish: (result?: OnboardingResult) => void;
 }) {
+  const [integrations, setIntegrations] = useState<('discord' | 'claude')[]>([]);
   const [step, setStep] = useState(0);
   const [profile, setProfile] = useState<string | null>(null);
   const [location, setLocation] = useState<WeatherLocation | null>(null);
 
   const buildResult = (): OnboardingResult => ({
     profileId: profile ?? undefined,
+    integrations,
     weatherLocation: location ?? undefined,
   });
 
@@ -69,8 +75,9 @@ export function Onboarding({ accent, profiles, onFinish }: {
       <div style={{ flex: 1, position: 'relative', zIndex: 2, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 40 }}>
         {step === 0 && <OnbWelcome accent={accent} />}
         {step === 1 && <OnbProfile accent={accent} profiles={profiles} value={profile} setValue={setProfile} />}
-        {step === 2 && <OnbLocation accent={accent} value={location} setValue={setLocation} />}
-        {step === 3 && <OnbReady accent={accent} profile={profile} profiles={profiles} />}
+        {step === 2 && <OnbAudio accent={accent} spectrumRef={spectrumRef} source={audioSourceLabel} integrations={integrations} setIntegrations={setIntegrations} />}
+        {step === 3 && <OnbLocation accent={accent} value={location} setValue={setLocation} />}
+        {step === 4 && <OnbReady accent={accent} profile={profile} profiles={profiles} />}
       </div>
       <div style={{ position: 'relative', zIndex: 2, padding: '24px 48px', display: 'flex', alignItems: 'center', gap: 12, borderTop: '1px solid rgba(255,255,255,0.04)' }}>
         <button onClick={() => step > 0 && setStep(step - 1)} disabled={step === 0} style={{
@@ -115,15 +122,17 @@ function OnbLocation({ accent, value, setValue }: {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    let cancelled = false;
     const q = query.trim();
+    setError(null);
     if (q.length < 2) { setResults([]); setSearching(false); return; }
     setSearching(true);
     const id = window.setTimeout(() => {
       geocode(q)
-        .then((r) => { setResults(r); setSearching(false); setError(null); })
-        .catch(() => { setSearching(false); setError('Search failed — check your connection, or skip this step.'); });
+        .then((r) => { if (cancelled) return; setResults(r); setSearching(false); setError(null); })
+        .catch(() => { if (cancelled) return; setSearching(false); setError('Search failed — check your connection, or skip this step.'); });
     }, 350);
-    return () => window.clearTimeout(id);
+    return () => { cancelled = true; window.clearTimeout(id); };
   }, [query]);
 
   const field: React.CSSProperties = {
@@ -226,7 +235,7 @@ function OnbProfile({ accent, profiles, value, setValue }: {
   // displayed card uses a hardcoded preview layout for visual variety, but its
   // underlying id is the real profile id so the App can apply the choice.
   const PREVIEWS: { layout: 'work' | 'gaming' | 'chill'; subtitle: string }[] = [
-    { layout: 'work',   subtitle: 'Calendar, sysmon, notes — focus mode' },
+    { layout: 'work',   subtitle: 'Music, mixer, notes and system stats' },
     { layout: 'gaming', subtitle: 'Big viz hero with sysmon strip' },
     { layout: 'chill',  subtitle: 'Fullscreen ambient with glass overlays' },
   ];
@@ -309,4 +318,30 @@ function KbHint({ k, desc }: { k: string; desc: string }) {
       <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.6)' }}>{desc}</span>
     </div>
   );
+}
+
+function OnbAudio({ accent, spectrumRef, source, integrations, setIntegrations }: {
+  accent: string; spectrumRef: React.MutableRefObject<SpectrumState>; source: string;
+  integrations: ('discord' | 'claude')[]; setIntegrations: (value: ('discord' | 'claude')[]) => void;
+}) {
+  const [level, setLevel] = useState(0);
+  const [detected, setDetected] = useState(false);
+  useEffect(() => {
+    const timer = setInterval(() => {
+      const audio = spectrumRef.current;
+      const next = audio.live ? Math.max(0, Math.min(1, audio.level)) : 0;
+      setLevel(next);
+      if (next > .005) setDetected(true);
+    }, 250);
+    return () => clearInterval(timer);
+  }, [spectrumRef]);
+  return <div style={{ maxWidth: 640, width: '100%' }}>
+    <h2>Check your audio</h2>
+    <p>Play some music or a video. Listening to {source}.</p>
+    <meter aria-label="Audio input level" min={0} max={1} value={level} style={{ width: '100%', height: 24, accentColor: accent }} />
+    <p role="status">{detected ? 'Audio activity detected ✓' : 'Waiting for audio activity. Silence is okay — you can continue and choose an audio source in Settings.'}</p>
+    <h3>Optional connections</h3>
+    <p>Your starter profiles work with local tiles. Add these integrations to the selected profile if you want them; each tile will guide you through its own setup.</p>
+    {(['discord', 'claude'] as const).map(type => <label key={type} style={{ display: 'block', margin: '10px 0' }}><input type="checkbox" checked={integrations.includes(type)} onChange={e => setIntegrations(e.target.checked ? [...integrations, type] : integrations.filter(t => t !== type))} /> {type === 'discord' ? 'Discord' : 'Claude'} tile</label>)}
+  </div>;
 }

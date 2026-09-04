@@ -24,11 +24,9 @@ pub fn tweaks_load<R: Runtime>(app: AppHandle<R>) -> Result<Option<Value>, Strin
         return Ok(None);
     }
     let bytes = fs::read(&path).map_err(|e| format!("read {}: {e}", path.display()))?;
-    if bytes.is_empty() {
-        return Ok(None);
-    }
     let value: Value = serde_json::from_slice(&bytes)
         .map_err(|e| format!("parse {}: {e}", path.display()))?;
+    if !value.is_object() { return Err("Saved settings must be a JSON object".into()); }
     Ok(Some(value))
 }
 

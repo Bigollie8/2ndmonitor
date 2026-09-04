@@ -23,6 +23,7 @@ function GoldTileImpl({ density, accent }: GoldTileProps) {
     () => fetchStockQuotes([GOLD_SYMBOL]),
     REFRESH_MS,
     [],
+    'Gold',
   );
   const quote = data?.find((q) => q.symbol === GOLD_SYMBOL) ?? data?.[0];
   const gold = goldPricing(quote);

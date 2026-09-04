@@ -42,6 +42,8 @@ function HomeAssistantTileImpl({ density, accent, editing }: HomeAssistantTilePr
     },
     REFRESH_MS,
     [url, token, entities.join(',')],
+    'Home Assistant',
+    !configured || entities.length === 0,
   );
   const states = data ?? [];
 

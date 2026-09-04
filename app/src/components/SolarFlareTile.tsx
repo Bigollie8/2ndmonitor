@@ -19,6 +19,8 @@ function SolarFlareTileImpl({ density, accent }: { density: Density; accent: str
       return { reading: r, imageBust: Date.now() };
     },
     REFRESH_MS,
+    [],
+    'Solar activity',
   );
   /* Bust value for the initial render, before the first reading lands, so the
    * image URL stays stable across re-renders instead of reloading each time. */

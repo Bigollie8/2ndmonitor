@@ -1,3 +1,4 @@
+import { DataHealthPanel } from './DataHealthPanel';
 import { UpdateCheckRow } from './UpdateCheckRow';
 import React, { useCallback, useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
@@ -179,6 +180,9 @@ export function SettingsWindow({
   const { styles: vizStyles } = useVizStyles(v.catalogRemoved);
   const { options: sourceOptions, status: audioSourceStatus } = useAudioSource();
   const panes: PaneDef[] = [
+    { id: 'data-status', icon: '◉', title: 'Data status', rows: [
+      { id: 'data-health', label: 'Live data status', hint: 'Connection errors, last successful checks, stale data and retry controls', stacked: true, control: <DataHealthPanel /> },
+    ] },
     {
       id: 'visualizer', icon: '◢', title: 'Visualizer',
       rows: [

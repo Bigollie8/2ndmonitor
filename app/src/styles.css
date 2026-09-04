@@ -43,3 +43,20 @@ button {
 ::-webkit-scrollbar-track {
   background: transparent;
 }
+
+/* Shared controls for recovery, automation, and data status. */
+.feature-controls button, .feature-controls input:not([type="checkbox"]), .feature-controls select {
+  padding: 6px 10px;
+  border: 1px solid rgba(255,255,255,.2);
+  border-radius: 6px;
+  background: #151820;
+  color: #eee;
+  font: inherit;
+  font-size: 12px;
+}
+.feature-controls button { cursor: pointer; }
+.feature-controls button:hover:not(:disabled) { background: #292d3a; }
+.feature-controls button:disabled { opacity: .4; cursor: default; }
+.feature-controls :focus-visible { outline: 2px solid #a78bfa; outline-offset: 2px; }
+.feature-controls p { margin: 10px 0; line-height: 1.5; }
+.feature-controls summary { cursor: pointer; font-weight: 600; }

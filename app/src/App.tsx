@@ -16,7 +16,6 @@ import {
   occupiedRects,
   paintOrder,
   rectsOverlap,
-  refitTiles,
   addInstance,
   removeInstance,
   removeTilesOfType,
@@ -42,6 +41,11 @@ import {
   type PomodoroSettings,
 } from './state/pomodoro';
 import { TRACKS, ACCENT_PALETTES } from './data';
+import { DEFAULT_AUTOMATION, parseAutomation, type ProfileAutomation } from './state/profileAutomation';
+import { useProfileAutomation } from './state/useProfileAutomation';
+import { ProfileAutomationPanel } from './components/ProfileAutomationPanel';
+import { restoreLayout } from './state/layoutHistory';
+import { useLayoutHistory } from './state/useLayoutHistory';
 import { useTweaks } from './state/useTweaks';
 import type { AudioSource } from './state/audioSource';
 import { describeAudioSource, effectiveSensitivity, migrateAudioSource, migrateSensitivity } from './state/audioSource';
@@ -216,6 +220,7 @@ interface TweakState extends Record<string, unknown> {
   // Profile system: layout + tile visibility live INSIDE the active profile.
   profiles: Profile[];
   activeProfileId: string;
+  profileAutomation: ProfileAutomation;
   onboardingDone: boolean;
   /** The catalog removal list — see state/removedContent.ts. Keys of the form
    *  `${kind}:${id}`. A bundle's key stays here after its folder is deleted,
@@ -304,6 +309,7 @@ const TWEAK_DEFAULTS: TweakState = {
   },
   profiles: [],
   activeProfileId: '',
+  profileAutomation: DEFAULT_AUTOMATION,
   onboardingDone: false,
   catalogRemoved: [],
   pileRepaired: false,
@@ -538,7 +544,10 @@ function migrateTweaks(loaded: Record<string, unknown>): Record<string, unknown>
 }
 
 export default function App() {
-  const [t, setTweak, replaceTweaks, tweaksHydrated] = useTweaks<TweakState>(TWEAK_DEFAULTS, { migrate: migrateTweaks });
+  const [t, setTweak, replaceTweaks, tweaksHydrated, tweaksStorage] = useTweaks<TweakState>(TWEAK_DEFAULTS, { migrate: migrateTweaks });
+  const saveProfiles = useCallback((profiles: Profile[]) => setTweak('profiles', profiles), [setTweak]);
+  const layoutHistory = useLayoutHistory(t.profiles, saveProfiles, tweaksHydrated);
+  const setProfiles = layoutHistory.setProfiles;
   // Gain for whatever vizAudioSource currently points at — falls back to
   // DEFAULT_SENSITIVITY the first time a given source is picked.
   const vizSensitivity = effectiveSensitivity(t.vizSensitivityBySource, t.vizAudioSource);
@@ -549,7 +558,7 @@ export default function App() {
     if (!tweaksHydrated) return;
     if (t.profiles.length > 0 && t.activeProfileId) return;
     const seeded = seedStarterProfiles();
-    setTweak('profiles', seeded);
+    setProfiles(seeded);
     setTweak('activeProfileId', seeded[0]!.id);
   }, [tweaksHydrated, t.profiles.length, t.activeProfileId, setTweak]);
 
@@ -1212,13 +1221,18 @@ export default function App() {
         }
         return;
       }
+      if (editMode && !editing && cmd && (e.key.toLowerCase() === 'z' || e.key.toLowerCase() === 'y')) {
+        e.preventDefault();
+        layoutActionsRef.current(e.key.toLowerCase() === 'y' || e.shiftKey ? 'redo' : 'undo');
+        return;
+      }
       if (cmd && e.key === 'e') { e.preventDefault(); setEditMode((m) => !m); }
       else if (cmd && e.key === ',') { e.preventDefault(); setShowSettings((s) => !s); }
       else if (cmd && (e.key === '1' || e.key === '2' || e.key === '3')) {
         e.preventDefault();
         const idx = parseInt(e.key, 10) - 1;
         const p = t.profiles[idx];
-        if (p) setTweak('activeProfileId', p.id);
+        if (p) selectProfileManually(p.id);
       }
       else if (e.key === 'F11') {
         // True window fullscreen — the Windows taskbar disappears on this
@@ -1308,6 +1322,13 @@ export default function App() {
    *  `overlaysOpen` above, which is only the top-bar pin predicate. */
   const anyOverlayOpen = showGallery || editMode || showContentLibrary
     || showSettings || showMarket || showSwitcher || showOnboarding || showShortcuts;
+  const automationSettings = useMemo(() => parseAutomation(t.profileAutomation), [t.profileAutomation]);
+  const automation = useProfileAutomation({
+    settings: automationSettings, profileIds: t.profiles.map(p => p.id), activeProfileId: t.activeProfileId,
+    blocked: !tweaksHydrated || anyOverlayOpen || showProfile || showCommunity || showAdmin || showNotifications,
+    select: id => setTweak('activeProfileId', id), setScale: scale => setTweak('uiScale', scale),
+  });
+  const selectProfileManually = (id: string) => { automation.pause(); setTweak('activeProfileId', id); };
   // Pin/hide decision for the auto-hiding top bar. Pinned ⇒ never hidden.
   // Hiding does NOT reflow tiles: the bar overlays the same reserved space
   // when revealed (like the Windows taskbar) — CHROME_TOP_PX stays as-is.
@@ -1333,13 +1354,22 @@ export default function App() {
   }), []);
   const activeProfile: Profile = t.profiles.find((p) => p.id === t.activeProfileId) ?? t.profiles[0] ?? fallbackProfile;
   const activeOrientation = activeProfile[orientation];
+  const layoutActionsRef = useRef<(direction: 'undo' | 'redo') => void>(() => {});
+  layoutActionsRef.current = direction => {
+    if (showSwitcher || showSettings || showContentLibrary || showMarket || showOnboarding || showGallery || showProfile || showCommunity || showAdmin || showNotifications || showShortcuts) return;
+    layoutHistory.move(activeProfile.id, orientation, direction);
+  };
+  const [checkpointNotice, setCheckpointNotice] = useState('');
+  useEffect(() => setCheckpointNotice(''), [activeProfile.id, orientation]);
+  const historyAvailable = layoutHistory.available(activeProfile.id, orientation);
+
   const visibleTileCount = activeOrientation.tiles.length;
   useEffect(() => {
     if (selectedInstanceId && activeOrientation.tiles.some((t) => t.instanceId === selectedInstanceId)) return;
     setSelectedInstanceId(activeOrientation.tiles[0]?.instanceId ?? '');
   }, [activeOrientation.tiles, selectedInstanceId]);
   const updateActiveProfile = (patch: Partial<Profile>) => {
-    setTweak('profiles', t.profiles.map((p) =>
+    setProfiles(t.profiles.map((p) =>
       p.id === activeProfile.id ? { ...p, ...patch } : p
     ));
   };
@@ -1354,43 +1384,8 @@ export default function App() {
     updateActiveOrientation({ tiles: removeInstance(activeOrientation.tiles, inst.instanceId) });
   };
 
-  // ── Monitor-change re-fit (0.9.13) ─────────────────────────────────────
-  // Fractional rects + renderRectFrac already keep tiles VISIBLE on any
-  // canvas, but the STORED rects were only re-clamped once at boot against
-  // an estimate. Moving the window to a monitor with a different
-  // resolution/DPI/orientation now re-fits the saved arrangement against
-  // the real canvas: debounced 600ms so nothing thrashes mid-drag, gated
-  // on a >8% size change or an orientation flip so transient resize noise
-  // is ignored, and refitTiles returns by reference when nothing moves so
-  // the common case writes no state at all. Per-orientation arrangements
-  // stay separate — moving back restores the other layout untouched.
-  const lastFitRef = useRef<{ w: number; h: number; orient: string } | null>(null);
-  const activeTilesRef = useRef(activeOrientation.tiles);
-  activeTilesRef.current = activeOrientation.tiles;
-  const updateActiveOrientationStable = useRef(updateActiveOrientation);
-  updateActiveOrientationStable.current = updateActiveOrientation;
-  useEffect(() => {
-    // 0.9.15: useCanvas now holds its last good size through minimize, but
-    // keep an explicit plausibility + visibility gate here too — refitting
-    // WRITES the saved layout, and a wrong write is the worst failure this
-    // effect can produce (it corrupted Work profiles via 160x28 canvases).
-    if (canvas.w < 480 || canvas.h < 360) return;
-    if (document.hidden) return;
-    const id = setTimeout(() => {
-      const prev = lastFitRef.current;
-      const big = !prev || prev.orient !== orientation
-        || Math.abs(prev.w - canvas.w) / canvas.w > 0.08
-        || Math.abs(prev.h - canvas.h) / canvas.h > 0.08;
-      if (!big) return;
-      lastFitRef.current = { w: canvas.w, h: canvas.h, orient: orientation };
-      const fitted = refitTiles(activeTilesRef.current, canvas, topInsetPx);
-      if (fitted !== activeTilesRef.current) {
-        updateActiveOrientationStable.current({ tiles: fitted });
-      }
-    }, 600);
-    return () => clearTimeout(id);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [canvas.w, canvas.h, orientation]);
+  // Viewport fitting belongs to renderRectFrac. Keep preferred geometry intact
+  // when moving to a smaller screen; returning restores the saved arrangement.
   const addTileByType = (type: TileType) => {
     if (findInstance(activeOrientation.tiles, type)) return;
     const defaults = orientation === 'portrait' ? DEFAULT_PORTRAIT_LAYOUT : DEFAULT_LANDSCAPE_LAYOUT;
@@ -1593,7 +1588,7 @@ export default function App() {
             vizMode={t.vizMode}
             setVizMode={setVizModeStable}
             profiles={t.profiles}
-            setActiveProfileId={(id) => setTweak('activeProfileId', id)}
+            setActiveProfileId={selectProfileManually}
             catalogRemoved={t.catalogRemoved}
           />
         );
@@ -1845,7 +1840,7 @@ export default function App() {
           onMenuOpenChange={t.autoHideTopBar ? setTopBarMenuOpen : undefined}
           profiles={t.profiles}
           activeProfileId={t.activeProfileId}
-          setActiveProfileId={(id) => setTweak('activeProfileId', id)}
+          setActiveProfileId={selectProfileManually}
           onSwitcher={() => setShowSwitcher(true)}
           onOnboarding={() => setShowOnboarding(true)}
           onSettings={() => setShowSettings(true)}
@@ -1915,8 +1910,21 @@ export default function App() {
           audioSource={t.vizAudioSource}
           streamer={t.streamerMode}
         />
-        {editMode && (
+        {tweaksStorage.error && <div role="alert" style={{ position: 'fixed', bottom: 40, left: 20, right: 20, zIndex: 3000, padding: 12, background: '#451a1a', borderRadius: 8 }}>
+        {tweaksStorage.error} <button onClick={tweaksStorage.retry}>Retry</button>
+      </div>}
+      {editMode && (
           <EditModeOverlay
+            historyControls={<span className="feature-controls" style={{ display: 'contents' }}>
+              <button disabled={!historyAvailable.undo} onClick={() => layoutActionsRef.current('undo')} title="Undo (Ctrl/⌘ Z)">Undo</button>
+              <button disabled={!historyAvailable.redo} onClick={() => layoutActionsRef.current('redo')} title="Redo (Ctrl/⌘ Shift Z)">Redo</button>
+              <button onClick={() => { updateActiveProfile({ layoutCheckpoints: { ...activeProfile.layoutCheckpoints, [orientation]: structuredClone(activeOrientation) } }); setCheckpointNotice('Checkpoint saved'); }} title="Keep this arrangement for recovery after a restart">Save checkpoint</button>
+              <button disabled={!activeProfile.layoutCheckpoints?.[orientation]} onClick={() => {
+                const saved = activeProfile.layoutCheckpoints?.[orientation];
+                if (saved) { updateActiveOrientation(restoreLayout(saved, activeOrientation)); setCheckpointNotice('Checkpoint restored'); }
+              }}>Restore checkpoint</button>
+              {checkpointNotice && <span role="status" style={{ fontSize: 11 }}>{checkpointNotice}</span>}
+            </span>}
             accent={accent}
             accent2={accent2}
             onExit={() => setEditMode(false)}
@@ -1941,17 +1949,21 @@ export default function App() {
         )}
         {showSwitcher && (
           <ProfileSwitcher
+            availableTiles={tileCatalogLoaded ? tileCatalog.map(entry => entry.type) : null}
+            automationPanel={<ProfileAutomationPanel value={automationSettings} set={value => setTweak('profileAutomation', value)} profiles={t.profiles} activeProfileId={t.activeProfileId} uiScale={t.uiScale} paused={automation.paused} resume={automation.resume} status={automation.status} />}
             accent={accent}
             profiles={t.profiles}
             activeProfileId={t.activeProfileId}
-            setActiveProfileId={(id) => setTweak('activeProfileId', id)}
-            setProfiles={(next) => setTweak('profiles', next)}
+            setActiveProfileId={selectProfileManually}
+            setProfiles={(next) => setProfiles(next)}
             orientation={orientation}
             onClose={() => setShowSwitcher(false)}
           />
         )}
         {showOnboarding && (
           <Onboarding
+            spectrumRef={spectrumRef}
+            audioSourceLabel={describeAudioSource(t.vizAudioSource, exe => exe, null)}
             accent={accent}
             profiles={t.profiles}
             onFinish={(result) => {
@@ -1969,7 +1981,7 @@ export default function App() {
               if (result?.hiddenForActive) {
                 const targetId = result.profileId ?? t.activeProfileId;
                 const hiddenMap = result.hiddenForActive!;
-                setTweak('profiles', t.profiles.map((p) => {
+                setProfiles(t.profiles.map((p) => {
                   if (p.id !== targetId) return p;
                   const hideTypes = (Object.keys(hiddenMap) as TileType[]).filter((type) => hiddenMap[type]);
                   let landTiles = p.landscape.tiles;
@@ -1981,6 +1993,24 @@ export default function App() {
                     if (pi) portTiles = removeInstance(portTiles, pi.instanceId);
                   }
                   return { ...p, landscape: { tiles: landTiles }, portrait: { tiles: portTiles } };
+                }));
+              }
+              if (result?.integrations?.length) {
+                const targetId = result.profileId ?? t.activeProfileId;
+                setProfiles(t.profiles.map(profile => {
+                  if (profile.id !== targetId) return profile;
+                  const add = (orient: Orientation) => {
+                    let tiles = profile[orient].tiles;
+                    const size = orient === 'portrait' ? { w: 1440, h: 2560 } : { w: 2560, h: 1440 };
+                    const defaults = orient === 'portrait' ? DEFAULT_PORTRAIT_LAYOUT : DEFAULT_LANDSCAPE_LAYOUT;
+                    for (const type of result.integrations ?? []) {
+                      if (tiles.some(tile => tile.type === type)) continue;
+                      const rect = findEmptyRect(occupiedRects(tiles), defaults[type], size, topInsetPx);
+                      tiles = addInstance(tiles, { instanceId: newId(), type, rect });
+                    }
+                    return { tiles };
+                  };
+                  return { ...profile, landscape: add('landscape'), portrait: add('portrait') };
                 }));
               }
               setTweak('onboardingDone', true);
@@ -2009,7 +2039,7 @@ export default function App() {
             accent={accent}
             catalogRemoved={t.catalogRemoved}
             setCatalogRemoved={(next) => setTweak('catalogRemoved', next)}
-            onRemoveTileInstances={(type) => setTweak('profiles', t.profiles.map((p) => ({
+            onRemoveTileInstances={(type) => setProfiles(t.profiles.map((p) => ({
               ...p,
               landscape: { tiles: removeTilesOfType(p.landscape.tiles, type) },
               portrait: { tiles: removeTilesOfType(p.portrait.tiles, type) },
@@ -2116,7 +2146,7 @@ export default function App() {
                 ? { landscape: canvas, portrait: rotatedCanvas }
                 : { landscape: rotatedCanvas, portrait: canvas };
               const reclamped = reclampProfilesBelowChrome(t.profiles, canvasByOrientation);
-              if (reclamped !== t.profiles) setTweak('profiles', reclamped);
+              if (reclamped !== t.profiles) setProfiles(reclamped);
             }
             setTweak(key, value as unknown as TweakState[typeof key]);
           }}

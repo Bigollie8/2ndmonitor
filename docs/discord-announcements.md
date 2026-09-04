@@ -32,7 +32,9 @@ Ad-hoc modes (`--dev/--progress/--feature/--info`) require `--title` and
 
 1. Move `[Unreleased]` items in `CHANGELOG.md` into a `## [X.Y.Z] - YYYY-MM-DD`
    section (format is load-bearing — the parser depends on it).
-2. Bump version in `app/src-tauri/tauri.conf.json` + `app/package.json`.
+2. Bump version in `app/src-tauri/tauri.conf.json`, `app/package.json`,
+   `app/package-lock.json`, `app/src-tauri/Cargo.toml`, and the app package
+   entry in `app/src-tauri/Cargo.lock`.
 3. Commit, `git tag vX.Y.Z`, push branch and tag.
 4. `.github/workflows/announce-release.yml` posts the changelog to the
    releases channel and, if the section has `### Added` or `### Fixed`, a spotlight to the

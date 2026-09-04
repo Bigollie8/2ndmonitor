@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useRef, useState } from 'react';
 
+import { pollHealth } from './pollHealth';
 import { startPollLoop } from './pollLoop';
 export { backoffDelay } from './pollLoop';
 
@@ -10,6 +11,7 @@ export interface PollState<T> {
   error: string | null;
   /** True until the first fetch settles (success or failure). */
   loading: boolean;
+  updatedAt: number | null;
 }
 
 /** Shared polling loop for data tiles. Replaces the hand-rolled
@@ -27,36 +29,56 @@ export function usePoll<T>(
   fetcher: () => Promise<T>,
   intervalMs: number,
   deps: unknown[] = [],
+  healthLabel?: string,
+  needsSetup = false,
 ): PollState<T> & { refresh: () => void } {
-  const [state, setState] = useState<PollState<T>>({ data: null, error: null, loading: true });
+  const [state, setState] = useState<PollState<T>>({ data: null, error: null, loading: true, updatedAt: null });
+  const healthId = useId();
   const fetcherRef = useRef(fetcher);
   fetcherRef.current = fetcher;
   const cleanupRef = useRef<(() => void) | null>(null);
 
   const run = useCallback(() => startPollLoop({
-    fetcher: () => fetcherRef.current(),
+    fetcher: async () => {
+      const data = await fetcherRef.current();
+      if (data == null && !needsSetup) throw new Error('No data returned');
+      if (data && typeof data === 'object' && 'error' in data && data.error) throw new Error(String(data.error));
+      return data;
+    },
     intervalMs,
-    onData: data => setState({ data, error: null, loading: false }),
-    onError: err => setState(prev => ({
-      data: prev.data, error: err instanceof Error ? err.message : String(err), loading: false,
-    })),
+    onData: data => {
+      const updatedAt = Date.now();
+      pollHealth.patch(healthId, { updatedAt, failed: false, pending: false });
+      setState({ data, error: null, loading: false, updatedAt });
+    },
+    onError: err => {
+      pollHealth.patch(healthId, { failed: true, pending: false });
+      setState(prev => ({ ...prev, error: err instanceof Error ? err.message : String(err), loading: false }));
+    },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }), [intervalMs, ...deps]);
+  }), [intervalMs, needsSetup, ...deps]);
 
+  const refreshRef = useRef<() => void>(() => {});
   useEffect(() => {
+    // A new location/query must not inherit the old source's success timestamp.
+    setState({ data: null, error: null, loading: true, updatedAt: null });
+    if (healthLabel) pollHealth.put({ id: healthId, label: healthLabel, intervalMs, needsSetup, updatedAt: null, failed: false, pending: true, retry: () => refreshRef.current() });
     cleanupRef.current = run();
     return () => {
       cleanupRef.current?.();
       cleanupRef.current = null;
+      pollHealth.remove(healthId);
     };
-  }, [run]);
+  }, [run, healthLabel, healthId, intervalMs, needsSetup]);
 
   const refresh = useCallback(() => {
     // Tear down the current loop and start a fresh one: immediate fetch,
     // failure count reset. Data is kept so the tile doesn't flash empty.
     cleanupRef.current?.();
+    pollHealth.patch(healthId, { pending: true });
     cleanupRef.current = run();
   }, [run]);
 
+  refreshRef.current = refresh;
   return { ...state, refresh };
 }

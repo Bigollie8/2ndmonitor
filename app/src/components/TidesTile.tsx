@@ -40,6 +40,8 @@ function TidesTileImpl({ density, accent, editing, config, setConfig, streamer =
     },
     REFRESH_MS,
     [parsed.stationId],
+    'Tides',
+    !parsed.stationId,
   );
 
   // Tick "now" every minute so the next-tide countdown stays current.

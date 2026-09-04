@@ -17,7 +17,7 @@ import { isBundleTile, bundleIdOf, BUNDLE_TILE_ICON } from '../tiles/tileRegistr
 import { useTileCatalog } from '../tiles/useTileCatalog';
 
 export function EditModeOverlay({
-  accent, accent2, onExit, onRemove, onOpenLibrary,
+  historyControls, accent, accent2, onExit, onRemove, onOpenLibrary,
   tiles, setTiles,
   selectedInstanceId, setSelectedInstanceId,
   snap, setSnap,
@@ -27,6 +27,7 @@ export function EditModeOverlay({
   catalogRemoved,
   topInsetPx,
 }: {
+  historyControls?: React.ReactNode;
   accent: string;
   accent2: string;
   onExit: () => void;
@@ -110,6 +111,7 @@ export function EditModeOverlay({
           showGrid={showGrid} setShowGrid={setShowGrid}
           snap={snap} setSnap={setSnap}
           profileName={profileName}
+          historyControls={historyControls}
           onExit={onExit}
           onPickerOpen={onOpenLibrary} />
       </div>
@@ -142,8 +144,9 @@ export function EditModeOverlay({
 }
 
 function EditToolbar({
-  accent, showGuides, setShowGuides, showGrid, setShowGrid, snap, setSnap, onExit, profileName, onPickerOpen,
+  historyControls, accent, showGuides, setShowGuides, showGrid, setShowGrid, snap, setSnap, onExit, profileName, onPickerOpen,
 }: {
+  historyControls?: React.ReactNode;
   accent: string;
   showGuides: boolean;
   setShowGuides: (b: boolean) => void;
@@ -158,12 +161,13 @@ function EditToolbar({
   return (
     <div style={{
       position: 'absolute', top: 16, left: '50%', transform: 'translateX(-50%)',
-      display: 'flex', alignItems: 'center', gap: 4,
+      display: 'flex', flexWrap: 'wrap', justifyContent: 'center', width: 'max-content', maxWidth: '95vw', alignItems: 'center', gap: 4,
       padding: '6px 8px', borderRadius: 10,
       background: 'var(--surface-overlay, rgba(20,22,28,0.95))', backdropFilter: 'blur(20px)',
       border: '1px solid rgba(255,255,255,0.08)',
       boxShadow: '0 12px 40px rgba(0,0,0,0.5)', zIndex: 60,
     }}>
+      {historyControls}
       <ToolBtn icon="+" label="Add tile" active={false} onClick={onPickerOpen} accent={accent} />
       <Divider />
       <ToolToggle label="Snap" active={snap} onClick={() => setSnap(!snap)} accent={accent} />

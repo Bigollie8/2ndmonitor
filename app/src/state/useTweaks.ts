@@ -42,14 +42,15 @@ async function tauriSave(value: unknown): Promise<void> {
 
 export function useTweaks<T extends Record<string, unknown>>(
   defaults: T,
-  opts?: { migrate?: (loaded: Record<string, unknown>) => Record<string, unknown> },
-): [T, <K extends keyof T>(key: K, value: T[K]) => void, (raw: Record<string, unknown>) => void, boolean] {
+  opts?: { migrate?: (loaded: Record<string, unknown>) => Record<string, unknown>; store?: { load: () => Promise<unknown | null>; save: (value: unknown) => Promise<void> } },
+): [T, <K extends keyof T>(key: K, value: T[K]) => void, (raw: Record<string, unknown>) => void, boolean, { error: string | null; retry: () => void }] {
   // Synchronous initial state from localStorage (browser dev + first-paint hint).
   const [values, setValues] = useState<T>(() => {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
       if (raw) {
         let parsed = JSON.parse(raw) as Record<string, unknown>;
+        if (!isPlainObject(parsed)) throw new Error('Settings must be an object');
         if (opts?.migrate) parsed = opts.migrate(parsed);
         return mergeTweaks(defaults, parsed);
       }
@@ -64,37 +65,46 @@ export function useTweaks<T extends Record<string, unknown>>(
   // which starts `[]` in TWEAK_DEFAULTS) gate on this instead of guessing with a
   // timeout — see App.tsx's seed_sync effect.
   const [hydrated, setHydrated] = useState(false);
+  const [loadOk, setLoadOk] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [retryCount, setRetryCount] = useState(0);
+  const saveQueue = useRef<Promise<void>>(Promise.resolve());
 
   // Async hydrate from Tauri file (single-shot on mount).
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
-        const fromFile = await tauriLoad();
+        const fromFile = await (opts?.store?.load ?? tauriLoad)();
         if (cancelled) return;
         if (isPlainObject(fromFile)) {
           let raw = fromFile;
           if (opts?.migrate) raw = opts.migrate(raw);
           setValues(mergeTweaks(defaults, raw));
-        } else if (isTauri) {
-          // Migration: file doesn't exist yet but localStorage might. Persist current state.
-          try {
-            const raw = localStorage.getItem(STORAGE_KEY);
-            let initial: Record<string, unknown> = raw ? JSON.parse(raw) : {};
-            if (opts?.migrate) initial = opts.migrate(initial);
-            const merged = mergeTweaks(defaults, initial);
-            await tauriSave(merged);
-          } catch { /* ignore */ }
+        } else if (fromFile !== null) {
+          throw new Error('Saved settings are not a JSON object.');
+        } else {
+          const legacy = typeof localStorage !== 'undefined' ? localStorage.getItem(STORAGE_KEY) : null;
+          if (legacy !== null) {
+            let raw: unknown = JSON.parse(legacy);
+            if (!isPlainObject(raw)) throw new Error('Legacy settings are not a JSON object.');
+            if (opts?.migrate) raw = opts.migrate(raw);
+            setValues(mergeTweaks(defaults, raw as Record<string, unknown>));
+          }
         }
+        if (!cancelled) { setLoadOk(true); setError(null); }
       } catch (err) {
-        console.warn('tweaks_load failed, using localStorage:', err);
+        if (!cancelled) {
+          setLoadOk(false);
+          setError(`Settings could not be loaded. Saving is paused to protect your file. ${String(err)}`);
+        }
       } finally {
         if (!cancelled) setHydrated(true);
       }
     })();
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [retryCount]);
 
   // Persist on change. Both sinks share the 300ms debounce: serializing the
   // full state (profiles, bookmarks, todos) is not free, and without the
@@ -102,6 +112,7 @@ export function useTweaks<T extends Record<string, unknown>>(
   // sensitivity/smoothing sliders.
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
+    if (!hydrated || !loadOk) return;
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
       // Under Tauri the file IS the store — the localStorage copy is only a
@@ -112,16 +123,18 @@ export function useTweaks<T extends Record<string, unknown>>(
       // the main thread (0.7.3 P3). This stops WRITING the legacy copy; it
       // never deletes one, so an install that somehow never migrated still
       // has its blob intact.
-      if (isTauri) {
-        void tauriSave(values).catch((err) => console.warn('tweaks_save failed:', err));
+      if (isTauri || opts?.store) {
+        // Serialize native writes: a slow older save must not replace a newer one.
+        saveQueue.current = saveQueue.current.catch(() => {}).then(() => (opts?.store?.save ?? tauriSave)(values))
+          .then(() => setError(null), err => setError(`Settings could not be saved: ${String(err)}`));
       } else {
-        try { localStorage.setItem(STORAGE_KEY, JSON.stringify(values)); } catch { /* noop */ }
+        try { localStorage.setItem(STORAGE_KEY, JSON.stringify(values)); setError(null); } catch (err) { setError(`Settings could not be saved: ${String(err)}`); }
       }
     }, 300);
     return () => {
       if (saveTimer.current) clearTimeout(saveTimer.current);
     };
-  }, [values]);
+  }, [values, hydrated, loadOk]);
 
   const setTweak = useCallback(<K extends keyof T>(key: K, value: T[K]) => {
     setValues((prev) => ({ ...prev, [key]: value }));
@@ -148,5 +161,9 @@ export function useTweaks<T extends Record<string, unknown>>(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  return [values, setTweak, replaceAll, hydrated];
+  const retry = () => {
+    if (!loadOk) setRetryCount(n => n + 1);
+    else setValues(prev => ({ ...prev }));
+  };
+  return [values, setTweak, replaceAll, hydrated, { error, retry }];
 }

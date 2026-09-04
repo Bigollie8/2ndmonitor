@@ -5,7 +5,8 @@
 //
 // Privacy rule: `config.mapView` is a saved map center — the user's home
 // location — and profile files are meant to be shared. It is stripped on
-// export AND (defensively) on import.
+// export AND (defensively) on import. Since 0.9.17, new exports include only
+// allowlisted presentation config; arbitrary tile/bundle config stays local.
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Profile } from '../types';
 import type { OrientationLayout, Rect, TileInstance } from './layout';
@@ -65,12 +66,26 @@ function sanitizeConfig(config: Record<string, unknown> | undefined): Record<str
   return Object.keys(rest).length > 0 ? rest : undefined;
 }
 
+/** Shared files carry presentation settings only. Bundle config has no trusted
+ * schema here and may contain credentials, so none of it is exported. */
+function shareableConfig(tile: TileInstance): Record<string, unknown> | undefined {
+  if (tile.type.startsWith('bundle:') || !tile.config) return undefined;
+  const safe: Record<string, unknown> = {};
+  const layers = tile.config.layers;
+  if (Array.isArray(layers)) safe.layers = layers.filter(x => typeof x === 'string' && ['rain', 'clouds', 'wind', 'temperature', 'pressure', 'radar', 'satellite'].includes(x));
+  for (const key of ['opacity', 'speed', 'trailLength']) {
+    const value = tile.config[key];
+    if (typeof value === 'number' && Number.isFinite(value)) safe[key] = value;
+  }
+  return Object.keys(safe).length ? safe : undefined;
+}
+
 export function buildProfileExport(profile: Profile): ProfileExportFile {
   const exportTiles = (tiles: TileInstance[]): TileInstance[] =>
     tiles.map((t) => {
       const out: TileInstance = { instanceId: t.instanceId, type: t.type, rect: { ...t.rect } };
       if (t.name !== undefined) out.name = t.name;
-      const config = sanitizeConfig(t.config);
+      const config = shareableConfig(t);
       if (config !== undefined) out.config = config;
       return out;
     });
@@ -199,7 +214,7 @@ export function buildSetupExport(
     tiles: tiles.map((t) => {
       const out: TileInstance = { instanceId: t.instanceId, type: t.type, rect: { ...t.rect } };
       if (t.name !== undefined) out.name = t.name;
-      const config = sanitizeConfig(t.config);
+      const config = shareableConfig(t);
       if (config !== undefined) out.config = config;
       return out;
     }),

@@ -312,7 +312,7 @@ export function DeclarativeTile({ bundleId, instanceId, density, accent, editing
       const message = e instanceof Error ? e.message : String(e);
       throw new Error(redactSecrets(message, secretValues));
     }
-  }, intervalMs, [bundle, needsSetup, JSON.stringify(configValues), JSON.stringify(secretValues)]);
+  }, intervalMs, [bundle, needsSetup, JSON.stringify(configValues), JSON.stringify(secretValues)], bundle?.manifest.name ?? 'Bundle tile', needsSetup);
 
   const title = bundle?.manifest.name ?? 'Tile';
 

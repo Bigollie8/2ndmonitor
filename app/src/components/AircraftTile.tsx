@@ -39,6 +39,7 @@ function AircraftTileImpl({ density, accent, location, config, setConfig, redact
     },
     AIRCRAFT_REFRESH_MS,
     [location.lat, location.lon],
+    'Aircraft',
   );
   const planes = data ?? [];
   const errInfo = describeAircraftError(error);

@@ -66,6 +66,8 @@ function EnergyTileImpl({ density, accent, accent2, editing, config, setConfig }
     },
     POLL_MS,
     [haReady, configured, haUrl, haToken, parsed.solarEntity, parsed.gridEntity],
+    'Energy',
+    !haReady || !configured,
   );
   const solar = data?.solar ?? null;
   const grid = data?.grid ?? null;

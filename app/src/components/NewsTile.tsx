@@ -29,6 +29,7 @@ function NewsTileImpl({ density, accent, editing, config, setConfig }: NewsTileP
     () => fetchNewsHeadlines(parsed.category, parsed.region),
     REFRESH_MS,
     [parsed.category, parsed.region],
+    'News',
   );
   const headlines: Headline[] = data?.headlines ?? [];
   const feedError = error ?? data?.error ?? null;

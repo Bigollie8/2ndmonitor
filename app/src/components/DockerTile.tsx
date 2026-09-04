@@ -7,7 +7,7 @@ import type { Density } from '../types';
 const REFRESH_MS = 30 * 1000;
 
 function DockerTileImpl({ density, accent }: { density: Density; accent: string }) {
-  const { data: result } = usePoll(
+  const { data: result, error } = usePoll(
     async () => {
       // fetchDockerContainers returns null outside Tauri / on invoke failure;
       // usePoll drives backoff off thrown errors, so promote the null to a
@@ -19,6 +19,7 @@ function DockerTileImpl({ density, accent }: { density: Density; accent: string 
     },
     REFRESH_MS,
     [],
+    'Docker',
   );
 
   const running = result?.containers.filter((c) => c.state === 'running').length ?? 0;
@@ -28,7 +29,7 @@ function DockerTileImpl({ density, accent }: { density: Density; accent: string 
     <span style={{
       fontSize: 10, color: 'rgba(255,255,255,0.55)',
       fontFamily: '"JetBrains Mono", ui-monospace, monospace',
-    }}>{result?.error ? 'unavailable' : `${running}/${total}`}</span>
+    }}>{(error || result?.error) ? 'unavailable' : `${running}/${total}`}</span>
   );
 
   return (
@@ -38,13 +39,13 @@ function DockerTileImpl({ density, accent }: { density: Density; accent: string 
         display: 'flex', flexDirection: 'column', gap: 4,
         overflow: 'hidden',
       }}>
-        {result?.error && (
+        {(error || result?.error) && (
           <div style={{
             color: 'rgba(255,255,255,0.55)', fontSize: 11, padding: 8,
             background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)',
             borderRadius: 5, lineHeight: 1.5,
           }}>
-            {result.error}
+            {error || result?.error}
             <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)', marginTop: 4 }}>
               Start Docker Desktop or expose `docker` in PATH.
             </div>

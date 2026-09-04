@@ -9,6 +9,7 @@ export type BuiltinVizMode = 'milkdrop' | 'scripted';
  *  ids are namespaced so they can never collide with a built-in. */
 export type VizMode = BuiltinVizMode | `bundle:${string}`;
 export interface Profile {
+  layoutCheckpoints?: Partial<Record<'landscape' | 'portrait', import('./state/layout').OrientationLayout>>;
   /** Stable id (UUID). Used for activeProfileId references. */
   id: string;
   /** User-editable display name, e.g. "Work". */

@@ -1,8 +1,8 @@
 # 2nd Monitor Hub
 
-A Windows-native dashboard built for the second screen on your desk. Drop it on the side monitor and you get music with synced lyrics, an audio visualizer that reacts to whatever's playing on your PC, a system-resource readout, weather, todos, and a Discord voice tile — all on a drag-resize grid you can rearrange in seconds.
+A desktop dashboard for Windows and macOS built for the second screen on your desk. Drop it on the side monitor and you get music with synced lyrics, an audio visualizer that reacts to whatever's playing on your PC, a system-resource readout, weather, todos, and a Discord voice tile — all on a drag-resize grid you can rearrange in seconds.
 
-Built with Tauri 2 (Rust + WebView2) and React. ~10 MB installer, native Windows audio capture, no Electron.
+Built with Tauri 2 (Rust + platform WebView) and React, with native audio capture and no Electron.
 
 ## What it does
 
@@ -21,7 +21,7 @@ Built with Tauri 2 (Rust + WebView2) and React. ~10 MB installer, native Windows
 
 Download the latest `Second-Monitor Hub_<version>_x64-setup.exe` from [Releases](../../releases) and run it. The installer fetches the WebView2 bootstrapper if you don't already have it.
 
-Requires: Windows 10/11 x64.
+Installers: Windows x64 and universal macOS. See the latest release for artifacts.
 
 ## Build from source
 
@@ -40,11 +40,11 @@ cd app
 npm run tauri:dev
 ```
 
-Toolchain: Node 20+, Rust 1.75+, Windows (the app uses Windows-only APIs — GSMTC for now-playing, WASAPI for audio capture, Core Audio for the mixer).
+Toolchain: Node 20+ and stable Rust. Build Windows installers on Windows and macOS installers on macOS; each platform uses its native audio and media APIs.
 
 ## First launch
 
-A 5-step onboarding walks you through audio source, profile, and tile pick. After that:
+A 5-step onboarding walks you through profile choice, audio activity, optional integrations, and location. After that:
 
 - **V** — cycle visualizer style
 - **Ctrl+E** — toggle edit mode (drag tiles, resize, hide)
@@ -115,3 +115,5 @@ available under it — see [LICENSE-MIT](LICENSE-MIT).
 Third-party components are listed in
 [THIRD-PARTY-LICENSES.md](THIRD-PARTY-LICENSES.md), regenerated with
 `node scripts/gen-third-party-licenses.mjs`.
+
+See [0.9.17 feature guide](docs/FEATURES_0.9.17.md) for layout recovery, automatic profiles, display recall, data status and shared-setup previews.

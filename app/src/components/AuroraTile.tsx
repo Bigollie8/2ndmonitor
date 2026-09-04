@@ -53,6 +53,7 @@ function AuroraTileImpl({ density, accent, location, hour12 }: AuroraTileProps) 
     },
     KP_REFRESH_MS,
     [],
+    'Aurora',
   );
   const recent = data?.recent ?? [];
   const forecast = data?.forecast ?? [];

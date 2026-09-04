@@ -40,6 +40,7 @@ function PollenTileImpl({ density, accent, editing, location }: PollenTileProps)
     },
     REFRESH_MS,
     [loaded, token, location.lat, location.lon],
+    'Pollen',
   );
   const sample = data ?? null;
 

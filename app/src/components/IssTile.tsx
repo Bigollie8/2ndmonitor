@@ -38,6 +38,7 @@ function IssTileImpl({ density, accent, location, config, setConfig, redacted = 
     },
     REFRESH_MS,
     [],
+    'Space station',
   );
 
   // Ground track accumulated while the tile runs. A ref, not state — the tile

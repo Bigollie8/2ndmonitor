@@ -55,6 +55,7 @@ function RadarTileImpl({ density, accent, location, config, setConfig, redacted 
     },
     MANIFEST_REFRESH_MS,
     [],
+    'Radar',
   );
 
   /** The configured loop window of past frames, oldest → newest. */

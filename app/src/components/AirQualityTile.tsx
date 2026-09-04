@@ -27,6 +27,7 @@ function AirQualityTileImpl({ density, accent, location }: AirQualityTileProps) 
     },
     REFRESH_MS,
     [location.lat, location.lon],
+    'Air quality',
   );
 
   const aqi = aqiCategory(sample?.usAqi ?? null);
