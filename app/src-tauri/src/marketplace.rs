@@ -1610,6 +1610,7 @@ pub fn install_bundle_zip<R: Runtime>(
         }
         other => return Err(format!("unknown kind {other}")),
     }
+    crate::background::content_changed();
     Ok(())
 }
 
@@ -1731,6 +1732,7 @@ pub fn marketplace_uninstall<R: Runtime>(app: AppHandle<R>, id: String, kind: St
         }
         other => return Err(format!("unknown kind {other}")),
     }
+    crate::background::content_changed();
     Ok(())
 }
 

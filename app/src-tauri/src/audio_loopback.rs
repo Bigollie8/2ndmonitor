@@ -8,6 +8,7 @@
 //! activation fails and the caller falls back to the mix — we never sniff the
 //! version, we just try.
 
+use crate::audio::AudioRing;
 use parking_lot::Mutex;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
@@ -56,7 +57,7 @@ impl Drop for ProcessCapture {
 pub fn start(
     pid: u32,
     exclude: bool,
-    buffer: Arc<Mutex<Vec<f32>>>,
+    buffer: Arc<Mutex<AudioRing>>,
     ring_cap: usize,
 ) -> Result<ProcessCapture, String> {
     let stop = Arc::new(AtomicBool::new(false));
@@ -103,7 +104,7 @@ pub fn start(
 pub fn start(
     _pid: u32,
     _exclude: bool,
-    _b: Arc<Mutex<Vec<f32>>>,
+    _b: Arc<Mutex<AudioRing>>,
     _c: usize,
 ) -> Result<ProcessCapture, String> {
     Err("process loopback is Windows-only".into())
@@ -118,17 +119,22 @@ pub fn start(
 // every per-app source, however stereo (the 0.9.3 report).
 
 #[cfg(any(target_os = "windows", test))]
-fn push_stereo(data: &[f32], channels: usize, buffer: &Arc<Mutex<Vec<f32>>>, ring_cap: usize) {
+fn push_stereo(data: &[f32], channels: usize, buffer: &Arc<Mutex<AudioRing>>, ring_cap: usize) {
     if channels == 0 {
         return; // a stream reporting no channels never completes a frame
     }
     let mut buf = buffer.lock();
-    for frame in data.chunks_exact(channels) {
+    if channels == 2 {
+        crate::audio_ring::push_interleaved(&mut buf, data, ring_cap);
+        return;
+    }
+    let skip = crate::audio_ring::prepare_packet(&mut buf, data.len() / channels, ring_cap);
+    for frame in data.chunks_exact(channels).skip(skip) {
         // Mono duplicates into both; anything wider contributes FL/FR — the
         // one shared implementation of that pick.
         let (l, r) = crate::audio::frame_lr(&frame[..channels.min(2)]);
-        buf.push(l);
-        buf.push(r);
+        buf.push_back(l);
+        buf.push_back(r);
     }
     crate::audio::trim_frames(&mut buf, ring_cap);
 }
@@ -136,14 +142,15 @@ fn push_stereo(data: &[f32], channels: usize, buffer: &Arc<Mutex<Vec<f32>>>, rin
 /// AUDCLNT_BUFFERFLAGS_SILENT means the packet's memory is undefined, not
 /// zeroed — we must synthesize the silence ourselves or the FFT sees junk.
 #[cfg(any(target_os = "windows", test))]
-fn push_silence(frames: usize, buffer: &Arc<Mutex<Vec<f32>>>, ring_cap: usize) {
+fn push_silence(frames: usize, buffer: &Arc<Mutex<AudioRing>>, ring_cap: usize) {
     let mut buf = buffer.lock();
-    buf.extend(std::iter::repeat(0.0f32).take(frames * 2));
+    crate::audio_ring::push_silence(&mut buf, frames, ring_cap);
     crate::audio::trim_frames(&mut buf, ring_cap);
 }
 
 #[cfg(target_os = "windows")]
 mod winimpl {
+    use crate::audio::AudioRing;
     use super::{push_silence, push_stereo, CAPTURE_CHANNELS, CAPTURE_SAMPLE_RATE};
     use parking_lot::{Condvar, Mutex};
     use std::sync::{
@@ -254,7 +261,7 @@ mod winimpl {
     pub unsafe fn pump(
         pid: u32,
         exclude: bool,
-        buffer: Arc<Mutex<Vec<f32>>>,
+        buffer: Arc<Mutex<AudioRing>>,
         ring_cap: usize,
         stop: Arc<AtomicBool>,
         tx: &Sender<Result<(), String>>,
@@ -279,7 +286,7 @@ mod winimpl {
     unsafe fn capture_loop(
         pid: u32,
         exclude: bool,
-        buffer: Arc<Mutex<Vec<f32>>>,
+        buffer: Arc<Mutex<AudioRing>>,
         ring_cap: usize,
         stop: Arc<AtomicBool>,
         tx: &Sender<Result<(), String>>,
@@ -452,8 +459,8 @@ mod winimpl {
 mod tests {
     use super::*;
 
-    fn ring() -> Arc<Mutex<Vec<f32>>> {
-        Arc::new(Mutex::new(Vec::new()))
+    fn ring() -> Arc<Mutex<AudioRing>> {
+        Arc::new(Mutex::new(AudioRing::new()))
     }
 
     // The 0.9.3 stereo bug: this backend averaged every frame to mono before

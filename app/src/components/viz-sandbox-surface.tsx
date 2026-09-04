@@ -123,6 +123,22 @@ export function SandboxVizSurface({
 }) {
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const hostRef = useRef<HTMLDivElement | null>(null);
+  const sizeRef = useRef({ width: 0, height: 0 });
+  // Layout size changes far less often than audio frames. Keep geometry
+  // reads out of the frame pump, including while resizing or changing zoom.
+  useEffect(() => {
+    const host = hostRef.current;
+    if (!host) return;
+    const measure = () => {
+      const rect = host.getBoundingClientRect();
+      sizeRef.current = { width: Math.round(rect.width), height: Math.round(rect.height) };
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(host);
+    window.addEventListener('resize', measure);
+    return () => { observer.disconnect(); window.removeEventListener('resize', measure); };
+  }, []);
   const [wantsStereo, setWantsStereo] = useState(false);
   const waveRef = useWaveformRef({ stereo: wantsStereo });
   // Spotify beat/bar/section grid (0.9.10): polled only while a bundle whose
@@ -292,12 +308,11 @@ export function SandboxVizSurface({
     try {
       settings = JSON.parse(localStorage.getItem(settingsKey(bundleId)) ?? '{}');
     } catch { /* fresh */ }
-    const rect = hostRef.current.getBoundingClientRect();
     const msg: InitMessage = {
       type: 'init',
       code: codeRef.current,
       settings,
-      size: { width: Math.round(rect.width), height: Math.round(rect.height) },
+      size: sizeRef.current,
       theme: themeRef.current,
       surface: surfaceRef.current,
     };
@@ -448,7 +463,6 @@ export function SandboxVizSurface({
       // Real elapsed time, not an assumed 40ms step — the reader's AGC and
       // onset decays are wall-clock-true since 0.8.7 (see read()'s doc).
       reader.read(clampDt(dtMs));
-      const rect = hostRef.current.getBoundingClientRect();
       const msg = buildFrameMessage({
         spectrum: reader.out,
         waveform: waveRef.current.mono,
@@ -458,7 +472,7 @@ export function SandboxVizSurface({
         onset: reader.onset,
         level: spectrumRef?.current.level ?? 0,
         dtMs,
-        size: { width: Math.round(rect.width), height: Math.round(rect.height) },
+        size: sizeRef.current,
         theme: themeRef.current,
         track: trackRef.current ? { title: trackRef.current.title, artist: trackRef.current.artist } : null,
         playback: toVizPlayback(playbackRef.current, now),

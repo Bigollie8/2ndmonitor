@@ -1,3 +1,6 @@
+import { createMeterGate } from '../state/meterPace';
+import { isAppHidden } from '../state/framePace';
+import { getVizMaxFps } from './viz';
 import React, { useEffect, useRef, useState, type MutableRefObject } from 'react';
 import { getDensity } from '../data';
 import type { Density, Track } from '../types';
@@ -870,9 +873,12 @@ function SpotifyMiniViz({ accent, accent2, spectrumRef }: {
     // audio arrives — skip the 36 DOM writes per frame instead of rewriting
     // the same scaleY(0.08) at 60fps.
     let settled = false;
+    const shouldPaint = createMeterGate();
     const tick = () => {
       raf = requestAnimationFrame(tick);
-      if (document.hidden) return;
+      if (isAppHidden()) return;
+      const sample = spectrumRef.current;
+      if (!shouldPaint(performance.now(), sample.live, sample.frameId, getVizMaxFps())) return;
       const bands = spectrumRef.current.bands;
       const live = spectrumRef.current.live;
       const level = spectrumRef.current.level;

@@ -35,9 +35,40 @@ Ad-hoc modes (`--dev/--progress/--feature/--info`) require `--title` and
 2. Bump version in `app/src-tauri/tauri.conf.json` + `app/package.json`.
 3. Commit, `git tag vX.Y.Z`, push branch and tag.
 4. `.github/workflows/announce-release.yml` posts the changelog to the
-   releases channel and, if the section has `### Added`, a spotlight to the
+   releases channel and, if the section has `### Added` or `### Fixed`, a spotlight to the
    features channel. **It fails loudly if the tagged commit lacks the
    changelog section** — no fallback post.
+5. Wait for both Windows and macOS release builds and the merged updater
+   manifest. The build workflow reads the same tagged changelog through
+   `scripts/release-notes.mjs` for GitHub descriptions and updater notes.
+6. Verify the public mirror at `Bigollie8/2ndmonitor-releases`, including
+   anonymous access to `releases/latest/download/latest.json` and every
+   platform artifact it names. A successful private upload alone does not
+   mean users can install or update.
+7. Check the announcement job log for BOTH `posted: release vX.Y.Z` and
+   `posted: spotlight vX.Y.Z`. Do not run the local sender as well after
+   success: that would duplicate the Discord posts.
+
+### Public mirror fallback
+
+The `RELEASES_TOKEN` Actions secret is required for automatic cross-repo
+mirroring. It was absent on the 0.9.15 release; installer builds succeeded
+but the mirror step failed. Until a scoped publishing credential is
+configured, an authenticated maintainer can finish the existing release:
+
+1. Download every asset from the private versioned release into a fresh
+   staging directory, including the generated `latest.json`.
+2. Generate notes with `node scripts/release-notes.mjs X.Y.Z` into a file.
+3. Create the matching public release with `gh release create`, passing
+   `--repo Bigollie8/2ndmonitor-releases` and `--notes-file`; upload all
+   staged artifacts. If the public release exists, edit its notes and
+   upload only after checking which assets are missing.
+4. Compare names and SHA-256 digests between both releases and verify the
+   anonymous updater URL. Record that mirroring was completed manually;
+   the failed Actions mirror step should not be mistaken for a missing
+   public release.
+
+Never print webhook URLs or signing credentials while checking a release.
 
 ## Secrets
 

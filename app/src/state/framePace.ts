@@ -19,11 +19,28 @@ export function paceFrame(now: number, state: PaceState, minDelta: number): bool
  *  hide — so the Rust side emits `hub://window-visibility` explicitly and
  *  App.tsx mirrors it here for the rAF viz gate to read. */
 let windowHidden = false;
+const visibilityListeners = new Set<() => void>();
 
 export function setWindowHidden(hidden: boolean): void {
+  if (windowHidden === hidden) return;
   windowHidden = hidden;
+  for (const listener of visibilityListeners) listener();
 }
 
 export function isWindowHidden(): boolean {
   return windowHidden;
+}
+
+/** WebView document visibility alone misses native hide-to-tray. */
+export function isAppHidden(): boolean {
+  return windowHidden || (typeof document !== 'undefined' && document.hidden);
+}
+
+export function subscribeVisibility(listener: () => void): () => void {
+  visibilityListeners.add(listener);
+  if (typeof document !== 'undefined') document.addEventListener('visibilitychange', listener);
+  return () => {
+    visibilityListeners.delete(listener);
+    if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', listener);
+  };
 }

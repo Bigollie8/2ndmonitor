@@ -36,6 +36,16 @@ export function VizScripted(props: VizProps) {
 }
 
 function ScriptedSurface(props: VizProps) {
+  useEffect(() => {
+    let cancelled = false;
+    let stop: (() => void) | undefined;
+    void import('@tauri-apps/api/core').then(({ invoke }) => {
+      if (cancelled) return;
+      void invoke('set_content_editing', { active: true }).catch(() => {});
+      stop = () => { void invoke('set_content_editing', { active: false }).catch(() => {}); };
+    });
+    return () => { cancelled = true; stop?.(); };
+  }, []);
   const { accent } = props;
   const [folders, setFolders] = useState<VizFolder[]>([]);
   const [activeId, setActiveId] = useState<string | null>(() => localStorage.getItem(LS_ACTIVE));

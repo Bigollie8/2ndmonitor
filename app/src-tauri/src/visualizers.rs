@@ -222,6 +222,7 @@ pub fn visualizers_write<R: Runtime>(
     if let Some(c) = code {
         write("main.js", &c)?;
     }
+    crate::background::content_changed();
     Ok(())
 }
 
@@ -261,10 +262,18 @@ pub fn spawn_watcher<R: Runtime>(app: AppHandle<R>) {
             return;
         };
         let mut last = fingerprint(&dir);
+        let mut schedule = crate::background::WorkSchedule::new();
+        let mut revision = crate::background::content_revision();
         loop {
-            std::thread::sleep(Duration::from_secs(2));
+            std::thread::sleep(Duration::from_secs(1));
+            let next_revision = crate::background::content_revision();
+            let changed = revision != next_revision;
+            revision = next_revision;
+            if !schedule.due(crate::WINDOW_VISIBLE.load(std::sync::atomic::Ordering::Relaxed), crate::background::content_interval(), 30) && !changed {
+                continue;
+            }
             let now = fingerprint(&dir);
-            if now != last {
+            if changed || now != last {
                 last = now;
                 let _ = app.emit("visualizers:changed", ());
             }

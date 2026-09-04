@@ -167,20 +167,7 @@ fn sample_to_byte(s: f32) -> u8 {
 /// memory if the processor stalls.
 const RING_CAP: usize = FFT_SIZE * 8;
 
-/// Drop the oldest samples once a ring exceeds `cap_frames` frames. Always an
-/// even count: an odd drain would swap L and R for the entire remainder of
-/// the stream — silent, permanent, and invisible until someone opened a
-/// vectorscope. Every ring writer (cpal `push_frames`, the apps-mode
-/// `append_hop`, `audio_loopback`, `audio_tap`) trims through here so the
-/// invariant has exactly one implementation.
-pub(crate) fn trim_frames(buf: &mut Vec<f32>, cap_frames: usize) {
-    let cap = cap_frames * 2;
-    if buf.len() > cap {
-        let excess = buf.len() - cap;
-        let drop = ((excess + 1) & !1).min(buf.len());
-        buf.drain(..drop);
-    }
-}
+pub(crate) use crate::audio_ring::{AudioRing, trim_frames};
 
 /// De-interleaved time-domain bytes, same convention as the mono waveform
 /// (0-255 centred at 128). Sent as two arrays so the frontend does no
@@ -211,7 +198,7 @@ fn run<R: Runtime>(app: AppHandle<R>) -> Result<(), String> {
     // ×2: the ring holds interleaved L/R, RING_CAP counts frames. Anything
     // less and the first seconds of capture reallocate the ring inside the
     // realtime callback — the exact cost the one-lock design exists to avoid.
-    let buffer = Arc::new(Mutex::new(Vec::<f32>::with_capacity(RING_CAP * 2)));
+    let buffer = Arc::new(Mutex::new(AudioRing::with_capacity(RING_CAP * 2)));
 
     // The capture backend gets its own thread: cpal's Stream is !Send on
     // Windows, so it must be created *and dropped* on one thread, and a
@@ -304,7 +291,7 @@ static LAST_STATE: Mutex<Option<AudioSourceState>> = Mutex::new(None);
 ///   pid list and mixes them itself, so there is one ring; publishing it
 ///   unconditionally is what keeps `process_loop` in apps mode (and the
 ///   spectrum decaying to zero rather than freezing) when nothing is playing.
-static APP_RINGS: Mutex<Vec<Arc<Mutex<Vec<f32>>>>> = Mutex::new(Vec::new());
+static APP_RINGS: Mutex<Vec<Arc<Mutex<AudioRing>>>> = Mutex::new(Vec::new());
 
 /// Current capture state. Pure read — never touches the capture.
 ///
@@ -328,7 +315,7 @@ pub async fn audio_get_source() -> AudioSourceState {
 #[cfg(not(target_os = "macos"))]
 struct AppCapture {
     exe: String,
-    ring: Arc<Mutex<Vec<f32>>>,
+    ring: Arc<Mutex<AudioRing>>,
     cap: Option<(u32, crate::audio_loopback::ProcessCapture)>,
     /// Session pid observed for this exe at the last build or watcher pass —
     /// tracked whether or not a capture is attached. This is what lets the
@@ -367,7 +354,7 @@ struct TapApps {
     /// `APP_RINGS` is how `process_loop` knows to keep the window sliding
     /// with synthesized silence. With no tap it simply stays empty, which is
     /// exactly what a Windows slot with `cap: None` looks like.
-    ring: Arc<Mutex<Vec<f32>>>,
+    ring: Arc<Mutex<AudioRing>>,
     /// `None` when no selected app had a process object to tap, or when the
     /// tap could not be created. Held purely for its `Drop` — hence the allow
     /// on `Live`.
@@ -404,7 +391,7 @@ struct Supervisor<R: Runtime> {
     app: AppHandle<R>,
     /// The FFT ring. Mix mode: cpal writes it directly. Apps mode: only the
     /// hop mix in `process_loop` writes it (via `APP_RINGS`).
-    buffer: Arc<Mutex<Vec<f32>>>,
+    buffer: Arc<Mutex<AudioRing>>,
     live: Live,
     requested: Source,
     supported: bool,
@@ -432,7 +419,7 @@ const WATCH_INTERVAL: Duration = Duration::from_secs(2);
 
 fn supervisor<R: Runtime>(
     app: AppHandle<R>,
-    buffer: Arc<Mutex<Vec<f32>>>,
+    buffer: Arc<Mutex<AudioRing>>,
     rx: mpsc::Receiver<CaptureCmd>,
 ) {
     let mut sup = Supervisor {
@@ -545,11 +532,11 @@ impl<R: Runtime> Supervisor<R> {
         exes: Vec<String>,
         pids: Vec<Option<u32>>,
         can_try: bool,
-    ) -> (Live, Vec<Arc<Mutex<Vec<f32>>>>, u32) {
+    ) -> (Live, Vec<Arc<Mutex<AudioRing>>>, u32) {
         let mut caps: Vec<AppCapture> = Vec::with_capacity(exes.len());
         for (exe, pid) in exes.into_iter().zip(pids) {
             // ×2: the ring holds interleaved L/R, RING_CAP counts frames.
-            let ring = Arc::new(Mutex::new(Vec::with_capacity(RING_CAP * 2)));
+            let ring = Arc::new(Mutex::new(AudioRing::with_capacity(RING_CAP * 2)));
             let cap = match pid {
                 Some(pid) if can_try => {
                     match crate::audio_loopback::start(pid, false, ring.clone(), RING_CAP) {
@@ -604,11 +591,11 @@ impl<R: Runtime> Supervisor<R> {
         exes: Vec<String>,
         pids: Vec<Option<u32>>,
         can_try: bool,
-    ) -> (Live, Vec<Arc<Mutex<Vec<f32>>>>, u32) {
+    ) -> (Live, Vec<Arc<Mutex<AudioRing>>>, u32) {
         use crate::audio_tap::TapTarget;
 
         // ×2: the ring holds interleaved L/R, RING_CAP counts frames.
-        let ring = Arc::new(Mutex::new(Vec::with_capacity(RING_CAP * 2)));
+        let ring = Arc::new(Mutex::new(AudioRing::with_capacity(RING_CAP * 2)));
         let mut slots: Vec<AppSlot> = exes
             .into_iter()
             .zip(pids.iter().copied())
@@ -932,7 +919,7 @@ fn session_pairs() -> Vec<(String, u32)> {
 /// an explanation rather than killing the audio threads.
 #[cfg(not(target_os = "macos"))]
 fn open_mix_or_none(
-    buffer: &Arc<Mutex<Vec<f32>>>,
+    buffer: &Arc<Mutex<AudioRing>>,
     reason: &mut Option<String>,
 ) -> (Live, u32) {
     match open_mix(buffer.clone()) {
@@ -958,7 +945,7 @@ fn open_mix_or_none(
 /// `audio_tap` spells that out in the error the UI ends up showing.
 #[cfg(target_os = "macos")]
 fn open_mix_or_none(
-    buffer: &Arc<Mutex<Vec<f32>>>,
+    buffer: &Arc<Mutex<AudioRing>>,
     reason: &mut Option<String>,
 ) -> (Live, u32) {
     match crate::audio_tap::start(
@@ -988,7 +975,7 @@ fn open_mix_or_none(
 /// device. Re-queried on every call so a default-device change is picked up by
 /// the next swap. The returned flag is the stream's liveness — see `build_stream`.
 #[cfg(not(target_os = "macos"))]
-fn open_mix(buffer: Arc<Mutex<Vec<f32>>>) -> Result<(cpal::Stream, u32, Arc<AtomicBool>), String> {
+fn open_mix(buffer: Arc<Mutex<AudioRing>>) -> Result<(cpal::Stream, u32, Arc<AtomicBool>), String> {
     let host = cpal::default_host();
     let device = host
         .default_output_device()
@@ -1033,7 +1020,7 @@ fn build_stream(
     config: &cpal::StreamConfig,
     sample_format: cpal::SampleFormat,
     channels: usize,
-    buffer: Arc<Mutex<Vec<f32>>>,
+    buffer: Arc<Mutex<AudioRing>>,
     alive: Arc<AtomicBool>,
 ) -> Result<cpal::Stream, String> {
     let err_fn = move |err| {
@@ -1047,18 +1034,21 @@ fn build_stream(
     /// which is the whole reason the ring carries stereo rather than a second
     /// ring being added alongside the mono one: a second mutex here is
     /// contention on a realtime thread, and that is audible for every user.
-    fn push_frames<I, F>(samples: I, channels: usize, buffer: &Arc<Mutex<Vec<f32>>>, to_f32: F)
+    fn push_frames<I, F>(samples: I, channels: usize, buffer: &Arc<Mutex<AudioRing>>, to_f32: F)
     where
         I: IntoIterator,
+        I::IntoIter: ExactSizeIterator,
         F: Fn(I::Item) -> f32,
     {
         if channels == 0 {
             return; // a device that reports no channels would never complete a frame
         }
         let mut buf = buffer.lock();
+        let samples = samples.into_iter();
+        let skip = crate::audio_ring::prepare_packet(&mut buf, samples.len() / channels, RING_CAP);
         let mut frame: [f32; 2] = [0.0, 0.0];
         let mut count: usize = 0;
-        for s in samples {
+        for s in samples.skip(skip * channels) {
             let v = to_f32(s);
             if count < 2 {
                 frame[count] = v;
@@ -1067,8 +1057,8 @@ fn build_stream(
             if count == channels {
                 let used = if channels == 1 { &frame[..1] } else { &frame[..2] };
                 let (l, r) = frame_lr(used);
-                buf.push(l);
-                buf.push(r);
+                buf.push_back(l);
+                buf.push_back(r);
                 count = 0;
             }
         }
@@ -1080,7 +1070,11 @@ fn build_stream(
             .build_input_stream(
                 config,
                 move |data: &[f32], _| {
-                    push_frames(data.iter().copied(), channels, &buffer, |s| s);
+                    if channels == 2 {
+                        crate::audio_ring::push_interleaved(&mut buffer.lock(), data, RING_CAP);
+                    } else {
+                        push_frames(data.iter().copied(), channels, &buffer, |s| s);
+                    }
                 },
                 err_fn,
                 None,
@@ -1116,7 +1110,7 @@ fn build_stream(
 
 fn process_loop<R: Runtime>(
     app: AppHandle<R>,
-    buffer: Arc<Mutex<Vec<f32>>>,
+    buffer: Arc<Mutex<AudioRing>>,
 ) -> Result<(), String> {
     let mut planner = FftPlanner::<f32>::new();
     let fft = planner.plan_fft_forward(FFT_SIZE);
@@ -1131,6 +1125,13 @@ fn process_loop<R: Runtime>(
     let mut band_edges: Vec<(usize, usize)> = Vec::new();
     let mut band_tilt: Vec<f32> = Vec::new();
     let mut workspace = vec![Complex32::default(); FFT_SIZE];
+    let mut fft_scratch = vec![Complex32::default(); fft.get_inplace_scratch_len()];
+    let mut rings: Vec<Arc<Mutex<AudioRing>>> = Vec::new();
+    let mut drained: Vec<Vec<f32>> = Vec::new();
+    let mut mixed: Vec<f32> = Vec::with_capacity(RING_CAP * 2);
+    let mut frame = AudioFrame { bands: vec![0.0; SPECTRUM_BANDS], level: 0.0 };
+    let mut stereo_wave = StereoWaveform { left: Vec::with_capacity(WAVEFORM_LEN), right: Vec::with_capacity(WAVEFORM_LEN) };
+    let mut wave = Vec::with_capacity(WAVEFORM_LEN);
     let mut samples = vec![0f32; FFT_SIZE];
     let mut smoothed = vec![0f32; SPECTRUM_BANDS];
     // Reused per hop so the FFT path stays allocation-free (0.8.4): the mono
@@ -1193,13 +1194,14 @@ fn process_loop<R: Runtime>(
         // zero; a frozen ring would replay the last real window forever.
         // Empty list = mix mode (cpal writes the ring directly): this whole
         // block then costs one uncontended lock.
-        let rings: Vec<Arc<Mutex<Vec<f32>>>> = APP_RINGS.lock().clone();
+        rings.clone_from(&APP_RINGS.lock());
         if !rings.is_empty() {
-            let drained: Vec<Vec<f32>> = rings
-                .iter()
-                .map(|r| std::mem::take(&mut *r.lock()))
-                .collect();
-            let mixed = mix_rings(&drained);
+            drained.resize_with(rings.len(), || Vec::with_capacity(RING_CAP * 2));
+            for (ring, scratch) in rings.iter().zip(drained.iter_mut()) {
+                scratch.clear();
+                scratch.extend(ring.lock().drain(..));
+            }
+            mix_rings_into(&drained, &mut mixed);
             // Per-app rings carry INTERLEAVED L/R since 0.9.3 — the backends
             // used to pre-mix to mono inside the capture path, which is why a
             // per-app source drew a vertical line on the vectorscope (L == R
@@ -1221,12 +1223,11 @@ fn process_loop<R: Runtime>(
             if buf.len() < need {
                 false
             } else {
-                let tail = &buf[buf.len() - need..];
-                mono_scratch.clear();
-                pairs_to_mono(tail, &mut mono_scratch);
-                samples.copy_from_slice(&mono_scratch);
                 stereo_tail.clear();
-                stereo_tail.extend_from_slice(tail);
+                stereo_tail.extend(buf.iter().skip(buf.len() - need).copied());
+                mono_scratch.clear();
+                pairs_to_mono(&stereo_tail, &mut mono_scratch);
+                samples.copy_from_slice(&mono_scratch);
                 true
             }
         };
@@ -1250,10 +1251,11 @@ fn process_loop<R: Runtime>(
         for i in 0..FFT_SIZE {
             workspace[i] = Complex32::new(samples[i] * hann[i], 0.0);
         }
-        fft.process(&mut workspace);
+        fft.process_with_scratch(&mut workspace, &mut fft_scratch);
 
         // Magnitudes (positive-frequency half).
-        let mut bands = vec![0f32; SPECTRUM_BANDS];
+        let bands = &mut frame.bands;
+        bands.fill(0.0);
         for b in 0..SPECTRUM_BANDS {
             let (start, end) = band_edges[b];
             if end <= start {
@@ -1284,10 +1286,11 @@ fn process_loop<R: Runtime>(
         let rms = (sum_sq / FFT_SIZE as f32).sqrt();
         let level = (rms * 4.0).clamp(0.0, 1.0);
 
-        // Read before the emit moves `bands`: silence needs both the source
+        // Before emitting, silence detection needs both the source
         // quiet (peak) and the DISPLAYED spectrum fully decayed.
         let display_settled = bands.iter().all(|b| *b < 0.004);
-        let _ = app.emit("audio:spectrum", AudioFrame { bands, level });
+        frame.level = level;
+        let _ = app.emit("audio:spectrum", &frame);
 
         // Stereo waveform (0.8.4) — the vectorscope and the correlation/width
         // meters need both channels, de-interleaved so the frontend does no
@@ -1298,21 +1301,19 @@ fn process_loop<R: Runtime>(
             && stereo_tail.len() >= WAVEFORM_LEN * 2
         {
             let tail = &stereo_tail[stereo_tail.len() - WAVEFORM_LEN * 2..];
-            let mut left = Vec::with_capacity(WAVEFORM_LEN);
-            let mut right = Vec::with_capacity(WAVEFORM_LEN);
+            stereo_wave.left.clear();
+            stereo_wave.right.clear();
             for p in tail.chunks_exact(2) {
-                left.push(sample_to_byte(p[0]));
-                right.push(sample_to_byte(p[1]));
+                stereo_wave.left.push(sample_to_byte(p[0]));
+                stereo_wave.right.push(sample_to_byte(p[1]));
             }
-            let _ = app.emit("audio:waveform_stereo", StereoWaveform { left, right });
+            let _ = app.emit("audio:waveform_stereo", &stereo_wave);
         }
 
         if WAVEFORM_ENABLED.load(std::sync::atomic::Ordering::Relaxed) {
-            let wave: Vec<u8> = samples[FFT_SIZE - WAVEFORM_LEN..]
-                .iter()
-                .map(|s| sample_to_byte(*s))
-                .collect();
-            let _ = app.emit("audio:waveform", wave);
+            wave.clear();
+            wave.extend(samples[FFT_SIZE - WAVEFORM_LEN..].iter().map(|s| sample_to_byte(*s)));
+            let _ = app.emit("audio:waveform", &wave);
         }
 
         // Silence bookkeeping (0.9.6) — AFTER the emits, so the decaying
@@ -1383,9 +1384,17 @@ fn log_band_edges(bands: usize, max_bin: usize, sample_rate: f32, fmin: f32, fma
 /// Cross-app alignment is deliberately loose: packet timing can skew apps by
 /// up to one hop (~30 ms) relative to each other, which is invisible in a
 /// spectrum display and avoids per-capture timestamp bookkeeping.
+#[cfg(test)]
 pub fn mix_rings(drained: &[Vec<f32>]) -> Vec<f32> {
+    let mut out = Vec::new();
+    mix_rings_into(drained, &mut out);
+    out
+}
+
+fn mix_rings_into(drained: &[Vec<f32>], out: &mut Vec<f32>) {
     let len = drained.iter().map(|d| d.len()).max().unwrap_or(0);
-    let mut out = vec![0.0f32; len];
+    out.clear();
+    out.resize(len, 0.0);
     for d in drained {
         for (i, s) in d.iter().enumerate() {
             out[i] += *s;
@@ -1394,7 +1403,6 @@ pub fn mix_rings(drained: &[Vec<f32>]) -> Vec<f32> {
     for s in out.iter_mut() {
         *s = s.clamp(-1.0, 1.0);
     }
-    out
 }
 
 /// Append one hop of the apps-mode mix to the FFT ring. `mixed` is already
@@ -1402,21 +1410,69 @@ pub fn mix_rings(drained: &[Vec<f32>]) -> Vec<f32> {
 /// appends `silence_frames` frames of silence instead, so the window keeps
 /// sliding and the spectrum decays to zero rather than replaying the last
 /// real window forever.
-fn append_hop(buf: &mut Vec<f32>, mixed: &[f32], silence_frames: usize) {
+fn append_hop(buf: &mut AudioRing, mixed: &[f32], silence_frames: usize) {
     if mixed.is_empty() {
-        buf.extend(std::iter::repeat(0.0f32).take(silence_frames * 2));
+        crate::audio_ring::push_silence(buf, silence_frames, RING_CAP);
     } else {
         // The pushes upstream are frame-atomic, so an odd tail should not
         // exist — but pairing one with the next hop's first sample would
         // swap L and R for the rest of the stream, so drop it defensively.
-        buf.extend_from_slice(&mixed[..mixed.len() & !1]);
+        crate::audio_ring::push_interleaved(buf, mixed, RING_CAP);
     }
     trim_frames(buf, RING_CAP);
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{mix_rings, sample_to_byte};
+    use super::{mix_rings, sample_to_byte, AudioRing};
+
+    #[test]
+    fn circular_ring_wraps_without_growing_and_keeps_channel_order() {
+        let mut ring = AudioRing::with_capacity(8);
+        let capacity = ring.capacity();
+        for i in 0..100 {
+            crate::audio_ring::push_interleaved(&mut ring, &[i as f32, -(i as f32)], 4);
+        }
+        assert_eq!(ring.capacity(), capacity);
+        assert_eq!(ring, vec![96.0, -96.0, 97.0, -97.0, 98.0, -98.0, 99.0, -99.0]);
+        let tail: Vec<_> = ring.iter().skip(ring.len() - 4).copied().collect();
+        let mut mono = Vec::new();
+        super::pairs_to_mono(&tail, &mut mono);
+        assert_eq!(mono, vec![0.0, 0.0]);
+        ring.clear();
+        crate::audio_ring::push_interleaved(&mut ring, &[0.25, -0.5], 4);
+        assert_eq!(ring, vec![0.25, -0.5]);
+        assert_eq!(ring.capacity(), capacity);
+    }
+
+    #[test]
+    fn reused_mix_does_not_retain_previous_hop_samples() {
+        let mut out = Vec::with_capacity(16);
+        super::mix_rings_into(&[vec![0.5, -0.5, 0.75, -0.75]], &mut out);
+        let ptr = out.as_ptr();
+        super::mix_rings_into(&[vec![0.25, -0.25], vec![0.5, 0.5]], &mut out);
+        assert_eq!(out, vec![0.75, 0.25]);
+        assert_eq!(out.as_ptr(), ptr);
+        super::mix_rings_into(&[], &mut out);
+        assert!(out.is_empty());
+        assert_eq!(out.as_ptr(), ptr);
+    }
+
+    #[test]
+    fn reused_fft_scratch_preserves_transform_output() {
+        use rustfft::{FftPlanner, num_complex::Complex32};
+        let fft = FftPlanner::<f32>::new().plan_fft_forward(super::FFT_SIZE);
+        let mut scratch = vec![Complex32::default(); fft.get_inplace_scratch_len()];
+        for cycle in [1.0f32, 13.0, 0.0] {
+            let input: Vec<_> = (0..super::FFT_SIZE).map(|i|
+                Complex32::new((i as f32 * cycle / 17.0).sin(), 0.0)).collect();
+            let mut expected = input.clone();
+            fft.process(&mut expected);
+            let mut actual = input;
+            fft.process_with_scratch(&mut actual, &mut scratch);
+            assert_eq!(actual, expected);
+        }
+    }
 
     #[test]
     fn silence_maps_to_center() {
@@ -1492,21 +1548,21 @@ mod tests {
         // The 0.9.3 bug in one line: this used to duplicate a mono mix into
         // both channels, so a stereo per-app source could never reach the
         // vectorscope as stereo.
-        let mut buf = Vec::new();
+        let mut buf = AudioRing::new();
         super::append_hop(&mut buf, &[0.5, -0.5, 0.25, -0.25], 4);
         assert_eq!(buf, vec![0.5, -0.5, 0.25, -0.25]);
     }
 
     #[test]
     fn append_hop_synthesizes_stereo_silence_for_an_empty_hop() {
-        let mut buf = Vec::new();
+        let mut buf = AudioRing::new();
         super::append_hop(&mut buf, &[], 3);
         assert_eq!(buf, vec![0.0; 6]);
     }
 
     #[test]
     fn append_hop_drops_a_torn_odd_tail() {
-        let mut buf = Vec::new();
+        let mut buf = AudioRing::new();
         super::append_hop(&mut buf, &[0.1, 0.2, 0.9], 4);
         assert_eq!(buf, vec![0.1, 0.2]);
     }

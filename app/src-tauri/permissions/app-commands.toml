@@ -253,6 +253,7 @@ commands.allow = [
   "mixer_refresh",
   "set_mixer_active",
   "set_claude_active",
+  "set_content_editing",
 
   # secrets — DPAPI-backed credential store, read by the Settings credential UI
   # (src/state/secrets.ts). This is the command the missing ACL exposed.

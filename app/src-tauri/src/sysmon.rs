@@ -117,8 +117,12 @@ pub fn spawn<R: Runtime>(app: AppHandle<R>) {
             s.sys.refresh_cpu_all();
             s.networks.refresh();
         }
+        let mut schedule = crate::background::WorkSchedule::new();
         loop {
             thread::sleep(Duration::from_secs(1));
+            if !schedule.due(crate::WINDOW_VISIBLE.load(std::sync::atomic::Ordering::Relaxed), 1, 5) {
+                continue;
+            }
             let sample = collect(&state);
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.emit("sysmon:tick", &sample);

@@ -106,6 +106,17 @@ jobs:
         working-directory: app
         run: npm ci
 
+      - name: Read release notes from the changelog
+        id: notes
+        shell: bash
+        run: |
+          node scripts/release-notes.mjs "${GITHUB_REF_NAME#v}" > release-notes.md
+          {
+            echo 'body<<HUB_RELEASE_NOTES'
+            cat release-notes.md
+            echo 'HUB_RELEASE_NOTES'
+          } >> "$GITHUB_OUTPUT"
+
       - name: Build, sign, and publish release
         uses: tauri-apps/tauri-action@v0
         env:
@@ -116,7 +127,7 @@ jobs:
           projectPath: app
           tagName: ${{ github.ref_name }}
           releaseName: "2ndMonitor ${{ github.ref_name }}"
-          releaseBody: "See CHANGELOG.md for details. Installer below; the app auto-updates from this release onward."
+          releaseBody: ${{ steps.notes.outputs.body }}
           releaseDraft: false
           prerelease: false
           includeUpdaterJson: false
@@ -184,6 +195,10 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
       # Which legs actually finished. A leg that failed uploaded no marker.
       # No `name:` filter, so zero matches is a warning here, not a failure —
       # both legs failing is handled downstream by the empty-map check.
@@ -193,8 +208,8 @@ jobs:
           path: legs
           pattern: leg-*
 
-      # No checkout needed: this job only talks to the GitHub Release API via
-      # `gh`/`jq`, both preinstalled on the runner image.
+      # The tagged changelog supplies release and updater notes; gh/jq
+      # compose the signed artifact manifest.
       - name: Compose and publish merged updater manifest
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -256,6 +271,7 @@ jobs:
           echo "build legs: windows=${win_built} macos=${mac_built}"
 
           version="${TAG#v}"
+          node scripts/release-notes.mjs "$version" > release-notes.md
           pub_date=$(date -u +"%Y-%m-%dT%H:%M:%S.%3NZ")
           # Points at the PUBLIC mirror, not this repo — see RELEASES_REPO above.
           base_url="https://github.com/${RELEASES_REPO}/releases/download/${TAG}"
@@ -306,9 +322,10 @@ jobs:
             --arg version "$version" \
             --arg pub_date "$pub_date" \
             --argjson platforms "$platforms" \
+            --rawfile notes release-notes.md \
             '{
               version: $version,
-              notes: "See CHANGELOG.md for details. Installer below; the app auto-updates from this release onward.",
+              notes: $notes,
               pub_date: $pub_date,
               platforms: $platforms
             }' > latest.json
@@ -354,7 +371,7 @@ jobs:
           GH_TOKEN="$RELEASES_TOKEN" GH_REPO="$RELEASES_REPO" \
             gh release create "$TAG" \
               --title "2ndMonitor ${TAG}" \
-              --notes "Installers below. Source is in a private repository; see CHANGELOG in the app for details." \
+              --notes-file release-notes.md \
               --target main
 
           GH_TOKEN="$RELEASES_TOKEN" GH_REPO="$RELEASES_REPO" \

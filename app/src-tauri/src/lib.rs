@@ -9,7 +9,9 @@
 //! this file pins the two lists together so neither can drift silently.
 
 mod actions;
+mod background;
 mod audio;
+mod audio_ring;
 mod audio_loopback;
 mod audio_source;
 /// Core Audio process taps — the macOS counterpart to `audio_loopback`'s
@@ -219,6 +221,7 @@ pub fn run() {
             mixer::mixer_refresh,
             mixer::set_mixer_active,
             claude::set_claude_active,
+            background::set_content_editing,
             secrets::secret_get,
             secrets::secret_set,
             secrets::secret_delete,

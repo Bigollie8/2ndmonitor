@@ -67,6 +67,7 @@ use coreaudio_sys::{
 use objc2::rc::{autoreleasepool, Retained};
 use objc2::runtime::{AnyClass, AnyObject};
 use objc2::{msg_send, sel};
+use crate::audio::AudioRing;
 use parking_lot::Mutex;
 use std::ffi::{c_char, c_void, CStr, CString};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -219,7 +220,7 @@ pub enum TapTarget {
 /// never dangle. Moving the `Arc` into `TapCapture` does not move this
 /// allocation, which is why taking the pointer before the move is sound.
 struct Shared {
-    buffer: Arc<Mutex<Vec<f32>>>,
+    buffer: Arc<Mutex<AudioRing>>,
     ring_cap: usize,
     /// Bumped once per IOProc invocation. The only thing the callback writes
     /// besides the ring, and the only evidence `is_alive` has.
@@ -357,7 +358,7 @@ impl Drop for TapCapture {
 /// it clears the sticky `supported` flag and the selected apps stay silent.
 pub fn start(
     target: TapTarget,
-    buffer: Arc<Mutex<Vec<f32>>>,
+    buffer: Arc<Mutex<AudioRing>>,
     ring_cap: usize,
 ) -> Result<TapCapture, String> {
     // `Except(vec![])` is meaningful — it's the system mix, and `AllProcesses`
@@ -467,7 +468,7 @@ const MAX_PLANES: usize = 8;
 /// L then R; the general loop covers both without the callback having to
 /// branch on layout. A single total channel duplicates into both, the honest
 /// display for mono.
-fn push_stereo(planes: &[(&[f32], usize)], buffer: &Arc<Mutex<Vec<f32>>>, ring_cap: usize) {
+fn push_stereo(planes: &[(&[f32], usize)], buffer: &Arc<Mutex<AudioRing>>, ring_cap: usize) {
     let total_channels: usize = planes.iter().map(|(_, ch)| *ch).sum();
     if total_channels == 0 {
         return;
@@ -482,7 +483,12 @@ fn push_stereo(planes: &[(&[f32], usize)], buffer: &Arc<Mutex<Vec<f32>>>, ring_c
     }
 
     let mut buf = buffer.lock();
-    for f in 0..frames {
+    if planes.len() == 1 && planes[0].1 == 2 {
+        crate::audio_ring::push_interleaved(&mut buf, planes[0].0, ring_cap);
+        return;
+    }
+    let skip = crate::audio_ring::prepare_packet(&mut buf, frames, ring_cap);
+    for f in skip..frames {
         // The first two channels of this frame, in plane order; the L/R pick
         // itself is audio.rs `frame_lr`, the one shared implementation.
         let mut first_two = [0.0f32; 2];
@@ -498,8 +504,8 @@ fn push_stereo(planes: &[(&[f32], usize)], buffer: &Arc<Mutex<Vec<f32>>>, ring_c
             }
         }
         let (l, r) = crate::audio::frame_lr(&first_two[..c]);
-        buf.push(l);
-        buf.push(r);
+        buf.push_back(l);
+        buf.push_back(r);
     }
     // `ring_cap` counts frames; the shared trim drains an even sample count
     // so L and R can never swap.
@@ -1221,7 +1227,7 @@ mod tests {
         // fix: this used to collapse each frame to its mean, so vectorscope
         // and console saw L == R for every per-app source.
         let samples = [1.0f32, 0.0, 0.5, -0.5, -1.0, 1.0];
-        let buffer = Arc::new(Mutex::new(Vec::new()));
+        let buffer = Arc::new(Mutex::new(AudioRing::new()));
         push_stereo(&[(&samples[..], 2)], &buffer, 64);
         assert_eq!(*buffer.lock(), vec![1.0, 0.0, 0.5, -0.5, -1.0, 1.0]);
 
@@ -1229,32 +1235,32 @@ mod tests {
         // layout: plane 0 is L, plane 1 is R.
         let left = [1.0f32, 0.5, -1.0];
         let right = [0.0f32, -0.5, 1.0];
-        let buffer = Arc::new(Mutex::new(Vec::new()));
+        let buffer = Arc::new(Mutex::new(AudioRing::new()));
         push_stereo(&[(&left[..], 1), (&right[..], 1)], &buffer, 64);
         assert_eq!(*buffer.lock(), vec![1.0, 0.0, 0.5, -0.5, -1.0, 1.0]);
 
         // A single mono plane duplicates into both channels — perfectly
         // correlated is the honest display for mono, not a bug.
         let mono = [0.25f32, -0.75];
-        let buffer = Arc::new(Mutex::new(Vec::new()));
+        let buffer = Arc::new(Mutex::new(AudioRing::new()));
         push_stereo(&[(&mono[..], 1)], &buffer, 64);
         assert_eq!(*buffer.lock(), vec![0.25, 0.25, -0.75, -0.75]);
 
         // 5.1 and friends: the first two channels are FL/FR.
         let surround = [1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0];
-        let buffer = Arc::new(Mutex::new(Vec::new()));
+        let buffer = Arc::new(Mutex::new(AudioRing::new()));
         push_stereo(&[(&surround[..], 6)], &buffer, 64);
         assert_eq!(*buffer.lock(), vec![1.0, 2.0]);
 
         // A trailing partial frame is dropped, never misaligned.
         let odd = [1.0f32, 1.0, 9.0];
-        let buffer = Arc::new(Mutex::new(Vec::new()));
+        let buffer = Arc::new(Mutex::new(AudioRing::new()));
         push_stereo(&[(&odd[..], 2)], &buffer, 64);
         assert_eq!(*buffer.lock(), vec![1.0, 1.0]);
 
         // Over the cap the OLDEST samples go, an even count at a time: cap of
         // 4 frames = 8 samples; 2 stale frames + 3 pushed frames = 10 → drop 2.
-        let buffer = Arc::new(Mutex::new(vec![9.0f32; 4]));
+        let buffer = Arc::new(Mutex::new(AudioRing::from(vec![9.0f32; 4])));
         let mono = [1.0f32, 2.0, 3.0];
         push_stereo(&[(&mono[..], 1)], &buffer, 4);
         assert_eq!(*buffer.lock(), vec![9.0, 9.0, 1.0, 1.0, 2.0, 2.0, 3.0, 3.0]);
@@ -1264,7 +1270,7 @@ mod tests {
     /// to run on a CI runner with no audio hardware and no tap permission.
     #[test]
     fn a_tap_on_no_processes_is_rejected() {
-        let buffer = Arc::new(Mutex::new(Vec::new()));
+        let buffer = Arc::new(Mutex::new(AudioRing::new()));
         // Not `unwrap_err`: `TapCapture` is deliberately not `Debug` (it holds
         // opaque Core Audio handles), so match the result instead.
         match start(TapTarget::Only(vec![]), buffer, 1024) {
@@ -1350,7 +1356,7 @@ mod tests {
         std::thread::sleep(Duration::from_millis(500));
 
         // Only us: our tone must be there.
-        let buffer = Arc::new(Mutex::new(Vec::<f32>::new()));
+        let buffer = Arc::new(Mutex::new(AudioRing::new()));
         let capture = start(TapTarget::Only(vec![own_pid]), buffer.clone(), RING)
             .expect("could not start a tap on our own process");
         std::thread::sleep(Duration::from_millis(500));
@@ -1380,7 +1386,7 @@ mod tests {
         );
 
         // Everything but us: our tone must not be there.
-        let buffer = Arc::new(Mutex::new(Vec::<f32>::new()));
+        let buffer = Arc::new(Mutex::new(AudioRing::new()));
         let capture = start(TapTarget::Except(vec![own_pid]), buffer.clone(), RING)
             .expect("could not start a tap excluding our own process");
         std::thread::sleep(Duration::from_millis(500));

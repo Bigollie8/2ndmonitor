@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { paceFrame, isWindowHidden, setWindowHidden, type PaceState } from './framePace';
+import { paceFrame, isWindowHidden, setWindowHidden, isAppHidden, subscribeVisibility, type PaceState } from './framePace';
 
 function simulate(vsyncHz: number, capFps: number, frames: number): number[] {
   const minDelta = 1000 / capFps;
@@ -55,4 +55,18 @@ test('setWindowHidden(false) flips isWindowHidden back to false', () => {
   setWindowHidden(true);
   setWindowHidden(false);
   assert.equal(isWindowHidden(), false);
+});
+
+test('native visibility notifies once per transition and cleanup removes the listener', () => {
+  const seen: boolean[] = [];
+  const stop = subscribeVisibility(() => seen.push(isAppHidden()));
+  try {
+    setWindowHidden(true);
+    setWindowHidden(true);
+    setWindowHidden(false);
+    assert.deepEqual(seen, [true, false]);
+    stop();
+    setWindowHidden(true);
+    assert.deepEqual(seen, [true, false]);
+  } finally { stop(); setWindowHidden(false); }
 });

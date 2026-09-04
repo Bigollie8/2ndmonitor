@@ -1,3 +1,6 @@
+import { createMeterGate } from '../state/meterPace';
+import { isAppHidden } from '../state/framePace';
+import { getVizMaxFps } from './viz';
 import { useEffect, useRef, useState, type MutableRefObject } from 'react';
 import { HFTile } from './tiles';
 import type { Density } from '../types';
@@ -289,9 +292,12 @@ function MasterRow({
     // Once the idle glow is painted there's nothing to animate until audio
     // arrives — skip the style write instead of rewriting it at 60fps.
     let settled = false;
+    const shouldPaint = createMeterGate();
     const tick = () => {
       raf = requestAnimationFrame(tick);
-      if (document.hidden) return;
+      if (isAppHidden()) return;
+      const sample = spectrumRef.current;
+      if (!shouldPaint(performance.now(), sample.live, sample.frameId, getVizMaxFps())) return;
       const el = trackRef.current;
       if (!el) return;
       const live = spectrumRef.current.live;

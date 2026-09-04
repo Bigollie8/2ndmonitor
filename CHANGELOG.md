@@ -5,6 +5,34 @@ All notable changes to 2ndMonitor are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.9.16] - 2026-09-04
+
+### Fixed
+- **Less repeated work while music plays.** The music meters and mixer glow
+  now paint only when fresh audio arrives, at up to 30 updates per second
+  (or a lower custom visualizer cap). High-refresh displays no longer make
+  these small decorations rewrite the same values on every display frame.
+- **A quieter app in the tray.** Data tiles now use the app's native
+  visibility signal, so hiding to the tray pauses polling and returning
+  catches up on overdue requests. System monitoring samples every five
+  seconds while hidden and resumes its normal one-second cadence on return.
+- **Less allocation and copying in audio capture.** Capture now appends
+  whole packets into circular buffers, and analysis reuses FFT scratch,
+  mixing, spectrum, and waveform storage. Stereo channel order, sample
+  windows, and FFT output are covered by regression tests.
+- **Visualizer sizing no longer polls the layout every frame.** Sandbox
+  surfaces measure on resize and reuse those dimensions while animating;
+  existing visualizer bundles keep the same frame-message format.
+- **Fewer background folder scans.** Content scans run every ten seconds
+  normally and thirty seconds in the tray. The Scripted authoring surface
+  retains two-second hot reload, and app-driven installs, removals, and
+  saves request a prompt refresh instead of waiting for the idle interval.
+
+### Changed
+- GitHub release descriptions and updater notes now include the actual
+  version's changelog. Discord continues to receive the release notes and
+  a fixes spotlight through the existing tag-triggered webhook workflow.
+
 ## [0.9.15] - 2026-08-30
 
 ### Added

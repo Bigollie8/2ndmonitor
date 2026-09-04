@@ -190,6 +190,8 @@ function payloadToTrack(p: NowPlayingPayload): Track | null {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export interface SpectrumState {
+  /** Incremented on receipt, allowing meters to skip duplicate paints. */
+  frameId?: number;
   bands: Float32Array;
   level: number;
   /** True once we've received at least one frame of real audio. */
@@ -236,6 +238,7 @@ export function useSpectrumRef(): MutableRefObject<SpectrumState> {
           for (let i = 0; i < n; i++) arr[i] = src[i]!;
           ref.current.level = e.payload.level;
           ref.current.live = true;
+          ref.current.frameId = (ref.current.frameId ?? 0) + 1;
           lastFrameAt = performance.now();
         })
       )

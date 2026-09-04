@@ -1,22 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-/** `setTimeout`'s delay argument is coerced to a 32-bit signed int; anything
- *  larger silently clamps to 0 in both Node and browsers, turning a poll
- *  "interval" into a tight loop instead of throwing (I3). `viewSpec.ts`
- *  caps a declarative tile's `intervalMs` at 24h so `baseMs * 8` alone can't
- *  reach this, but `usePoll` is also used by hand-written built-in tiles
- *  that never go through that validator — so the clamp lives here too, as
- *  defense in depth, not only at the one call site that happens to validate
- *  its input. */
-const MAX_SETTIMEOUT_MS = 2_147_483_647; // 2^31 - 1
-
-/** Delay before the next poll after `failures` consecutive errors.
- *  Doubles per failure, capped at 8x the base interval so a dead endpoint
- *  is retried at a civilized rate instead of hammered forever. */
-export function backoffDelay(baseMs: number, failures: number): number {
-  const n = Math.max(0, Math.min(3, failures));
-  return Math.min(baseMs * 2 ** n, MAX_SETTIMEOUT_MS);
-}
+import { startPollLoop } from './pollLoop';
+export { backoffDelay } from './pollLoop';
 
 export interface PollState<T> {
   /** Last successful result. Survives later failures (stale-while-error). */
@@ -46,76 +31,17 @@ export function usePoll<T>(
   const [state, setState] = useState<PollState<T>>({ data: null, error: null, loading: true });
   const fetcherRef = useRef(fetcher);
   fetcherRef.current = fetcher;
-  const generationRef = useRef(0);
   const cleanupRef = useRef<(() => void) | null>(null);
 
-  const run = useCallback(() => {
-    generationRef.current += 1;
-    const generation = generationRef.current;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    let failures = 0;
-    /** Set when a poll came due while the document was hidden. */
-    let dueWhileHidden = false;
-    let inFlight = false;
-
-    const cancelled = () => generation !== generationRef.current;
-
-    const schedule = () => {
-      if (cancelled()) return;
-      timer = setTimeout(fire, backoffDelay(intervalMs, failures));
-    };
-
-    const fire = () => {
-      if (cancelled()) return;
-      if (typeof document !== 'undefined' && document.hidden) {
-        // Defer until visibilitychange; don't stack timers meanwhile.
-        dueWhileHidden = true;
-        return;
-      }
-      void load();
-    };
-
-    const load = async () => {
-      if (inFlight || cancelled()) return;
-      inFlight = true;
-      try {
-        const data = await fetcherRef.current();
-        if (cancelled()) return;
-        failures = 0;
-        setState({ data, error: null, loading: false });
-      } catch (err) {
-        if (cancelled()) return;
-        failures += 1;
-        const message = err instanceof Error ? err.message : String(err);
-        setState((prev) => ({ data: prev.data, error: message, loading: false }));
-      } finally {
-        inFlight = false;
-      }
-      schedule();
-    };
-
-    const onVisible = () => {
-      if (typeof document !== 'undefined' && !document.hidden && dueWhileHidden) {
-        dueWhileHidden = false;
-        void load();
-      }
-    };
-    if (typeof document !== 'undefined') {
-      document.addEventListener('visibilitychange', onVisible);
-    }
-
-    void load();
-
-    return () => {
-      // Bump the generation so any in-flight fetch's setState is ignored.
-      generationRef.current += 1;
-      if (timer !== undefined) clearTimeout(timer);
-      if (typeof document !== 'undefined') {
-        document.removeEventListener('visibilitychange', onVisible);
-      }
-    };
+  const run = useCallback(() => startPollLoop({
+    fetcher: () => fetcherRef.current(),
+    intervalMs,
+    onData: data => setState({ data, error: null, loading: false }),
+    onError: err => setState(prev => ({
+      data: prev.data, error: err instanceof Error ? err.message : String(err), loading: false,
+    })),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [intervalMs, ...deps]);
+  }), [intervalMs, ...deps]);
 
   useEffect(() => {
     cleanupRef.current = run();
