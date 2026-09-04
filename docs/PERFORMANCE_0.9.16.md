@@ -52,3 +52,25 @@ The capture supervisor remains active to detect audio-device/source changes.
 The Windows test build used a separate identifier
 `com.secondmonitor.hub.perf0916`; it was not installed or launched over the
 user's saved dashboard.
+
+## Published release verification
+
+- Source commit: `fb39c8c4bbb7f0d4030092e7ab91e5e58b32a2c9`, tag `v0.9.16`.
+- [macOS CI](https://github.com/Bigollie8/2ndmonitor/actions/runs/33915711810)
+  passed, including 195 Rust tests; one hardware-only test was ignored.
+- Both platform builds in [Release build](https://github.com/Bigollie8/2ndmonitor/actions/runs/33916220617)
+  succeeded. The merged manifest was generated successfully. The missing
+  `RELEASES_TOKEN` caused only the public-mirror step to fail, so mirroring
+  was completed manually through the authenticated maintainer account.
+- The public release was staged as a draft. All six assets matched the
+  private release's SHA-256 digests and sizes before publication. Both updater
+  package signatures verified against the app's pinned key using the same
+  `minisign-verify` version and verification call as the updater.
+- After publication, anonymous requests returned version `0.9.16` from the
+  latest updater endpoint and HTTP 200 for Windows NSIS, universal macOS DMG,
+  and the macOS updater archive. All four platform entries and the full
+  changelog notes were checked.
+- [Announce release](https://github.com/Bigollie8/2ndmonitor/actions/runs/33916220511)
+  succeeded and logged both `posted: release v0.9.16` and
+  `posted: spotlight v0.9.16`. No duplicate local webhook posts were sent.
+- Public downloads: [2ndMonitor v0.9.16](https://github.com/Bigollie8/2ndmonitor-releases/releases/tag/v0.9.16).
