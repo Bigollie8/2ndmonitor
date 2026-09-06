@@ -5,6 +5,22 @@ All notable changes to 2ndMonitor are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.9.19] - 2026-09-06
+
+### Fixed
+- **Crash while music plays.** A Windows crash dump from 0.9.18 showed the
+  app being terminated by Windows' own media-control machinery while it
+  handed over album art: the system fails fast with "handle is invalid"
+  when the artwork stream is opened at the moment the player is replacing
+  it, and nothing in the app can catch that. The now-playing poller now
+  keeps one media session manager for its lifetime instead of creating a
+  new one every two seconds, and only opens a track's artwork once the
+  same track has been reported on two consecutive polls, at most once per
+  track. Album art appears about two seconds later than before; skipping
+  quickly through tracks no longer opens artwork for tracks you skipped
+  past. The poll thread is also named, so a future crash dump identifies
+  it.
+
 ## [0.9.18] - 2026-09-06
 
 ### Fixed
