@@ -1,11 +1,12 @@
 import React, { useEffect, useRef } from 'react';
 import { type MapViewState, panBy, project, visibleTiles, zoomAt } from './slippy';
+import { BASEMAP_ATTRIBUTION, BASEMAP_DIM, baseTileUrl } from './basemap';
 
-/** CARTO dark_matter raster basemap. CSP `img-src https:` already allows it;
+/** The basemap provider lives in ./basemap.ts (0.9.18: CARTO went key-only;
+ *  now Esri's World Dark Gray canvas). Re-exported so existing imports of the
+ *  URL builder keep working. CSP `img-src https:` already allows the host;
  *  crossOrigin keeps the canvas untainted for compositing. */
-export function baseTileUrl(z: number, x: number, y: number): string {
-  return `https://basemaps.cartocdn.com/dark_all/${z}/${x}/${y}.png`;
-}
+export { baseTileUrl };
 
 export type ProjectFn = (lat: number, lon: number) => { x: number; y: number };
 
@@ -184,6 +185,11 @@ function MapViewImpl({
       const img = getTile(baseTileUrl(t.z, t.x, t.y), schedule);
       if (img) ctx.drawImage(img, t.sx, t.sy, t.size, t.size);
     }
+    // Dim the mid-gray Esri canvas toward MAP_BG (0.9.18) so the maps keep
+    // the near-black look the CARTO tiles had and the data overlays below
+    // keep their contrast. One rect per repaint.
+    ctx.fillStyle = BASEMAP_DIM;
+    ctx.fillRect(0, 0, w, h);
     const urlFn = overlayTileUrlRef.current;
     if (urlFn) {
       ctx.globalAlpha = overlayTileAlphaRef.current;
@@ -306,16 +312,17 @@ function MapViewImpl({
           display: 'block', cursor: 'grab', touchAction: 'none',
         }}
       />
-      {/* License requirement: always-visible attribution. */}
+      {/* License requirement: always-visible attribution, sourced from the
+          provider module so it cannot drift from the tiles being drawn. */}
       <div style={{
-        position: 'absolute', right: 3, bottom: 2,
-        fontSize: 8, lineHeight: 1.4, letterSpacing: 0.2,
+        position: 'absolute', right: 3, bottom: 2, maxWidth: '85%',
+        fontSize: 8, lineHeight: 1.4, letterSpacing: 0.2, textAlign: 'right',
         color: 'rgba(255,255,255,0.45)',
         background: 'rgba(0,0,0,0.35)',
         padding: '0 4px', borderRadius: 3,
         pointerEvents: 'none', userSelect: 'none',
       }}>
-        © OpenStreetMap © CARTO
+        {BASEMAP_ATTRIBUTION}
       </div>
       {redacted && (
         <div style={{

@@ -5,9 +5,12 @@
 export const TILE_SIZE = 256;
 /** Web-Mercator latitude limit — the projection cuts off at ±85.0511°. */
 export const MAX_LAT = 85.05112878;
-/** CARTO raster tiles exist for z 0..19. */
+/** Deepest tile the basemap provider actually serves (see ./basemap.ts —
+ *  Esri's dark canvas carries data to z16; CARTO went to z19 before it went
+ *  key-only in 0.9.18). `visibleTiles` scales this level for any deeper view
+ *  zoom, so a host tile's maxZoom can still exceed it. */
 export const MIN_TILE_Z = 0;
-export const MAX_TILE_Z = 19;
+export const MAX_TILE_Z = 16;
 
 export interface LatLon { lat: number; lon: number }
 export interface MapViewState { center: LatLon; zoom: number }

@@ -29,7 +29,7 @@ import {
 } from './state/layout';
 import { seedStarterProfiles, PROFILE_DEFAULT_COLORS } from './state/starterProfiles';
 import { shouldPinTopBar } from './state/topBar';
-import { atTarget, correctedRequest } from './state/f11';
+import { convergeOnRect } from './state/f11';
 import { redactLocation } from './state/streamer';
 import { isBundleTile, bundleIdOf } from './tiles/tileRegistry';
 import { useTileCatalog } from './tiles/useTileCatalog';
@@ -40,6 +40,7 @@ import {
   type PomodoroState,
   type PomodoroSettings,
 } from './state/pomodoro';
+import { DEFAULT_PET_STATE, type PetState } from './state/pet';
 import { TRACKS, ACCENT_PALETTES } from './data';
 import { DEFAULT_AUTOMATION, parseAutomation, type ProfileAutomation } from './state/profileAutomation';
 import { useProfileAutomation } from './state/useProfileAutomation';
@@ -114,6 +115,7 @@ const AirQualityTile = lazy(() => import('./components/AirQualityTile').then((m)
 const StocksTile = lazy(() => import('./components/StocksTile').then((m) => ({ default: m.StocksTile })));
 const GoldTile = lazy(() => import('./components/GoldTile').then((m) => ({ default: m.GoldTile })));
 const LawsOfPowerTile = lazy(() => import('./components/LawsOfPowerTile').then((m) => ({ default: m.LawsOfPowerTile })));
+const PetTile = lazy(() => import('./components/PetTile').then((m) => ({ default: m.PetTile })));
 const NewsTile = lazy(() => import('./components/NewsTile').then((m) => ({ default: m.NewsTile })));
 const TidesTile = lazy(() => import('./components/TidesTile').then((m) => ({ default: m.TidesTile })));
 const StreamChatTile = lazy(() => import('./components/StreamChatTile').then((m) => ({ default: m.StreamChatTile })));
@@ -217,6 +219,10 @@ interface TweakState extends Record<string, unknown> {
   todos: Todo[];
   weatherLocation: WeatherLocation;
   pomodoro: { state: PomodoroState; settings: PomodoroSettings };
+  /** Virtual pet meters + timestamps — see state/pet.ts. Persisted JSON is
+   *  re-hydrated by the tile on every read, so a partial/corrupt object
+   *  degrades to a fresh pet rather than crashing. */
+  pet: PetState;
   // Profile system: layout + tile visibility live INSIDE the active profile.
   profiles: Profile[];
   activeProfileId: string;
@@ -307,6 +313,7 @@ const TWEAK_DEFAULTS: TweakState = {
     state: { ...DEFAULT_POMODORO_STATE },
     settings: { ...DEFAULT_POMODORO_SETTINGS },
   },
+  pet: { ...DEFAULT_PET_STATE },
   profiles: [],
   activeProfileId: '',
   profileAutomation: DEFAULT_AUTOMATION,
@@ -906,32 +913,34 @@ export default function App() {
         // 5 passes at 120ms (round 4; was 3 at 90ms) — DPI/frame adjustments
         // on slower machines can land after the third measurement, so the old
         // loop sometimes exhausted while Windows was still moving the window.
-        let converged = false;
-        let settled = { x: 0, y: 0, w: 0, h: 0 };
+        //
         // Ask, measure, CORRECT (round 5). An undecorated window can keep an
         // invisible frame that shifts the client area (+8,+1 in the 0.9.3
         // report), so re-requesting the same rect could never converge. Each
-        // miss is fed back into the next request — state/f11.ts holds the
-        // math and its tests.
-        let req = { ...target };
-        for (let attempt = 1; attempt <= 5; attempt++) {
-          await win.setPosition(new PhysicalPosition(req.x, req.y));
-          await win.setSize(new PhysicalSize(req.w, req.h));
-          await new Promise((r) => setTimeout(r, 120));
-          const p = await win.innerPosition();
-          const s = await win.innerSize();
-          settled = { x: p.x, y: p.y, w: s.width, h: s.height };
-          converged = atTarget(settled, target);
-          if (converged) break;
-          console.warn(
-            `F11: settled at ${p.x},${p.y} ${s.width}x${s.height}, wanted `
+        // miss is fed back into the next request. Round 6 (0.9.18) names
+        // that frame — it is tao's undecorated-shadow inset (8 px sides,
+        // 1 px top on Windows 11; setPosition moves the OUTER rect while
+        // innerPosition reads the CLIENT origin) — and pre-measures it so
+        // pass 1 already lands. The loop itself lives in state/f11.ts, where
+        // it runs under node:test against a model of that geometry.
+        const driver = {
+          setPosition: async (x: number, y: number) => { await win.setPosition(new PhysicalPosition(x, y)); },
+          setSize: async (w: number, h: number) => { await win.setSize(new PhysicalSize(w, h)); },
+          innerPosition: async () => { const p = await win.innerPosition(); return { x: p.x, y: p.y }; },
+          innerSize: async () => { const s = await win.innerSize(); return { w: s.width, h: s.height }; },
+          outerPosition: async () => { const p = await win.outerPosition(); return { x: p.x, y: p.y }; },
+          outerSize: async () => { const s = await win.outerSize(); return { w: s.width, h: s.height }; },
+          wait: (ms: number) => new Promise<void>((r) => setTimeout(r, ms)),
+        };
+        const result = await convergeOnRect(driver, target, {
+          passes: 5,
+          settleMs: 120,
+          onMiss: (attempt, s) => console.warn(
+            `F11: settled at ${s.x},${s.y} ${s.w}x${s.h}, wanted `
             + `${target.x},${target.y} ${target.w}x${target.h} (pass ${attempt})`,
-          );
-          // Correct only while another pass remains to send it — the
-          // diagnostic card's `request` line must show what was actually
-          // asked of Windows, not a correction that never went out.
-          if (attempt < 5) req = correctedRequest(req, settled, target);
-        }
+          ),
+        });
+        const { converged, settled, request: req, frame } = result;
         if (!converged) {
           // Park on the plain target, best-effort: the last correction was
           // computed from measurements this loop just proved it can't trust,
@@ -947,6 +956,7 @@ export default function App() {
             `target  : ${target.x},${target.y} ${target.w}x${target.h}`,
             `settled : ${settled.x},${settled.y} ${settled.w}x${settled.h}`,
             `request : ${req.x},${req.y} ${req.w}x${req.h}`,
+            `frame   : client ${frame.dx >= 0 ? '+' : ''}${frame.dx},${frame.dy >= 0 ? '+' : ''}${frame.dy} inside outer; outer ${frame.dw}x${frame.dh} larger`,
             `window  : ${pos.x},${pos.y} ${size.width}x${size.height} (center ${cx},${cy})`,
             `monitor : ${monLine(monitor)}`,
             ...monitors.map((m, i) => `display${i}: ${monLine(m)}`),
@@ -1664,6 +1674,16 @@ export default function App() {
             editing={editMode}
             config={instance.config as Record<string, unknown> | undefined}
             setConfig={configSetterFor(instance.instanceId)}
+          />
+        );
+      case 'pet':
+        return (
+          <PetTile
+            density={t.density}
+            accent={accent}
+            editing={editMode}
+            state={t.pet}
+            setState={(next) => setTweak('pet', next)}
           />
         );
       case 'news':

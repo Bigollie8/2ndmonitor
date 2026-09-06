@@ -243,7 +243,15 @@ function GalleryCard({
       position: 'relative',
       borderRadius: 12, overflow: 'hidden',
       background: '#06070a',
-      border: active ? `2px solid ${accent}` : '1px solid rgba(255,255,255,0.06)',
+      // Constant 1px border on EVERY card (0.9.18, "isn't properly
+      // bordered"). The active ring used to be a 2px border: selecting a
+      // card shrank its content by a pixel per edge (a visible jump), and
+      // the rounded `overflow: hidden` clip met the thicker border on a
+      // different arc than the border painted on, leaving anti-aliased
+      // notches at the corners of the selected card. The 1px border now
+      // only changes colour; the accent ring is the overlay at the end of
+      // this card, drawn INSIDE the clip on the same arc as the content.
+      border: `1px solid ${active ? accent : 'rgba(255,255,255,0.06)'}`,
       transition: 'border-color .15s, transform .15s',
       cursor: 'pointer',
     }}
@@ -339,6 +347,18 @@ function GalleryCard({
           #{style.id}
         </span>
       </div>
+      {/* Selected ring. An inset shadow on the card itself would paint UNDER
+          the preview canvas, so it lives on a top-most, click-through overlay
+          that fills the padding box: same rounded clip as the content
+          (radius 11 = 12 minus the 1px border), no layout, no corner seam. */}
+      {active && (
+        <div aria-hidden style={{
+          position: 'absolute', inset: 0, zIndex: 3,
+          borderRadius: 11,
+          boxShadow: `inset 0 0 0 2px ${accent}`,
+          pointerEvents: 'none',
+        }} />
+      )}
     </div>
   );
 }

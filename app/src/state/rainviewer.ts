@@ -58,8 +58,8 @@ function isFrame(x: unknown): x is RainViewerFrame {
 }
 
 /** Build the radar overlay tile URL for a specific frame.
- *  Color scheme `2` is "Universal Blue" — reads cleanly over the CARTO
- *  dark_matter basemap the shared MapView renders. Variant `1_1`: smooth +
+ *  Color scheme `2` is "Universal Blue" — reads cleanly over the dimmed dark
+ *  basemap the shared MapView renders (map/basemap.ts). Variant `1_1`: smooth +
  *  show snow. */
 export function radarTileUrl(host: string, path: string, z: number, x: number, y: number): string {
   return `${host}${path}/256/${z}/${x}/${y}/2/1_1.png`;

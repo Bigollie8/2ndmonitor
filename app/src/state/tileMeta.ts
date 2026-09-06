@@ -73,4 +73,5 @@ export const TILE_META: Record<BuiltinTileType, TileMeta> = {
   dateTime: { icon: '◔', label: 'Date & time', description: 'Large clock with a full date line, optional seconds', multiInstance: true, category: 'productivity' },
   gold: { icon: '◉', label: 'Gold price', description: '24K spot gold, live — USD per gram and per troy ounce', multiInstance: false, category: 'productivity' },
   lawsOfPower: { icon: '♟', label: '48 Laws of Power', description: 'One concisely-worded law at a time, rotating through the day', multiInstance: false, category: 'productivity' },
+  pet: { icon: '◕', label: 'Pet', description: 'A small virtual companion — feed, play, and pet it through the day', multiInstance: false, category: 'ambient' },
 };

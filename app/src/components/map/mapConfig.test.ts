@@ -60,8 +60,8 @@ test('parseMapZoom: rejects non-finite and non-numbers', () => {
 
 test('parseMapZoom: clamps into the tile-zoom range', () => {
   assert.equal(parseMapZoom(7), 7);
-  assert.equal(parseMapZoom(-5), 0);
-  assert.equal(parseMapZoom(999), 19);
+  assert.equal(parseMapZoom(-5), MIN_TILE_Z);
+  assert.equal(parseMapZoom(999), MAX_TILE_Z);
 });
 
 test('classifyViewChange: a zoom delta is a zoom, even when the centre also moved', () => {

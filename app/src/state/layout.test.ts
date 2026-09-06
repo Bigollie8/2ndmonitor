@@ -164,7 +164,7 @@ test('DEFAULT_PORTRAIT_LAYOUT contains all tile types', () => {
     'clock', 'dateTime', 'discord', 'docker', 'energy', 'gold',
     'homeAssistant', 'iss', 'lawsOfPower', 'lightning', 'mixer',
     'musicLyrics', 'musicPlayer', 'musicQueue', 'news', 'notes',
-    'onThisDay', 'pollen', 'pomodoro',
+    'onThisDay', 'pet', 'pollen', 'pomodoro',
     'scratchpad', 'solarFlare', 'spotify', 'stocks', 'streamChat',
     'streamDeck', 'sun', 'sysmon', 'tides', 'viz', 'weatherRadar',
   ]);

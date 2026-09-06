@@ -576,7 +576,7 @@ export function SettingsWindow({
       rows: [
         {
           id: 'advanced-perfdebug', label: 'Perf debug HUD',
-          hint: 'Long-task observer, GPU spike ring buffer, per-viz draw-rate and ResizeObserver counters',
+          hint: 'Long-task observer, GPU spike ring buffer, per-viz draw-rate and ResizeObserver counters, plus a 2 h session log you can copy or save as JSON/CSV',
           control: <Toggle checked={v.perfDebug} onChange={(c) => set('perfDebug', c)} accent={accent} />,
         },
         {

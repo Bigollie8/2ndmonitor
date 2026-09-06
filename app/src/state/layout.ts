@@ -18,7 +18,7 @@ export type BuiltinTileType =
   | 'scratchpad' | 'onThisDay'
   | 'iss' | 'pollen'
   | 'solarFlare' | 'lightning' | 'aircraft' | 'activeWindow' | 'docker' | 'energy'
-  | 'dateTime' | 'gold' | 'lawsOfPower'
+  | 'dateTime' | 'gold' | 'lawsOfPower' | 'pet'
   | 'musicPlayer' | 'musicQueue' | 'musicLyrics';
 
 /** A tile that can be placed on a dashboard: a built-in, or an installed
@@ -40,7 +40,7 @@ export const ALL_TILE_TYPES: BuiltinTileType[] = [
   'scratchpad', 'onThisDay',
   'iss', 'pollen',
   'solarFlare', 'lightning', 'aircraft', 'activeWindow', 'docker', 'energy',
-  'dateTime', 'gold', 'lawsOfPower',
+  'dateTime', 'gold', 'lawsOfPower', 'pet',
 ];
 
 export interface Rect { x: number; y: number; w: number; h: number }
@@ -183,6 +183,7 @@ export const DEFAULT_LANDSCAPE_LAYOUT: Record<BuiltinTileType, Rect> = {
   dateTime: { x: 0.40, y: 0.36, w: 0.30, h: 0.18 },
   gold: { x: 0.72, y: 0.74, w: 0.22, h: 0.16 },
   lawsOfPower: { x: 0.40, y: 0.56, w: 0.30, h: 0.16 },
+  pet: { x: 0.05, y: 0.55, w: 0.20, h: 0.18 },
   musicPlayer: { x: 0.40, y: 0.55, w: 0.30, h: 0.30 },
   musicQueue: { x: 0.72, y: 0.55, w: 0.20, h: 0.30 },
   musicLyrics: { x: 0.05, y: 0.55, w: 0.20, h: 0.30 },
@@ -268,6 +269,7 @@ export const DEFAULT_PORTRAIT_LAYOUT: Record<BuiltinTileType, Rect> = {
   dateTime: { x: 0.05, y: 0.30, w: 0.90, h: 0.14 },
   gold: { x: 0.05, y: 0.46, w: 0.90, h: 0.12 },
   lawsOfPower: { x: 0.05, y: 0.60, w: 0.90, h: 0.14 },
+  pet: { x: 0.05, y: 0.62, w: 0.43, h: 0.10 },
   musicPlayer: { x: 0.05, y: 0.30, w: 0.90, h: 0.20 },
   musicQueue: { x: 0.05, y: 0.52, w: 0.90, h: 0.18 },
   musicLyrics: { x: 0.05, y: 0.30, w: 0.90, h: 0.24 },

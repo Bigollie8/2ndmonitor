@@ -14,13 +14,24 @@
  *   - Window resize listener increments                    → `recordResize()`
  *   - PerformanceObserver('longtask') is set up on enable
  *   - ResizeObserver constructor is wrapped on enable so we count callback fires
+ *   - A session log (perfLog.ts) samples all of the above every 2 s into a
+ *     2 h ring buffer while enabled; the HUD exports it as JSON/CSV
  *
- * Output: a snapshot you can read live (HUD) or freeze when a spike fires.
+ * Output: a snapshot you can read live (HUD) or freeze when a spike fires,
+ * plus the long-running session log for offline trend analysis.
  *
  * No React imports — this is a plain TS module. The HUD lives in PerfDebugHUD.tsx.
  */
 
 import { useEffect } from 'react';
+import {
+  type PerfSample,
+  type SessionLog,
+  MAX_TOP_DRAWERS,
+  readUsedJSHeap,
+  sortCounts,
+  startSessionLog,
+} from './perfLog';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -78,6 +89,22 @@ interface State {
   spikeThreshold: number;               // %-points over baseline that triggers
   spikeCooldownMs: number;              // suppress double-fires
   lastSpikeAt: number;
+  /** Cumulative counters since enable — the session log diffs these between
+   *  ticks so each sample carries exact "since last sample" deltas without a
+   *  second measurement path. Only touched while enabled. */
+  totals: Totals;
+}
+
+interface Totals {
+  longTaskCount: number;
+  longTaskMs: number;
+  resizeFires: number;
+  roFires: number;
+  draws: Map<string, number>;           // name → cumulative draw count
+}
+
+function freshTotals(): Totals {
+  return { longTaskCount: 0, longTaskMs: 0, resizeFires: 0, roFires: 0, draws: new Map() };
 }
 
 const state: State = {
@@ -96,6 +123,7 @@ const state: State = {
   spikeThreshold: 15,    // 15 %-points above rolling baseline → spike
   spikeCooldownMs: 1000, // don't fire more than once per second
   lastSpikeAt: 0,
+  totals: freshTotals(),
 };
 
 // ─── Subscribers (HUD live updates) ───────────────────────────────────────────
@@ -136,6 +164,8 @@ function startLongTaskObserver(): void {
         };
         state.longTasks.push(rec);
         if (state.longTasks.length > 50) state.longTasks.shift();
+        state.totals.longTaskCount++;
+        state.totals.longTaskMs += e.duration;
       }
       if (entries.length) notify();
     });
@@ -169,6 +199,7 @@ function wrapResizeObserver(): void {
       for (let i = 0; i < entries.length; i++) {
         state.resizeWindow.push({ ts, source: 'resize-observer' });
       }
+      state.totals.roFires += entries.length;
       pruneResizeWindow();
       cb(entries, observer);
     };
@@ -195,6 +226,7 @@ function startWindowResizeListener(): void {
   if (typeof window === 'undefined') return;
   windowResizeListener = () => {
     state.resizeWindow.push({ ts: performance.now(), source: 'window' });
+    state.totals.resizeFires++;
     pruneResizeWindow();
   };
   window.addEventListener('resize', windowResizeListener);
@@ -219,15 +251,18 @@ function pruneResizeWindow(): void {
 export function enable(): void {
   if (state.enabled) return;
   state.enabled = true;
+  state.totals = freshTotals();
   startLongTaskObserver();
   wrapResizeObserver();
   startWindowResizeListener();
+  startSessionSampler();
   notify();
 }
 
 export function disable(): void {
   if (!state.enabled) return;
   state.enabled = false;
+  stopSessionSampler();
   stopLongTaskObserver();
   unwrapResizeObserver();
   stopWindowResizeListener();
@@ -240,6 +275,89 @@ export function disable(): void {
   state.resizeWindow = [];
   state.lastDrawName = null;
   state.baseline = 0;
+  state.totals = freshTotals();
+  notify();
+}
+
+// ─── Session log (long-running sampler) ──────────────────────────────────────
+
+let session: ReturnType<typeof startSessionLog> | null = null;
+/** Totals as of the previous tick, so each sample is an exact delta. */
+let lastTotals: Totals = freshTotals();
+/** performance.now() of the previous tick — bounds the GPU-average window. */
+let lastTickTs = 0;
+
+function startSessionSampler(): void {
+  if (session) return;
+  if (typeof setInterval === 'undefined') return;
+  lastTotals = freshTotals();
+  lastTickTs = performance.now();
+  session = startSessionLog({ collect: collectSessionSample });
+}
+
+function stopSessionSampler(): void {
+  if (!session) return;
+  session.stop(); // clears the interval AND releases the buffer
+  session = null;
+  lastTotals = freshTotals();
+}
+
+/** Build one session-log sample from the live counters. Exported so the
+ *  behaviour is inspectable, but only the sampler should normally call it. */
+export function collectSessionSample(): PerfSample {
+  const now = performance.now();
+  const t = state.totals;
+
+  // GPU: average / max of sysmon samples that landed since the last tick.
+  let gpuSum = 0, gpuMax = -Infinity, gpuN = 0;
+  for (const s of state.gpuSamples) {
+    if (s.ts <= lastTickTs) continue;
+    gpuSum += s.value;
+    if (s.value > gpuMax) gpuMax = s.value;
+    gpuN++;
+  }
+
+  // Draw deltas per name.
+  const drawDelta = new Map<string, number>();
+  for (const [name, count] of t.draws) {
+    const d = count - (lastTotals.draws.get(name) ?? 0);
+    if (d > 0) drawDelta.set(name, d);
+  }
+
+  const sample: PerfSample = {
+    t: Date.now(),
+    gpu: gpuN ? gpuSum / gpuN : null,
+    gpuMax: gpuN ? gpuMax : null,
+    fps: state.fps,
+    perfMode: state.perfMode,
+    vizMode: state.vizMode,
+    surfaces: Array.from(state.surfaces.keys()),
+    longTasks: t.longTaskCount - lastTotals.longTaskCount,
+    longTaskMs: t.longTaskMs - lastTotals.longTaskMs,
+    resizeFires: t.resizeFires - lastTotals.resizeFires,
+    roFires: t.roFires - lastTotals.roFires,
+    topDrawers: sortCounts(drawDelta, MAX_TOP_DRAWERS),
+    memory: readUsedJSHeap(),
+  };
+
+  lastTotals = {
+    longTaskCount: t.longTaskCount,
+    longTaskMs: t.longTaskMs,
+    resizeFires: t.resizeFires,
+    roFires: t.roFires,
+    draws: new Map(t.draws),
+  };
+  lastTickTs = now;
+  return sample;
+}
+
+/** The running session log, or null while perfDebug is off. */
+export function getSessionLog(): SessionLog | null {
+  return session?.log ?? null;
+}
+
+export function clearSessionLog(): void {
+  session?.log.clear();
   notify();
 }
 
@@ -253,6 +371,7 @@ export function recordDraw(name: string): void {
   const ts = performance.now();
   state.drawWindow.push({ ts, name });
   state.lastDrawName = name;
+  state.totals.draws.set(name, (state.totals.draws.get(name) ?? 0) + 1);
   // Keep last 5 seconds.
   const cutoff = ts - 5000;
   while (state.drawWindow.length && state.drawWindow[0]!.ts < cutoff) {

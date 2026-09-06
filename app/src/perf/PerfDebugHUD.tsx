@@ -12,7 +12,10 @@ import {
   getSnapshot,
   subscribe,
   clearSpikes,
+  getSessionLog,
+  clearSessionLog,
 } from './debug';
+import { formatSpan, type SessionSummary } from './perfLog';
 import { getVizMaxFps } from '../components/viz';
 
 export function PerfDebugHUD() {
@@ -180,9 +183,89 @@ export function PerfDebugHUD() {
               )
             )}
           </Section>
+
+          <SessionLogSection />
         </>
       )}
     </div>
+  );
+}
+
+/** Long-running session log: one-line summary + export controls. Reads the
+ *  log on every HUD refresh (~2 Hz); summarising ≤3600 samples is sub-ms. */
+function SessionLogSection() {
+  const [flash, setFlash] = useState<string | null>(null);
+  const log = getSessionLog();
+  const summary: SessionSummary | null = log ? log.summary() : null;
+
+  const say = (msg: string) => {
+    setFlash(msg);
+    setTimeout(() => setFlash(null), 1500);
+  };
+
+  const copy = async (label: string, text: () => string) => {
+    if (!log) return;
+    try {
+      await navigator.clipboard.writeText(text());
+      say(`${label} copied`);
+    } catch (e) {
+      console.warn('perf log copy failed', e);
+      say('copy failed');
+    }
+  };
+
+  // Blob download works in WebView2/Chromium; if the webview swallows it the
+  // clipboard buttons remain the reliable path.
+  const save = (ext: 'json' | 'csv') => {
+    if (!log) return;
+    try {
+      const body = ext === 'json' ? log.toJSONString() : log.toCSV();
+      const blob = new Blob([body], { type: ext === 'json' ? 'application/json' : 'text/csv' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+      a.href = url;
+      a.download = `2ndmonitor-perf-${stamp}.${ext}`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      say(`${ext.toUpperCase()} saved`);
+    } catch (e) {
+      console.warn('perf log save failed', e);
+      say('save failed');
+    }
+  };
+
+  const disabled = !log || log.size === 0;
+  const dim: React.CSSProperties = disabled ? { ...hudBtn, opacity: 0.4, cursor: 'default' } : hudBtn;
+
+  return (
+    <Section
+      title={`Session log (${summary?.samples ?? 0}${log ? `/${log.capacity}` : ''})`}
+      right={flash ? <span style={{ color: '#4ade80', marginLeft: 4 }}>{flash}</span> : null}
+    >
+      {summary && summary.samples > 0 ? (
+        <div style={{ color: 'rgba(255,255,255,0.65)' }}>
+          span {formatSpan(summary.spanMs)}
+          {' · '}GPU {summary.gpu ? `${summary.gpu.avg.toFixed(1)}/${summary.gpu.max.toFixed(1)}%` : '—'}
+          {' · '}fps {summary.fps ? summary.fps.avg.toFixed(0) : '—'}
+          {' · '}long {summary.longTaskCount}× {summary.longTaskMs.toFixed(0)}ms
+          {summary.memory ? ` · heap ${(summary.memory.max / 1048576).toFixed(0)}MB` : ''}
+        </div>
+      ) : (
+        <div style={{ color: 'rgba(255,255,255,0.5)' }}>
+          {log ? `sampling every ${(log.intervalMs / 1000).toFixed(0)}s…` : 'not running'}
+        </div>
+      )}
+      <div style={{ display: 'flex', flexWrap: 'wrap', marginTop: 4, marginLeft: -4 }}>
+        <button disabled={disabled} onClick={() => copy('JSON', () => log!.toJSONString())} style={dim}>Copy JSON</button>
+        <button disabled={disabled} onClick={() => copy('CSV', () => log!.toCSV())} style={dim}>Copy CSV</button>
+        <button disabled={disabled} onClick={() => save('json')} style={dim}>Save JSON</button>
+        <button disabled={disabled} onClick={() => save('csv')} style={dim}>Save CSV</button>
+        <button disabled={disabled} onClick={() => clearSessionLog()} style={dim}>Clear</button>
+      </div>
+    </Section>
   );
 }
 
