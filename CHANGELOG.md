@@ -5,6 +5,47 @@ All notable changes to 2ndMonitor are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.9.18] - 2026-09-06
+
+### Fixed
+- **Maps work again.** The basemap behind the Radar, Aircraft, ISS and
+  Lightning tiles came from CARTO, whose keyless dark tiles began returning
+  an "API KEY REQUIRED" picture in place of the map. All four map tiles now
+  draw Esri's World Dark Gray canvas, which needs no key or account, dimmed
+  toward the app's dark background so radar and aircraft overlays keep their
+  contrast. The credit line names the new provider. Tile caching, zoom and
+  panning are unchanged.
+- **F11 lands exactly on the monitor.** On Windows an undecorated window
+  keeps an invisible shadow frame, so the visible area sat 8 px right and
+  1 px down from where fullscreen asked for it (the three-monitor report:
+  target 3440,212, settled 3448,213). Fullscreen now measures that frame
+  before the first request and asks for the window origin that puts the
+  visible area on the monitor, so it lands on the first pass; the feedback
+  correction from 0.9.3 remains as the safety net, still bounded so a bad
+  measurement can never push the window off-screen. If it ever does miss,
+  the diagnostic card now also reports the measured frame.
+- **Visualizer gallery selection ring.** The selected style card used a
+  thicker border than its neighbours, which nudged its content by a pixel
+  and left notched corners where the rounded clip met the border. Every
+  card now keeps the same 1 px border and the selected card draws its
+  accent ring inside the clip, so the ring is complete on all four edges
+  and selecting a card moves nothing.
+
+### Added
+- **Pet tile.** A small virtual pet that lives on the dashboard. It has
+  Food and Joy meters that drift over real time (about eight hours from
+  full to hungry, twelve from delighted to glum, faster when hungry), Feed
+  / Play / Pet actions, a rename-on-click name, an age readout and a mood
+  that shows in its face. It naps late at night, never dies, and picks up
+  where it left off after a restart. Idle motion is CSS-only with no
+  animation loop, and it needs no network or permissions.
+- **Session performance log** (Settings → Advanced → Perf debug HUD).
+  While the HUD is on, the app samples GPU load, frame rate, active
+  visualizer, mounted surfaces, long tasks, resize events, top drawers and
+  heap size every two seconds into a two-hour ring buffer, and the HUD's
+  new Session log section shows a running summary with Copy JSON / Copy CSV
+  / Save / Clear. Nothing is sampled or retained while the HUD is off.
+
 ## [0.9.17] - 2026-09-04
 
 ### Added
