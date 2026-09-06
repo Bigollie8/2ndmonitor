@@ -86,3 +86,28 @@ Five Discord items, worked in the `worktree-v0.9.18` worktree on 2026-09-06.
 - No Rust changes beyond the version bump. No native F11 run on a three-monitor Windows 11 setup
   was possible in this session; the tao geometry is verified from source and under test, not on
   hardware. The gallery ring and pet tile were not screenshot in the packaged app.
+
+## Release verification
+
+Published on 2026-09-06:
+
+- Source commits `ebf76fe` (feature work) and `a59aaf0` (bump); annotated tag `v0.9.18` points at
+  the bump commit, on main after a fast-forward from `worktree-v0.9.18`.
+- [macOS check](https://github.com/Bigollie8/2ndmonitor/actions/runs/34045117750) on the pushed
+  main passed before tagging.
+- [Release build](https://github.com/Bigollie8/2ndmonitor/actions/runs/34045289702): the Windows
+  and universal-macOS build/sign/upload jobs succeeded and the merged `latest.json` was attached to
+  the source release. The mirror step failed as before (`RELEASES_TOKEN` still absent).
+- Maintainer fallback: all six assets downloaded from the source release, both updater signatures
+  verified against the app's pinned public key (Ed25519 over BLAKE2b-512, key id
+  `4f5dda4a5dd6cd64`, using a Node verifier first checked against the live 0.9.17 signature), and
+  every manifest `signature` field matched its `.sig` file. The assets were staged as a draft on
+  [2ndmonitor-releases](https://github.com/Bigollie8/2ndmonitor-releases/releases/tag/v0.9.18),
+  re-downloaded, and compared by SHA-256 to the source set (identical) before publishing as latest.
+- Anonymous `releases/latest/download/latest.json` reports 0.9.18 and is byte-identical to the
+  built manifest; anonymous HEAD requests for the Windows setup EXE, universal DMG and universal
+  app updater archive all returned HTTP 200 with the expected sizes.
+- [Announce job](https://github.com/Bigollie8/2ndmonitor/actions/runs/34045289673) succeeded with
+  `posted: release v0.9.18` and `posted: spotlight v0.9.18`.
+
+Automatic cross-repository publishing still needs a scoped `RELEASES_TOKEN`.
