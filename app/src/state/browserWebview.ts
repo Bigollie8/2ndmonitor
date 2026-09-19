@@ -5,7 +5,7 @@ import { isTauri } from './tauri';
 import { LogicalPosition, LogicalSize } from '@tauri-apps/api/dpi';
 
 interface UseBrowserWebviewArgs {
-  /** True iff a webview should currently exist (videoEnabled && currentUrl !== null && !suppress). */
+  /** True iff a webview should currently exist (videoEnabled && currentUrl !== null). */
   enabled: boolean;
   /** URL to load. URL changes destroy + recreate the webview (no JS eval available
    *  in Tauri 2.1 — see plan Task 3 amendment). */
@@ -33,6 +33,13 @@ export interface UseBrowserWebviewResult {
 }
 
 const WEBVIEW_LABEL = 'browser-tile';
+// Serialize across effect cleanup, URL changes and component remounts.
+let lifecycle: Promise<unknown> = Promise.resolve();
+function enqueue(operation: () => Promise<void>): Promise<void> {
+  const next = lifecycle.then(operation);
+  lifecycle = next.catch(() => {});
+  return next;
+}
 
 // ── Interface scale for the child webview (0.9.6) ───────────────────────────
 // `setZoom` on the MAIN webview does not reach children — the browser-player
@@ -110,30 +117,12 @@ export function useBrowserWebview(args: UseBrowserWebviewArgs): UseBrowserWebvie
 
     let cancelled = false;
 
-    // Tear down any existing webview at the top of every effect run. This
-    // handles both URL changes (destroy + recreate) and the destroy-only paths.
-    const existing = webviewRef.current;
-    if (existing) {
-      webviewRef.current = null;
-      setReady(false);
-    }
+    let owned: Webview | null = null;
+    if (!enabled || !url || !boundsAvailable) return;
 
-    if (!existing && (!enabled || !url || !boundsAvailable)) return;
-
-    (async () => {
+    void enqueue(async () => {
       try {
-        // AWAIT the close before creating anything (0.8.2). Every webview uses
-        // the same constant label, so firing close() and immediately
-        // constructing a new Webview with that label races the teardown: the
-        // old native webview can be orphaned rather than destroyed, and it
-        // keeps its page — a whole Netflix tab — resident. Switching sources
-        // repeatedly then stacked those orphans in memory. Serialising the two
-        // costs a few ms on a source switch and nothing at all otherwise.
-        if (existing) {
-          try { await existing.close(); } catch (e) { logCloseError(e); }
-        }
-        if (cancelled || !enabled || !url || !boundsAvailable) return;
-
+        if (cancelled) return;
         const initial = boundsRef.current;
         if (!initial) return;  // race: bounds went null between dep eval and async tick
 
@@ -146,18 +135,22 @@ export function useBrowserWebview(args: UseBrowserWebviewArgs): UseBrowserWebvie
           height: toLogical(initial.height),
         });
 
+        owned = wv;
+
         // wv.once() returns Promise<UnlistenFn> that resolves on REGISTRATION,
         // not on event fire. Wrap in an explicit Promise so the outer await
         // actually waits for the native handle to be ready before declaring
         // setReady — Task 4's reposition effect needs this guarantee.
-        await new Promise<void>((resolve) => {
-          wv.once('tauri://created', () => resolve());
-        });
+        const unlisten: (() => void)[] = [];
+        try {
+          await new Promise<void>((resolve, reject) => {
+            void wv.once('tauri://created', () => resolve()).then(fn => unlisten.push(fn), reject);
+            void wv.once('tauri://error', event => reject(event.payload)).then(fn => unlisten.push(fn), reject);
+          });
+        } finally { unlisten.forEach(fn => fn()); }
 
-        if (cancelled) {
-          await wv.close().catch(logCloseError);
-          return;
-        }
+        // Cleanup is queued behind this operation, and closes even a late create.
+        if (cancelled) return;
         webviewRef.current = wv;
         liveWebview = wv;
         if (currentZoom !== 1) {
@@ -168,7 +161,7 @@ export function useBrowserWebview(args: UseBrowserWebviewArgs): UseBrowserWebvie
       } catch (e: unknown) {
         if (!cancelled) setError(e instanceof Error ? e.message : String(e));
       }
-    })();
+    });
 
     return () => {
       cancelled = true;
@@ -176,7 +169,10 @@ export function useBrowserWebview(args: UseBrowserWebviewArgs): UseBrowserWebvie
       webviewRef.current = null;
       if (liveWebview === wv) liveWebview = null;
       setReady(false);
-      if (wv) wv.close().catch(logCloseError);
+      void enqueue(async () => {
+        if (owned) await owned.close().catch(logCloseError);
+        owned = null;
+      });
     };
   }, [enabled, url, boundsAvailable]);
 

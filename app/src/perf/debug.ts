@@ -23,7 +23,7 @@
  * No React imports — this is a plain TS module. The HUD lives in PerfDebugHUD.tsx.
  */
 
-import { useEffect } from 'react';
+import { useEffect, useSyncExternalStore } from 'react';
 import {
   type PerfSample,
   type SessionLog,
@@ -32,6 +32,11 @@ import {
   sortCounts,
   startSessionLog,
 } from './perfLog';
+
+let resources: { cpu: number | null; ramMb: number | null; at: number } = { cpu: null, ramMb: null, at: -Infinity };
+export function recordAppResources(cpu: number, ramMb: number): void {
+  if (state.enabled) resources = { cpu, ramMb, at: performance.now() };
+}
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -195,6 +200,7 @@ function wrapResizeObserver(): void {
     const wrappedCb: ResizeObserverCallback = (entries, observer) => {
       // Each entry counts as one fire; this matches "how many resize events
       // are landing per second across all observers."
+      if (!state.enabled) { cb(entries, observer); return; }
       const ts = performance.now();
       for (let i = 0; i < entries.length; i++) {
         state.resizeWindow.push({ ts, source: 'resize-observer' });
@@ -251,6 +257,7 @@ function pruneResizeWindow(): void {
 export function enable(): void {
   if (state.enabled) return;
   state.enabled = true;
+  resources = { cpu: null, ramMb: null, at: -Infinity };
   state.totals = freshTotals();
   startLongTaskObserver();
   wrapResizeObserver();
@@ -324,8 +331,11 @@ export function collectSessionSample(): PerfSample {
     if (d > 0) drawDelta.set(name, d);
   }
 
+  const freshResources = now - resources.at < 15000;
   const sample: PerfSample = {
     t: Date.now(),
+    cpu: freshResources ? resources.cpu : null,
+    ramMb: freshResources ? resources.ramMb : null,
     gpu: gpuN ? gpuSum / gpuN : null,
     gpuMax: gpuN ? gpuMax : null,
     fps: state.fps,
@@ -395,10 +405,10 @@ function _registerSurface(name: string): () => void {
 /** React hook that registers a "surface" (viz, overlay, etc.) for the
  *  duration of the component's mount. Cheap when perfDebug is off. */
 export function useRegisterSurface(name: string): void {
+  const enabled = useSyncExternalStore(subscribe, isEnabled, () => false);
   useEffect(() => {
-    if (!state.enabled) return;
-    return _registerSurface(name);
-  }, [name]);
+    if (enabled) return _registerSurface(name);
+  }, [name, enabled]);
 }
 
 export function recordGpuSample(value: number | null | undefined): void {
@@ -549,6 +559,7 @@ export function getSnapshot(): PerfSnapshot {
     return c > 0 ? sum / c : 0;
   });
   const gpuLatest = state.gpuSamples.length
+    && now - state.gpuSamples[state.gpuSamples.length - 1]!.ts < 15000
     ? state.gpuSamples[state.gpuSamples.length - 1]!.value
     : null;
 

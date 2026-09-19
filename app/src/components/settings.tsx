@@ -586,7 +586,7 @@ export function SettingsWindow({
         },
         {
           id: 'advanced-crash-log', label: 'Crash log', stacked: true,
-          hint: 'Every internal error (including Rust panics) is appended here with a timestamp and location. Attach it to a bug report',
+          hint: 'Rust panics and native webview failures are logged here. Copy the path and attach the crash.log file to a bug report',
           control: <CrashLogRow accent={accent} />,
         },
         {

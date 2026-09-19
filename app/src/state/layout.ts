@@ -313,6 +313,49 @@ export function snapFrac(v: number): number {
   return Math.round(v / SNAP_FRAC) * SNAP_FRAC;
 }
 
+/** Choose the regular grid that changes existing sizes least. Paint order and
+ * payloads are preserved. An impossible minimum-size fit is reported, never
+ * silently turned into overlapping tiles. */
+export function arrangeTiles(tiles: TileInstance[], canvas: { w: number; h: number },
+  orientation: Orientation): TileInstance[] {
+  if (!tiles.length) return tiles;
+  const rawTop = CHROME_TOP_PX / canvas.h;
+  const rawBottom = 1 - CHROME_BOTTOM_PX / canvas.h;
+  let best: Rect[] | null = null;
+  let bestCost = Infinity;
+  const columns = Array.from({ length: tiles.length }, (_, i) => i + 1);
+  if (orientation === 'landscape') columns.reverse();
+  // At exact minimum-size boundaries, snapping inward can make an otherwise
+  // feasible fit impossible. Fall back to exact cell/chrome boundaries then.
+  for (const snapped of [true, false]) {
+    const snap = snapped ? snapFrac : (value: number) => value;
+    const top = snapped ? Math.ceil(rawTop / SNAP_FRAC) * SNAP_FRAC : rawTop;
+    const bottom = snapped ? Math.floor(rawBottom / SNAP_FRAC) * SNAP_FRAC : rawBottom;
+    for (const cols of columns) {
+      const rows = Math.ceil(tiles.length / cols);
+      const rects = tiles.map((_, i) => {
+        const row = Math.floor(i / cols);
+        const inRow = Math.min(cols, tiles.length - row * cols);
+        const col = i % cols;
+        const x = snap(col / inRow);
+        const y = snap(top + row * (bottom - top) / rows);
+        return { x, y, w: snap((col + 1) / inRow) - x,
+          h: snap(top + (row + 1) * (bottom - top) / rows) - y };
+      });
+      if (rects.some(r => r.w * canvas.w < MIN_SIZE_PX.w - 1e-7 ||
+        r.h * canvas.h < MIN_SIZE_PX.h - 1e-7)) continue;
+      const cost = rects.reduce((sum, r, i) => sum +
+        (r.w - tiles[i]!.rect.w) ** 2 + (r.h - tiles[i]!.rect.h) ** 2, 0);
+      if (cost < bestCost) { bestCost = cost; best = rects; }
+    }
+    if (best) break;
+  }
+  if (!best || !Number.isFinite(canvas.w) || !Number.isFinite(canvas.h) || canvas.w <= 0 || canvas.h <= 0) {
+    throw new Error('Not enough room to auto-fit these tiles. Enlarge the window or remove a tile.');
+  }
+  return tiles.map((tile, i) => ({ ...tile, rect: clampRectFrac(best![i]!, canvas) }));
+}
+
 /** Display-time clamp against the fixed-pixel chrome bars (0.9.4).
  *
  *  Saved rects are fractions of the whole window, but the top/bottom bars

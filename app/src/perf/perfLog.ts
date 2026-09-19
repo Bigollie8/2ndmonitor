@@ -31,6 +31,9 @@ export interface DrawCount {
 }
 
 export interface PerfSample {
+  /** Native process-tree CPU% and resident MB; optional for older exports. */
+  cpu?: number | null;
+  ramMb?: number | null;
   /** Epoch ms (Date.now()) when the sample was taken. */
   t: number;
   /** Mean GPU% of the sysmon samples that arrived since the previous sample;
@@ -245,7 +248,7 @@ export interface PerfLogJSON {
 export const CSV_COLUMNS = [
   't', 'iso', 'gpu', 'gpuMax', 'fps', 'perfMode', 'vizMode',
   'surfaceCount', 'surfaces', 'longTasks', 'longTaskMs',
-  'resizeFires', 'roFires', 'topDrawers', 'memoryBytes',
+  'resizeFires', 'roFires', 'topDrawers', 'memoryBytes', 'cpu', 'ramMb',
 ] as const;
 
 /** RFC 4180-style quoting: wrap when the value holds a comma, quote, CR or
@@ -283,6 +286,8 @@ export function toCSV(samples: readonly PerfSample[]): string {
       s.roFires,
       encodeDrawers(s.topDrawers),
       s.memory == null ? '' : s.memory,
+      s.cpu == null ? '' : round(s.cpu, 2),
+      s.ramMb == null ? '' : round(s.ramMb, 2),
     ].map(csvEscape).join(','));
   }
   return lines.join('\n') + '\n';

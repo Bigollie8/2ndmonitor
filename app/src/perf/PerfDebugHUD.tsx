@@ -27,6 +27,7 @@ export function PerfDebugHUD() {
     // Re-render on store notify, throttled by rAF so a burst of long tasks
     // doesn't itself cause re-render thrash.
     let pending = false;
+    let raf = 0;
     const refresh = () => {
       pending = false;
       setSnap(getSnapshot());
@@ -34,12 +35,12 @@ export function PerfDebugHUD() {
     const unsub = subscribe(() => {
       if (pending) return;
       pending = true;
-      requestAnimationFrame(refresh);
+      raf = requestAnimationFrame(refresh);
     });
     // Also refresh every 500ms even without notifies — keeps draw rates ticking
     // even when no spikes are firing.
     const id = setInterval(refresh, 500);
-    return () => { unsub(); clearInterval(id); };
+    return () => { unsub(); clearInterval(id); cancelAnimationFrame(raf); };
   }, []);
 
   if (!snap.enabled) return null;

@@ -619,3 +619,46 @@ test('refitTiles repairs tiny-canvas corruption back into the unit square (0.9.1
   const healthy = [{ instanceId: 'h', type: 'clock', rect: { x: 0.1, y: 0.2, w: 0.4, h: 0.3 } }] as unknown as TileInstance[];
   assert.equal(refitTiles(healthy, { w: 1920, h: 1080 }), healthy);
 });
+
+import { arrangeTiles, rectsOverlap } from './layout';
+import { LayoutHistory } from './layoutHistory';
+for (const canvas of [LANDSCAPE, PORTRAIT, { w: 800, h: 600 }, { w: 1920, h: 1080 }]) {
+  test(`arrange: bounds, minimums, identity, order, undo and idempotency ${canvas.w}x${canvas.h}`, () => {
+    const input: TileInstance[] = Array.from({ length: 8 }, (_, i) => ({
+      instanceId: `tile-${i}`, type: 'clock', config: { label: String(i) },
+      rect: { x: 0.1, y: 0.1, w: 0.2 + i * 0.03, h: 0.3 },
+    }));
+    const original = structuredClone(input);
+    const orientation = canvas.w >= canvas.h ? 'landscape' : 'portrait';
+    const out = arrangeTiles(input, canvas, orientation);
+    out.forEach((t, i) => {
+      const r = t.rect;
+      assert.equal(t.config, input[i]!.config);
+      assert.equal(t.instanceId, input[i]!.instanceId);
+      assert.equal(t.type, input[i]!.type);
+      assert.ok(r.x >= 0 && r.x + r.w <= 1 + 1e-9);
+      assert.ok(r.y * canvas.h >= CHROME_TOP_PX - 1e-9);
+      assert.ok((r.y + r.h) * canvas.h <= canvas.h - CHROME_BOTTOM_PX + 1e-9);
+      assert.ok(r.w * canvas.w >= MIN_SIZE_PX.w - 1e-9);
+      assert.ok(r.h * canvas.h >= MIN_SIZE_PX.h - 1e-9);
+      out.slice(i + 1).forEach(other => assert.equal(rectsOverlap(r, other.rect), false));
+    });
+    assert.deepEqual(input, original);
+    assert.deepEqual(arrangeTiles(out, canvas, orientation), out);
+    const history = new LayoutHistory();
+    history.record('p', orientation, { tiles: input }, { tiles: out });
+    assert.deepEqual(history.move('p', orientation, { tiles: out }, 'undo')?.tiles, input);
+  });
+}
+test('arrange: empty and impossible canvas', () => {
+  assert.deepEqual(arrangeTiles([], LANDSCAPE, 'landscape'), []);
+  assert.throws(() => arrangeTiles([{ instanceId: 'x', type: 'clock', rect: { x: 0, y: 0, w: 1, h: 1 } }], { w: 100, h: 100 }, 'portrait'), /Not enough room/);
+});
+
+ test('arrange: an exact minimum-size fit uses chrome boundaries without snap inflation', () => {
+   const tiles: TileInstance[] = Array.from({length: 4}, (_, i) => ({instanceId: String(i), type: 'clock', rect: {x: 0, y: 0, w: 1, h: 1}}));
+   const canvas = {w: 400, h: 368};
+   const out = arrangeTiles(tiles, canvas, 'landscape');
+   assert.deepEqual(arrangeTiles(out, canvas, 'landscape'), out);
+   out.forEach((tile, i) => out.slice(i + 1).forEach(other => assert.equal(rectsOverlap(tile.rect, other.rect), false)));
+ });

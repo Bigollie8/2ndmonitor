@@ -7,7 +7,8 @@
 //! Scope, honestly: a panic hook LOGS; it does not stop the unwind. Tauri
 //! command threads and our own `thread::spawn` workers die the same way they
 //! did — but now with a timestamp, message and file:line on disk first. The
-//! file is capped so it can never grow without bound.
+//! file is capped so it can never grow without bound. Release uses panic=abort:
+//! after this hook runs the packaged process terminates, rather than unwinding.
 
 use std::io::Write;
 use std::path::PathBuf;
@@ -16,6 +17,7 @@ use tauri::{AppHandle, Manager, Runtime};
 const FILE_NAME: &str = "crash.log";
 /// Keep the log small: when it passes this, the oldest half is dropped.
 const CAP_BYTES: u64 = 512 * 1024;
+static LOG_LOCK: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
 
 fn log_path<R: Runtime>(app: &AppHandle<R>) -> Option<PathBuf> {
     let dir = app.path().app_data_dir().ok()?;
@@ -24,16 +26,25 @@ fn log_path<R: Runtime>(app: &AppHandle<R>) -> Option<PathBuf> {
 }
 
 fn append_line(path: &PathBuf, line: &str) {
+    let _guard = LOG_LOCK.lock();
     // Trim first so a runaway panic loop can't fill the disk.
     if let Ok(meta) = std::fs::metadata(path) {
         if meta.len() > CAP_BYTES {
             if let Ok(text) = std::fs::read_to_string(path) {
-                let keep = &text[text.len() / 2..];
+                let mut start = text.len() / 2;
+                while !text.is_char_boundary(start) {
+                    start += 1;
+                }
+                let keep = &text[start..];
                 let _ = std::fs::write(path, keep);
             }
         }
     }
-    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+    {
         let _ = writeln!(f, "{line}");
     }
 }
@@ -64,7 +75,10 @@ fn now_iso() -> String {
 /// unchanged; it only ADDS the file write.
 pub fn install<R: Runtime>(app: &AppHandle<R>) {
     let Some(path) = log_path(app) else { return };
-    append_line(&path, &format!("[{}] start v{}", now_iso(), env!("CARGO_PKG_VERSION")));
+    append_line(
+        &path,
+        &format!("[{}] start v{}", now_iso(), env!("CARGO_PKG_VERSION")),
+    );
     let default_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         let msg = info
@@ -77,10 +91,18 @@ pub fn install<R: Runtime>(app: &AppHandle<R>) {
             .location()
             .map(|l| format!("{}:{}:{}", l.file(), l.line(), l.column()))
             .unwrap_or_else(|| "<unknown location>".to_string());
-        let thread = std::thread::current().name().unwrap_or("<unnamed>").to_string();
+        let thread = std::thread::current()
+            .name()
+            .unwrap_or("<unnamed>")
+            .to_string();
         append_line(
             &path,
-            &format!("[{}] panic in thread '{thread}' at {loc}: {msg}", now_iso()),
+            &format!(
+                "[{}] panic pid={} in thread '{thread}' at {loc}: {msg}\n{}",
+                now_iso(),
+                std::process::id(),
+                std::backtrace::Backtrace::force_capture()
+            ),
         );
         default_hook(info);
     }));
@@ -100,7 +122,19 @@ pub fn crash_log_path<R: Runtime>(app: AppHandle<R>) -> Result<String, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::now_iso;
+    use super::{append_line, now_iso, CAP_BYTES};
+
+    #[test]
+    fn rotation_handles_multibyte_text_without_panicking() {
+        let path = std::env::temp_dir().join(format!("hub-crash-test-{}.log", std::process::id()));
+        let text = "€".repeat(CAP_BYTES as usize / 3 + 2);
+        std::fs::write(&path, text).unwrap();
+        append_line(&path, "failure context");
+        let saved = std::fs::read_to_string(&path).unwrap();
+        assert!(saved.ends_with("failure context\n"));
+        assert!(saved.len() < CAP_BYTES as usize);
+        std::fs::remove_file(path).unwrap();
+    }
 
     #[test]
     fn timestamp_is_iso_shaped() {
@@ -111,4 +145,65 @@ mod tests {
         assert_eq!(&s[10..11], "T");
         assert!(s.starts_with("20"), "{s}");
     }
+}
+
+/// Sparse lifecycle diagnostics, not a polling loop. Never records page URLs.
+pub fn record<R: Runtime>(app: &AppHandle<R>, message: &str) {
+    if let Some(path) = log_path(app) {
+        append_line(
+            &path,
+            &format!("[{}] pid={} {message}", now_iso(), std::process::id()),
+        );
+    }
+}
+
+/// Covers main, browser-player and web-tile webviews, including ones created
+/// through the JS API. WebView2 child crashes do not invoke Rust's panic hook.
+pub fn plugin<R: Runtime>() -> tauri::plugin::TauriPlugin<R> {
+    tauri::plugin::Builder::new("crash-diagnostics")
+        .on_webview_ready(|webview| {
+            let app = webview.app_handle().clone();
+            let label = webview.label().to_string();
+            record(&app, &format!("webview ready label={label}"));
+            #[cfg(windows)]
+            {
+                let failure_app = app.clone();
+                let result = webview.with_webview(move |native| unsafe {
+                    use webview2_com::{ProcessFailedEventHandler, Microsoft::Web::WebView2::Win32::*};
+                    let callback_app = failure_app.clone();
+                    let callback_label = label.clone();
+                    let handler = ProcessFailedEventHandler::create(Box::new(move |_, args| {
+                        let mut kind = COREWEBVIEW2_PROCESS_FAILED_KIND(0);
+                        use webview_windows_core::Interface;
+                        let status = args.as_ref().map(|args| args.ProcessFailedKind(&mut kind));
+                        let detail = args.and_then(|args| args.cast::<ICoreWebView2ProcessFailedEventArgs2>().ok())
+                            .map(|args| {
+                                let mut reason = COREWEBVIEW2_PROCESS_FAILED_REASON(0);
+                                let mut exit_code = 0;
+                                let reason_status = args.Reason(&mut reason);
+                                let exit_status = args.ExitCode(&mut exit_code);
+                                format!("reason={} exit_code={exit_code} reason_status={reason_status:?} exit_status={exit_status:?}", reason.0)
+                            });
+                        record(&callback_app, &format!("WebView2 ProcessFailed label={callback_label} kind={} status={status:?} detail={detail:?}", kind.0));
+                        Ok(())
+                    }));
+                    let result = native.controller().CoreWebView2().and_then(|core| {
+                        let mut token = 0;
+                        // The COM event source owns the handler until this webview closes.
+                        core.add_ProcessFailed(&handler, &mut token)
+                    });
+                    match result {
+                        Ok(()) => record(&failure_app, &format!("ProcessFailed handler attached label={label}")),
+                        Err(error) => record(&failure_app, &format!("ProcessFailed registration failed label={label}: {error}")),
+                    }
+                });
+                if let Err(error) = result { record(&app, &format!("with_webview failed: {error}")); }
+            }
+        })
+        .on_event(|app, event| match event {
+            tauri::RunEvent::ExitRequested { .. } => record(app, "exit requested"),
+            tauri::RunEvent::Exit => record(app, "event loop exit"),
+            _ => {}
+        })
+        .build()
 }

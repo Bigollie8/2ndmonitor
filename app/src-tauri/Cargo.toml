@@ -44,6 +44,8 @@ urlencoding = "2"
 tokio = { version = "1", features = ["rt", "rt-multi-thread"] }
 
 [target.'cfg(windows)'.dependencies]
+webview2-com = "0.38.2"
+webview-windows-core = { package = "windows-core", version = "0.61" }
 # NVML (NVIDIA Management Library) only ships bindings/drivers relevant on
 # Windows and Linux desktops with NVIDIA GPUs; macOS has none. sysmon.rs
 # treats GPU metrics as optional already, so this simply reports `None` off

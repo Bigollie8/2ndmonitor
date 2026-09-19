@@ -7,6 +7,7 @@ import {
   CHROME_TOP_PX,
   migrateLegacyProfileToOrientations,
   useCanvas,
+  arrangeTiles,
   useOrientation,
   newId,
   ALL_TILE_TYPES,
@@ -1936,6 +1937,12 @@ export default function App() {
       {editMode && (
           <EditModeOverlay
             historyControls={<span className="feature-controls" style={{ display: 'contents' }}>
+              <button disabled={!activeOrientation.tiles.length} title="Arrange tiles into a non-overlapping grid (undoable)" onClick={() => {
+                try {
+                  updateActiveOrientation({ tiles: arrangeTiles(activeOrientation.tiles, canvas, orientation) });
+                  setCheckpointNotice('Tiles auto-fitted');
+                } catch (error) { setCheckpointNotice(String(error instanceof Error ? error.message : error)); }
+              }}>Auto-fit</button>
               <button disabled={!historyAvailable.undo} onClick={() => layoutActionsRef.current('undo')} title="Undo (Ctrl/⌘ Z)">Undo</button>
               <button disabled={!historyAvailable.redo} onClick={() => layoutActionsRef.current('redo')} title="Redo (Ctrl/⌘ Shift Z)">Redo</button>
               <button onClick={() => { updateActiveProfile({ layoutCheckpoints: { ...activeProfile.layoutCheckpoints, [orientation]: structuredClone(activeOrientation) } }); setCheckpointNotice('Checkpoint saved'); }} title="Keep this arrangement for recovery after a restart">Save checkpoint</button>
@@ -2700,7 +2707,8 @@ function BottomStatus({
   // remaining chrome-level sysmon subscriber.
   useEffect(() => {
     perfDebug.recordGpuSample(app?.gpu);
-  }, [app?.gpu]);
+    if (app) perfDebug.recordAppResources(app.cpu, app.ram_mb);
+  }, [app]);
   const cpuText = app ? `${app.cpu.toFixed(1)}%` : '—';
   const ramText = app ? (app.ram_mb >= 1024 ? `${(app.ram_mb / 1024).toFixed(2)} GB` : `${Math.round(app.ram_mb)} MB`) : '—';
   const gpuText = app && app.gpu != null ? `${app.gpu.toFixed(0)}%` : '—';

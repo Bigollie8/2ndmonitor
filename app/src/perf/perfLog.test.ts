@@ -238,13 +238,15 @@ test('toCSV emits a header row plus one flattened row per sample', () => {
     longTaskMs: 83.26,
     topDrawers: [{ name: 'a', count: 3 }, { name: 'b', count: 1 }],
     memory: 123456,
+    cpu: 7.123,
+    ramMb: 256.789,
   });
   const csv = toCSV([s]);
   const lines = csv.split('\n');
   assert.equal(lines[0], CSV_COLUMNS.join(','));
   assert.equal(lines[1], [
     String(s.t), '2026-09-06T12:00:00.000Z', '12.35', '20', '60', 'balanced', 'milkdrop',
-    '2', 'viz|gallery', '0', '83.3', '0', '0', 'a:3;b:1', '123456',
+    '2', 'viz|gallery', '0', '83.3', '0', '0', 'a:3;b:1', '123456', '7.12', '256.79',
   ].join(','));
   assert.equal(lines[2], '', 'file ends with a trailing newline');
   assert.equal(lines.length, 3);

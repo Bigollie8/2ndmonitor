@@ -1,0 +1,461 @@
+{
+  "baseline": "215f8c7",
+  "kind": "deterministic simulated vsync through HUD; not hardware performance",
+  "vsyncHz": 144,
+  "results": [
+    {
+      "label": "before",
+      "cap": 120,
+      "atMs": 9993.055555555555,
+      "drawsPerSec": 120.2
+    },
+    {
+      "label": "before",
+      "cap": 120,
+      "atMs": 19993.055555555555,
+      "drawsPerSec": 30.2
+    },
+    {
+      "label": "before",
+      "cap": 120,
+      "atMs": 129993.05555555556,
+      "drawsPerSec": 12.2
+    },
+    {
+      "label": "before",
+      "cap": 120,
+      "atMs": 134993.05555555556,
+      "drawsPerSec": 120
+    },
+    {
+      "label": "before",
+      "cap": 120,
+      "idleGapMinMs": 27.777777777777374,
+      "idleGapMaxMs": 34.722222222222626
+    },
+    {
+      "label": "before",
+      "cap": 60,
+      "atMs": 9993.055555555555,
+      "drawsPerSec": 60
+    },
+    {
+      "label": "before",
+      "cap": 60,
+      "atMs": 19993.055555555555,
+      "drawsPerSec": 30.2
+    },
+    {
+      "label": "before",
+      "cap": 60,
+      "atMs": 129993.05555555556,
+      "drawsPerSec": 12.2
+    },
+    {
+      "label": "before",
+      "cap": 60,
+      "atMs": 134993.05555555556,
+      "drawsPerSec": 60.2
+    },
+    {
+      "label": "before",
+      "cap": 60,
+      "idleGapMinMs": 27.777777777777374,
+      "idleGapMaxMs": 34.722222222222626
+    },
+    {
+      "label": "before",
+      "cap": 24,
+      "atMs": 9993.055555555555,
+      "drawsPerSec": 24
+    },
+    {
+      "label": "before",
+      "cap": 24,
+      "atMs": 19993.055555555555,
+      "drawsPerSec": 24
+    },
+    {
+      "label": "before",
+      "cap": 24,
+      "atMs": 129993.05555555556,
+      "drawsPerSec": 12.2
+    },
+    {
+      "label": "before",
+      "cap": 24,
+      "atMs": 134993.05555555556,
+      "drawsPerSec": 24.2
+    },
+    {
+      "label": "before",
+      "cap": 24,
+      "idleGapMinMs": 34.72222222221899,
+      "idleGapMaxMs": 62.5
+    },
+    {
+      "label": "before",
+      "disabledObserverFires": 100
+    },
+    {
+      "label": "after",
+      "cap": 120,
+      "atMs": 9993.055555555555,
+      "drawsPerSec": 120.2
+    },
+    {
+      "label": "after",
+      "cap": 120,
+      "atMs": 19993.055555555555,
+      "drawsPerSec": 30.2
+    },
+    {
+      "label": "after",
+      "cap": 120,
+      "atMs": 129993.05555555556,
+      "drawsPerSec": 12.2
+    },
+    {
+      "label": "after",
+      "cap": 120,
+      "atMs": 134993.05555555556,
+      "drawsPerSec": 120.2
+    },
+    {
+      "label": "after",
+      "cap": 120,
+      "idleGapMinMs": 27.777777777777374,
+      "idleGapMaxMs": 34.722222222222626
+    },
+    {
+      "label": "after",
+      "cap": 60,
+      "atMs": 9993.055555555555,
+      "drawsPerSec": 60
+    },
+    {
+      "label": "after",
+      "cap": 60,
+      "atMs": 19993.055555555555,
+      "drawsPerSec": 30.2
+    },
+    {
+      "label": "after",
+      "cap": 60,
+      "atMs": 129993.05555555556,
+      "drawsPerSec": 12.2
+    },
+    {
+      "label": "after",
+      "cap": 60,
+      "atMs": 134993.05555555556,
+      "drawsPerSec": 60.2
+    },
+    {
+      "label": "after",
+      "cap": 60,
+      "idleGapMinMs": 27.777777777777374,
+      "idleGapMaxMs": 34.722222222222626
+    },
+    {
+      "label": "after",
+      "cap": 24,
+      "atMs": 9993.055555555555,
+      "drawsPerSec": 24
+    },
+    {
+      "label": "after",
+      "cap": 24,
+      "atMs": 19993.055555555555,
+      "drawsPerSec": 24
+    },
+    {
+      "label": "after",
+      "cap": 24,
+      "atMs": 129993.05555555556,
+      "drawsPerSec": 12.2
+    },
+    {
+      "label": "after",
+      "cap": 24,
+      "atMs": 134993.05555555556,
+      "drawsPerSec": 24.2
+    },
+    {
+      "label": "after",
+      "cap": 24,
+      "idleGapMinMs": 41.66666666666424,
+      "idleGapMaxMs": 48.611111111109494
+    },
+    {
+      "label": "after",
+      "disabledObserverFires": 0
+    }
+  ],
+  "sessionSamples": [
+    {
+      "t": 1789837270825,
+      "cpu": null,
+      "ramMb": null,
+      "gpu": null,
+      "gpuMax": null,
+      "fps": 60,
+      "perfMode": "unknown",
+      "vizMode": "unknown",
+      "surfaces": [],
+      "longTasks": 0,
+      "longTaskMs": 0,
+      "resizeFires": 0,
+      "roFires": 0,
+      "topDrawers": [
+        {
+          "name": "audit-viz",
+          "count": 1200
+        }
+      ],
+      "memory": null
+    },
+    {
+      "t": 1789837270825,
+      "cpu": null,
+      "ramMb": null,
+      "gpu": null,
+      "gpuMax": null,
+      "fps": 60,
+      "perfMode": "unknown",
+      "vizMode": "unknown",
+      "surfaces": [],
+      "longTasks": 0,
+      "longTaskMs": 0,
+      "resizeFires": 0,
+      "roFires": 0,
+      "topDrawers": [
+        {
+          "name": "audit-viz",
+          "count": 390
+        }
+      ],
+      "memory": null
+    },
+    {
+      "t": 1789837270827,
+      "cpu": null,
+      "ramMb": null,
+      "gpu": null,
+      "gpuMax": null,
+      "fps": 60,
+      "perfMode": "unknown",
+      "vizMode": "unknown",
+      "surfaces": [],
+      "longTasks": 0,
+      "longTaskMs": 0,
+      "resizeFires": 0,
+      "roFires": 0,
+      "topDrawers": [
+        {
+          "name": "audit-viz",
+          "count": 3138
+        }
+      ],
+      "memory": null
+    },
+    {
+      "t": 1789837270827,
+      "cpu": null,
+      "ramMb": null,
+      "gpu": null,
+      "gpuMax": null,
+      "fps": 60,
+      "perfMode": "unknown",
+      "vizMode": "unknown",
+      "surfaces": [],
+      "longTasks": 0,
+      "longTaskMs": 0,
+      "resizeFires": 0,
+      "roFires": 0,
+      "topDrawers": [
+        {
+          "name": "audit-viz",
+          "count": 600
+        }
+      ],
+      "memory": null
+    },
+    {
+      "t": 1789837270828,
+      "cpu": null,
+      "ramMb": null,
+      "gpu": null,
+      "gpuMax": null,
+      "fps": 60,
+      "perfMode": "unknown",
+      "vizMode": "unknown",
+      "surfaces": [],
+      "longTasks": 0,
+      "longTaskMs": 0,
+      "resizeFires": 0,
+      "roFires": 0,
+      "topDrawers": [
+        {
+          "name": "audit-viz",
+          "count": 600
+        }
+      ],
+      "memory": null
+    },
+    {
+      "t": 1789837270828,
+      "cpu": null,
+      "ramMb": null,
+      "gpu": null,
+      "gpuMax": null,
+      "fps": 60,
+      "perfMode": "unknown",
+      "vizMode": "unknown",
+      "surfaces": [],
+      "longTasks": 0,
+      "longTaskMs": 0,
+      "resizeFires": 0,
+      "roFires": 0,
+      "topDrawers": [
+        {
+          "name": "audit-viz",
+          "count": 331
+        }
+      ],
+      "memory": null
+    },
+    {
+      "t": 1789837270830,
+      "cpu": null,
+      "ramMb": null,
+      "gpu": null,
+      "gpuMax": null,
+      "fps": 60,
+      "perfMode": "unknown",
+      "vizMode": "unknown",
+      "surfaces": [],
+      "longTasks": 0,
+      "longTaskMs": 0,
+      "resizeFires": 0,
+      "roFires": 0,
+      "topDrawers": [
+        {
+          "name": "audit-viz",
+          "count": 3138
+        }
+      ],
+      "memory": null
+    },
+    {
+      "t": 1789837270830,
+      "cpu": null,
+      "ramMb": null,
+      "gpu": null,
+      "gpuMax": null,
+      "fps": 60,
+      "perfMode": "unknown",
+      "vizMode": "unknown",
+      "surfaces": [],
+      "longTasks": 0,
+      "longTaskMs": 0,
+      "resizeFires": 0,
+      "roFires": 0,
+      "topDrawers": [
+        {
+          "name": "audit-viz",
+          "count": 300
+        }
+      ],
+      "memory": null
+    },
+    {
+      "t": 1789837270830,
+      "cpu": null,
+      "ramMb": null,
+      "gpu": null,
+      "gpuMax": null,
+      "fps": 60,
+      "perfMode": "unknown",
+      "vizMode": "unknown",
+      "surfaces": [],
+      "longTasks": 0,
+      "longTaskMs": 0,
+      "resizeFires": 0,
+      "roFires": 0,
+      "topDrawers": [
+        {
+          "name": "audit-viz",
+          "count": 240
+        }
+      ],
+      "memory": null
+    },
+    {
+      "t": 1789837270831,
+      "cpu": null,
+      "ramMb": null,
+      "gpu": null,
+      "gpuMax": null,
+      "fps": 60,
+      "perfMode": "unknown",
+      "vizMode": "unknown",
+      "surfaces": [],
+      "longTasks": 0,
+      "longTaskMs": 0,
+      "resizeFires": 0,
+      "roFires": 0,
+      "topDrawers": [
+        {
+          "name": "audit-viz",
+          "count": 240
+        }
+      ],
+      "memory": null
+    },
+    {
+      "t": 1789837270832,
+      "cpu": null,
+      "ramMb": null,
+      "gpu": null,
+      "gpuMax": null,
+      "fps": 60,
+      "perfMode": "unknown",
+      "vizMode": "unknown",
+      "surfaces": [],
+      "longTasks": 0,
+      "longTaskMs": 0,
+      "resizeFires": 0,
+      "roFires": 0,
+      "topDrawers": [
+        {
+          "name": "audit-viz",
+          "count": 2533
+        }
+      ],
+      "memory": null
+    },
+    {
+      "t": 1789837270832,
+      "cpu": null,
+      "ramMb": null,
+      "gpu": null,
+      "gpuMax": null,
+      "fps": 60,
+      "perfMode": "unknown",
+      "vizMode": "unknown",
+      "surfaces": [],
+      "longTasks": 0,
+      "longTaskMs": 0,
+      "resizeFires": 0,
+      "roFires": 0,
+      "topDrawers": [
+        {
+          "name": "audit-viz",
+          "count": 120
+        }
+      ],
+      "memory": null
+    }
+  ]
+}
