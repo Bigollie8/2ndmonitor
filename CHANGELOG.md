@@ -5,6 +5,33 @@ All notable changes to 2ndMonitor are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.9.20] - 2026-09-23
+
+### Added
+- **Auto-fit tiles.** Edit mode now has an Auto-fit button that arranges your
+  placed tiles into a non-overlapping grid within the dashboard bars. It
+  preserves tile content and order, respects minimum sizes, and supports Undo.
+- **Better crash diagnostics.** Crash logs now include Rust panic backtraces
+  and native WebView2 failure details. Find the log in Settings → Advanced →
+  Crash log. This adds evidence for overnight browser failures; it does not
+  claim to resolve every Netflix or Windows-native crash.
+- **CPU and RAM in performance exports.** The existing opt-in session log now
+  includes the app process tree's CPU usage and resident memory alongside GPU,
+  draw rates and long tasks.
+
+### Fixed
+- **Smoother visualizer transitions.** Resuming playback or returning to the
+  dashboard resets the frame deadline immediately. A single pacing deadline
+  avoids uneven timing when idle and custom frame-rate caps interact, while
+  sustained silence still reduces animation to 30 and then 12 frames/second.
+- **Safer browser source switching.** Native browser creation and teardown
+  are serialized, and creation errors are shown instead of waiting forever.
+  Opening Settings or Market still only hides the browser, preserving audio
+  and the session.
+- **Performance debug cleanup.** Disabling the HUD stops resize-event
+  collection, mounted surfaces are correctly attributed when it is re-enabled,
+  and pending HUD animation callbacks are cancelled on unmount.
+
 ## [0.9.19] - 2026-09-06
 
 ### Fixed
