@@ -163,7 +163,13 @@ fn folder_entry(path: &std::path::Path, id: String) -> VizFolder {
 }
 
 #[tauri::command]
-pub fn visualizers_list<R: Runtime>(app: AppHandle<R>) -> Result<Vec<VizFolder>, String> {
+pub async fn visualizers_list<R: Runtime>(app: AppHandle<R>) -> Result<Vec<VizFolder>, String> {
+    tauri::async_runtime::spawn_blocking(move || list_visualizers(app))
+        .await
+        .map_err(|e| format!("visualizer catalog worker failed: {e}"))?
+}
+
+fn list_visualizers<R: Runtime>(app: AppHandle<R>) -> Result<Vec<VizFolder>, String> {
     let dir = visualizers_dir(&app)?;
     let mut out = Vec::new();
     let entries = std::fs::read_dir(&dir).map_err(|e| format!("read visualizers dir: {e}"))?;

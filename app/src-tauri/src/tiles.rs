@@ -159,7 +159,13 @@ fn folder_entry(path: &std::path::Path, id: String) -> TileFolder {
 }
 
 #[tauri::command]
-pub fn tiles_list<R: Runtime>(app: AppHandle<R>) -> Result<Vec<TileFolder>, String> {
+pub async fn tiles_list<R: Runtime>(app: AppHandle<R>) -> Result<Vec<TileFolder>, String> {
+    tauri::async_runtime::spawn_blocking(move || list_tiles(app))
+        .await
+        .map_err(|e| format!("tile catalog worker failed: {e}"))?
+}
+
+fn list_tiles<R: Runtime>(app: AppHandle<R>) -> Result<Vec<TileFolder>, String> {
     let dir = tiles_dir(&app)?;
     let mut out = Vec::new();
     let entries = std::fs::read_dir(&dir).map_err(|e| format!("read tiles dir: {e}"))?;

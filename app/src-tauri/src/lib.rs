@@ -46,6 +46,7 @@ mod tray;
 mod tweaks;
 mod weather;
 mod webtiles;
+mod webview_policy;
 
 /// Mirrors the `hub://window-visibility` signal for BACKEND consumers
 /// (0.9.6): audio's analysis loop idles while the window is hidden to the
@@ -56,6 +57,8 @@ pub static WINDOW_VISIBLE: std::sync::atomic::AtomicBool =
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Before Builder/plugins can create threads or the first browser environment.
+    webview_policy::configure();
     tauri::Builder::default()
         // Single-instance must be the FIRST plugin registered so a second
         // launch is intercepted before any other plugin does work. The

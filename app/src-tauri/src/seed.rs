@@ -210,7 +210,16 @@ pub fn seed_zip_for<R: Runtime>(
 /// `plan_seeds` enforces the exclusion via `parse_seed_path`'s kind check, so
 /// the constraint holds even if this loop were ever accidentally widened.
 #[tauri::command]
-pub fn seed_sync<R: Runtime>(app: AppHandle<R>, removed: Vec<String>) -> Result<Vec<String>, String> {
+pub async fn seed_sync<R: Runtime>(app: AppHandle<R>, removed: Vec<String>) -> Result<Vec<String>, String> {
+    // Directory scans, zip validation and extraction can take seconds on an
+    // upgrade. An async JS invoke alone does not move a synchronous Rust
+    // command off Tauri's window thread.
+    tauri::async_runtime::spawn_blocking(move || sync_seeds(app, removed))
+        .await
+        .map_err(|e| format!("seed worker failed: {e}"))?
+}
+
+fn sync_seeds<R: Runtime>(app: AppHandle<R>, removed: Vec<String>) -> Result<Vec<String>, String> {
     let Some(dir) = seed_dir(&app) else { return Ok(vec![]) };
 
     // A missing kind subdirectory is the normal state before any seeds of

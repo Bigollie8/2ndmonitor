@@ -76,6 +76,13 @@ struct State {
 }
 
 pub fn spawn<R: Runtime>(app: AppHandle<R>) {
+    // Device/driver discovery and process enumeration must also happen on the
+    // sampler thread. Moving only the priming sleep still blocked first paint
+    // in System::new_with_specifics, network discovery and Nvml::init.
+    thread::spawn(move || run(app));
+}
+
+fn run<R: Runtime>(app: AppHandle<R>) {
     let sys = System::new_with_specifics(
         RefreshKind::new()
             .with_cpu(CpuRefreshKind::everything())
@@ -101,36 +108,29 @@ pub fn spawn<R: Runtime>(app: AppHandle<R>) {
     let state = Arc::new(Mutex::new(State { sys, networks, nvml, last_gpu_sample_ts: 0 }));
 
     // Prime CPU readings — sysinfo needs two refreshes to compute deltas.
-    // Both refreshes (and the 200ms wait between them) happen INSIDE the
-    // sampler thread: this function is called from Tauri's setup() on the
-    // main thread, and sleeping there delayed first paint by 200ms (0.8.7
-    // audit). The first tick is a second later anyway, so nothing observes
-    // the priming any earlier than this.
-    thread::spawn(move || {
-        {
-            let mut s = state.lock();
-            s.sys.refresh_cpu_all();
+    {
+        let mut s = state.lock();
+        s.sys.refresh_cpu_all();
+    }
+    thread::sleep(Duration::from_millis(200));
+    {
+        let mut s = state.lock();
+        s.sys.refresh_cpu_all();
+        s.networks.refresh();
+    }
+    let mut schedule = crate::background::WorkSchedule::new();
+    loop {
+        thread::sleep(Duration::from_secs(1));
+        if !schedule.due(crate::WINDOW_VISIBLE.load(std::sync::atomic::Ordering::Relaxed), 1, 5) {
+            continue;
         }
-        thread::sleep(Duration::from_millis(200));
-        {
-            let mut s = state.lock();
-            s.sys.refresh_cpu_all();
-            s.networks.refresh();
+        let sample = collect(&state);
+        if let Some(window) = app.get_webview_window("main") {
+            let _ = window.emit("sysmon:tick", &sample);
+        } else {
+            let _ = app.emit("sysmon:tick", &sample);
         }
-        let mut schedule = crate::background::WorkSchedule::new();
-        loop {
-            thread::sleep(Duration::from_secs(1));
-            if !schedule.due(crate::WINDOW_VISIBLE.load(std::sync::atomic::Ordering::Relaxed), 1, 5) {
-                continue;
-            }
-            let sample = collect(&state);
-            if let Some(window) = app.get_webview_window("main") {
-                let _ = window.emit("sysmon:tick", &sample);
-            } else {
-                let _ = app.emit("sysmon:tick", &sample);
-            }
-        }
-    });
+    }
 }
 
 fn collect(state: &Arc<Mutex<State>>) -> SysmonSample {

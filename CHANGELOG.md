@@ -5,6 +5,21 @@ All notable changes to 2ndMonitor are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.9.21] - 2026-09-28
+
+### Fixed
+- **Background playback scheduling on Windows.** The visualizer and built-in
+  browser now use WebView2 scheduling overrides intended to reduce stuttering
+  when another app has focus. Existing visualizer limits during silence and
+  tray hiding remain in place. Playback improvements still need confirmation
+  across different systems and WebView2 versions.
+- **More responsive startup.** System and GPU initialization, content catalog
+  scans, and bundled-content installation now run on workers so they can no
+  longer block the window's event loop during launch.
+- **Discord emoji crash.** Fixed a crash when diagnostic text was truncated
+  inside a multibyte character. Detailed Discord payload logging now runs only
+  in development builds, reducing unnecessary work in installed releases.
+
 ## [0.9.20] - 2026-09-23
 
 ### Added

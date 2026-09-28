@@ -313,19 +313,60 @@ fn run_session<R: Runtime>(app: &AppHandle<R>, client_id: &str, token: &str) -> 
             Ok(v) => v,
             Err(_) => continue,
         };
-        // Trace every frame so we can see what Discord is actually sending.
-        // Truncate huge payloads (e.g. GET_CHANNEL with full message history).
-        let cmd_dbg = msg.get("cmd").and_then(|v| v.as_str()).unwrap_or("?");
-        let evt_dbg = msg.get("evt").and_then(|v| v.as_str()).unwrap_or("");
-        let raw = msg.to_string();
-        let preview = if raw.len() > 600 { format!("{}…(+{} bytes)", &raw[..600], raw.len() - 600) } else { raw };
-        eprintln!("discord_rpc <- cmd={cmd_dbg} evt={evt_dbg} body={preview}");
+        // Full payload serialization is only useful for development traces.
+        #[cfg(debug_assertions)]
+        {
+            let cmd_dbg = msg.get("cmd").and_then(|v| v.as_str()).unwrap_or("?");
+            let evt_dbg = msg.get("evt").and_then(|v| v.as_str()).unwrap_or("");
+            let preview = payload_preview(&msg.to_string(), 600);
+            eprintln!("discord_rpc <- cmd={cmd_dbg} evt={evt_dbg} body={preview}");
+        }
         handle_message(app, &writer, &msg, &mut current_voice_channel)?;
     })();
     // Always clear the static handle when the session ends so commands can't
     // try to write to a half-dead pipe.
     *WRITE_PIPE.lock() = None;
     result
+}
+
+#[cfg(any(debug_assertions, test))]
+fn payload_preview(raw: &str, max_bytes: usize) -> String {
+    let mut end = raw.len().min(max_bytes);
+    while !raw.is_char_boundary(end) {
+        end -= 1;
+    }
+    if end == raw.len() {
+        raw.to_owned()
+    } else {
+        format!("{}…(+{} bytes)", &raw[..end], raw.len() - end)
+    }
+}
+
+#[cfg(test)]
+mod preview_tests {
+    use super::payload_preview;
+
+    #[test]
+    fn truncation_handles_the_logged_variation_selector_crash() {
+        let raw = format!("{}\u{fe0f}tail", "a".repeat(599));
+        assert_eq!(payload_preview(&raw, 600), format!("{}…(+7 bytes)", "a".repeat(599)));
+    }
+
+    #[test]
+    fn truncation_handles_all_utf8_boundaries_and_short_payloads() {
+        let raw = "aé中🎵";
+        for limit in 0..=raw.len() + 1 {
+            let preview = payload_preview(raw, limit);
+            if limit >= raw.len() {
+                assert_eq!(preview, raw);
+            } else {
+                let prefix = preview.split('…').next().unwrap();
+                assert!(raw.starts_with(prefix));
+                assert!(prefix.len() <= limit);
+            }
+        }
+        assert_eq!(payload_preview("", 600), "");
+    }
 }
 
 fn handle_message<R: Runtime>(
