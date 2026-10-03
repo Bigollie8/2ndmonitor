@@ -49,6 +49,10 @@ use std::io::Write;
 use std::path::PathBuf;
 use tauri::{AppHandle, Manager, Runtime};
 
+// Serialize the complete read/modify/write transaction, including backend callers.
+// Concurrent commands must not overwrite each other or share a live temp file.
+static STORE_LOCK: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
+
 /// Keys a `#[tauri::command]` caller (i.e. the frontend) may never read,
 /// write, or delete through the generic secret commands — see the module doc
 /// above. Add a key here, not a case in the commands below, so
@@ -109,6 +113,7 @@ fn save_map<R: Runtime>(app: &AppHandle<R>, map: &Map<String, Value>) -> Result<
 // ---------------------------------------------------------------------------
 
 pub fn secret_get_inner<R: Runtime>(app: &AppHandle<R>, key: &str) -> Option<String> {
+    let _guard = STORE_LOCK.lock();
     // Missing file, missing key, or a blob that no longer decrypts (file
     // copied from another machine / user profile) all read as "no secret" —
     // callers treat None as "not configured".
@@ -120,6 +125,7 @@ pub fn secret_get_inner<R: Runtime>(app: &AppHandle<R>, key: &str) -> Option<Str
 }
 
 pub fn secret_set_inner<R: Runtime>(app: &AppHandle<R>, key: &str, value: &str) -> Result<(), String> {
+    let _guard = STORE_LOCK.lock();
     let cipher = dpapi::protect(key, value.as_bytes())?;
     let mut map = load_map(app)?;
     map.insert(key.to_string(), Value::String(STANDARD.encode(cipher)));
@@ -127,6 +133,7 @@ pub fn secret_set_inner<R: Runtime>(app: &AppHandle<R>, key: &str, value: &str) 
 }
 
 pub fn secret_delete_inner<R: Runtime>(app: &AppHandle<R>, key: &str) -> Result<(), String> {
+    let _guard = STORE_LOCK.lock();
     let mut map = load_map(app)?;
     if map.remove(key).is_some() {
         save_map(app, &map)?;
@@ -145,27 +152,33 @@ pub fn secret_delete_inner<R: Runtime>(app: &AppHandle<R>, key: &str) -> Result<
 // ---------------------------------------------------------------------------
 
 #[tauri::command]
-pub fn secret_get<R: Runtime>(app: AppHandle<R>, key: String) -> Option<String> {
+pub async fn secret_get<R: Runtime>(app: AppHandle<R>, key: String) -> Option<String> {
     if is_reserved(&key) {
         return None;
     }
-    secret_get_inner(&app, &key)
+    tauri::async_runtime::spawn_blocking(move || secret_get_inner(&app, &key))
+        .await
+        .unwrap_or(None)
 }
 
 #[tauri::command]
-pub fn secret_set<R: Runtime>(app: AppHandle<R>, key: String, value: String) -> Result<(), String> {
+pub async fn secret_set<R: Runtime>(app: AppHandle<R>, key: String, value: String) -> Result<(), String> {
     if is_reserved(&key) {
         return Err(format!("{key:?} is a reserved key and cannot be set through this command"));
     }
-    secret_set_inner(&app, &key, &value)
+    tauri::async_runtime::spawn_blocking(move || secret_set_inner(&app, &key, &value))
+        .await
+        .map_err(|e| format!("secret_set worker failed: {e}"))?
 }
 
 #[tauri::command]
-pub fn secret_delete<R: Runtime>(app: AppHandle<R>, key: String) -> Result<(), String> {
+pub async fn secret_delete<R: Runtime>(app: AppHandle<R>, key: String) -> Result<(), String> {
     if is_reserved(&key) {
         return Err(format!("{key:?} is a reserved key and cannot be deleted through this command"));
     }
-    secret_delete_inner(&app, &key)
+    tauri::async_runtime::spawn_blocking(move || secret_delete_inner(&app, &key))
+        .await
+        .map_err(|e| format!("secret_delete worker failed: {e}"))?
 }
 
 #[cfg(windows)]
@@ -336,15 +349,15 @@ mod tests {
         let src = include_str!("secrets.rs");
         for (sig, inner_call) in [
             (
-                "pub fn secret_get<R: Runtime>(app: AppHandle<R>, key: String) -> Option<String> {",
+                "pub async fn secret_get<R: Runtime>(app: AppHandle<R>, key: String) -> Option<String> {",
                 "secret_get_inner(",
             ),
             (
-                "pub fn secret_set<R: Runtime>(app: AppHandle<R>, key: String, value: String) -> Result<(), String> {",
+                "pub async fn secret_set<R: Runtime>(app: AppHandle<R>, key: String, value: String) -> Result<(), String> {",
                 "secret_set_inner(",
             ),
             (
-                "pub fn secret_delete<R: Runtime>(app: AppHandle<R>, key: String) -> Result<(), String> {",
+                "pub async fn secret_delete<R: Runtime>(app: AppHandle<R>, key: String) -> Result<(), String> {",
                 "secret_delete_inner(",
             ),
         ] {

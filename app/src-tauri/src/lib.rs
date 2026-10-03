@@ -48,6 +48,9 @@ mod weather;
 mod webtiles;
 mod webview_policy;
 
+#[cfg(test)]
+mod command_thread_tests;
+
 /// Mirrors the `hub://window-visibility` signal for BACKEND consumers
 /// (0.9.6): audio's analysis loop idles while the window is hidden to the
 /// tray, since nothing can display a spectrum. Set at every site that

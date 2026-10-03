@@ -187,7 +187,13 @@ fn list_tiles<R: Runtime>(app: AppHandle<R>) -> Result<Vec<TileFolder>, String> 
 }
 
 #[tauri::command]
-pub fn tiles_read<R: Runtime>(app: AppHandle<R>, id: String) -> Result<TileSource, String> {
+pub async fn tiles_read<R: Runtime>(app: AppHandle<R>, id: String) -> Result<TileSource, String> {
+    tauri::async_runtime::spawn_blocking(move || tiles_read_blocking(app, id))
+        .await
+        .map_err(|e| format!("tiles_read worker failed: {e}"))?
+}
+
+fn tiles_read_blocking<R: Runtime>(app: AppHandle<R>, id: String) -> Result<TileSource, String> {
     if !is_safe_id(&id) {
         return Err("invalid tile id".into());
     }

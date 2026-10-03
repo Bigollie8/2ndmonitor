@@ -8,6 +8,9 @@ use std::path::PathBuf;
 use tauri::{AppHandle, Manager, Runtime};
 use tauri_plugin_dialog::DialogExt;
 
+// useTweaks preserves save order; this also protects the temp file from other callers.
+static SAVE_LOCK: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
+
 fn tweaks_path<R: Runtime>(app: &AppHandle<R>) -> Result<PathBuf, String> {
     let dir = app
         .path()
@@ -18,7 +21,13 @@ fn tweaks_path<R: Runtime>(app: &AppHandle<R>) -> Result<PathBuf, String> {
 }
 
 #[tauri::command]
-pub fn tweaks_load<R: Runtime>(app: AppHandle<R>) -> Result<Option<Value>, String> {
+pub async fn tweaks_load<R: Runtime>(app: AppHandle<R>) -> Result<Option<Value>, String> {
+    tauri::async_runtime::spawn_blocking(move || tweaks_load_blocking(app))
+        .await
+        .map_err(|e| format!("tweaks_load worker failed: {e}"))?
+}
+
+fn tweaks_load_blocking<R: Runtime>(app: AppHandle<R>) -> Result<Option<Value>, String> {
     let path = tweaks_path(&app)?;
     if !path.exists() {
         return Ok(None);
@@ -31,7 +40,14 @@ pub fn tweaks_load<R: Runtime>(app: AppHandle<R>) -> Result<Option<Value>, Strin
 }
 
 #[tauri::command]
-pub fn tweaks_save<R: Runtime>(app: AppHandle<R>, value: Value) -> Result<(), String> {
+pub async fn tweaks_save<R: Runtime>(app: AppHandle<R>, value: Value) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || tweaks_save_blocking(app, value))
+        .await
+        .map_err(|e| format!("tweaks_save worker failed: {e}"))?
+}
+
+fn tweaks_save_blocking<R: Runtime>(app: AppHandle<R>, value: Value) -> Result<(), String> {
+    let _guard = SAVE_LOCK.lock();
     let path = tweaks_path(&app)?;
     let tmp = path.with_extension("json.tmp");
     let mut f = fs::File::create(&tmp).map_err(|e| format!("create {}: {e}", tmp.display()))?;
@@ -50,6 +66,16 @@ pub fn tweaks_save<R: Runtime>(app: AppHandle<R>, value: Value) -> Result<(), St
 /// "<profile>.2ndmonitor-profile.json".
 #[tauri::command]
 pub async fn tweaks_export<R: Runtime>(
+    app: AppHandle<R>,
+    json: String,
+    file_name: Option<String>,
+) -> Result<bool, String> {
+    tauri::async_runtime::spawn_blocking(move || tweaks_export_blocking(app, json, file_name))
+        .await
+        .map_err(|e| format!("tweaks_export worker failed: {e}"))?
+}
+
+fn tweaks_export_blocking<R: Runtime>(
     app: AppHandle<R>,
     json: String,
     file_name: Option<String>,
@@ -82,6 +108,12 @@ fn show_import_error<R: Runtime>(app: &AppHandle<R>, message: String) {
 
 #[tauri::command]
 pub async fn tweaks_import<R: Runtime>(app: AppHandle<R>) -> Result<Option<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || tweaks_import_blocking(app))
+        .await
+        .map_err(|e| format!("tweaks_import worker failed: {e}"))?
+}
+
+fn tweaks_import_blocking<R: Runtime>(app: AppHandle<R>) -> Result<Option<String>, String> {
     let Some(path) = app
         .dialog()
         .file()

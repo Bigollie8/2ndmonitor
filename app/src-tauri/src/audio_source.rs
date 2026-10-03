@@ -137,7 +137,13 @@ fn source_options() -> Result<Vec<SourceOption>, String> {
 
 /// Drives the Settings source picker.
 #[tauri::command]
-pub fn audio_sources_list() -> Result<Vec<SourceOption>, String> {
+pub async fn audio_sources_list() -> Result<Vec<SourceOption>, String> {
+    tauri::async_runtime::spawn_blocking(move || audio_sources_list_blocking())
+        .await
+        .map_err(|e| format!("audio_sources_list worker failed: {e}"))?
+}
+
+fn audio_sources_list_blocking() -> Result<Vec<SourceOption>, String> {
     let mut out = source_options()?;
     out.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
     Ok(out)
