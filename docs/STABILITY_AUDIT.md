@@ -84,7 +84,37 @@ Microsoft documents shared GPU failure events and recovery in
   `app/src-tauri/target/release/second-monitor-hub.exe`.
 - Existing Rust dead-code warnings remain in audio-source, Discord, and
   marketplace helpers.
-- These changes are local source fixes; the installed app has not been replaced.
+- The local test executable was launched for user testing. The installed app
+  was not replaced during the audit.
+
+### Release verification — 0.9.22
+
+Published 2026-10-03 after [PR #14](https://github.com/Bigollie8/2ndmonitor/pull/14)
+merged into `main` as `c0205d2`; tag `v0.9.22` points to that commit.
+
+- The [macOS PR check](https://github.com/Bigollie8/2ndmonitor/actions/runs/37146826401)
+  passed: frontend checks, 205 Rust tests passed and one ignored. The check on
+  the merged `main` commit also passed. All 21 release-script tests passed locally.
+- The [release workflow](https://github.com/Bigollie8/2ndmonitor/actions/runs/37147168053)
+  built both Windows and universal macOS installers and generated the combined
+  updater manifest. Its final mirror step failed because `RELEASES_TOKEN` is
+  absent; the public mirror was completed with the authenticated maintainer CLI.
+- Both updater artifact signatures and their trusted comments verified against
+  the public key pinned in `tauri.conf.json`. The manifest includes Windows,
+  Apple Silicon, Intel, and universal entries with correct public URLs and notes.
+- All six artifacts were uploaded to a public-repository draft, downloaded again,
+  and compared byte-for-byte before publishing as latest. Anonymous downloads
+  after publication also returned HTTP 200 and matched every source artifact.
+  The anonymous latest updater endpoint returns version `0.9.22`.
+
+| Artifact | SHA-256 |
+|---|---|
+| Windows setup EXE | `b03e8fdfd006fc56a12f998907bea38cb84afda1645fd9d86b99ad47a0439962` |
+| Universal DMG | `1129d88b8508415bd7702d5dfc20298a1035d298cbc5d169d24f04771abada2f` |
+| Universal updater archive | `3230de7baa4d05a0929342c8c11959e4370e91be3a5f2bd7a033b9e72f2cea90` |
+| Updater manifest | `9591c29ca8791267d8a07441332a3b9ed0c20fc805611db3ed09e287f9408cb8` |
+
+[Public release and downloads](https://github.com/Bigollie8/2ndmonitor-releases/releases/tag/v0.9.22).
 
 ### Native verification to complete
 
