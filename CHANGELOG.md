@@ -5,6 +5,19 @@ All notable changes to 2ndMonitor are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.9.22] - 2026-10-03
+
+### Fixed
+- **Fewer “Not Responding” freezes.** Marketplace and community requests,
+  including the startup account checks and background notification polling,
+  now run on workers so slow network responses do not block the app window.
+- **More responsive Settings.** Audio-device discovery now runs on a worker
+  when Settings opens. Settings loads and saves, credential access, and native
+  import/export dialogs also run off the window and async executor threads.
+- **Smoother content loading.** Preset scans and tile/visualizer file access
+  now run on workers. Concurrent settings, credential, and visualizer writes
+  are protected against overlapping file updates.
+
 ## [0.9.21] - 2026-09-28
 
 ### Fixed

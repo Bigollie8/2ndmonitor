@@ -324,7 +324,18 @@ fn patch_capped_json(
 /// `password` is used only to build the outgoing request body and is dropped
 /// when this function returns, exactly as in `marketplace_login` below.
 #[tauri::command]
-pub fn marketplace_register(
+pub async fn marketplace_register(
+    url: String,
+    email: String,
+    password: String,
+    invite: Option<String>,
+) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || marketplace_register_blocking(url, email, password, invite))
+        .await
+        .map_err(|e| format!("marketplace_register worker failed: {e}"))?
+}
+
+fn marketplace_register_blocking(
     url: String,
     email: String,
     password: String,
@@ -367,7 +378,13 @@ pub fn marketplace_register(
 /// Confirms an address with the token from the verification email — or, in
 /// dev mode, the one `marketplace_register` just handed back.
 #[tauri::command]
-pub fn marketplace_verify_account(url: String, token: String) -> Result<(), String> {
+pub async fn marketplace_verify_account(url: String, token: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || marketplace_verify_account_blocking(url, token))
+        .await
+        .map_err(|e| format!("marketplace_verify_account worker failed: {e}"))?
+}
+
+fn marketplace_verify_account_blocking(url: String, token: String) -> Result<(), String> {
     if token.trim().is_empty() {
         return Err("verification token required".into());
     }
@@ -459,7 +476,13 @@ pub async fn marketplace_login<R: Runtime>(
 /// Clears the stored session. Idempotent — signing out when already signed
 /// out is not an error (mirrors `secret_delete_inner`'s own idempotence).
 #[tauri::command]
-pub fn marketplace_logout<R: Runtime>(app: AppHandle<R>) -> Result<(), String> {
+pub async fn marketplace_logout<R: Runtime>(app: AppHandle<R>) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || marketplace_logout_blocking(app))
+        .await
+        .map_err(|e| format!("marketplace_logout worker failed: {e}"))?
+}
+
+fn marketplace_logout_blocking<R: Runtime>(app: AppHandle<R>) -> Result<(), String> {
     crate::secrets::secret_delete_inner(&app, SESSION_SECRET_KEY)
 }
 
@@ -503,7 +526,15 @@ fn session_blob_has_token(raw: &str) -> bool {
 /// email returned is the masked value written at login time — see
 /// `mask_email` — never the raw one.
 #[tauri::command]
-pub fn marketplace_session_status<R: Runtime>(
+pub async fn marketplace_session_status<R: Runtime>(
+    app: AppHandle<R>,
+) -> Result<MarketplaceSessionStatus, String> {
+    tauri::async_runtime::spawn_blocking(move || marketplace_session_status_blocking(app))
+        .await
+        .map_err(|e| format!("marketplace_session_status worker failed: {e}"))?
+}
+
+fn marketplace_session_status_blocking<R: Runtime>(
     app: AppHandle<R>,
 ) -> Result<MarketplaceSessionStatus, String> {
     let Some(raw) = crate::secrets::secret_get_inner(&app, SESSION_SECRET_KEY) else {
@@ -666,7 +697,17 @@ pub async fn marketplace_post_review<R: Runtime>(
 /// the request so an obviously-too-big file fails instantly rather than after
 /// a pointless upload.
 #[tauri::command]
-pub fn marketplace_set_avatar<R: Runtime>(
+pub async fn marketplace_set_avatar<R: Runtime>(
+    app: AppHandle<R>,
+    url: String,
+    image: String,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || marketplace_set_avatar_blocking(app, url, image))
+        .await
+        .map_err(|e| format!("marketplace_set_avatar worker failed: {e}"))?
+}
+
+fn marketplace_set_avatar_blocking<R: Runtime>(
     app: AppHandle<R>,
     url: String,
     image: String,
@@ -685,7 +726,16 @@ pub fn marketplace_set_avatar<R: Runtime>(
 /// Permission is decided server-side (server/src/roles.rs); these commands
 /// only carry the request.
 #[tauri::command]
-pub fn marketplace_staff_whoami<R: Runtime>(
+pub async fn marketplace_staff_whoami<R: Runtime>(
+    app: AppHandle<R>,
+    url: String,
+) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || marketplace_staff_whoami_blocking(app, url))
+        .await
+        .map_err(|e| format!("marketplace_staff_whoami worker failed: {e}"))?
+}
+
+fn marketplace_staff_whoami_blocking<R: Runtime>(
     app: AppHandle<R>,
     url: String,
 ) -> Result<serde_json::Value, String> {
@@ -695,7 +745,17 @@ pub fn marketplace_staff_whoami<R: Runtime>(
 }
 
 #[tauri::command]
-pub fn marketplace_staff_users<R: Runtime>(
+pub async fn marketplace_staff_users<R: Runtime>(
+    app: AppHandle<R>,
+    url: String,
+    query: Option<String>,
+) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || marketplace_staff_users_blocking(app, url, query))
+        .await
+        .map_err(|e| format!("marketplace_staff_users worker failed: {e}"))?
+}
+
+fn marketplace_staff_users_blocking<R: Runtime>(
     app: AppHandle<R>,
     url: String,
     query: Option<String>,
@@ -712,7 +772,16 @@ pub fn marketplace_staff_users<R: Runtime>(
 }
 
 #[tauri::command]
-pub fn marketplace_staff_reports<R: Runtime>(
+pub async fn marketplace_staff_reports<R: Runtime>(
+    app: AppHandle<R>,
+    url: String,
+) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || marketplace_staff_reports_blocking(app, url))
+        .await
+        .map_err(|e| format!("marketplace_staff_reports worker failed: {e}"))?
+}
+
+fn marketplace_staff_reports_blocking<R: Runtime>(
     app: AppHandle<R>,
     url: String,
 ) -> Result<serde_json::Value, String> {
@@ -723,7 +792,16 @@ pub fn marketplace_staff_reports<R: Runtime>(
 
 /// The moderation log.
 #[tauri::command]
-pub fn marketplace_staff_audit<R: Runtime>(
+pub async fn marketplace_staff_audit<R: Runtime>(
+    app: AppHandle<R>,
+    url: String,
+) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || marketplace_staff_audit_blocking(app, url))
+        .await
+        .map_err(|e| format!("marketplace_staff_audit worker failed: {e}"))?
+}
+
+fn marketplace_staff_audit_blocking<R: Runtime>(
     app: AppHandle<R>,
     url: String,
 ) -> Result<serde_json::Value, String> {
@@ -736,7 +814,17 @@ pub fn marketplace_staff_audit<R: Runtime>(
 /// recorded -- the client never guesses, because an undo derived from a
 /// half-remembered argument list is how you restore the wrong thing.
 #[tauri::command]
-pub fn marketplace_undo<R: Runtime>(
+pub async fn marketplace_undo<R: Runtime>(
+    app: AppHandle<R>,
+    url: String,
+    id: i64,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || marketplace_undo_blocking(app, url, id))
+        .await
+        .map_err(|e| format!("marketplace_undo worker failed: {e}"))?
+}
+
+fn marketplace_undo_blocking<R: Runtime>(
     app: AppHandle<R>,
     url: String,
     id: i64,
@@ -750,7 +838,18 @@ pub fn marketplace_undo<R: Runtime>(
 /// one, so duplicating that here would only create a second place to get it
 /// wrong.
 #[tauri::command]
-pub fn marketplace_moderate<R: Runtime>(
+pub async fn marketplace_moderate<R: Runtime>(
+    app: AppHandle<R>,
+    url: String,
+    action: String,
+    args: serde_json::Value,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || marketplace_moderate_blocking(app, url, action, args))
+        .await
+        .map_err(|e| format!("marketplace_moderate worker failed: {e}"))?
+}
+
+fn marketplace_moderate_blocking<R: Runtime>(
     app: AppHandle<R>,
     url: String,
     action: String,
@@ -768,7 +867,19 @@ pub fn marketplace_moderate<R: Runtime>(
 /// Mint an invite code. Any moderator may — handing out invites is everyday
 /// work, and every code is attributed in the list.
 #[tauri::command]
-pub fn marketplace_create_invite<R: Runtime>(
+pub async fn marketplace_create_invite<R: Runtime>(
+    app: AppHandle<R>,
+    url: String,
+    note: Option<String>,
+    max_uses: Option<i64>,
+    expires_in_days: Option<i64>,
+) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || marketplace_create_invite_blocking(app, url, note, max_uses, expires_in_days))
+        .await
+        .map_err(|e| format!("marketplace_create_invite worker failed: {e}"))?
+}
+
+fn marketplace_create_invite_blocking<R: Runtime>(
     app: AppHandle<R>,
     url: String,
     note: Option<String>,
@@ -791,7 +902,16 @@ pub fn marketplace_create_invite<R: Runtime>(
 }
 
 #[tauri::command]
-pub fn marketplace_list_invites<R: Runtime>(
+pub async fn marketplace_list_invites<R: Runtime>(
+    app: AppHandle<R>,
+    url: String,
+) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || marketplace_list_invites_blocking(app, url))
+        .await
+        .map_err(|e| format!("marketplace_list_invites worker failed: {e}"))?
+}
+
+fn marketplace_list_invites_blocking<R: Runtime>(
     app: AppHandle<R>,
     url: String,
 ) -> Result<serde_json::Value, String> {
@@ -802,7 +922,16 @@ pub fn marketplace_list_invites<R: Runtime>(
 
 /// Your inbox, with the unread count for the badge.
 #[tauri::command]
-pub fn marketplace_notifications<R: Runtime>(
+pub async fn marketplace_notifications<R: Runtime>(
+    app: AppHandle<R>,
+    url: String,
+) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || marketplace_notifications_blocking(app, url))
+        .await
+        .map_err(|e| format!("marketplace_notifications worker failed: {e}"))?
+}
+
+fn marketplace_notifications_blocking<R: Runtime>(
     app: AppHandle<R>,
     url: String,
 ) -> Result<serde_json::Value, String> {
@@ -813,7 +942,17 @@ pub fn marketplace_notifications<R: Runtime>(
 
 /// Mark one notification read, or all of them when `id` is absent.
 #[tauri::command]
-pub fn marketplace_mark_read<R: Runtime>(
+pub async fn marketplace_mark_read<R: Runtime>(
+    app: AppHandle<R>,
+    url: String,
+    id: Option<i64>,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || marketplace_mark_read_blocking(app, url, id))
+        .await
+        .map_err(|e| format!("marketplace_mark_read worker failed: {e}"))?
+}
+
+fn marketplace_mark_read_blocking<R: Runtime>(
     app: AppHandle<R>,
     url: String,
     id: Option<i64>,
@@ -831,7 +970,17 @@ pub fn marketplace_mark_read<R: Runtime>(
 /// somebody else's, and conflating the two in one call would make the
 /// permission question ambiguous.
 #[tauri::command]
-pub fn marketplace_delete_comment<R: Runtime>(
+pub async fn marketplace_delete_comment<R: Runtime>(
+    app: AppHandle<R>,
+    url: String,
+    id: i64,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || marketplace_delete_comment_blocking(app, url, id))
+        .await
+        .map_err(|e| format!("marketplace_delete_comment worker failed: {e}"))?
+}
+
+fn marketplace_delete_comment_blocking<R: Runtime>(
     app: AppHandle<R>,
     url: String,
     id: i64,
@@ -890,7 +1039,16 @@ fn delete_capped_json(
 /// The creator directory, optionally searched. Public: a signed-out browse
 /// still gets the full list, because discovering people is the point.
 #[tauri::command]
-pub fn marketplace_fetch_creators(
+pub async fn marketplace_fetch_creators(
+    url: String,
+    query: Option<String>,
+) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || marketplace_fetch_creators_blocking(url, query))
+        .await
+        .map_err(|e| format!("marketplace_fetch_creators worker failed: {e}"))?
+}
+
+fn marketplace_fetch_creators_blocking(
     url: String,
     query: Option<String>,
 ) -> Result<serde_json::Value, String> {
@@ -911,7 +1069,18 @@ pub fn marketplace_fetch_creators(
 
 /// Forum topics, optionally scoped to one bundle's discussion.
 #[tauri::command]
-pub fn marketplace_fetch_topics<R: Runtime>(
+pub async fn marketplace_fetch_topics<R: Runtime>(
+    app: AppHandle<R>,
+    url: String,
+    bundle_id: Option<String>,
+    query: Option<String>,
+) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || marketplace_fetch_topics_blocking(app, url, bundle_id, query))
+        .await
+        .map_err(|e| format!("marketplace_fetch_topics worker failed: {e}"))?
+}
+
+fn marketplace_fetch_topics_blocking<R: Runtime>(
     app: AppHandle<R>,
     url: String,
     bundle_id: Option<String>,
@@ -937,7 +1106,19 @@ pub fn marketplace_fetch_topics<R: Runtime>(
 }
 
 #[tauri::command]
-pub fn marketplace_create_topic<R: Runtime>(
+pub async fn marketplace_create_topic<R: Runtime>(
+    app: AppHandle<R>,
+    url: String,
+    title: String,
+    body: String,
+    bundle_id: Option<String>,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || marketplace_create_topic_blocking(app, url, title, body, bundle_id))
+        .await
+        .map_err(|e| format!("marketplace_create_topic worker failed: {e}"))?
+}
+
+fn marketplace_create_topic_blocking<R: Runtime>(
     app: AppHandle<R>,
     url: String,
     title: String,
@@ -965,7 +1146,17 @@ pub fn marketplace_create_topic<R: Runtime>(
 }
 
 #[tauri::command]
-pub fn marketplace_fetch_replies<R: Runtime>(
+pub async fn marketplace_fetch_replies<R: Runtime>(
+    app: AppHandle<R>,
+    url: String,
+    topic_id: i64,
+) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || marketplace_fetch_replies_blocking(app, url, topic_id))
+        .await
+        .map_err(|e| format!("marketplace_fetch_replies worker failed: {e}"))?
+}
+
+fn marketplace_fetch_replies_blocking<R: Runtime>(
     app: AppHandle<R>,
     url: String,
     topic_id: i64,
@@ -975,7 +1166,18 @@ pub fn marketplace_fetch_replies<R: Runtime>(
 }
 
 #[tauri::command]
-pub fn marketplace_create_reply<R: Runtime>(
+pub async fn marketplace_create_reply<R: Runtime>(
+    app: AppHandle<R>,
+    url: String,
+    topic_id: i64,
+    body: String,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || marketplace_create_reply_blocking(app, url, topic_id, body))
+        .await
+        .map_err(|e| format!("marketplace_create_reply worker failed: {e}"))?
+}
+
+fn marketplace_create_reply_blocking<R: Runtime>(
     app: AppHandle<R>,
     url: String,
     topic_id: i64,
@@ -995,7 +1197,16 @@ pub fn marketplace_create_reply<R: Runtime>(
 /// The shoutbox window. Polled by the client, so this stays cheap and never
 /// errors loudly — a dead fetch leaves the last window on screen.
 #[tauri::command]
-pub fn marketplace_fetch_shouts<R: Runtime>(
+pub async fn marketplace_fetch_shouts<R: Runtime>(
+    app: AppHandle<R>,
+    url: String,
+) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || marketplace_fetch_shouts_blocking(app, url))
+        .await
+        .map_err(|e| format!("marketplace_fetch_shouts worker failed: {e}"))?
+}
+
+fn marketplace_fetch_shouts_blocking<R: Runtime>(
     app: AppHandle<R>,
     url: String,
 ) -> Result<serde_json::Value, String> {
@@ -1004,7 +1215,17 @@ pub fn marketplace_fetch_shouts<R: Runtime>(
 }
 
 #[tauri::command]
-pub fn marketplace_post_shout<R: Runtime>(
+pub async fn marketplace_post_shout<R: Runtime>(
+    app: AppHandle<R>,
+    url: String,
+    body: String,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || marketplace_post_shout_blocking(app, url, body))
+        .await
+        .map_err(|e| format!("marketplace_post_shout worker failed: {e}"))?
+}
+
+fn marketplace_post_shout_blocking<R: Runtime>(
     app: AppHandle<R>,
     url: String,
     body: String,
@@ -1058,7 +1279,17 @@ fn is_safe_handle(h: &str) -> bool {
 
 /// Follower count + whether the caller follows this creator.
 #[tauri::command]
-pub fn marketplace_follow_status<R: Runtime>(
+pub async fn marketplace_follow_status<R: Runtime>(
+    app: AppHandle<R>,
+    url: String,
+    handle: String,
+) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || marketplace_follow_status_blocking(app, url, handle))
+        .await
+        .map_err(|e| format!("marketplace_follow_status worker failed: {e}"))?
+}
+
+fn marketplace_follow_status_blocking<R: Runtime>(
     app: AppHandle<R>,
     url: String,
     handle: String,
@@ -1071,7 +1302,18 @@ pub fn marketplace_follow_status<R: Runtime>(
 }
 
 #[tauri::command]
-pub fn marketplace_set_follow<R: Runtime>(
+pub async fn marketplace_set_follow<R: Runtime>(
+    app: AppHandle<R>,
+    url: String,
+    handle: String,
+    following: bool,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || marketplace_set_follow_blocking(app, url, handle, following))
+        .await
+        .map_err(|e| format!("marketplace_set_follow worker failed: {e}"))?
+}
+
+fn marketplace_set_follow_blocking<R: Runtime>(
     app: AppHandle<R>,
     url: String,
     handle: String,
@@ -1086,7 +1328,13 @@ pub fn marketplace_set_follow<R: Runtime>(
 
 /// The creators the caller follows — the profile popout's Following tab.
 #[tauri::command]
-pub fn marketplace_follows_mine<R: Runtime>(app: AppHandle<R>, url: String) -> Result<serde_json::Value, String> {
+pub async fn marketplace_follows_mine<R: Runtime>(app: AppHandle<R>, url: String) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || marketplace_follows_mine_blocking(app, url))
+        .await
+        .map_err(|e| format!("marketplace_follows_mine worker failed: {e}"))?
+}
+
+fn marketplace_follows_mine_blocking<R: Runtime>(app: AppHandle<R>, url: String) -> Result<serde_json::Value, String> {
     let token = session_token(&app)?;
     let base = url.trim_end_matches('/');
     get_social(&format!("{base}/follows/mine"), Some(token))
@@ -1094,13 +1342,30 @@ pub fn marketplace_follows_mine<R: Runtime>(app: AppHandle<R>, url: String) -> R
 
 /// Public per-bundle favourite counts plus the caller's own list.
 #[tauri::command]
-pub fn marketplace_fetch_favourites<R: Runtime>(app: AppHandle<R>, url: String) -> Result<serde_json::Value, String> {
+pub async fn marketplace_fetch_favourites<R: Runtime>(app: AppHandle<R>, url: String) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || marketplace_fetch_favourites_blocking(app, url))
+        .await
+        .map_err(|e| format!("marketplace_fetch_favourites worker failed: {e}"))?
+}
+
+fn marketplace_fetch_favourites_blocking<R: Runtime>(app: AppHandle<R>, url: String) -> Result<serde_json::Value, String> {
     let base = url.trim_end_matches('/');
     get_social(&format!("{base}/favourites"), session_token(&app).ok())
 }
 
 #[tauri::command]
-pub fn marketplace_set_favourite<R: Runtime>(
+pub async fn marketplace_set_favourite<R: Runtime>(
+    app: AppHandle<R>,
+    url: String,
+    id: String,
+    favourite: bool,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || marketplace_set_favourite_blocking(app, url, id, favourite))
+        .await
+        .map_err(|e| format!("marketplace_set_favourite worker failed: {e}"))?
+}
+
+fn marketplace_set_favourite_blocking<R: Runtime>(
     app: AppHandle<R>,
     url: String,
     id: String,
@@ -1116,7 +1381,13 @@ pub fn marketplace_set_favourite<R: Runtime>(
 /// Bundle ids from creators the caller follows, newest first. Ids only — the
 /// client already holds the catalog and resolves them itself.
 #[tauri::command]
-pub fn marketplace_fetch_feed<R: Runtime>(app: AppHandle<R>, url: String) -> Result<serde_json::Value, String> {
+pub async fn marketplace_fetch_feed<R: Runtime>(app: AppHandle<R>, url: String) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || marketplace_fetch_feed_blocking(app, url))
+        .await
+        .map_err(|e| format!("marketplace_fetch_feed worker failed: {e}"))?
+}
+
+fn marketplace_fetch_feed_blocking<R: Runtime>(app: AppHandle<R>, url: String) -> Result<serde_json::Value, String> {
     let token = session_token(&app)?;
     let base = url.trim_end_matches('/');
     get_social(&format!("{base}/feed"), Some(token))
@@ -1126,7 +1397,17 @@ pub fn marketplace_fetch_feed<R: Runtime>(app: AppHandle<R>, url: String) -> Res
 /// server can apply the caller's blocks — enforced there, not here, so a
 /// modified client cannot un-block anyone.
 #[tauri::command]
-pub fn marketplace_fetch_comments<R: Runtime>(
+pub async fn marketplace_fetch_comments<R: Runtime>(
+    app: AppHandle<R>,
+    url: String,
+    id: String,
+) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || marketplace_fetch_comments_blocking(app, url, id))
+        .await
+        .map_err(|e| format!("marketplace_fetch_comments worker failed: {e}"))?
+}
+
+fn marketplace_fetch_comments_blocking<R: Runtime>(
     app: AppHandle<R>,
     url: String,
     id: String,
@@ -1139,7 +1420,18 @@ pub fn marketplace_fetch_comments<R: Runtime>(
 }
 
 #[tauri::command]
-pub fn marketplace_post_comment<R: Runtime>(
+pub async fn marketplace_post_comment<R: Runtime>(
+    app: AppHandle<R>,
+    url: String,
+    id: String,
+    body: String,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || marketplace_post_comment_blocking(app, url, id, body))
+        .await
+        .map_err(|e| format!("marketplace_post_comment worker failed: {e}"))?
+}
+
+fn marketplace_post_comment_blocking<R: Runtime>(
     app: AppHandle<R>,
     url: String,
     id: String,
@@ -1159,7 +1451,18 @@ pub fn marketplace_post_comment<R: Runtime>(
 }
 
 #[tauri::command]
-pub fn marketplace_set_block<R: Runtime>(
+pub async fn marketplace_set_block<R: Runtime>(
+    app: AppHandle<R>,
+    url: String,
+    handle: String,
+    blocking: bool,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || marketplace_set_block_blocking(app, url, handle, blocking))
+        .await
+        .map_err(|e| format!("marketplace_set_block worker failed: {e}"))?
+}
+
+fn marketplace_set_block_blocking<R: Runtime>(
     app: AppHandle<R>,
     url: String,
     handle: String,
@@ -1173,7 +1476,19 @@ pub fn marketplace_set_block<R: Runtime>(
 }
 
 #[tauri::command]
-pub fn marketplace_report<R: Runtime>(
+pub async fn marketplace_report<R: Runtime>(
+    app: AppHandle<R>,
+    url: String,
+    target_kind: String,
+    target_id: String,
+    reason: String,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || marketplace_report_blocking(app, url, target_kind, target_id, reason))
+        .await
+        .map_err(|e| format!("marketplace_report worker failed: {e}"))?
+}
+
+fn marketplace_report_blocking<R: Runtime>(
     app: AppHandle<R>,
     url: String,
     target_kind: String,
@@ -1202,7 +1517,22 @@ pub fn marketplace_report<R: Runtime>(
 /// `type` and `rect` is refused, not quietly cleaned, since anyone can POST
 /// to that endpoint without going through this command.
 #[tauri::command]
-pub fn marketplace_publish_layout<R: Runtime>(
+pub async fn marketplace_publish_layout<R: Runtime>(
+    app: AppHandle<R>,
+    url: String,
+    manifest: String,
+    layout: String,
+    // Base64 PNG wireframe. Optional: a layout with no preview publishes
+    // fine and falls back to the letter block, exactly like any other
+    // previewless bundle.
+    preview: Option<String>,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || marketplace_publish_layout_blocking(app, url, manifest, layout, preview))
+        .await
+        .map_err(|e| format!("marketplace_publish_layout worker failed: {e}"))?
+}
+
+fn marketplace_publish_layout_blocking<R: Runtime>(
     app: AppHandle<R>,
     url: String,
     manifest: String,
@@ -1251,7 +1581,13 @@ pub async fn marketplace_fetch_creator(url: String, handle: String) -> Result<se
 /// The signed-in account's own profile. Requires a session; the token is read
 /// Rust-side and never crosses the IPC boundary as a parameter.
 #[tauri::command]
-pub fn marketplace_account_get<R: Runtime>(app: AppHandle<R>, url: String) -> Result<serde_json::Value, String> {
+pub async fn marketplace_account_get<R: Runtime>(app: AppHandle<R>, url: String) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || marketplace_account_get_blocking(app, url))
+        .await
+        .map_err(|e| format!("marketplace_account_get worker failed: {e}"))?
+}
+
+fn marketplace_account_get_blocking<R: Runtime>(app: AppHandle<R>, url: String) -> Result<serde_json::Value, String> {
     let token = session_token(&app)?;
     let base = url.trim_end_matches('/');
     let (status, buf) = get_capped_auth(&format!("{base}/account"), FETCH_CAP, &token)?;
@@ -1264,7 +1600,17 @@ pub fn marketplace_account_get<R: Runtime>(app: AppHandle<R>, url: String) -> Re
 
 /// Claim a handle. One-time — the server refuses a second claim.
 #[tauri::command]
-pub fn marketplace_claim_handle<R: Runtime>(
+pub async fn marketplace_claim_handle<R: Runtime>(
+    app: AppHandle<R>,
+    url: String,
+    handle: String,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || marketplace_claim_handle_blocking(app, url, handle))
+        .await
+        .map_err(|e| format!("marketplace_claim_handle worker failed: {e}"))?
+}
+
+fn marketplace_claim_handle_blocking<R: Runtime>(
     app: AppHandle<R>,
     url: String,
     handle: String,
@@ -1283,7 +1629,17 @@ pub fn marketplace_claim_handle<R: Runtime>(
 /// Edit display name, bio and links. Every field optional; the server
 /// validates each one and returns a readable reason.
 #[tauri::command]
-pub fn marketplace_account_patch<R: Runtime>(
+pub async fn marketplace_account_patch<R: Runtime>(
+    app: AppHandle<R>,
+    url: String,
+    patch: serde_json::Value,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || marketplace_account_patch_blocking(app, url, patch))
+        .await
+        .map_err(|e| format!("marketplace_account_patch worker failed: {e}"))?
+}
+
+fn marketplace_account_patch_blocking<R: Runtime>(
     app: AppHandle<R>,
     url: String,
     patch: serde_json::Value,
@@ -1705,7 +2061,13 @@ fn marketplace_install_blocking<R: Runtime>(
 }
 
 #[tauri::command]
-pub fn marketplace_uninstall<R: Runtime>(app: AppHandle<R>, id: String, kind: String) -> Result<(), String> {
+pub async fn marketplace_uninstall<R: Runtime>(app: AppHandle<R>, id: String, kind: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || marketplace_uninstall_blocking(app, id, kind))
+        .await
+        .map_err(|e| format!("marketplace_uninstall worker failed: {e}"))?
+}
+
+fn marketplace_uninstall_blocking<R: Runtime>(app: AppHandle<R>, id: String, kind: String) -> Result<(), String> {
     if !is_safe_id(&id) {
         return Err("invalid bundle id".into());
     }

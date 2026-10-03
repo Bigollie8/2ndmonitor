@@ -191,7 +191,13 @@ fn list_visualizers<R: Runtime>(app: AppHandle<R>) -> Result<Vec<VizFolder>, Str
 }
 
 #[tauri::command]
-pub fn visualizers_read<R: Runtime>(app: AppHandle<R>, id: String) -> Result<VizSource, String> {
+pub async fn visualizers_read<R: Runtime>(app: AppHandle<R>, id: String) -> Result<VizSource, String> {
+    tauri::async_runtime::spawn_blocking(move || visualizers_read_blocking(app, id))
+        .await
+        .map_err(|e| format!("visualizers_read worker failed: {e}"))?
+}
+
+fn visualizers_read_blocking<R: Runtime>(app: AppHandle<R>, id: String) -> Result<VizSource, String> {
     if !is_safe_id(&id) {
         return Err("invalid visualizer id".into());
     }
@@ -204,12 +210,27 @@ pub fn visualizers_read<R: Runtime>(app: AppHandle<R>, id: String) -> Result<Viz
 }
 
 #[tauri::command]
-pub fn visualizers_write<R: Runtime>(
+pub async fn visualizers_write<R: Runtime>(
     app: AppHandle<R>,
     id: String,
     manifest: Option<String>,
     code: Option<String>,
 ) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || visualizers_write_blocking(app, id, manifest, code))
+        .await
+        .map_err(|e| format!("visualizers_write worker failed: {e}"))?
+}
+
+static WRITE_LOCK: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
+
+fn visualizers_write_blocking<R: Runtime>(
+    app: AppHandle<R>,
+    id: String,
+    manifest: Option<String>,
+    code: Option<String>,
+) -> Result<(), String> {
+    // Preserve temp-file exclusivity now that writes can run concurrently.
+    let _guard = WRITE_LOCK.lock();
     if !is_safe_id(&id) {
         return Err("invalid visualizer id".into());
     }

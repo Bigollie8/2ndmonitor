@@ -33,7 +33,13 @@ pub(crate) fn is_safe_name(name: &str) -> bool {
 }
 
 #[tauri::command]
-pub fn presets_list<R: Runtime>(app: AppHandle<R>) -> Result<Vec<UserPreset>, String> {
+pub async fn presets_list<R: Runtime>(app: AppHandle<R>) -> Result<Vec<UserPreset>, String> {
+    tauri::async_runtime::spawn_blocking(move || presets_list_blocking(app))
+        .await
+        .map_err(|e| format!("presets_list worker failed: {e}"))?
+}
+
+fn presets_list_blocking<R: Runtime>(app: AppHandle<R>) -> Result<Vec<UserPreset>, String> {
     let dir = presets_dir(&app)?;
     let mut out = Vec::new();
     let entries = std::fs::read_dir(&dir).map_err(|e| format!("read presets dir: {e}"))?;
@@ -63,7 +69,13 @@ pub fn presets_list<R: Runtime>(app: AppHandle<R>) -> Result<Vec<UserPreset>, St
 }
 
 #[tauri::command]
-pub fn presets_read<R: Runtime>(app: AppHandle<R>, file: String) -> Result<String, String> {
+pub async fn presets_read<R: Runtime>(app: AppHandle<R>, file: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || presets_read_blocking(app, file))
+        .await
+        .map_err(|e| format!("presets_read worker failed: {e}"))?
+}
+
+fn presets_read_blocking<R: Runtime>(app: AppHandle<R>, file: String) -> Result<String, String> {
     if !is_safe_name(&file) {
         return Err("invalid preset filename".into());
     }
@@ -135,12 +147,24 @@ fn market_entries(market_dir: &std::path::Path) -> Vec<MarketPreset> {
 }
 
 #[tauri::command]
-pub fn presets_market_list<R: Runtime>(app: AppHandle<R>) -> Result<Vec<MarketPreset>, String> {
+pub async fn presets_market_list<R: Runtime>(app: AppHandle<R>) -> Result<Vec<MarketPreset>, String> {
+    tauri::async_runtime::spawn_blocking(move || presets_market_list_blocking(app))
+        .await
+        .map_err(|e| format!("presets_market_list worker failed: {e}"))?
+}
+
+fn presets_market_list_blocking<R: Runtime>(app: AppHandle<R>) -> Result<Vec<MarketPreset>, String> {
     Ok(market_entries(&market_dir(&app)?))
 }
 
 #[tauri::command]
-pub fn presets_market_read<R: Runtime>(app: AppHandle<R>, id: String) -> Result<String, String> {
+pub async fn presets_market_read<R: Runtime>(app: AppHandle<R>, id: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || presets_market_read_blocking(app, id))
+        .await
+        .map_err(|e| format!("presets_market_read worker failed: {e}"))?
+}
+
+fn presets_market_read_blocking<R: Runtime>(app: AppHandle<R>, id: String) -> Result<String, String> {
     if !is_safe_id(&id) {
         return Err("invalid preset id".into());
     }

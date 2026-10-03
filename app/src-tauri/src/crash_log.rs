@@ -112,7 +112,13 @@ pub fn install<R: Runtime>(app: &AppHandle<R>) {
 /// and share it. Also writes a marker line so an empty log still proves the
 /// path works.
 #[tauri::command]
-pub fn crash_log_path<R: Runtime>(app: AppHandle<R>) -> Result<String, String> {
+pub async fn crash_log_path<R: Runtime>(app: AppHandle<R>) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || crash_log_path_blocking(app))
+        .await
+        .map_err(|e| format!("crash_log_path worker failed: {e}"))?
+}
+
+fn crash_log_path_blocking<R: Runtime>(app: AppHandle<R>) -> Result<String, String> {
     let path = log_path(&app).ok_or("app data dir unavailable")?;
     if !path.exists() {
         append_line(&path, &format!("[{}] log created", now_iso()));
